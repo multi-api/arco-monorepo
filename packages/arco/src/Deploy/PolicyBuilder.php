@@ -35,7 +35,7 @@ final class PolicyBuilder
             $statements[] = [
                 'Sid' => 'ArcoRuntimeBinary',
                 'Effect' => 'Allow',
-                'Action' => ['s3:GetObject', 's3:GetObjectVersion'],
+                'Action' => 's3:GetObject',
                 'Resource' => "arn:aws:s3:::$codeBucket/runtime/*",
             ];
         }

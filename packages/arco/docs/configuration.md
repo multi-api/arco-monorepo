@@ -176,7 +176,7 @@ package **without** the FrankenPHP binary and the Node web runtime. The deploy u
 the web revision once to the code bucket (`runtime/<build>/frankenphp`); at a cold start the console
 function downloads it (about 2.5 s for 160 MB, once per execution environment), checks its SHA-256 and
 keeps it in `/tmp`. The managed role may read `runtime/*` of the code bucket; with your own `role()`,
-allow `s3:GetObject` and `s3:GetObjectVersion` on `arn:aws:s3:::arco-<account>-<region>/runtime/*`
+allow `s3:GetObject` on `arn:aws:s3:::arco-<account>-<region>/runtime/*`
 and `logs:CreateLogStream` / `logs:PutLogEvents` on the console log group. If the console package is
 still over 250 MB, the web function deploys, the console function is skipped with a warning and deploy
 commands are refused: leave large folders out with `->exclude([...])`.

@@ -27,7 +27,7 @@ final class PolicyBuilderTest extends TestCase
         $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], 'arco-111111111111-us-east-1');
 
         $bySid = array_column($doc['Statement'], null, 'Sid');
-        self::assertSame(['s3:GetObject', 's3:GetObjectVersion'], $bySid['ArcoRuntimeBinary']['Action']);
+        self::assertSame('s3:GetObject', $bySid['ArcoRuntimeBinary']['Action']);
         self::assertSame('arn:aws:s3:::arco-111111111111-us-east-1/runtime/*', $bySid['ArcoRuntimeBinary']['Resource']);
     }
 

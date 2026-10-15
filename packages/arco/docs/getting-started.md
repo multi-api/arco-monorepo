@@ -371,7 +371,7 @@ basis: without `lambda:ListVersionsByFunction` or `lambda:DeleteFunction` that s
 People who only run `arco command`, `arco tinker` or `arco logs` need `lambda:InvokeFunction` on the console
 function (`arco logs` needs the `logs:` actions above). The function's execution role is separate: for the managed role Arco
 adds `logs:CreateLogGroup`, `logs:CreateLogStream` and `logs:PutLogEvents` on the web and console log
-groups, `s3:GetObject` and `s3:GetObjectVersion` on `runtime/*` of the code bucket, and read access to the
+groups, `s3:GetObject` on `runtime/*` of the code bucket, and read access to the
 secrets you reference.
 
 ### Permissions for custom domains
