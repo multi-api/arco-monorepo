@@ -31,6 +31,10 @@ final class PackagerTest extends TestCase
         file_put_contents("$this->runtimeDir/index.js", '// runtime');
         file_put_contents("$this->runtimeDir/lib/caddyfile.js", '// lib');
         file_put_contents("$this->runtimeDir/test/x.test.js", '// test');
+        file_put_contents("$this->runtimeDir/bootstrap", "#!/bin/sh\n");
+        file_put_contents("$this->runtimeDir/console.php", '<?php // console');
+        mkdir("$this->runtimeDir/console");
+        file_put_contents("$this->runtimeDir/console/Handler.php", '<?php // handler');
 
         mkdir("$base/staging/app/public", 0777, true);
         mkdir("$base/staging/app/vendor/big", 0777, true);
@@ -64,12 +68,16 @@ final class PackagerTest extends TestCase
             $names[] = $zip->getNameIndex($i);
         }
         sort($names);
-        self::assertSame(['app/public/index.php', 'app/vendor/big/blob.bin', 'arco-package.json', 'arco-runtime.json', 'bin/frankenphp', 'index.js', 'lib/caddyfile.js'], $names);
+        self::assertSame(['app/public/index.php', 'app/vendor/big/blob.bin', 'arco-package.json', 'arco-runtime.json', 'bin/frankenphp', 'bootstrap', 'index.js', 'lib/caddyfile.js', 'runtime/console.php', 'runtime/console/Handler.php'], $names);
 
         $zip->getExternalAttributesName('bin/frankenphp', $opsys, $attr);
         self::assertSame(ZipArchive::OPSYS_UNIX, $opsys);
         self::assertSame(0755, ($attr >> 16) & 0777);
         self::assertSame(ZipArchive::CM_STORE, $zip->statName('bin/frankenphp')['comp_method']);
+        $zip->getExternalAttributesName('bootstrap', $opsys, $attr);
+        self::assertSame(0755, ($attr >> 16) & 0777, 'Lambda runs bootstrap directly');
+        $zip->getExternalAttributesName('runtime/console.php', $opsys, $attr);
+        self::assertSame(0644, ($attr >> 16) & 0777);
 
         self::assertSame([
             'mode' => 'direct',
@@ -78,11 +86,35 @@ final class PackagerTest extends TestCase
             'threads' => 8,
             'workers' => ['min' => 4, 'max' => 64],
             'phpIni' => ['memory_limit' => '512M'],
+            'console' => ['entry' => null],
         ], json_decode((string) $zip->getFromName('arco-runtime.json'), true));
         $zip->close();
 
         self::assertSame(64, strlen($package->hash));
         self::assertGreaterThan(4096, $package->bytes);
+    }
+
+    public function test_laravel_commands_go_through_artisan(): void
+    {
+        self::assertSame(['entry' => 'artisan'], Packager::runtimeConfig($this->config(), new \Multiapi\Arco\Laravel\LaravelPreset())['console']);
+    }
+
+    public function test_a_package_without_the_console_runtime_is_refused(): void
+    {
+        $built = (new Packager($this->runtimeDir))->package($this->build, $this->binary, $this->config(), new PlainPhpPreset());
+        $old = sys_get_temp_dir() . '/arco-old-' . bin2hex(random_bytes(4)) . '.zip';
+        copy($built->path, $old);
+        $zip = new ZipArchive();
+        self::assertTrue($zip->open($old));
+        $zip->deleteName('bootstrap');
+        $zip->close();
+
+        try {
+            PackageReader::check(PackageReader::open($old), $this->config(), new PlainPhpPreset(), null);
+            self::fail('A package without bootstrap must be refused.');
+        } catch (BuildException $e) {
+            self::assertSame('package.no_console_runtime', $e->key);
+        }
     }
 
     public function test_hash_depends_on_content_only(): void

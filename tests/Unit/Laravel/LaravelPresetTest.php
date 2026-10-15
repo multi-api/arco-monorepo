@@ -69,4 +69,10 @@ final class LaravelPresetTest extends TestCase
         self::assertSame(['/build/*'], (new LaravelPreset())->cachedPaths());
         self::assertSame([], (new \Multiapi\Arco\Build\PlainPhpPreset())->cachedPaths());
     }
+
+    public function test_commands_run_through_artisan(): void
+    {
+        self::assertInstanceOf(\Multiapi\Arco\Build\RunsCommands::class, new LaravelPreset());
+        self::assertSame('artisan', (new LaravelPreset())->commandEntry());
+    }
 }

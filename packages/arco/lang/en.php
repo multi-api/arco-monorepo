@@ -214,4 +214,6 @@ return [
     'deploy.verify_iam_logs_unreadable' => 'This endpoint uses IAM auth, so Arco relies on the Lambda init report, but it could not read CloudWatch Logs ({error}). The init did not necessarily fail: check the function logs and that your profile has logs:FilterLogEvents, then deploy again.',
     'package.corrupt' => '{path} is damaged (its zip entries are inconsistent), so it was not deployed. Copy it again or rebuild it with "arco package".',
     'package.runtime_build_differs' => '{path} contains runtime build {package_build}, but arco.php now resolves to {build}. The package\'s build is deployed; rebuild it to use the current one.',
+    'package.no_console_runtime' => 'Package {path} was built by an older Arco and has no console runtime. Build it again with "arco package".',
+    'package.no_binary' => 'Package {path} has no bin/frankenphp, which the console function downloads from S3. Build it again with "arco package".',
 ];

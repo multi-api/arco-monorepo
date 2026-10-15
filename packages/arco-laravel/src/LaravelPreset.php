@@ -5,10 +5,16 @@ namespace Multiapi\Arco\Laravel;
 use Multiapi\Arco\Build\BuildException;
 use Multiapi\Arco\Build\CachesPaths;
 use Multiapi\Arco\Build\FrameworkPreset;
+use Multiapi\Arco\Build\RunsCommands;
 
-final class LaravelPreset implements FrameworkPreset, CachesPaths
+final class LaravelPreset implements FrameworkPreset, CachesPaths, RunsCommands
 {
     private const OCTANE_WORKER_STUB = 'vendor/laravel/octane/src/Commands/stubs/frankenphp-worker.php';
+
+    public function commandEntry(): string
+    {
+        return 'artisan';
+    }
 
     public function name(): string
     {
