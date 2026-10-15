@@ -67,14 +67,15 @@ final class HandlerTest extends TestCase
         $this->handler(null)->handle('{"command":"   "}', 60_000);
     }
 
-    public function test_the_time_limit_is_the_remaining_time_minus_one_second(): void
+    public function test_the_time_limit_is_the_remaining_time_minus_three_seconds(): void
     {
+        // Three seconds: the 2 s SIGTERM grace and the response still fit before the Lambda deadline.
         $started = microtime(true);
 
-        $result = $this->handler()->handle('{"command":"x --slow"}', 2_000);
+        $result = $this->handler()->handle('{"command":"x --slow"}', 5_000);
 
         self::assertSame(124, $result['exitCode']);
-        self::assertStringContainsString('[arco] Stopped after 1 s', $result['output']);
+        self::assertStringContainsString('[arco] Stopped after 2 s', $result['output']);
         self::assertLessThan(5, microtime(true) - $started);
     }
 

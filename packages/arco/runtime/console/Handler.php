@@ -37,7 +37,8 @@ final class Handler
         if (! is_array($event) || array_is_list($event)) {
             throw new InvalidEvent('The event must be a JSON object such as {"command": "about"}.');
         }
-        $timeout = max(1.0, $remainingMs / 1000 - 1);
+        // 3 s kept back: the 2 s SIGTERM grace and the response still fit before the Lambda deadline.
+        $timeout = max(1.0, $remainingMs / 1000 - 3);
         $stdin = null;
         $tinker = array_key_exists('tinker', $event);
         if ($tinker) {
