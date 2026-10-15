@@ -1,0 +1,99 @@
+<?php declare(strict_types=1);
+
+namespace Multiapi\Arco\ConsoleRuntime;
+
+/**
+ * One invocation of the console function: {"command": "<args>", "timeout"?: int} runs
+ * `<php> <entry> <args>`; {"tinker": {"code": base64, "context": base64|null}} runs
+ * `<php> <entry> arco:tinker` with the request on stdin. Returns {"exitCode", "output"}.
+ */
+final class Handler
+{
+    public const TINKER_COMMAND = 'arco:tinker';
+
+    /**
+     * @param list<string> $php how to run PHP: [<frankenphp>, 'php-cli'] on Lambda
+     * @param string|null $entry script every command goes through ('artisan'), null when the first argument is the script
+     * @param array<string, string> $env environment of the child process, secrets resolved
+     * @param \Closure(array<string, mixed>): void $log writes one JSON line to the function log
+     */
+    public function __construct(
+        private readonly ProcessRunner $runner,
+        private readonly array $php,
+        private readonly string $appDir,
+        private readonly ?string $entry,
+        private readonly array $env,
+        private readonly \Closure $log,
+    ) {
+    }
+
+    /**
+     * @return array{exitCode: int, output: string}
+     * @throws InvalidEvent
+     */
+    public function handle(string $body, int $remainingMs): array
+    {
+        $event = json_decode($body, true);
+        if (! is_array($event) || array_is_list($event)) {
+            throw new InvalidEvent('The event must be a JSON object such as {"command": "about"}.');
+        }
+        $timeout = max(1.0, $remainingMs / 1000 - 1);
+        $stdin = null;
+        if (array_key_exists('tinker', $event)) {
+            [$arguments, $stdin] = $this->tinker($event['tinker']);
+        } else {
+            $command = $event['command'] ?? null;
+            if (! is_string($command) || trim($command) === '') {
+                throw new InvalidEvent('The event needs a "command" string, e.g. {"command": "migrate:status"}.');
+            }
+            ($this->log)(['arco' => 'command', 'command' => $command]);
+            try {
+                $arguments = ArgumentSplitter::split($command);
+            } catch (\InvalidArgumentException $e) {
+                return ['exitCode' => 2, 'output' => $e->getMessage() . "\n"];
+            }
+            $limit = $event['timeout'] ?? null;
+            if (is_int($limit) && $limit > 0) {
+                $timeout = min($timeout, (float) $limit);
+            }
+        }
+
+        $argv = [...$this->php, ...($this->entry === null ? [] : [$this->entry]), ...$arguments];
+        try {
+            $result = $this->runner->run($argv, $this->appDir, $this->env, $timeout, $stdin);
+        } catch (\ValueError) {
+            // proc_open refuses NUL bytes in arguments and environment values.
+            $result = new ProcessResult(2, "The command cannot be run: its arguments or environment contain a NUL byte.\n", false);
+        }
+        $output = $result->output;
+        if ($result->timedOut) {
+            $output .= sprintf("\n[arco] Stopped after %d s: the command reached its time limit.\n", (int) round($timeout));
+        }
+        if ($result->exitCode !== 0) {
+            ($this->log)(['arco' => 'command_failed', 'arguments' => $arguments, 'exitCode' => $result->exitCode, 'timedOut' => $result->timedOut]);
+        }
+        return ['exitCode' => $result->exitCode, 'output' => $output];
+    }
+
+    /**
+     * @return array{0: list<string>, 1: string} arguments and stdin
+     * @throws InvalidEvent
+     */
+    private function tinker(mixed $request): array
+    {
+        if (! is_array($request) || ! is_string($request['code'] ?? null)) {
+            throw new InvalidEvent('"tinker" must be {"code": base64, "context": base64|null}.');
+        }
+        $code = base64_decode($request['code'], true);
+        $context = $request['context'] ?? null;
+        if ($code === false || ($context !== null && ! is_string($context))) {
+            throw new InvalidEvent('"tinker" must be {"code": base64, "context": base64|null}.');
+        }
+        if ($this->entry === null) {
+            throw new InvalidEvent('arco tinker needs the Laravel preset (artisan).');
+        }
+        // Audit trail: every statement is written to the function log before it runs.
+        ($this->log)(['arco' => 'tinker', 'code' => substr($code, 0, 4000)]);
+        return [[self::TINKER_COMMAND], json_encode(['code' => $request['code'], 'context' => $context], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)];
+    }
+}

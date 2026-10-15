@@ -1,0 +1,58 @@
+#!/bin/sh
+# Arco console runtime entrypoint (Lambda provided.al2023). The console package has no PHP: the
+# FrankenPHP binary of the web revision is downloaded once per execution environment from the code
+# bucket (SigV4 with the function's credentials), checked against ARCO_BINARY_SHA256, cached in /tmp,
+# then runs runtime/console.php in PHP CLI mode. An unverified binary never runs.
+set -eu
+ROOT="${LAMBDA_TASK_ROOT:-/var/task}"
+TMP="${ARCO_TMP:-/tmp/arco}"
+BIN="$TMP/bin/frankenphp"
+
+log() { printf '{"arco":"%s"%s}\n' "$1" "${2:-}"; }
+fail() {
+  log fatal ",\"error\":\"$2\""
+  curl -s -o /dev/null -X POST -H "Lambda-Runtime-Function-Error-Type: $1" \
+    -d "{\"errorType\":\"$1\",\"errorMessage\":\"$2\"}" \
+    "http://${AWS_LAMBDA_RUNTIME_API:-127.0.0.1:9001}/2018-06-01/runtime/init/error" || true
+  exit 1
+}
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+
+if [ ! -x "$BIN" ]; then
+  # Only a verified binary is ever renamed into place, so an existing one is reused as is.
+  if [ -z "${ARCO_BINARY_BUCKET:-}" ] || [ -z "${ARCO_BINARY_KEY:-}" ] || [ -z "${ARCO_BINARY_SHA256:-}" ]; then
+    fail Arco.InitError "ARCO_BINARY_BUCKET, ARCO_BINARY_KEY and ARCO_BINARY_SHA256 must be set (deploy again with arco deploy)"
+  fi
+  mkdir -p "$TMP/bin"
+  started=$(date +%s)
+  if [ -n "${ARCO_S3_ENDPOINT:-}" ]; then
+    url="$ARCO_S3_ENDPOINT/$ARCO_BINARY_BUCKET/$ARCO_BINARY_KEY"
+  else
+    url="https://$ARCO_BINARY_BUCKET.s3.$AWS_REGION.amazonaws.com/$ARCO_BINARY_KEY"
+  fi
+  if [ -n "${ARCO_BINARY_VERSION:-}" ]; then
+    url="$url?versionId=$ARCO_BINARY_VERSION"
+  fi
+  set -- --fail --silent --show-error --retry 2 --connect-timeout 3 \
+    --aws-sigv4 "aws:amz:$AWS_REGION:s3" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+    -H "x-amz-content-sha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" \
+    -o "$BIN.part"
+  if [ -n "${AWS_SESSION_TOKEN:-}" ]; then
+    set -- "$@" -H "x-amz-security-token: $AWS_SESSION_TOKEN"
+  fi
+  curl "$@" "$url" || { rm -f "$BIN.part"; fail Arco.BinaryDownload "Cannot download s3://$ARCO_BINARY_BUCKET/$ARCO_BINARY_KEY (check s3:GetObject on runtime/* in the execution role)"; }
+  actual=$(sha256 "$BIN.part")
+  if [ "$actual" != "$ARCO_BINARY_SHA256" ]; then
+    rm -f "$BIN.part"
+    fail Arco.BinaryChecksum "FrankenPHP binary checksum mismatch: expected $ARCO_BINARY_SHA256, got $actual"
+  fi
+  chmod 0755 "$BIN.part"
+  mv "$BIN.part" "$BIN"
+  log binary_ready ",\"seconds\":$(( $(date +%s) - started )),\"bytes\":$(wc -c < "$BIN" | tr -d ' ')"
+fi
+
+export ARCO_PHP_BINARY="$BIN"
+cd "$ROOT/app"
+exec "$BIN" php-cli "$ROOT/runtime/console.php"

@@ -89,4 +89,18 @@ final class SecretsTest extends TestCase
         $this->expectExceptionMessage('AmazonSSM.GetParameters failed with HTTP 400');
         $secrets->resolve([...self::CREDENTIALS, 'A' => 'arco-ssm:/x']);
     }
+
+    public function test_all_digit_names_are_sent_as_strings(): void
+    {
+        $secrets = $this->secrets([
+            'AmazonSSM.GetParameters' => ['Parameters' => [['Name' => '12345', 'Value' => 'from-ssm']]],
+            'secretsmanager.BatchGetSecretValue' => ['SecretValues' => [['Name' => '678', 'SecretString' => 'from-sm']]],
+        ]);
+
+        $result = $secrets->resolve([...self::CREDENTIALS, 'A' => 'arco-ssm:12345', 'B' => 'arco-secret:678']);
+
+        self::assertSame(['Names' => ['12345'], 'WithDecryption' => true], $this->calls[0]['body']);
+        self::assertSame(['SecretIdList' => ['678']], $this->calls[1]['body']);
+        self::assertSame(['A' => 'from-ssm', 'B' => 'from-sm'], $result['resolved']);
+    }
 }

@@ -45,8 +45,9 @@ final class Secrets
             }
         }
 
+        // Array keys that look like integers become ints: send every name to AWS as a string.
         $parameters = [];
-        foreach (array_chunk(array_keys($names), 10) as $chunk) {
+        foreach (array_chunk(array_map(strval(...), array_keys($names)), 10) as $chunk) {
             $response = $this->call('ssm', 'AmazonSSM.GetParameters', ['Names' => $chunk, 'WithDecryption' => true], $credentials);
             foreach (is_array($response['Parameters'] ?? null) ? $response['Parameters'] : [] as $parameter) {
                 if (is_array($parameter) && is_string($parameter['Name'] ?? null) && is_string($parameter['Value'] ?? null)) {
@@ -55,7 +56,7 @@ final class Secrets
             }
         }
         $secrets = [];
-        foreach (array_chunk(array_keys($ids), 20) as $chunk) {
+        foreach (array_chunk(array_map(strval(...), array_keys($ids)), 20) as $chunk) {
             $response = $this->call('secretsmanager', 'secretsmanager.BatchGetSecretValue', ['SecretIdList' => $chunk], $credentials);
             foreach (is_array($response['SecretValues'] ?? null) ? $response['SecretValues'] : [] as $secret) {
                 if (is_array($secret)) {
