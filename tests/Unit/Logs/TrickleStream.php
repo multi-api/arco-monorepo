@@ -2,14 +2,24 @@
 
 namespace Multiapi\Arco\Tests\Unit\Logs;
 
+use GuzzleHttp\Psr7\Exception\TimeoutException;
 use Psr\Http\Message\StreamInterface;
 
 final class TrickleStream implements StreamInterface
 {
+    /** After the data: the stream ends. */
+    public const END = 'end';
+    /** After the data: reads return nothing and the stream never ends (a stalled connection). */
+    public const STALL = 'stall';
+    /** After the data: reads throw like a Guzzle body whose read_timeout elapsed. */
+    public const TIME_OUT = 'time_out';
+
     public int $delivered = 0;
+    public int $emptyReads = 0;
     private bool $hitEnd = false;
 
-    public function __construct(private readonly string $data, private readonly int $chunk)
+    /** @param self::END|self::STALL|self::TIME_OUT $after */
+    public function __construct(private readonly string $data, private readonly int $chunk, private readonly string $after = self::END)
     {
     }
 
@@ -18,7 +28,12 @@ final class TrickleStream implements StreamInterface
         $part = substr($this->data, $this->delivered, min($length, $this->chunk));
         $this->delivered += strlen($part);
         if ($part === '') {
-            $this->hitEnd = true;
+            $this->emptyReads++;
+            match ($this->after) {
+                self::END => $this->hitEnd = true,
+                self::STALL => null,
+                self::TIME_OUT => throw new TimeoutException('Unable to read from stream: timed out'),
+            };
         }
         return $part;
     }

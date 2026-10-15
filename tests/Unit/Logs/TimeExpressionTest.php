@@ -34,4 +34,34 @@ final class TimeExpressionTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         TimeExpression::parse(' ', self::NOW);
     }
+
+    /** @return iterable<string, array{string}> */
+    public static function notTimes(): iterable
+    {
+        yield 'bare number' => ['1500'];
+        yield 'bare year' => ['2026'];
+        yield 'decimal duration' => ['1.5h'];
+        yield 'decimal number' => ['1.5'];
+        yield 'unknown unit' => ['10w'];
+        yield 'upper-case unit' => ['10M'];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('notTimes')]
+    public function test_rejects_numbers_without_a_valid_unit(string $value): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        TimeExpression::parse($value, self::NOW);
+    }
+
+    public function test_rejects_an_overflowing_duration(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        TimeExpression::parse('99999999999999999999d', self::NOW);
+    }
+
+    public function test_rejects_a_duration_before_1970(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        TimeExpression::parse('30000d', self::NOW);
+    }
 }

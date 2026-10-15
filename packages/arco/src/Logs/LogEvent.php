@@ -25,7 +25,18 @@ final readonly class LogEvent
         $stream = is_string($row['logStreamName'] ?? null) ? $row['logStreamName'] : '';
         $id = is_string($row['eventId'] ?? null) && $row['eventId'] !== ''
             ? $row['eventId']
-            : hash('sha256', "$name\0$stream\0$timestamp\0$message");
+            : self::hash($name, $stream, $timestamp, $message);
         return new self($timestamp, $message, $name, $stream, $id);
+    }
+
+    /** Identifies an event by its content: Live Tail events have no eventId, FilterLogEvents ones do. */
+    public function contentKey(): string
+    {
+        return self::hash($this->group, $this->stream, $this->timestamp, $this->message);
+    }
+
+    private static function hash(string $group, string $stream, int $timestamp, string $message): string
+    {
+        return hash('sha256', "$group\0$stream\0$timestamp\0$message");
     }
 }
