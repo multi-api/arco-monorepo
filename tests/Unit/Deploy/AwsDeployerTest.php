@@ -116,7 +116,6 @@ final class AwsDeployerTest extends TestCase
             'ARCO_BINARY_BUCKET' => 'arco-111111111111-us-east-1',
             'ARCO_BINARY_KEY' => 'runtime/1.13.0-r1/frankenphp',
             'ARCO_BINARY_SHA256' => $console->binarySha256,
-            'ARCO_BINARY_VERSION' => 'bv1',
         ], array_intersect_key($mocks->params[21]['Environment']['Variables'], array_flip(['ARCO_BINARY_BUCKET', 'ARCO_BINARY_KEY', 'ARCO_BINARY_SHA256', 'ARCO_BINARY_VERSION'])));
         self::assertSame('production', $mocks->params[21]['Environment']['Variables']['APP_ENV']);
         self::assertSame(['arco:app' => 'shop', 'arco:environment' => 'production'], $mocks->params[21]['Tags']);

@@ -80,7 +80,7 @@ final class AwsDeployer implements Deployer
             $step('deploy.step_console', ['function' => $config->consoleFunctionName()]);
             $consoleKey = self::consolePrefix($config) . "{$console->package->hash}.zip";
             $consoleObject = $codeBucket->upload($bucket, $consoleKey, $console->package->path);
-            $binaryObject = $codeBucket->uploadBinary($bucket, $console->binaryKey, $console->binaryPath, $console->binaryBytes);
+            $codeBucket->uploadBinary($bucket, $console->binaryKey, $console->binaryPath, $console->binaryBytes);
             $functions = $this->consoleFunction();
             $previousConsole = $functions->liveVersion($config->consoleFunctionName());
             $consoleVersion = $functions->deploy(
@@ -89,7 +89,7 @@ final class AwsDeployer implements Deployer
                 $consoleKey,
                 $consoleObject,
                 $roleArn,
-                [...$variables, ...self::binaryVariables($bucket, $console, $binaryObject)],
+                [...$variables, ...self::binaryVariables($bucket, $console)],
                 $tags,
                 $roleCreated,
             );
@@ -99,17 +99,14 @@ final class AwsDeployer implements Deployer
     }
 
     /**
-     * Where the console bootstrap downloads the FrankenPHP binary from, and its checksum.
+     * Where the console bootstrap downloads the FrankenPHP binary from, and its checksum. No S3
+     * version is pinned: runtime/* keys are immutable and the checksum verifies the bytes.
      *
      * @return array<string, string>
      */
-    private static function binaryVariables(string $bucket, ConsoleArtifacts $console, ?string $version): array
+    private static function binaryVariables(string $bucket, ConsoleArtifacts $console): array
     {
-        $variables = ['ARCO_BINARY_BUCKET' => $bucket, 'ARCO_BINARY_KEY' => $console->binaryKey, 'ARCO_BINARY_SHA256' => $console->binarySha256];
-        if ($version !== null) {
-            $variables['ARCO_BINARY_VERSION'] = $version;
-        }
-        return $variables;
+        return ['ARCO_BINARY_BUCKET' => $bucket, 'ARCO_BINARY_KEY' => $console->binaryKey, 'ARCO_BINARY_SHA256' => $console->binarySha256];
     }
 
     public function release(AppConfig $config, PreparedDeploy $prepared, ?callable $onStep = null): DeployResult

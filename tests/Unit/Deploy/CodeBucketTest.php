@@ -111,9 +111,9 @@ final class CodeBucketTest extends TestCase
         );
         $bucket = new CodeBucket($mocks->clients()->s3());
 
-        self::assertSame('bv1', $bucket->uploadBinary('b', 'runtime/1.13.0-r1/frankenphp', $file, 3));
-        self::assertSame('bv2', $bucket->uploadBinary('b', 'runtime/1.13.0-r1/frankenphp', $file, 3));
-        self::assertSame('bv3', $bucket->uploadBinary('b', 'runtime/custom/abc/frankenphp', $file, 3));
+        $bucket->uploadBinary('b', 'runtime/1.13.0-r1/frankenphp', $file, 3);
+        $bucket->uploadBinary('b', 'runtime/1.13.0-r1/frankenphp', $file, 3);
+        $bucket->uploadBinary('b', 'runtime/custom/abc/frankenphp', $file, 3);
 
         self::assertSame(['HeadObject', 'HeadObject', 'PutObject', 'HeadObject', 'PutObject'], $mocks->calls);
         self::assertSame('runtime/custom/abc/frankenphp', $mocks->params[4]['Key']);
