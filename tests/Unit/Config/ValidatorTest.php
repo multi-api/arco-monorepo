@@ -53,6 +53,22 @@ final class ValidatorTest extends TestCase
         ], $this->errorKeys($app));
     }
 
+    public function test_php_ini_keys_and_values_are_checked(): void
+    {
+        $app = App::make('shop')->region('us-east-1')->environment('production')
+            ->runtime(fn (Runtime $r) => $r->phpIni([
+                'memory_limit' => '256M',
+                'opcache.jit_buffer-size' => '1',
+                "bad key\nx" => '1',
+                'error_log' => "a\"\nmemory_limit = 1M",
+                'cr' => "a\rb",
+                'nul' => "a\0b",
+            ]));
+
+        $errors = array_values(array_filter($this->errorKeys($app), fn (string $k): bool => str_starts_with($k, 'validation.php_ini')));
+        self::assertSame(['validation.php_ini_key', 'validation.php_ini_value', 'validation.php_ini_value', 'validation.php_ini_value'], $errors);
+    }
+
     public function test_missing_region(): void
     {
         self::assertSame(['validation.region_missing'], $this->errorKeys(App::make('shop')->environment('production')));

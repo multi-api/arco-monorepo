@@ -21,7 +21,13 @@ final class PhpIni
             if (! is_scalar($value)) {
                 continue;
             }
+            if (! preg_match('/^[A-Za-z0-9_.-]+$/', (string) $key)) {
+                throw new \InvalidArgumentException("Invalid phpIni key: $key");
+            }
             $value = is_bool($value) ? ($value ? '1' : '0') : (string) $value;
+            if (preg_match('/[\r\n\0]/', $value)) {
+                throw new \InvalidArgumentException("Invalid phpIni value for $key: line breaks and NUL are not allowed.");
+            }
             $lines[] = sprintf('%s = "%s"', $key, addcslashes($value, '\\"$'));
         }
         if ($lines === []) {

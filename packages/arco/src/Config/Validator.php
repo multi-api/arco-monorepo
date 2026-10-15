@@ -70,6 +70,13 @@ final class Validator
         if ($runtime->threads < 1) {
             $result->error('validation.threads', ['value' => $runtime->threads]);
         }
+        foreach ($runtime->phpIni as $key => $value) {
+            if (! preg_match('/^[A-Za-z0-9_.-]+$/', (string) $key)) {
+                $result->error('validation.php_ini_key', ['key' => (string) $key]);
+            } elseif (is_string($value) && preg_match('/[\r\n\0]/', $value)) {
+                $result->error('validation.php_ini_value', ['key' => (string) $key]);
+            }
+        }
         if (! in_array($runtime->mode, ['direct', 'proxy'], true)) {
             $result->error('validation.mode', ['value' => $runtime->mode]);
         }

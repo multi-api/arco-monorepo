@@ -42,6 +42,31 @@ final class PhpIniTest extends TestCase
         self::assertSame(['PHP_INI_SCAN_DIR' => "/opt/php.d:$this->dir"], PhpIni::prepare(['memory_limit' => '1G'], $this->dir, ['PHP_INI_SCAN_DIR' => '/opt/php.d']));
     }
 
+    /** @return array<string, array{array<mixed>}> */
+    public static function unsafeSettings(): array
+    {
+        return [
+            'quote then line break' => [['error_log' => "q\"\nmemory_limit = 1M ;"]],
+            'carriage return' => [['x' => "a\rb"]],
+            'NUL' => [['x' => "a\0b"]],
+            'key with a space' => [['memory limit' => '1M']],
+            'key with a line break' => [["a\nb" => '1M']],
+            'empty key' => [['' => '1M']],
+        ];
+    }
+
+    /** @param array<mixed> $settings */
+    #[\PHPUnit\Framework\Attributes\DataProvider('unsafeSettings')]
+    public function test_values_and_keys_that_could_inject_directives_are_refused(array $settings): void
+    {
+        try {
+            PhpIni::prepare($settings, $this->dir, []);
+            self::fail('Unsafe settings must be refused.');
+        } catch (\InvalidArgumentException) {
+            self::assertFileDoesNotExist("$this->dir/99-arco.ini");
+        }
+    }
+
     public function test_no_settings_changes_nothing(): void
     {
         self::assertSame([], PhpIni::prepare([], $this->dir, []));

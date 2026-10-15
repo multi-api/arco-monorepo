@@ -26,6 +26,8 @@ return [
     'validation.log_level' => 'logLevel debe ser trace, debug, info, warn, error o fatal; se recibió "{value}".',
     'validation.account' => 'account debe ser un ID de cuenta AWS de 12 dígitos, se recibió "{value}".',
     'validation.workers' => 'workers necesita min ≥ 1 y max ≥ min, se recibió min {min} y max {max}.',
+    'validation.php_ini_key' => 'La clave de phpIni "{key}" no es válida: usa solo letras, dígitos, guiones bajos, puntos y guiones.',
+    'validation.php_ini_value' => 'El valor de phpIni de "{key}" no puede contener saltos de línea ni caracteres NUL.',
     'validation.threads' => 'threads debe ser al menos 1, se recibió {value}.',
     'validation.mode' => 'El modo del runtime debe ser "direct" o "proxy", se recibió "{value}".',
     'validation.binary_missing' => 'El binario propio {path} no existe.',

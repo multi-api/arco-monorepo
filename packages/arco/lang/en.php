@@ -26,6 +26,8 @@ return [
     'validation.log_level' => 'logLevel must be one of trace, debug, info, warn, error, fatal; got "{value}".',
     'validation.account' => 'account must be a 12-digit AWS account id, got "{value}".',
     'validation.workers' => 'workers needs min ≥ 1 and max ≥ min, got min {min} and max {max}.',
+    'validation.php_ini_key' => 'phpIni key "{key}" is not valid: use only letters, digits, underscores, dots and hyphens.',
+    'validation.php_ini_value' => 'phpIni value of "{key}" must not contain line breaks or NUL characters.',
     'validation.threads' => 'threads must be at least 1, got {value}.',
     'validation.mode' => 'runtime mode must be "direct" or "proxy", got "{value}".',
     'validation.binary_missing' => 'Custom binary {path} does not exist.',
