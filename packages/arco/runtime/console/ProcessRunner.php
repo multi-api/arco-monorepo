@@ -4,8 +4,9 @@ namespace Multiapi\Arco\ConsoleRuntime;
 
 /**
  * Runs a command as a child process without a shell (proc_open with an argument list), stdout and
- * stderr interleaved in one pipe, each chunk echoed as it arrives (to the function log), with a
- * time limit after which the process is terminated (SIGTERM, then SIGKILL after 2 s).
+ * stderr interleaved in one pipe, each chunk echoed as it arrives (to the function log) unless the
+ * caller opts out, with a time limit after which the process is terminated (SIGTERM, then SIGKILL
+ * after 2 s).
  */
 final class ProcessRunner
 {
@@ -20,8 +21,9 @@ final class ProcessRunner
     /**
      * @param list<string> $command executable and arguments
      * @param array<string, string> $env
+     * @param bool $echo false keeps the output out of the function log (it is still returned)
      */
-    public function run(array $command, string $cwd, array $env, float $timeoutSeconds, ?string $stdin = null): ProcessResult
+    public function run(array $command, string $cwd, array $env, float $timeoutSeconds, ?string $stdin = null, bool $echo = true): ProcessResult
     {
         $pipes = [];
         $process = @proc_open($command, [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['redirect', 1]], $pipes, $cwd, $env);
@@ -70,7 +72,9 @@ final class ProcessRunner
                 }
                 if ($chunk !== '') {
                     $buffer->append($chunk);
-                    ($this->echo)($chunk);
+                    if ($echo) {
+                        ($this->echo)($chunk);
+                    }
                 }
             }
         }

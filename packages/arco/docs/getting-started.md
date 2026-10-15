@@ -300,7 +300,8 @@ Only the PsySH commands `help`, `exit`, `clear`, `history` and `buffer` are avai
 `doc`, `show`, `timeit`, ...) are disabled because they would run on your machine instead of Lambda. The
 history is a separate file per app and environment. `production` and environments marked `->protected()`
 ask for confirmation first; `--force` skips it (it is required without a terminal). Every statement is
-written to the console function's log, as an audit trail. `--execute` runs one statement and exits with
+written to the console function's log, as an audit trail; results and variables are not, since they
+can hold secrets. `--execute` runs one statement and exits with
 1 if it throws.
 
 ### Logs

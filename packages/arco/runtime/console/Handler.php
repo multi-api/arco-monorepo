@@ -39,7 +39,8 @@ final class Handler
         }
         $timeout = max(1.0, $remainingMs / 1000 - 1);
         $stdin = null;
-        if (array_key_exists('tinker', $event)) {
+        $tinker = array_key_exists('tinker', $event);
+        if ($tinker) {
             [$arguments, $stdin] = $this->tinker($event['tinker']);
         } else {
             $command = $event['command'] ?? null;
@@ -60,7 +61,9 @@ final class Handler
 
         $argv = [...$this->php, ...($this->entry === null ? [] : [$this->entry]), ...$arguments];
         try {
-            $result = $this->runner->run($argv, $this->appDir, $this->env, $timeout, $stdin);
+            // A tinker reply carries the presented result and the serialized scope (secrets, PII):
+            // it never goes to the function log, only to the invoker.
+            $result = $this->runner->run($argv, $this->appDir, $this->env, $timeout, $stdin, echo: ! $tinker);
         } catch (\ValueError) {
             // proc_open refuses NUL bytes in arguments and environment values.
             $result = new ProcessResult(2, "The command cannot be run: its arguments or environment contain a NUL byte.\n", false);
@@ -68,6 +71,9 @@ final class Handler
         $output = $result->output;
         if ($result->timedOut) {
             $output .= sprintf("\n[arco] Stopped after %d s: the command reached its time limit.\n", (int) round($timeout));
+        }
+        if ($tinker) {
+            ($this->log)(['arco' => 'tinker_done', 'exitCode' => $result->exitCode]);
         }
         if ($result->exitCode !== 0) {
             ($this->log)(['arco' => 'command_failed', 'arguments' => $arguments, 'exitCode' => $result->exitCode, 'timedOut' => $result->timedOut]);

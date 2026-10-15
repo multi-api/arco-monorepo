@@ -12,6 +12,7 @@ final class HandlerTest extends TestCase
     private string $app;
     /** @var list<array<string, mixed>> */
     private array $logged = [];
+    private string $echoed = '';
 
     protected function setUp(): void
     {
@@ -31,7 +32,7 @@ final class HandlerTest extends TestCase
 
     private function handler(?string $entry = 'artisan'): Handler
     {
-        return new Handler(new ProcessRunner(fn (string $chunk) => null), [PHP_BINARY], $this->app, $entry, [], function (array $line): void { $this->logged[] = $line; });
+        return new Handler(new ProcessRunner(function (string $chunk): void { $this->echoed .= $chunk; }), [PHP_BINARY], $this->app, $entry, [], function (array $line): void { $this->logged[] = $line; });
     }
 
     public function test_runs_the_command_through_the_entry_script(): void
@@ -41,6 +42,7 @@ final class HandlerTest extends TestCase
         self::assertSame(0, $result['exitCode']);
         self::assertSame("args:[\"migrate\",\"--path=db\\/a b\"]\n", $result['output']);
         self::assertSame(['arco' => 'command', 'command' => 'migrate --path="db/a b"'], $this->logged[0]);
+        self::assertSame($result['output'], $this->echoed, 'command output is echoed to the function log');
     }
 
     public function test_a_failing_command_is_a_normal_result_and_is_logged(): void
@@ -108,6 +110,16 @@ final class HandlerTest extends TestCase
         self::assertStringContainsString('args:["arco:tinker"]', $result['output']);
         self::assertStringContainsString('stdin:{"code":"' . base64_encode('User::count()') . '","context":null}', $result['output']);
         self::assertSame(['arco' => 'tinker', 'code' => 'User::count()'], $this->logged[0]);
+        self::assertSame(['arco' => 'tinker_done', 'exitCode' => 0], $this->logged[1]);
+    }
+
+    public function test_tinker_output_is_never_echoed_to_the_function_log(): void
+    {
+        // The reply carries the result and the serialized scope: secrets and PII must stay out of CloudWatch.
+        $result = $this->handler()->handle((string) json_encode(['tinker' => ['code' => base64_encode('config("app.key")'), 'context' => null]]), 60_000);
+
+        self::assertStringContainsString('stdin:', $result['output']);
+        self::assertSame('', $this->echoed);
     }
 
     /** @return iterable<string, array{string}> */

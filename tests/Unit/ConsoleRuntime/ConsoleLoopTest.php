@@ -29,6 +29,7 @@ final class ConsoleLoopTest extends TestCase
             <?php
             echo 'args:', json_encode(array_slice($argv, 1)), "\n", 'server-args:', json_encode(array_slice($_SERVER['argv'], 1)), "\n", 'greeting:', getenv('GREETING'), "\n", 'cwd:', getcwd(), "\n";
             fwrite(STDERR, "to-stderr\n");
+            if (($argv[1] ?? '') === 'arco:tinker') { echo "ARCO-TINKER:scope-with-a-secret\n"; }
             exit(in_array('--fail', $argv, true) ? 3 : 0);
             PHP);
 
@@ -89,6 +90,23 @@ final class ConsoleLoopTest extends TestCase
         self::assertStringContainsString('{"arco":"console_ready"', $log);
         self::assertStringContainsString('{"arco":"command_failed"', $log);
         self::assertStringContainsString('to-stderr', $log, 'command output is echoed to the function log');
+    }
+
+    public function test_tinker_replies_stay_out_of_the_function_log(): void
+    {
+        $runtime = $this->runtime = $this->runtime(['ARCO_PHP_BINARY' => PHP_BINARY]);
+        $runtime->start();
+
+        $reply = $this->respond($runtime, $this->api->enqueue(['tinker' => ['code' => base64_encode('$x = 1;'), 'context' => null]]));
+        $command = $this->respond($runtime, $this->api->enqueue(['command' => 'about']));
+
+        self::assertStringContainsString('ARCO-TINKER:scope-with-a-secret', $reply['output']);
+        self::assertSame(0, $command['exitCode']);
+        $log = $runtime->getOutput();
+        self::assertStringContainsString('{"arco":"tinker","code":"$x = 1;"', $log);
+        self::assertStringContainsString('{"arco":"tinker_done","exitCode":0', $log);
+        self::assertStringNotContainsString('scope-with-a-secret', $log);
+        self::assertStringContainsString('args:["about"]', $log, 'command output is still echoed');
     }
 
     public function test_scripts_get_php_argv_under_frankenphp_php_cli(): void
