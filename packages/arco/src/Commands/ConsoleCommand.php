@@ -66,7 +66,8 @@ final class ConsoleCommand extends ArcoCommand
             $console = ($this->consoleFactory)($this->awsClients($config, $input, $errors), $config);
             if ($input->getOption('async')) {
                 $console->start($config, $command, $timeout);
-                $io->writeln($this->t('command.started', ['command' => $command, 'function' => $config->consoleFunctionName(), 'environment' => $config->environment]));
+                // stderr: stdout carries only the command's own output, for scripts.
+                $errors->writeln($this->t('command.started', ['command' => $command, 'function' => $config->consoleFunctionName(), 'environment' => $config->environment]));
                 return self::SUCCESS;
             }
 

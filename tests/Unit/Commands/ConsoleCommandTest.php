@@ -51,11 +51,12 @@ final class ConsoleCommandTest extends TestCase
         $console = new FakeConsole();
         $tester = $this->tester($console);
 
-        $tester->execute(['args' => 'reports:build', '--env' => 'staging', '--profile' => 'p', '--async' => true, '--timeout' => '300'], ['interactive' => false]);
+        $tester->execute(['args' => 'reports:build', '--env' => 'staging', '--profile' => 'p', '--async' => true, '--timeout' => '300'], ['interactive' => false, 'capture_stderr_separately' => true]);
 
         $tester->assertCommandIsSuccessful();
         self::assertSame([['start', 'reports:build', 300, 'live']], $console->calls);
-        self::assertStringContainsString('arco logs --env=staging --source=console --follow', $tester->getDisplay());
+        self::assertStringContainsString('arco logs --env=staging --source=console --follow', $tester->getErrorOutput());
+        self::assertSame('', $tester->getDisplay(), 'stdout carries only command output');
     }
 
     public function test_a_crash_shows_the_error_type_and_the_last_log_lines(): void
