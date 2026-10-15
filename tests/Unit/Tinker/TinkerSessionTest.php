@@ -69,6 +69,43 @@ final class TinkerSessionTest extends TestCase
         self::assertStringContainsString('no commands defined', $reply->exception['message'] ?? '');
     }
 
+    public function test_a_server_failure_without_context_keeps_the_previous_context(): void
+    {
+        $console = new FakeConsole([
+            FakeConsole::tinkerReply(['context' => 'ctx-1']),
+            FakeConsole::tinkerReply(['exception' => ['class' => 'Arco.TinkerMissing', 'message' => 'psy/psysh is not installed']], 1),
+            FakeConsole::tinkerReply(['context' => 'ctx-2']),
+        ]);
+        $session = new TinkerSession($console, self::config());
+        $session->execute('$a = 1');
+
+        $reply = $session->execute('$a');
+
+        self::assertTrue($reply->replied);
+        self::assertSame('ctx-1', $session->context());
+        $session->execute('$a + 1');
+        self::assertSame('ctx-1', $console->calls[2][2]);
+    }
+
+    public function test_an_empty_scope_or_a_dropped_context_still_clears_the_context(): void
+    {
+        $console = new FakeConsole([
+            FakeConsole::tinkerReply(['context' => 'ctx-1']),
+            FakeConsole::tinkerReply(['presented' => 'null']),
+            FakeConsole::tinkerReply(['context' => 'ctx-2']),
+            FakeConsole::tinkerReply(['exception' => ['class' => 'RuntimeException', 'message' => 'boom'], 'dropped' => ['big']], 1),
+        ]);
+        $session = new TinkerSession($console, self::config());
+        $session->execute('$a = 1');
+
+        $session->execute('unset($a)');
+        self::assertNull($session->context(), 'an answer without exception and without context means an empty scope');
+
+        $session->execute('$big = big()');
+        $session->execute('throw new RuntimeException("boom")');
+        self::assertNull($session->context(), 'variables reported as dropped are gone');
+    }
+
     public function test_a_failing_restore_without_marker_keeps_the_raw_output_and_exit_code(): void
     {
         $console = new FakeConsole([

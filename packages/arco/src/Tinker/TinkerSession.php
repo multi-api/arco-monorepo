@@ -20,14 +20,28 @@ final class TinkerSession
     public function execute(string $code): TinkerReply
     {
         $reply = TinkerReply::parse($this->console->tinker($this->config, $code, $this->context));
-        if ($reply->replied) {
+        if ($reply->replied && ! self::failedBeforeRunning($reply)) {
             $this->context = $reply->context;
         }
         return $reply;
     }
 
+    public function config(): AppConfig
+    {
+        return $this->config;
+    }
+
     public function context(): ?string
     {
         return $this->context;
+    }
+
+    /**
+     * arco:tinker refused the statement (bad input, psysh missing) and sent no scope back. A null
+     * context otherwise means an empty scope, or variables that are reported as dropped.
+     */
+    private static function failedBeforeRunning(TinkerReply $reply): bool
+    {
+        return $reply->exception !== null && $reply->context === null && $reply->dropped === [];
     }
 }
