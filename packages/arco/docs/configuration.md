@@ -163,7 +163,10 @@ App::make('shop')
 `arco deploy` creates or updates `<app>-<env>-console` (runtime `provided.al2023`, arm64, 2048 MB,
 1024 MB of `/tmp`, timeout `consoleTimeout()`; the name must fit Lambda's 64 characters), with the web
 revision's variables, secrets and execution role. It publishes a version and points the `live` alias at it
-once traffic has moved and the health check passed. `arco command` and `arco tinker` invoke `live`; deploy
+once traffic has moved and the health check passed. If AWS refuses that alias move (for example a profile
+without `lambda:UpdateAlias`), the deploy still succeeds with a warning: the web revision is live, but
+`arco command` and `arco tinker` keep running the previous version until the next deploy. `arco command`
+and `arco tinker` invoke `live`; deploy
 commands invoke the version published by the deploy itself. The deploy keeps the live version plus the 4
 newest and prunes older ones best-effort. Its logs go to `/aws/lambda/<app>-<env>-console`, which the
 managed role may write. `arco remove` deletes it (log groups are kept).

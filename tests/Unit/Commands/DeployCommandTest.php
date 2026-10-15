@@ -531,6 +531,22 @@ final class DeployCommandTest extends TestCase
         self::assertStringContainsString('migrate:rollback', $display);
     }
 
+    public function test_a_refused_console_alias_move_is_a_warning_and_the_deploy_succeeds(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+        $deployer->activateError = new \RuntimeException('AccessDenied');
+
+        $tester = $this->tester($deployer);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('[WARNING] Revision rev-2 is live and verified, but the live alias of shop-production-console was not moved to version 7 (AccessDenied)', $display);
+        self::assertStringContainsString('arco command and arco tinker still run the previous version', $display);
+        self::assertContains('prune', $deployer->calls);
+    }
+
     public function test_a_refused_prune_is_shown_as_a_warning_block(): void
     {
         $this->aws->append(new Result(['Account' => '222222222222']));

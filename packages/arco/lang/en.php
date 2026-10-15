@@ -95,6 +95,7 @@ return [
     'deploy.commands_without_console' => 'The console function was not updated, so the deploy commands cannot run.',
     'init.ask_migrate' => 'This app uses a {connection} database. Run "migrate --force" on every deploy, before traffic moves?',
     'deploy.console_skipped_size' => 'The console package is {size} MB unzipped (without FrankenPHP); Lambda allows {max} MB for the console function, so it was not updated: arco command and tinker keep using the previous version, and deploys with deploy commands are refused until it fits. Leave large folders out with ->exclude([...]) in arco.php ("arco package" lists the largest ones).',
+    'deploy.console_not_activated' => 'Revision {revision} is live and verified, but the live alias of {function} was not moved to version {version} ({error}): arco command and arco tinker still run the previous version. Allow lambda:UpdateAlias, lambda:CreateAlias and lambda:PutFunctionEventInvokeConfig in the profile and deploy again.',
     'deploy.prune_versions_failed' => 'Old versions of console function {function} were not deleted ({error}). The deploy is fine; check that the profile allows lambda:ListVersionsByFunction and lambda:DeleteFunction.',
     'deploy.prune_packages_failed' => 'Old packages in {bucket} were not deleted ({error}). The deploy is fine; check that the profile allows s3:ListBucket and s3:DeleteObject.',
     'deploy.bucket_forbidden' => 'Bucket {bucket} exists but belongs to another account or denies access.',

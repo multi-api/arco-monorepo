@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Deploy;
 
+use Aws\Exception\AwsException;
 use Multiapi\Arco\Binary\BinaryProvider;
 use Multiapi\Arco\Build\Builder;
 use Multiapi\Arco\Build\BuildResult;
@@ -140,7 +141,18 @@ final class DeployPipeline
             }
             // `arco command` and tinker follow the live alias: it moves only to a version whose web revision works.
             if ($verification->ok && $result->consoleVersion !== null) {
-                $deployer->activateConsole($config, $result->consoleVersion);
+                try {
+                    $deployer->activateConsole($config, $result->consoleVersion);
+                } catch (Throwable $e) {
+                    // Traffic already serves the verified revision: a refused alias move (often a missing
+                    // lambda:UpdateAlias during an IAM upgrade) is a warning, not a failed deploy.
+                    $onStep('deploy.console_not_activated', [
+                        'revision' => $result->revisionId,
+                        'function' => $config->consoleFunctionName(),
+                        'version' => $result->consoleVersion,
+                        'error' => self::errorMessage($e),
+                    ]);
+                }
             }
             // Custom domains only once the endpoint is known to work; the origin is the endpoint domain.
             if ($verification->ok && $config->domains !== []) {
@@ -161,6 +173,12 @@ final class DeployPipeline
         } finally {
             (new Filesystem())->remove($work);
         }
+    }
+
+    private static function errorMessage(Throwable $e): string
+    {
+        $message = $e instanceof AwsException ? $e->getAwsErrorMessage() : null;
+        return is_string($message) && $message !== '' ? $message : $e->getMessage();
     }
 
     /**

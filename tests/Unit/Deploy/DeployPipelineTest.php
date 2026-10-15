@@ -282,6 +282,27 @@ final class DeployPipelineTest extends TestCase
         self::assertNotContains('prune', $deployer->calls, 'a failed verification and its rollback never prune (a verifier exception: test_verifier_exception_rolls_back_then_rethrows)');
     }
 
+    public function test_a_refused_console_alias_move_after_a_verified_shift_is_a_warning_and_the_deploy_goes_on(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
+        $deployer->activateError = new \RuntimeException('not authorized to perform: lambda:UpdateAlias');
+        $verifier = new FakeVerifier(true);
+        $steps = [];
+
+        $outcome = $this->pipeline()->deploy($this->config(domains: true), new PlainPhpPreset(), $this->project, $deployer, $verifier, function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertFalse($outcome->rolledBack);
+        self::assertSame(['prepare', 'release', 'live:7', 'domains:', 'prune'], $deployer->calls);
+        self::assertSame(['coldStart'], $verifier->calls);
+        self::assertSame([
+            'revision' => 'rev-2',
+            'function' => 'shop-production-console',
+            'version' => '7',
+            'error' => 'not authorized to perform: lambda:UpdateAlias',
+        ], $steps['deploy.console_not_activated'] ?? null);
+    }
+
     public function test_a_refused_prune_is_a_warning_on_a_successful_deploy(): void
     {
         $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');

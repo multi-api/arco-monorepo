@@ -16,7 +16,7 @@ final class StepPrinter
 {
     public const PROGRESS = 'package.progress';
     /** Steps that report something the user should act on, not progress. */
-    public const WARNINGS = ['deploy.console_skipped_size', 'deploy.prune_versions_failed', 'deploy.prune_packages_failed'];
+    public const WARNINGS = ['deploy.console_skipped_size', 'deploy.console_not_activated', 'deploy.prune_versions_failed', 'deploy.prune_packages_failed'];
     private const MARKS = [25, 50, 75, 100];
 
     private ?ProgressBar $bar = null;

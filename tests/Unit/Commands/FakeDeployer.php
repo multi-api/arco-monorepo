@@ -22,6 +22,8 @@ final class FakeDeployer implements Deployer
     public ?string $pruneWarning = null;
     /** thrown by release(), e.g. AWS refusing the traffic shift */
     public ?\Throwable $releaseError = null;
+    /** thrown by activateConsole(), e.g. AWS refusing lambda:UpdateAlias */
+    public ?\Throwable $activateError = null;
 
     public function __construct(
         public ?string $previousRevision = null,
@@ -56,6 +58,9 @@ final class FakeDeployer implements Deployer
     public function activateConsole(AppConfig $config, string $version): void
     {
         $this->calls[] = "live:$version";
+        if ($this->activateError !== null) {
+            throw $this->activateError;
+        }
     }
 
     public function prune(AppConfig $config, PreparedDeploy $prepared, ?callable $onStep = null): void
