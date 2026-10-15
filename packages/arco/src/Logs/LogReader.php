@@ -5,7 +5,10 @@ namespace Multiapi\Arco\Logs;
 use Aws\CloudWatchLogs\CloudWatchLogsClient;
 use Aws\CloudWatchLogs\Exception\CloudWatchLogsException;
 
-/** Reads a time range of several log groups with FilterLogEvents and merges them by timestamp. */
+/**
+ * Reads a time range of several log groups with FilterLogEvents and merges them by timestamp. Past
+ * $max events, the earliest ones of all groups are kept.
+ */
 final class LogReader
 {
     public const MAX_EVENTS = 10_000;
@@ -26,9 +29,12 @@ final class LogReader
         $events = [];
         $existing = [];
         $truncated = false;
+        // A truncated group is complete only up to its last event read: nothing later is shown.
+        $cutoff = null;
         foreach ($groups as $group) {
             try {
-                [$groupEvents, $groupTruncated] = $this->readGroup($group, $startMs, $endMs, $pattern, $max - count($events));
+                // Each group gets the whole budget, so one busy group cannot hide the others.
+                [$groupEvents, $groupTruncated] = $this->readGroup($group, $startMs, $endMs, $pattern, $max);
             } catch (CloudWatchLogsException $e) {
                 if ($e->getAwsErrorCode() === 'ResourceNotFoundException') {
                     continue;
@@ -37,9 +43,22 @@ final class LogReader
             }
             $existing[] = $group;
             array_push($events, ...$groupEvents);
-            $truncated = $truncated || $groupTruncated;
+            if ($groupTruncated) {
+                $truncated = true;
+                if ($groupEvents !== []) {
+                    $last = max(array_map(fn (LogEvent $e) => $e->timestamp, $groupEvents));
+                    $cutoff = $cutoff === null ? $last : min($cutoff, $last);
+                }
+            }
         }
         usort($events, fn (LogEvent $a, LogEvent $b) => $a->timestamp <=> $b->timestamp);
+        if ($cutoff !== null) {
+            $events = array_values(array_filter($events, fn (LogEvent $e) => $e->timestamp <= $cutoff));
+        }
+        if (count($events) > $max) {
+            $events = array_slice($events, 0, $max);
+            $truncated = true;
+        }
         return ['events' => $events, 'existing' => $existing, 'truncated' => $truncated];
     }
 

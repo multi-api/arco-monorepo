@@ -272,4 +272,6 @@ return [
     'logs.live_tail_unavailable' => 'Live Tail no está disponible (falta logs:StartLiveTail, hay demasiadas sesiones o un grupo de logs se creó después del inicio); se consulta cada 2 s, así que los eventos nuevos aparecen 10–40 s después de ocurrir.',
     'logs.live_tail_interrupted' => 'El flujo de Live Tail dejó de enviar datos; se consulta cada 2 s, así que los eventos nuevos aparecen 10–40 s después de ocurrir.',
     'logs.session_ended' => 'La sesión de Live Tail terminó (tras una hora sin eventos o tres horas en total). Vuelve a ejecutar el comando para seguir.',
+    'logs.following_polling' => 'Siguiendo {groups} con consultas cada 2 s, así que los eventos nuevos aparecen 10–40 s después de ocurrir. Ctrl+C para terminar.',
+    'logs.live_tail_unreachable' => 'No se pudo conectar con CloudWatch Live Tail; se consulta cada 2 s, así que los eventos nuevos aparecen 10–40 s después de ocurrir.',
 ];

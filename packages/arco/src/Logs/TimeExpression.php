@@ -22,8 +22,8 @@ final class TimeExpression
         if ($value === '') {
             throw new \InvalidArgumentException('Empty time.');
         }
-        // 1500, 2026, 1.5h: PHP would read some of these as a time of day or a year.
-        if (preg_match('/^[\d.]+[a-z]?$/i', $value) === 1) {
+        // 1500, 2026, 1.5h: PHP would read some of these as a time of day or a year (15.10.2026 is a date).
+        if (preg_match('/^\d+(\.\d+)?[a-z]?$/i', $value) === 1) {
             throw new \InvalidArgumentException("Unrecognized time \"$value\".");
         }
         try {

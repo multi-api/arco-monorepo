@@ -23,6 +23,11 @@ final class LogGroups
 
     public static function arn(string $region, string $account, string $group): string
     {
-        return "arn:aws:logs:$region:$account:log-group:$group";
+        $partition = match (true) {
+            str_starts_with($region, 'cn-') => 'aws-cn',
+            str_starts_with($region, 'us-gov-') => 'aws-us-gov',
+            default => 'aws',
+        };
+        return "arn:$partition:logs:$region:$account:log-group:$group";
     }
 }

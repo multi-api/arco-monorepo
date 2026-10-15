@@ -14,8 +14,11 @@ use Aws\CloudWatchLogs\CloudWatchLogsClient;
  */
 final class LiveTailFollower implements Follower
 {
-    /** Short, so a waiting read notices Ctrl+C quickly; a timed-out read is retried. */
-    public const READ_TIMEOUT_SECONDS = 2;
+    /**
+     * Bounds connect, the header phase and each silent body read; a timed-out body read is retried, so
+     * a waiting read notices Ctrl+C within this time (usually at once: the signal interrupts the wait).
+     */
+    public const READ_TIMEOUT_SECONDS = 5;
     public const IDLE_SECONDS = 30.0;
 
     /** @param list<string> $existing groups known to exist: a missing group fails the whole session */

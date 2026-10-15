@@ -23,6 +23,13 @@ final class TimeExpressionTest extends TestCase
         self::assertSame(self::NOW + 1500, TimeExpression::parse('2026-10-15 12:00:01.5 UTC', self::NOW));
     }
 
+    public function test_dotted_dates(): void
+    {
+        $expected = (int) (new \DateTimeImmutable('2026-10-15 00:00:00'))->format('Uv');
+
+        self::assertSame($expected, TimeExpression::parse('15.10.2026', self::NOW));
+    }
+
     public function test_rejects_anything_else(): void
     {
         $this->expectException(\InvalidArgumentException::class);

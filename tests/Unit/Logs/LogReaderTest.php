@@ -68,4 +68,47 @@ final class LogReaderTest extends TestCase
         self::assertCount(2, $read['events']);
         self::assertTrue($read['truncated']);
     }
+
+    public function test_a_busy_group_does_not_hide_the_others_when_truncated(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['events' => [self::row('w1', 1000), self::row('w2', 2000), self::row('w3', 3000), self::row('w4', 4000)]]),
+            new Result(['events' => [self::row('c1', 1500), self::row('c2', 5000)]]),
+        );
+
+        $read = (new LogReader($mocks->clients()->logs()))->read(['web', 'console'], 0, null, null, 3);
+
+        self::assertSame(['w1', 'c1', 'w2'], array_map(fn (LogEvent $e) => $e->id, $read['events']), 'the earliest events of all groups');
+        self::assertTrue($read['truncated']);
+    }
+
+    public function test_events_after_a_truncated_group_stops_are_not_shown(): void
+    {
+        // web is cut at 3000: console's 5000 would leave a gap where web events are missing.
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['events' => [self::row('w1', 1000), self::row('w2', 2000), self::row('w3', 3000), self::row('w4', 4000)]]),
+            new Result(['events' => [self::row('c1', 1500), self::row('c2', 5000)]]),
+        );
+
+        $read = (new LogReader($mocks->clients()->logs()))->read(['web', 'console'], 0, null, null, 4);
+
+        self::assertSame(['w1', 'c1', 'w2', 'w3'], array_map(fn (LogEvent $e) => $e->id, $read['events']));
+        self::assertTrue($read['truncated']);
+    }
+
+    public function test_not_truncated_when_everything_fits(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['events' => [self::row('w1', 1000)]]),
+            new Result(['events' => [self::row('c1', 1500)]]),
+        );
+
+        $read = (new LogReader($mocks->clients()->logs()))->read(['web', 'console'], 0, null, null, 2);
+
+        self::assertCount(2, $read['events']);
+        self::assertFalse($read['truncated']);
+    }
 }

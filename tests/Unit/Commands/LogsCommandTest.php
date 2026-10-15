@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\Commands;
 
 use Aws\CloudWatchLogs\Exception\CloudWatchLogsException;
+use ArrayIterator;
 use Aws\Result;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Commands\LogsCommand;
@@ -174,5 +175,74 @@ final class LogsCommandTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('loud', $tester->getDisplay());
         self::assertStringNotContainsString('quiet', $tester->getDisplay());
+    }
+
+    /** The real follower choice (Live Tail with a polling fallback), on mocked AWS. */
+    private function defaultTester(bool $liveTailAvailable): CommandTester
+    {
+        $sleeper = AwsMocks::noSleep();
+        return $this->project->tester(new LogsCommand(
+            awsFactory: fn () => $this->mocks->clients(),
+            // Drops Live Tail's http_handler, which would bypass the mock handler and reach the network.
+            logsFactory: fn (AwsClients $aws, array $overrides) => $aws->logs(),
+            sleeper: $sleeper,
+            stop: fn (): bool => $sleeper->slept >= 2,
+            liveTailAvailable: fn (): bool => $liveTailAvailable,
+        ));
+    }
+
+    public function test_follow_announces_live_tail_when_it_is_used(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['events' => []]),                                   // history
+            new Result(['responseStream' => new ArrayIterator([])]),        // StartLiveTail, ends at once
+            new Result(['events' => [['eventId' => 'c1', 'timestamp' => self::T, 'message' => 'polled line']]]),
+        );
+
+        $tester = $this->defaultTester(true);
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--source' => 'console', '--follow' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('with CloudWatch Live Tail', $display);
+        self::assertStringContainsString('The Live Tail stream stopped sending data', $display);
+        self::assertStringContainsString('polled line', $display);
+        self::assertSame(['GetCallerIdentity', 'FilterLogEvents', 'StartLiveTail', 'FilterLogEvents'], $this->mocks->calls);
+    }
+
+    public function test_follow_polls_directly_without_url_fopen(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['events' => []]),
+            new Result(['events' => [['eventId' => 'c1', 'timestamp' => self::T, 'message' => 'polled line']]]),
+        );
+
+        $tester = $this->defaultTester(false);
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--source' => 'console', '--follow' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('by polling every 2 s', $display);
+        self::assertStringNotContainsString('Live Tail', $display);
+        self::assertStringContainsString('polled line', $display);
+        self::assertNotContains('StartLiveTail', $this->mocks->calls);
+    }
+
+    public function test_follow_without_any_log_group_yet_says_so_and_polls(): void
+    {
+        $this->mocks->handler->append(
+            self::missing(),                                                // history
+            new Result(['events' => [['eventId' => 'c1', 'timestamp' => self::T, 'message' => 'first ever']]]),
+        );
+
+        $tester = $this->defaultTester(true);
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--source' => 'console', '--follow' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('No logs yet in /aws/lambda/shop-staging-console', $display);
+        self::assertStringContainsString('by polling every 2 s', $display);
+        self::assertStringContainsString('first ever', $display);
+        self::assertNotContains('StartLiveTail', $this->mocks->calls);
     }
 }

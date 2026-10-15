@@ -24,9 +24,19 @@ final class FallbackFollower implements Follower
     ) {
     }
 
+    /**
+     * Live Tail needs a followed group that exists (a missing one fails the whole session).
+     *
+     * @param list<string> $groups
+     */
+    public function usesLiveTail(array $groups): bool
+    {
+        return array_intersect($groups, $this->existing) !== [];
+    }
+
     public function follow(array $groups, int $fromMs, ?string $pattern, callable $onEvent, callable $stop): void
     {
-        if (array_intersect($groups, $this->existing) === []) {
+        if (! $this->usesLiveTail($groups)) {
             $this->polling->follow($groups, $fromMs, $pattern, $onEvent, $stop);
             return;
         }
@@ -63,10 +73,14 @@ final class FallbackFollower implements Follower
             }
             $notice = 'logs.live_tail_unavailable';
         } catch (AwsException $e) {
-            if (! in_array($e->getAwsErrorCode(), self::FALLBACK_CODES, true)) {
+            if ($e->isConnectionError() || $e->getAwsErrorCode() === null) {
+                // Slow TLS handshake or first byte, proxy, network blip: polling may still work.
+                $notice = 'logs.live_tail_unreachable';
+            } elseif (in_array($e->getAwsErrorCode(), self::FALLBACK_CODES, true)) {
+                $notice = 'logs.live_tail_unavailable';
+            } else {
                 throw $e;
             }
-            $notice = 'logs.live_tail_unavailable';
         }
 
         ($this->notify)($notice);

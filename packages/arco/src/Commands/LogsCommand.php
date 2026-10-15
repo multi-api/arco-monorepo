@@ -37,22 +37,31 @@ final class LogsCommand extends ArcoCommand
 
     private const SOURCES = ['all', 'web', 'console'];
 
-    /** @var Closure(AwsClients): CloudWatchLogsClient */
+    /** @var Closure(AwsClients, array<string, mixed>): CloudWatchLogsClient extra client config as 2nd argument (Live Tail's http_handler) */
     private Closure $logsFactory;
     /** @var Closure(AwsClients, AppConfig, list<string>, Closure(string): void): Follower */
     private Closure $followerFactory;
     private Sleeper $sleeper;
 
-    /** @param (Closure(): bool)|null $stop ends --follow (tests); default: Ctrl+C */
+    /** @var Closure(): bool */
+    private Closure $liveTailAvailable;
+
+    /**
+     * @param (Closure(): bool)|null $stop ends --follow (tests); default: Ctrl+C
+     * @param (Closure(): bool)|null $liveTailAvailable default: allow_url_fopen is on. Without it Guzzle
+     *        sends through curl, which buffers the whole Live Tail stream, so --follow polls instead.
+     */
     public function __construct(
         ?Closure $awsFactory = null,
         ?Closure $logsFactory = null,
         ?Closure $followerFactory = null,
         ?Sleeper $sleeper = null,
         private readonly ?Closure $stop = null,
+        ?Closure $liveTailAvailable = null,
     ) {
+        $this->liveTailAvailable = $liveTailAvailable ?? static fn (): bool => filter_var(ini_get('allow_url_fopen'), FILTER_VALIDATE_BOOL);
         $this->awsFactory = $awsFactory ?? fn (?string $profile, string $region) => new AwsClients($profile, $region);
-        $this->logsFactory = $logsFactory ?? fn (AwsClients $aws) => $aws->logs();
+        $this->logsFactory = $logsFactory ?? self::logsClient(...);
         $this->sleeper = $sleeper ?? new Sleeper();
         $this->followerFactory = $followerFactory ?? $this->defaultFollower(...);
         parent::__construct();
@@ -121,17 +130,17 @@ final class LogsCommand extends ArcoCommand
 
             $aws = $this->awsClients($config, $input, $errors);
             $groups = LogGroups::for($config, $source);
-            $read = (new LogReader(($this->logsFactory)($aws)))->read($groups, $sinceMs, $untilMs, $pattern);
+            $read = (new LogReader(($this->logsFactory)($aws, [])))->read($groups, $sinceMs, $untilMs, $pattern);
             foreach ($read['events'] as $event) {
                 $print($event);
             }
             if ($read['truncated']) {
                 $errors->note($this->t('logs.truncated', ['max' => LogReader::MAX_EVENTS]));
             }
+            if ($read['existing'] === []) {
+                $errors->note($this->t('logs.no_groups', ['groups' => implode(', ', $groups)]));
+            }
             if (! $follow) {
-                if ($read['existing'] === []) {
-                    $errors->note($this->t('logs.no_groups', ['groups' => implode(', ', $groups)]));
-                }
                 return self::SUCCESS;
             }
 
@@ -141,10 +150,12 @@ final class LogsCommand extends ArcoCommand
             $notify = function (string $key) use ($errors): void {
                 $errors->writeln('<comment>' . $this->t($key) . '</comment>');
             };
-            $errors->writeln($this->t('logs.following', ['groups' => implode(', ', $groups)]));
+            $follower = ($this->followerFactory)($aws, $config, $read['existing'], $notify);
+            $live = $follower instanceof FallbackFollower && $follower->usesLiveTail($groups);
+            $errors->writeln($this->t($live ? 'logs.following' : 'logs.following_polling', ['groups' => implode(', ', $groups)]));
             // Events already printed from the history are not printed again.
             $history = array_fill_keys(array_map(fn (LogEvent $event) => $event->id, $read['events']), true);
-            ($this->followerFactory)($aws, $config, $read['existing'], $notify)->follow(
+            $follower->follow(
                 $groups,
                 $sinceMs,
                 $pattern,
@@ -162,16 +173,25 @@ final class LogsCommand extends ArcoCommand
         }
     }
 
+    /** @param array<string, mixed> $overrides */
+    private static function logsClient(AwsClients $aws, array $overrides = []): CloudWatchLogsClient
+    {
+        return $aws->logs($overrides);
+    }
+
     /**
      * @param list<string> $existing
      * @param Closure(string): void $notify
      */
     private function defaultFollower(AwsClients $aws, AppConfig $config, array $existing, Closure $notify): Follower
     {
-        $live = $aws->logs(['http_handler' => FullReadStream::wrap(\Aws\default_http_handler())]);
+        if (! ($this->liveTailAvailable)()) {
+            return new PollingFollower(($this->logsFactory)($aws, []), $this->sleeper);
+        }
+        $live = ($this->logsFactory)($aws, ['http_handler' => FullReadStream::wrap(\Aws\default_http_handler())]);
         return new FallbackFollower(
             new LiveTailFollower($live, (string) $config->region, $aws->accountId(), $existing),
-            new PollingFollower(($this->logsFactory)($aws), $this->sleeper),
+            new PollingFollower(($this->logsFactory)($aws, []), $this->sleeper),
             $existing,
             $notify,
         );

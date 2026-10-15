@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\Logs;
 
 use Aws\CloudWatchLogs\Exception\CloudWatchLogsException;
+use Aws\Command;
 use Aws\Exception\EventStreamDataException;
 use Multiapi\Arco\Logs\FallbackFollower;
 use Multiapi\Arco\Logs\Follower;
@@ -46,6 +47,24 @@ final class FallbackFollowerTest extends TestCase
         $this->followWith($this->follower('live', AwsMocks::error(CloudWatchLogsException::class, 'StartLiveTail', 'AccessDeniedException', 400)));
 
         self::assertSame(['live', 'logs.live_tail_unavailable', 'polling'], $this->log);
+    }
+
+    public function test_falls_back_to_polling_when_live_tail_cannot_be_reached(): void
+    {
+        // A slow TLS handshake or a network blip: the SDK reports a connection error without an AWS error code.
+        $error = new CloudWatchLogsException('Connection timed out', new Command('StartLiveTail'), ['connection_error' => true]);
+
+        $this->followWith($this->follower('live', $error));
+
+        self::assertSame(['live', 'logs.live_tail_unreachable', 'polling'], $this->log);
+    }
+
+    public function test_uses_live_tail_only_when_a_followed_group_exists(): void
+    {
+        $fallback = new FallbackFollower($this->follower('live'), $this->follower('polling'), ['console'], fn (string $key) => null);
+
+        self::assertTrue($fallback->usesLiveTail(['web', 'console']));
+        self::assertFalse($fallback->usesLiveTail(['web']));
     }
 
     public function test_a_session_timeout_ends_the_follow(): void
