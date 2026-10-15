@@ -3,6 +3,33 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## Unreleased
+
+- **Added:** every deploy also deploys a console function, `<app>-<env>-console`, with the same code,
+  variables, secrets and role as the web function. Its package leaves out FrankenPHP (Lambda allows
+  250 MB for classic functions): the binary is uploaded once to `runtime/<build>/frankenphp` in the code
+  bucket and downloaded, checksum-verified, at the console function's cold start. The deploy keeps the
+  live version and the 4 newest and prunes older ones. `arco remove` deletes it.
+- **Added:** `arco command "<args>"` runs an artisan (or PHP) command there and exits with its exit code;
+  `--async` starts it without waiting, `--timeout` lowers the limit.
+- **Added:** `deployCommands([...])`, `arco deploy --migrate` and `--no-deploy-commands`: commands run
+  on the new console version before traffic moves; the first failure stops the deploy (exit code of that
+  command) with the previous revision still serving. If a later step fails, Arco lists the commands that
+  ran and suggests `arco command "migrate:rollback --force"`. `arco init` proposes `migrate --force` for
+  Laravel apps with a server database.
+- **Added:** `arco tinker`: PsySH on your machine, statements run on the console function, variables kept
+  between statements; confirmation on `production` and `->protected()` environments (`--force` skips it);
+  every statement is logged. Needs `laravel/tinker` in the app's `require`.
+- **Added:** `arco logs`: web and console logs merged and colored, with `--follow` (CloudWatch Live
+  Tail, polling as fallback), `--since`/`--until`, `--level`, `--request`, `--filter`, `--source`,
+  `--platform`, `--json`.
+- **Added:** `consoleTimeout()` and `protected()`; `arco info` shows the console function and its version.
+- **Changed:** the deploy profile needs Lambda permissions for the console function and
+  `logs:StartLiveTail` for `--follow` (see Minimal IAM permissions), the managed role may read `runtime/*`
+  in the code bucket and write the console log group, and packages built by `arco package` before this
+  version must be built again.
+- **Changed:** `multiapi/arco-laravel` registers a hidden `arco:tinker` command on Lambda.
+
 ## 0.1.4
 
 - **Fixed:** the cold start of a redeploy showed "not available yet". Lambda's platform events reach
