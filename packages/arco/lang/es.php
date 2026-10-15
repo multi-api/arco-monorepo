@@ -260,4 +260,6 @@ return [
     'tinker.no_reply' => 'La función de consola no respondió como arco:tinker. Si la salida anterior no es un error de tu sentencia o de sus variables, revisa que multiapi/arco-laravel esté en "require" de la app (no en require-dev) y que la app se haya desplegado después de instalarlo.',
     'tinker.remote_tinker_missing' => 'Agrega laravel/tinker a "require" en el composer.json de la app y vuelve a desplegar.',
     'tinker.no_reply_exit' => 'arco:tinker no dio respuesta (código de salida {code}).',
+    'logs.cold_start' => 'Arranque en frío: {ms} ms',
+    'logs.init_failed' => 'Falló el inicio: {type}',
 ];
