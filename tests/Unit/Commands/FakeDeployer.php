@@ -20,6 +20,8 @@ final class FakeDeployer implements Deployer
     public ?ConsoleArtifacts $console = null;
     /** step reported by prune(), as AwsDeployer does when AWS refuses the cleanup */
     public ?string $pruneWarning = null;
+    /** thrown by release(), e.g. AWS refusing the traffic shift */
+    public ?\Throwable $releaseError = null;
 
     public function __construct(
         public ?string $previousRevision = null,
@@ -45,6 +47,9 @@ final class FakeDeployer implements Deployer
     public function release(AppConfig $config, PreparedDeploy $prepared, ?callable $onStep = null): DeployResult
     {
         $this->calls[] = 'release';
+        if ($this->releaseError !== null) {
+            throw $this->releaseError;
+        }
         return new DeployResult('abc.on.aws', $prepared->revisionId, $prepared->previousRevisionId, $prepared->bucket, $prepared->key, [], $prepared->consoleVersion, $prepared->previousConsoleVersion);
     }
 

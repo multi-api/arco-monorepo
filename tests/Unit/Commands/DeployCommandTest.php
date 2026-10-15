@@ -11,6 +11,8 @@ use Multiapi\Arco\Build\Builder;
 use Multiapi\Arco\Build\PresetRegistry;
 use Multiapi\Arco\Cli\Application;
 use Multiapi\Arco\Commands\DeployCommand;
+use Multiapi\Arco\Console\CommandResult;
+use Multiapi\Arco\Deploy\AppStatus;
 use Multiapi\Arco\Deploy\DeployPipeline;
 use Multiapi\Arco\Package\Packager;
 use Multiapi\Arco\Tests\Unit\Binary\ElfInspectorTest;
@@ -67,7 +69,7 @@ final class DeployCommandTest extends TestCase
     /** @var list<array{0: ?string, 1: ?string, 2: bool}> deploy profile, DNS profile, force */
     private array $factoryCalls = [];
 
-    private function tester(FakeDeployer $deployer, bool $verifies = true, ?int $initMs = 800): CommandTester
+    private function tester(FakeDeployer $deployer, bool $verifies = true, ?int $initMs = 800, ?FakeConsole $console = null): CommandTester
     {
         $command = new DeployCommand(
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $this->aws, 'credentials' => false]),
@@ -78,6 +80,7 @@ final class DeployCommandTest extends TestCase
             },
             verifierFactory: fn () => new FakeVerifier($verifies, $initMs),
             presets: new PresetRegistry([]),
+            consoleFactory: fn () => $console ?? throw new \LogicException('No console expected.'),
         );
         $app = Application::create();
         $app->addCommands([$command]);
@@ -327,5 +330,168 @@ final class DeployCommandTest extends TestCase
         self::assertSame(1, $tester->getStatusCode());
         self::assertStringContainsString('laravel preset', preg_replace('/\s+/', ' ', $tester->getDisplay()));
         self::assertSame([], $deployer->calls);
+    }
+
+    private function withDeployCommands(string $list): void
+    {
+        $path = "$this->project/arco.php";
+        file_put_contents($path, str_replace(
+            "->variables(['APP_ENV' => 'production'])",
+            "->variables(['APP_ENV' => 'production'])->deployCommands($list)",
+            (string) file_get_contents($path),
+        ));
+    }
+
+    private function existing(?string $consoleVersion = '7'): FakeDeployer
+    {
+        return new FakeDeployer('rev-1', new AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'), consoleVersion: $consoleVersion);
+    }
+
+    public function test_deploy_commands_run_before_traffic_and_their_output_is_printed(): void
+    {
+        $this->withDeployCommands("['scripts/migrate.php', 'scripts/warm.php']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+        $console = new FakeConsole([new CommandResult(0, "Migrated.\n"), new CommandResult(0, "Warmed.\n")], function (string $call) use ($deployer): void { $deployer->calls[] = $call; });
+
+        $tester = $this->tester($deployer, console: $console);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['describe', 'prepare', 'console:scripts/migrate.php@7', 'console:scripts/warm.php@7', 'release', 'live:7', 'prune'], $deployer->calls);
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('Running deploy command: scripts/migrate.php', $display);
+        self::assertStringContainsString("Migrated.\n", $display);
+        self::assertStringContainsString("Warmed.\n", $display);
+        self::assertLessThan(strpos($display, 'scripts/warm.php'), strpos($display, 'Migrated.'), 'each output is printed before the next command starts');
+    }
+
+    public function test_a_failing_deploy_command_keeps_traffic_on_the_previous_revision(): void
+    {
+        $this->withDeployCommands("['scripts/migrate.php']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+
+        $tester = $this->tester($deployer, console: new FakeConsole([new CommandResult(3, "SQLSTATE[HY000] connection refused\n")]));
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(3, $tester->getStatusCode(), 'R12: the command\'s own exit code');
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('SQLSTATE[HY000] connection refused', $display);
+        self::assertStringContainsString('exit code 3', $display);
+        self::assertStringContainsString('previous revision keeps serving', $display);
+        self::assertSame(['describe', 'prepare'], $deployer->calls);
+    }
+
+    public function test_a_crashed_deploy_command_exits_with_1_and_shows_the_log_tail(): void
+    {
+        $this->withDeployCommands("['scripts/migrate.php']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+
+        $tester = $this->tester($deployer, console: new FakeConsole([new CommandResult(0, '', 'Sandbox.Timedout', 'Task timed out', ['<error>last log line</error>'])]));
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('Sandbox.Timedout', $display);
+        self::assertStringContainsString('<error>last log line</error>', $display, 'log lines are escaped, not styled');
+        self::assertSame(['describe', 'prepare'], $deployer->calls);
+    }
+
+    public function test_no_deploy_commands_skips_them(): void
+    {
+        $this->withDeployCommands("['scripts/migrate.php']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+
+        $tester = $this->tester($deployer, console: new FakeConsole());
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--no-deploy-commands' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['describe', 'prepare', 'release', 'live:7', 'prune'], $deployer->calls);
+    }
+
+    public function test_migrate_needs_laravel_and_conflicts_with_no_deploy_commands(): void
+    {
+        $deployer = $this->existing();
+        $tester = $this->tester($deployer);
+
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--migrate' => true], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('Laravel', $tester->getDisplay());
+
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--migrate' => true, '--no-deploy-commands' => true], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('--no-deploy-commands', $tester->getDisplay());
+        self::assertSame([], $deployer->calls, 'both fail before any AWS call');
+        self::assertSame([], $this->factoryCalls);
+    }
+
+    public function test_a_rollback_after_deploy_commands_says_what_was_not_undone(): void
+    {
+        $this->withDeployCommands("['migrate --force']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+
+        $tester = $this->tester($deployer, verifies: false, console: new FakeConsole([new CommandResult(0, '')]));
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('not undone: migrate --force', $display);
+        self::assertStringContainsString('arco command "migrate:rollback" --env=production', $display);
+        self::assertContains('rollback:rev-1', $deployer->calls);
+    }
+
+    public function test_an_error_after_deploy_commands_ran_still_says_what_was_not_undone(): void
+    {
+        $this->withDeployCommands("['scripts/warm.php']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+        $deployer->releaseError = new \Multiapi\Arco\Cli\UserError('release refused');
+
+        $tester = $this->tester($deployer, console: new FakeConsole([new CommandResult(0, '')]));
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('release refused', $display);
+        self::assertStringContainsString('not undone: scripts/warm.php', $display);
+        self::assertStringNotContainsString('migrate:rollback', $display, 'no migrate, no migrate hint');
+    }
+
+    public function test_an_unexpected_error_after_deploy_commands_ran_still_says_what_was_not_undone(): void
+    {
+        $this->withDeployCommands("['migrate --force']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+        $deployer->releaseError = new \RuntimeException('connection reset');
+
+        $tester = $this->tester($deployer, console: new FakeConsole([new CommandResult(0, '')]));
+        try {
+            $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+            self::fail('An unknown error is rethrown for the application to render.');
+        } catch (\RuntimeException $e) {
+            self::assertSame('connection reset', $e->getMessage());
+        }
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('not undone: migrate --force', $display);
+        self::assertStringContainsString('migrate:rollback', $display);
+    }
+
+    public function test_a_refused_prune_is_shown_as_a_warning_block(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+        $deployer->pruneWarning = 'deploy.prune_versions_failed';
+
+        $tester = $this->tester($deployer);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('[WARNING] Old versions of console function f were not deleted (AccessDenied)', $display);
+        self::assertStringNotContainsString('• Old versions', $display);
     }
 }

@@ -76,11 +76,11 @@ final class DeployPipeline
     }
 
     /** @param callable(string, array<string, string|int>): void $onStep */
-    public function deploy(AppConfig $config, FrameworkPreset $preset, string $projectDir, Deployer $deployer, Verifier $verifier, callable $onStep): DeployOutcome
+    public function deploy(AppConfig $config, FrameworkPreset $preset, string $projectDir, Deployer $deployer, Verifier $verifier, callable $onStep, ?CommandPlan $plan = null): DeployOutcome
     {
         [$build, $package] = $this->package($config, $preset, $projectDir, $onStep);
         try {
-            return $this->deployPackage($config, $preset, $package, $deployer, $verifier, $onStep);
+            return $this->deployPackage($config, $preset, $package, $deployer, $verifier, $onStep, $plan);
         } finally {
             $build->cleanup();
         }
@@ -88,11 +88,14 @@ final class DeployPipeline
 
     /**
      * Deploys a package that is already built (by deploy() or by `arco package`): upload, revision and
-     * console version, traffic, verification with rollback, then custom domains. Variables come from $config.
+     * console version, deploy commands (on the console version just published), traffic, verification
+     * with rollback, then custom domains. Variables come from $config.
      *
      * @param callable(string, array<string, string|int>): void $onStep
+     * @param CommandPlan|null $plan deploy commands; a failing one stops the deploy before traffic moves
+     * @throws DeployCommandFailed at the first deploy command that fails or crashes
      */
-    public function deployPackage(AppConfig $config, FrameworkPreset $preset, Package $package, Deployer $deployer, Verifier $verifier, callable $onStep): DeployOutcome
+    public function deployPackage(AppConfig $config, FrameworkPreset $preset, Package $package, Deployer $deployer, Verifier $verifier, callable $onStep, ?CommandPlan $plan = null): DeployOutcome
     {
         $variables = self::variables($config, $preset);
         // The console zip and the binary are derived from the web zip in a scratch directory.
@@ -100,15 +103,21 @@ final class DeployPipeline
         try {
             $console = ConsolePackager::fromWeb($package, $work);
             if ($console->package->bytes > ConsoleFunction::MAX_UNZIPPED_BYTES) {
-                $onStep('deploy.console_skipped_size', [
+                $params = [
                     'size' => (int) round($console->package->bytes / 1048576),
                     'max' => (int) round(ConsoleFunction::MAX_UNZIPPED_BYTES / 1048576),
-                ]);
+                ];
+                // Before any AWS change: deploy commands need the console version of this deploy.
+                if ($plan !== null && $plan->commands !== []) {
+                    throw DeployException::make('deploy.commands_package_too_large', $params);
+                }
+                $onStep('deploy.console_skipped_size', $params);
                 $console = null;
             }
 
             $since = (int) floor(microtime(true) * 1000) - 5000;
             $prepared = $deployer->prepare($config, $package, $console, $variables, $onStep);
+            $ran = $plan === null ? [] : $this->runCommands($config, $prepared, $plan, $onStep);
             $result = $deployer->release($config, $prepared, $onStep);
             try {
                 $onStep('deploy.verifying', ['path' => $preset->healthPath()]);
@@ -148,9 +157,36 @@ final class DeployPipeline
             if ($verification->ok) {
                 $deployer->prune($config, $prepared, $onStep);
             }
-            return new DeployOutcome($result, $verification, $rolledBack, $package->bytes);
+            return new DeployOutcome($result, $verification, $rolledBack, $package->bytes, $ran);
         } finally {
             (new Filesystem())->remove($work);
         }
+    }
+
+    /**
+     * Runs the deploy commands one by one on the console version just published (synchronous
+     * invokes), before any traffic moves and before the live alias points at that version.
+     *
+     * @param callable(string, array<string, string|int>): void $onStep
+     * @return list<string> the commands that ran
+     * @throws DeployCommandFailed at the first command that fails or crashes
+     */
+    private function runCommands(AppConfig $config, PreparedDeploy $prepared, CommandPlan $plan, callable $onStep): array
+    {
+        if ($plan->commands === []) {
+            return [];
+        }
+        $version = $prepared->consoleVersion ?? throw DeployException::make('deploy.commands_without_console');
+        $ran = [];
+        foreach ($plan->commands as $command) {
+            $onStep('deploy.command', ['command' => $command]);
+            $result = $plan->console->run($config, $command, null, $version);
+            $ran[] = $command;
+            ($plan->onResult)($command, $result);
+            if (! $result->succeeded()) {
+                throw new DeployCommandFailed($command, $result, $ran);
+            }
+        }
+        return $ran;
     }
 }

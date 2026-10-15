@@ -7,6 +7,7 @@ use Multiapi\Arco\Commands\InitCommand;
 use Multiapi\Arco\Config\ConfigLoader;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Validator;
+use Multiapi\Arco\Laravel\LaravelPreset;
 use Aws\Route53\Exception\Route53Exception;
 use Multiapi\Arco\Tests\Unit\Deploy\AwsMocks;
 use PHPUnit\Framework\TestCase;
@@ -413,6 +414,60 @@ ENV);
         self::assertNull(self::config($project)->dnsProfile);
         self::assertStringContainsString('Route 53 in the deploy account (profile p)', $tester->getDisplay());
         self::assertSame(['p:ListHostedZonesByName', 'p:GetCallerIdentity'], $zones->calls);
+        $project->restore();
+    }
+
+    private static function laravelProject(ProjectFixture $project, string $connection): void
+    {
+        file_put_contents("$project->dir/artisan", '<?php');
+        file_put_contents("$project->dir/composer.json", (string) json_encode(['require' => ['laravel/framework' => '^13.0']]));
+        file_put_contents("$project->dir/.env", "DB_CONNECTION=$connection\n");
+    }
+
+    public function test_proposes_migrations_on_deploy_for_laravel_apps_with_a_server_database(): void
+    {
+        $project = new ProjectFixture();
+        self::laravelProject($project, 'mysql');
+        $tester = $project->tester(new InitCommand(new PresetRegistry([new LaravelPreset()])));
+        $tester->setInputs(['no', 'yes']); // no custom domain; yes to migrations
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('mysql', $tester->getDisplay());
+        $config = ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production');
+        self::assertSame(['migrate --force'], $config->deployCommands);
+        self::assertSame('app', $config->sources['deployCommands']);
+        $project->restore();
+    }
+
+    public function test_declining_the_migration_proposal_writes_no_deploy_commands(): void
+    {
+        $project = new ProjectFixture();
+        self::laravelProject($project, '"pgsql"');
+        $tester = $project->tester(new InitCommand(new PresetRegistry([new LaravelPreset()])));
+        $tester->setInputs(['no', 'no']);
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('pgsql', $tester->getDisplay());
+        self::assertStringNotContainsString('deployCommands', (string) file_get_contents("$project->dir/arco.php"));
+        $project->restore();
+    }
+
+    public function test_no_migration_proposal_for_sqlite_or_without_a_terminal(): void
+    {
+        $project = new ProjectFixture();
+        self::laravelProject($project, 'sqlite');
+        $tester = $project->tester(new InitCommand(new PresetRegistry([new LaravelPreset()])));
+        $tester->setInputs(['no']);
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
+        self::assertSame([], ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production')->deployCommands);
+
+        self::laravelProject($project, 'pgsql');
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1', '--force' => true], ['interactive' => false]);
+        self::assertSame([], ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production')->deployCommands);
         $project->restore();
     }
 }

@@ -10,6 +10,11 @@ use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Config\Runtime;
+use Multiapi\Arco\Console\CommandResult;
+use Multiapi\Arco\Deploy\CommandPlan;
+use Multiapi\Arco\Deploy\ConsoleFunction;
+use Multiapi\Arco\Deploy\DeployCommandFailed;
+use Multiapi\Arco\Deploy\DeployException;
 use Multiapi\Arco\Deploy\DeployPipeline;
 use Multiapi\Arco\Deploy\DeployResult;
 use Multiapi\Arco\Deploy\VerificationResult;
@@ -17,6 +22,7 @@ use Multiapi\Arco\Deploy\Verifier;
 use Multiapi\Arco\Package\Packager;
 use Multiapi\Arco\Tests\Unit\Binary\ElfInspectorTest;
 use Multiapi\Arco\Tests\Unit\Build\FakeRunner;
+use Multiapi\Arco\Tests\Unit\Commands\FakeConsole;
 use Multiapi\Arco\Tests\Unit\Commands\FakeDeployer;
 use Multiapi\Arco\Tests\Unit\Commands\FakeVerifier;
 use PHPUnit\Framework\TestCase;
@@ -287,5 +293,113 @@ final class DeployPipelineTest extends TestCase
         self::assertTrue($outcome->verification->ok);
         self::assertFalse($outcome->rolledBack);
         self::assertSame('deploy.prune_versions_failed', end($steps));
+    }
+
+    /**
+     * @param list<CommandResult> $results
+     * @param list<string> $commands
+     */
+    private function plan(FakeDeployer $deployer, array $results, array $commands = ['migrate --force', 'config:cache']): CommandPlan
+    {
+        $console = new FakeConsole($results, function (string $call) use ($deployer): void { $deployer->calls[] = $call; });
+        return new CommandPlan($commands, $console, fn () => null);
+    }
+
+    public function test_deploy_commands_run_on_the_new_version_before_traffic_moves(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
+
+        $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null, $this->plan($deployer, [new CommandResult(0, ''), new CommandResult(0, '')]));
+
+        self::assertSame(['prepare', 'console:migrate --force@7', 'console:config:cache@7', 'release', 'live:7', 'prune'], $deployer->calls);
+        self::assertSame(['migrate --force', 'config:cache'], $outcome->commandsRan);
+    }
+
+    public function test_each_result_is_handed_over_before_the_next_command_runs(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+        $console = new FakeConsole([new CommandResult(0, "one\n"), new CommandResult(0, "two\n")], function (string $call) use ($deployer): void { $deployer->calls[] = $call; });
+        $plan = new CommandPlan(['a', 'b'], $console, function (string $command, CommandResult $result) use ($deployer): void { $deployer->calls[] = "result:$command:" . trim($result->output); });
+
+        $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null, $plan);
+
+        self::assertSame(['prepare', 'console:a@7', 'result:a:one', 'console:b@7', 'result:b:two', 'release', 'live:7', 'prune'], $deployer->calls);
+    }
+
+    public function test_a_failing_command_stops_the_deploy_before_traffic(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+
+        try {
+            $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null, $this->plan($deployer, [new CommandResult(1, 'SQLSTATE[HY000]')]));
+            self::fail('The failing command must stop the deploy.');
+        } catch (DeployCommandFailed $e) {
+            self::assertSame('migrate --force', $e->command);
+            self::assertSame(1, $e->result->exitCode);
+            self::assertSame(['migrate --force'], $e->ran);
+        }
+        self::assertSame(['prepare', 'console:migrate --force@7'], $deployer->calls, 'no release, no live alias, no prune');
+    }
+
+    public function test_a_crashed_command_also_stops_the_deploy(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+
+        try {
+            $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null, $this->plan($deployer, [new CommandResult(0, '', 'Sandbox.Timedout', 'Task timed out')]));
+            self::fail('The crashed command must stop the deploy.');
+        } catch (DeployCommandFailed $e) {
+            self::assertTrue($e->result->crashed());
+        }
+        self::assertSame(['prepare', 'console:migrate --force@7'], $deployer->calls);
+    }
+
+    public function test_a_rollback_after_deploy_commands_reports_them(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
+
+        $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(false), fn () => null, $this->plan($deployer, [new CommandResult(0, '')], ['migrate --force']));
+
+        self::assertTrue($outcome->rolledBack);
+        self::assertSame(['migrate --force'], $outcome->commandsRan);
+        self::assertSame(['prepare', 'console:migrate --force@7', 'release', 'rollback:rev-1'], $deployer->calls, 'web-only rollback: live never moved');
+    }
+
+    public function test_commands_with_a_package_over_the_console_limit_fail_before_any_change(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+
+        try {
+            // The console zip (web zip minus the binary) is over the limit even though the binary is not counted.
+            $this->pipeline()->deployPackage($this->config(), new PlainPhpPreset(), self::zipClaiming(ConsoleFunction::MAX_UNZIPPED_BYTES + 1), $deployer, new FakeVerifier(true), fn () => null, $this->plan($deployer, []));
+            self::fail('Commands cannot run without the console function.');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.commands_package_too_large', $e->key);
+        }
+        self::assertSame([], $deployer->calls);
+    }
+
+    public function test_an_empty_plan_with_an_oversized_console_still_deploys(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+        $steps = [];
+
+        $outcome = $this->pipeline()->deployPackage($this->config(), new PlainPhpPreset(), self::zipClaiming(ConsoleFunction::MAX_UNZIPPED_BYTES + 1), $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; }, $this->plan($deployer, [], []));
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertContains('deploy.console_skipped_size', $steps);
+    }
+
+    public function test_commands_without_a_console_version_stop_before_traffic(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: null);
+
+        try {
+            $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null, $this->plan($deployer, []));
+            self::fail('Commands need the console version of this deploy.');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.commands_without_console', $e->key);
+        }
+        self::assertSame(['prepare'], $deployer->calls);
     }
 }
