@@ -1,0 +1,122 @@
+<?php declare(strict_types=1);
+
+namespace Multiapi\Arco\Laravel;
+
+use Illuminate\Contracts\Config\Repository;
+use Illuminate\Contracts\Http\Kernel;
+use Illuminate\Http\Middleware\TrustProxies;
+use Illuminate\Http\Request;
+use Illuminate\Support\ServiceProvider;
+use Multiapi\Arco\Laravel\Http\ShareRequestId;
+
+final class ArcoServiceProvider extends ServiceProvider
+{
+    private const JSON_FORMATTER = 'Monolog\\Formatter\\JsonFormatter';
+
+    public function register(): void
+    {
+        // Lambda Web Functions sits behind AWS's HTTPS front end, which sets X-Forwarded-* headers.
+        if (($_SERVER['ARCO'] ?? getenv('ARCO')) !== '1') {
+            return;
+        }
+        TrustProxies::at('*');
+        TrustProxies::withHeaders(
+            Request::HEADER_X_FORWARDED_FOR
+            | Request::HEADER_X_FORWARDED_HOST
+            | Request::HEADER_X_FORWARDED_PORT
+            | Request::HEADER_X_FORWARDED_PROTO,
+        );
+
+        $this->addSessionToken();
+        $this->fixDefaultConfiguration();
+    }
+
+    public function boot(): void
+    {
+        if (($_SERVER['ARCO'] ?? getenv('ARCO')) !== '1') {
+            return;
+        }
+        $kernel = $this->app->bound(Kernel::class) ? $this->app->make(Kernel::class) : null;
+        if (is_object($kernel) && method_exists($kernel, 'prependMiddleware')) {
+            $kernel->prependMiddleware(ShareRequestId::class);
+        }
+    }
+
+    /**
+     * Lambda keeps only stdout/stderr, and its filesystem is read-only except /tmp: send logs to
+     * stderr as one JSON object per line (searchable in CloudWatch Logs Insights) and keep
+     * sessions out of files. Only stock values are changed; anything the app chose stays.
+     */
+    private function fixDefaultConfiguration(): void
+    {
+        if (! $this->app->bound('config')) {
+            return;
+        }
+        $config = $this->app->make('config');
+        if (! $config instanceof Repository) {
+            return;
+        }
+        if ($config->get('session.driver') === 'file') {
+            $config->set('session.driver', 'cookie');
+        }
+        if ($config->get('logging.default') === 'stack') {
+            $config->set('logging.default', 'stderr');
+        }
+        if (is_array($config->get('logging.channels.stderr')) && $config->get('logging.channels.stderr.formatter') === null) {
+            $config->set('logging.channels.stderr.formatter', self::JSON_FORMATTER);
+            $config->set('logging.channels.stderr.formatter_with', ['includeStacktraces' => true]);
+        }
+        $emergency = $config->get('logging.channels.emergency');
+        if (is_array($emergency) && isset($emergency['path']) && is_array($config->get('logging.channels.stderr'))) {
+            // The default emergency log is a file under storage/, which nobody reads on Lambda.
+            $config->set('logging.channels.emergency', $config->get('logging.channels.stderr'));
+        }
+    }
+
+    /**
+     * Lambda hands the function temporary credentials (key, secret and session token). Laravel's
+     * stock config passes only key and secret to AWS clients (DynamoDB, SQS, S3, SES, failed jobs,
+     * or any service the app configures the same way), which AWS rejects with "The security token
+     * included in the request is invalid". Anywhere in the config where an entry uses the
+     * function's own key without a token, add the token.
+     */
+    private function addSessionToken(): void
+    {
+        $key = self::env('AWS_ACCESS_KEY_ID');
+        $token = self::env('AWS_SESSION_TOKEN');
+        if ($key === null || $token === null || ! $this->app->bound('config')) {
+            return;
+        }
+        $config = $this->app->make('config');
+        if (! $config instanceof Repository) {
+            return;
+        }
+        foreach ($config->all() as $name => $value) {
+            if (is_array($value)) {
+                $this->patch($config, (string) $name, $value, $key, $token, 0);
+            }
+        }
+    }
+
+    /** @param array<mixed> $entry */
+    private function patch(Repository $config, string $path, array $entry, string $key, string $token, int $depth): void
+    {
+        if (($entry['key'] ?? null) === $key && empty($entry['token'])) {
+            $config->set("$path.token", $token);
+        }
+        if ($depth >= 6) {
+            return;
+        }
+        foreach ($entry as $name => $value) {
+            if (is_array($value) && ! str_contains((string) $name, '.')) {
+                $this->patch($config, "$path.$name", $value, $key, $token, $depth + 1);
+            }
+        }
+    }
+
+    private static function env(string $name): ?string
+    {
+        $value = $_SERVER[$name] ?? $_ENV[$name] ?? getenv($name);
+        return is_string($value) && $value !== '' ? $value : null;
+    }
+}

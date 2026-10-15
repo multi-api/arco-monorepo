@@ -1,0 +1,81 @@
+#!/usr/bin/env php
+<?php declare(strict_types=1);
+
+// Maintainer script: adds a published runtime build to packages/arco/resources/runtime-builds.php.
+// Usage: bin/runtime-manifest-add <build-id> [--repo=owner/name] [--from-file=build.json] [--default]
+// When fetching from GitHub, the release metadata is cross-checked (immutable, asset size and digest).
+// --from-file skips that check, since there is no release to compare against.
+
+require __DIR__ . '/../vendor/autoload.php';
+
+use Multiapi\Arco\Tools\RuntimeManifestEditor;
+
+$usage = "Usage: bin/runtime-manifest-add <build-id> [--repo=owner/name] [--from-file=build.json] [--default]\n";
+
+$id = null;
+$repo = 'multi-api/arco-runtime';
+$fromFile = null;
+$default = false;
+foreach (array_slice($argv, 1) as $arg) {
+    if (str_starts_with($arg, '--repo=')) {
+        $repo = substr($arg, 7);
+    } elseif (str_starts_with($arg, '--from-file=')) {
+        $fromFile = substr($arg, 12);
+    } elseif ($arg === '--default') {
+        $default = true;
+    } elseif (str_starts_with($arg, '--') || $id !== null) {
+        fwrite(STDERR, $usage);
+        exit(1);
+    } else {
+        $id = $arg;
+    }
+}
+if ($id === null) {
+    fwrite(STDERR, $usage);
+    exit(1);
+}
+
+try {
+    RuntimeManifestEditor::assertValidRepository($repo);
+} catch (InvalidArgumentException $e) {
+    fwrite(STDERR, $e->getMessage() . "\n");
+    exit(1);
+}
+
+$release = null;
+if ($fromFile !== null) {
+    $json = (string) file_get_contents($fromFile);
+} else {
+    $command = sprintf(
+        'gh release download %s --repo %s --pattern build.json --output -',
+        escapeshellarg("frankenphp-$id"),
+        escapeshellarg($repo),
+    );
+    $json = (string) shell_exec($command);
+    $release = json_decode((string) shell_exec(sprintf(
+        'gh api %s',
+        escapeshellarg("repos/$repo/releases/tags/frankenphp-$id"),
+    )), true);
+    if (! is_array($release)) {
+        fwrite(STDERR, "Could not read release metadata for frankenphp-$id.\n");
+        exit(1);
+    }
+}
+
+$build = json_decode($json, true);
+if (! is_array($build) || ($build['id'] ?? null) !== $id) {
+    fwrite(STDERR, "Could not read build.json for $id.\n");
+    exit(1);
+}
+
+try {
+    if ($release !== null) {
+        RuntimeManifestEditor::assertReleaseMatches($release, $build);
+    }
+    RuntimeManifestEditor::add(__DIR__ . '/../packages/arco/resources/runtime-builds.php', $build, $repo, $default);
+} catch (InvalidArgumentException $e) {
+    fwrite(STDERR, $e->getMessage() . "\n");
+    exit(1);
+}
+
+echo "Added $id" . ($default ? ' (default)' : '') . "\n";

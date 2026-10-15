@@ -1,0 +1,15 @@
+[
+    {"input": "arco-ssm:/myapp/production/app-key", "valid": true, "source": "ssm", "name": "/myapp/production/app-key", "jsonKey": null},
+    {"input": "arco-ssm:plain-name", "valid": true, "source": "ssm", "name": "plain-name", "jsonKey": null},
+    {"input": "arco-secret:myapp/production/db", "valid": true, "source": "secretsmanager", "name": "myapp/production/db", "jsonKey": null},
+    {"input": "arco-secret:myapp/production/db#password", "valid": true, "source": "secretsmanager", "name": "myapp/production/db", "jsonKey": "password"},
+    {"input": "arco-secret:arn:aws:secretsmanager:us-east-1:123456789012:secret:db-AbCdEf#user", "valid": true, "source": "secretsmanager", "name": "arn:aws:secretsmanager:us-east-1:123456789012:secret:db-AbCdEf", "jsonKey": "user"},
+    {"input": "arco-secret:db#a#b", "valid": true, "source": "secretsmanager", "name": "db", "jsonKey": "a#b"},
+    {"input": "arco-ssm:", "valid": false},
+    {"input": "arco-ssm:/myapp/key#field", "valid": false},
+    {"input": "arco-secret:", "valid": false},
+    {"input": "arco-secret:#password", "valid": false},
+    {"input": "arco-secret:db#", "valid": false},
+    {"input": "plain-value", "valid": false},
+    {"input": "ARCO-SSM:/upper", "valid": false}
+]

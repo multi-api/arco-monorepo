@@ -1,0 +1,11 @@
+/vendor/
+/node_modules/
+/poc/
+.arco/
+.phpunit.cache/
+.DS_Store
+/.superpowers/
+.phpunit.result.cache
+
+# Internal working docs (specs, plans) live in the private multi-api/arco-monorepo-archive repo
+/docs/superpowers/

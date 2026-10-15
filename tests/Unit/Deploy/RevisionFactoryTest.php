@@ -1,0 +1,57 @@
+<?php declare(strict_types=1);
+
+namespace Multiapi\Arco\Tests\Unit\Deploy;
+
+use Multiapi\Arco\Config\App;
+use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Config\Environment;
+use Multiapi\Arco\Deploy\RevisionFactory;
+use PHPUnit\Framework\TestCase;
+
+final class RevisionFactoryTest extends TestCase
+{
+    public function test_maps_config_to_the_api_shapes(): void
+    {
+        $config = ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e
+                ->timeout(60)->concurrency(16)->logLevel('debug')->auth('iam')->maxInstances(5)->rateLimit(100)->kmsKey('arn:kms'))
+                ->toArray(),
+            'production',
+        );
+
+        $revision = RevisionFactory::revision($config, 'bucket', 'shop/production/h.zip', 'v1', 'arn:role', ['A' => 'b']);
+        self::assertSame([
+            'description' => 'Deployed by Arco',
+            'kmsKeyArn' => 'arn:kms',
+            'buildConfig' => [
+                'codeConfig' => ['s3Object' => ['bucket' => 'bucket', 'key' => 'shop/production/h.zip', 'versionId' => 'v1']],
+                'runtimeConfig' => ['runtime' => 'nodejs24.x'],
+            ],
+            'serviceConfig' => [
+                'executionRoleArn' => 'arn:role',
+                'timeoutSeconds' => 60,
+                'maxConcurrencyPerEnvironment' => 16,
+                'environmentVariables' => ['A' => 'b'],
+                'telemetryConfig' => ['loggingConfig' => ['applicationLogLevel' => 'DEBUG', 'systemLogLevel' => 'INFO']],
+            ],
+        ], $revision);
+
+        self::assertSame([
+            'endpointName' => 'default',
+            'endpointType' => 'HomeRegion',
+            'authType' => 'IamAuth',
+            'autoDeploymentMode' => 'LatestRevision',
+            'scalingConfig' => ['maxEnvironments' => 5],
+            'throttleConfig' => ['rateLimit' => 100],
+        ], RevisionFactory::initialEndpoint($config));
+    }
+
+    public function test_omits_empty_variables_because_lambda_rejects_them(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+
+        $revision = RevisionFactory::revision($config, 'bucket', 'k.zip', null, 'arn:role', ['A' => 'b', 'EMPTY' => '']);
+
+        self::assertSame(['A' => 'b'], $revision['serviceConfig']['environmentVariables']);
+    }
+}

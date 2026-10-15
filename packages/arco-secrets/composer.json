@@ -1,0 +1,35 @@
+{
+    "name": "multiapi/arco-secrets",
+    "description": "arco-ssm: and arco-secret: references for AWS SSM Parameter Store and Secrets Manager",
+    "license": "MIT",
+    "homepage": "https://github.com/multi-api/arco",
+    "keywords": [
+        "aws",
+        "ssm",
+        "parameter-store",
+        "secrets-manager",
+        "secrets",
+        "lambda"
+    ],
+    "authors": [
+        {
+            "name": "Multiapi",
+            "homepage": "https://multiapi.cl"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/multi-api/arco/issues",
+        "source": "https://github.com/multi-api/arco",
+        "docs": "https://github.com/multi-api/arco/tree/main/docs"
+    },
+    "type": "library",
+    "require": {
+        "php": "^8.3",
+        "aws/aws-sdk-php": "^3.401.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "Multiapi\\Arco\\Secrets\\": "src/"
+        }
+    }
+}

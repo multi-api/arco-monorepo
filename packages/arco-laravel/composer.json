@@ -1,0 +1,52 @@
+{
+    "name": "multiapi/arco-laravel",
+    "description": "Laravel integration for Arco (Octane on AWS Lambda Web Functions)",
+    "license": "MIT",
+    "homepage": "https://github.com/multi-api/arco",
+    "keywords": [
+        "aws",
+        "lambda",
+        "lambda-web-functions",
+        "serverless",
+        "frankenphp",
+        "laravel",
+        "octane"
+    ],
+    "authors": [
+        {
+            "name": "Multiapi",
+            "homepage": "https://multiapi.cl"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/multi-api/arco/issues",
+        "source": "https://github.com/multi-api/arco",
+        "docs": "https://github.com/multi-api/arco/tree/main/docs"
+    },
+    "type": "library",
+    "require": {
+        "php": "^8.3",
+        "illuminate/support": "^11.0 || ^12.0 || ^13.0",
+        "illuminate/http": "^11.0 || ^12.0 || ^13.0"
+    },
+    "suggest": {
+        "multiapi/arco": "The Arco CLI (install with --dev); it loads LaravelPreset when building and deploying"
+    },
+    "autoload": {
+        "psr-4": {
+            "Multiapi\\Arco\\Laravel\\": "src/"
+        }
+    },
+    "extra": {
+        "arco": {
+            "presets": [
+                "Multiapi\\Arco\\Laravel\\LaravelPreset"
+            ]
+        },
+        "laravel": {
+            "providers": [
+                "Multiapi\\Arco\\Laravel\\ArcoServiceProvider"
+            ]
+        }
+    }
+}

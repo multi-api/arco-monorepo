@@ -1,0 +1,7 @@
+parameters:
+    level: max
+    paths:
+        - packages/arco/src
+        - packages/arco-laravel/src
+        - packages/arco-secrets/src
+        - tools

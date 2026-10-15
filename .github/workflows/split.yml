@@ -1,0 +1,34 @@
+name: Split packages
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
+concurrency:
+  group: split-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package:
+          - { local: packages/arco, repo: arco }
+          - { local: packages/arco-laravel, repo: arco-laravel }
+          - { local: packages/arco-secrets, repo: arco-secrets }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0          # the split needs the full history
+          persist-credentials: false
+      - uses: danharrin/monorepo-split-github-action@ac9845270ef47266435b4f124b133a323619e738 # v2.3.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.SPLIT_TOKEN }}
+        with:
+          package_directory: ${{ matrix.package.local }}
+          repository_organization: multi-api
+          repository_name: ${{ matrix.package.repo }}
+          branch: main
+          tag: ${{ github.ref_name }}
+          user_name: github-actions[bot]
+          user_email: 41898282+github-actions[bot]@users.noreply.github.com
