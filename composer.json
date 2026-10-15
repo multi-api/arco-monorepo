@@ -27,7 +27,8 @@
         "psr-4": {
             "Multiapi\\Arco\\": "packages/arco/src/",
             "Multiapi\\Arco\\Laravel\\": "packages/arco-laravel/src/",
-            "Multiapi\\Arco\\Secrets\\": "packages/arco-secrets/src/"
+            "Multiapi\\Arco\\Secrets\\": "packages/arco-secrets/src/",
+            "Multiapi\\Arco\\ConsoleRuntime\\": "packages/arco/runtime/console/"
         }
     },
     "autoload-dev": {

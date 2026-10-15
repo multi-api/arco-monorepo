@@ -4,4 +4,13 @@ parameters:
         - packages/arco/src
         - packages/arco-laravel/src
         - packages/arco-secrets/src
+        - packages/arco/runtime/console
         - tools
+    ignoreErrors:
+        # PHPStan's proc_open stub types descriptor specs as list<string>|resource, but PHP documents and
+        # requires ['redirect', <int fd>] (the string form '1' is rejected at runtime).
+        -
+            message: '#^Parameter \#2 \$descriptor_spec of function proc_open expects#'
+            identifier: argument.type
+            path: packages/arco/runtime/console/ProcessRunner.php
+            count: 1
