@@ -108,6 +108,10 @@ final class TinkerCommand extends ArcoCommand
                 $output->writeln('<error>' . OutputFormatter::escape($this->t('tinker.no_reply_exit', ['code' => $reply->exitCode])) . '</error>');
             } else {
                 $output->writeln('<error>' . OutputFormatter::escape($reply->exception['class'] . ': ' . $reply->exception['message']) . '</error>');
+                // A crash (timeout, out of memory): the end of the function log, as arco command shows it.
+                foreach ($reply->logTail as $line) {
+                    $output->writeln('  ' . OutputFormatter::escape($line));
+                }
             }
             $hint = match ($reply->exception['class']) {
                 TinkerReply::NO_REPLY => $this->t('tinker.no_reply'),

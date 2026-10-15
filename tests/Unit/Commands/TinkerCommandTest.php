@@ -80,12 +80,13 @@ final class TinkerCommandTest extends TestCase
 
     public function test_execute_shows_a_crash_of_the_invocation(): void
     {
-        $tester = $this->tester(new FakeConsole([new CommandResult(1, '', 'Sandbox.Timedout', 'Task timed out after 900.00 seconds')]));
+        $tester = $this->tester(new FakeConsole([new CommandResult(1, '', 'Sandbox.Timedout', 'Task timed out after 900.00 seconds', ['{"arco":"tinker","code":"sleep(1000)"}', 'END RequestId: <abc>'])]));
 
         $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => 'sleep(1000)'], ['interactive' => false]);
 
         self::assertSame(1, $tester->getStatusCode());
         self::assertStringContainsString('Sandbox.Timedout: Task timed out after 900.00 seconds', $tester->getDisplay());
+        self::assertStringContainsString("  {\"arco\":\"tinker\",\"code\":\"sleep(1000)\"}\n  END RequestId: <abc>\n", $tester->getDisplay(), 'the log tail, like arco command, markup kept as text');
     }
 
     public function test_truncated_values_are_shown_with_their_markers(): void

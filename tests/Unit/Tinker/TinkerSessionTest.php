@@ -38,7 +38,7 @@ final class TinkerSessionTest extends TestCase
     {
         $console = new FakeConsole([
             FakeConsole::tinkerReply(['context' => 'ctx-1']),
-            new CommandResult(1, '', 'Sandbox.Timedout', 'Task timed out after 900.00 seconds'),
+            new CommandResult(1, '', 'Sandbox.Timedout', 'Task timed out after 900.00 seconds', ['last log line']),
         ]);
         $session = new TinkerSession($console, self::config());
         $session->execute('$a = 1');
@@ -47,6 +47,7 @@ final class TinkerSessionTest extends TestCase
 
         self::assertFalse($reply->replied);
         self::assertSame(['class' => 'Sandbox.Timedout', 'message' => 'Task timed out after 900.00 seconds'], $reply->exception);
+        self::assertSame(['last log line'], $reply->logTail);
         self::assertSame('ctx-1', $session->context());
     }
 

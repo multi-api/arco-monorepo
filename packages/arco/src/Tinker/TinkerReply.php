@@ -26,13 +26,15 @@ final readonly class TinkerReply
         public bool $replied = true,
         /** the console command's exit code (shown when arco:tinker did not answer) */
         public int $exitCode = 0,
+        /** @var list<string> last lines of the function log when the invocation crashed (Sandbox.Timedout, ...) */
+        public array $logTail = [],
     ) {
     }
 
     public static function parse(CommandResult $result): self
     {
         if ($result->crashed()) {
-            return new self('', null, null, [], ['class' => (string) $result->errorType, 'message' => (string) $result->errorMessage], '', false, $result->exitCode);
+            return new self('', null, null, [], ['class' => (string) $result->errorType, 'message' => (string) $result->errorMessage], '', false, $result->exitCode, $result->logTail);
         }
         $data = null;
         $extra = [];
