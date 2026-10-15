@@ -102,7 +102,30 @@ final class CodeBucket
                 throw $e;
             }
         }
+        return $this->put($bucket, $key, $path);
+    }
 
+    /**
+     * Uploads a runtime binary (runtime/<build>/frankenphp) unless an object of the same size is
+     * already there: builds are immutable, so the size check only guards against a broken upload.
+     */
+    public function uploadBinary(string $bucket, string $key, string $path, int $bytes): ?string
+    {
+        try {
+            $head = $this->s3->headObject(['Bucket' => $bucket, 'Key' => $key]);
+            if (is_numeric($head['ContentLength'] ?? null) && (int) $head['ContentLength'] === $bytes) {
+                return self::version($head['VersionId'] ?? null);
+            }
+        } catch (S3Exception $e) {
+            if ($e->getStatusCode() !== 404) {
+                throw $e;
+            }
+        }
+        return $this->put($bucket, $key, $path);
+    }
+
+    private function put(string $bucket, string $key, string $path): ?string
+    {
         $body = fopen($path, 'rb');
         if ($body === false) {
             throw DeployException::make('deploy.read_package_failed', ['path' => $path]);

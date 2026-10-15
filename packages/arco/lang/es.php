@@ -81,6 +81,8 @@ return [
     'deploy.bucket_forbidden' => 'El bucket {bucket} existe pero pertenece a otra cuenta o niega el acceso.',
     'deploy.read_package_failed' => 'No se puede leer el paquete {path}.',
     'deploy.revision_failed' => 'La revisión {revision} falló: {reason}',
+    'deploy.console_failed' => 'Falló la actualización de la función de consola {function}: {reason}',
+    'deploy.console_missing' => 'La función de consola {function} desapareció durante el despliegue.',
     'deploy.endpoint_failed' => 'Falló la actualización del endpoint: {reason}',
     'deploy.endpoint_missing' => 'No se encontró el endpoint de {function}.',
     'deploy.timeout' => 'Se agotó el tiempo esperando {what}.',

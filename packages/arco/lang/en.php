@@ -81,6 +81,8 @@ return [
     'deploy.bucket_forbidden' => 'Bucket {bucket} exists but belongs to another account or denies access.',
     'deploy.read_package_failed' => 'Cannot read package {path}.',
     'deploy.revision_failed' => 'Revision {revision} failed: {reason}',
+    'deploy.console_failed' => 'Updating the console function {function} failed: {reason}',
+    'deploy.console_missing' => 'The console function {function} disappeared during the deploy.',
     'deploy.endpoint_failed' => 'The endpoint update failed: {reason}',
     'deploy.endpoint_missing' => 'The endpoint of {function} was not found.',
     'deploy.timeout' => 'Timed out waiting for {what}.',

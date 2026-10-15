@@ -18,7 +18,17 @@ final class PolicyBuilderTest extends TestCase
         self::assertSame([
             'arn:aws:logs:us-east-1:111111111111:log-group:/aws/lambda/web/shop-production:*',
             'arn:aws:logs:us-east-1:111111111111:log-group:/aws/lambda/web/shop-production.local:*',
+            'arn:aws:logs:us-east-1:111111111111:log-group:/aws/lambda/shop-production-console:*',
         ], $doc['Statement'][0]['Resource']);
+    }
+
+    public function test_the_console_may_read_runtime_binaries_from_the_code_bucket_only(): void
+    {
+        $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], 'arco-111111111111-us-east-1');
+
+        $bySid = array_column($doc['Statement'], null, 'Sid');
+        self::assertSame(['s3:GetObject', 's3:GetObjectVersion'], $bySid['ArcoRuntimeBinary']['Action']);
+        self::assertSame('arn:aws:s3:::arco-111111111111-us-east-1/runtime/*', $bySid['ArcoRuntimeBinary']['Resource']);
     }
 
     public function test_scopes_secret_access_to_referenced_resources(): void

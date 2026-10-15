@@ -77,4 +77,27 @@ final class CodeBucketTest extends TestCase
         self::assertSame(2, $deleted);
         self::assertSame([['Key' => 'p/c.zip'], ['Key' => 'p/a.zip']], $mocks->params[1]['Delete']['Objects']);
     }
+
+    public function test_a_runtime_binary_is_uploaded_once(): void
+    {
+        $file = (string) tempnam(sys_get_temp_dir(), 'bin');
+        file_put_contents($file, 'ELF');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['ContentLength' => 3, 'VersionId' => 'bv1']),                       // same size: kept
+            new Result(['ContentLength' => 2, 'VersionId' => 'bv0']),                       // other size: replaced
+            new Result(['VersionId' => 'bv2']),
+            AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404),             // missing: uploaded
+            new Result(['VersionId' => 'bv3']),
+        );
+        $bucket = new CodeBucket($mocks->clients()->s3());
+
+        self::assertSame('bv1', $bucket->uploadBinary('b', 'runtime/1.13.0-r1/frankenphp', $file, 3));
+        self::assertSame('bv2', $bucket->uploadBinary('b', 'runtime/1.13.0-r1/frankenphp', $file, 3));
+        self::assertSame('bv3', $bucket->uploadBinary('b', 'runtime/custom/abc/frankenphp', $file, 3));
+
+        self::assertSame(['HeadObject', 'HeadObject', 'PutObject', 'HeadObject', 'PutObject'], $mocks->calls);
+        self::assertSame('runtime/custom/abc/frankenphp', $mocks->params[4]['Key']);
+        unlink($file);
+    }
 }
