@@ -169,7 +169,7 @@ final class DeployPipeline
      *
      * @param callable(string, array<string, string|int>): void $onStep
      * @return list<string> the commands that ran
-     * @throws DeployCommandFailed at the first command that fails or crashes
+     * @throws DeployCommandFailed at the first command that fails, crashes or cannot be invoked
      */
     private function runCommands(AppConfig $config, PreparedDeploy $prepared, CommandPlan $plan, callable $onStep): array
     {
@@ -180,8 +180,13 @@ final class DeployPipeline
         $ran = [];
         foreach ($plan->commands as $command) {
             $onStep('deploy.command', ['command' => $command]);
-            $result = $plan->console->run($config, $command, null, $version);
             $ran[] = $command;
+            try {
+                $result = $plan->console->run($config, $command, null, $version);
+            } catch (Throwable $e) {
+                // The invoke failed (throttling, network, HTTP timeout): the command may have partly run.
+                throw new DeployCommandFailed($command, null, $ran, $e);
+            }
             ($plan->onResult)($command, $result);
             if (! $result->succeeded()) {
                 throw new DeployCommandFailed($command, $result, $ran);

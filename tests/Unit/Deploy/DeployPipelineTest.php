@@ -354,6 +354,23 @@ final class DeployPipelineTest extends TestCase
         self::assertSame(['prepare', 'console:migrate --force@7'], $deployer->calls);
     }
 
+    public function test_an_invoke_error_stops_the_deploy_and_counts_the_command_as_possibly_run(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+        $error = new \RuntimeException('cURL error 28: Operation timed out');
+
+        try {
+            $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null, $this->plan($deployer, [new CommandResult(0, ''), $error]));
+            self::fail('An invoke error must stop the deploy.');
+        } catch (DeployCommandFailed $e) {
+            self::assertSame('config:cache', $e->command);
+            self::assertNull($e->result, 'the outcome is unknown');
+            self::assertSame(['migrate --force', 'config:cache'], $e->ran, 'the interrupted command may have run');
+            self::assertSame($error, $e->getPrevious());
+        }
+        self::assertSame(['prepare', 'console:migrate --force@7', 'console:config:cache@7'], $deployer->calls, 'no release, no live alias, no prune');
+    }
+
     public function test_a_rollback_after_deploy_commands_reports_them(): void
     {
         $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');

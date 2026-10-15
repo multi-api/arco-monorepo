@@ -13,7 +13,7 @@ final class FakeConsole implements Console
     public array $calls = [];
 
     /**
-     * @param list<CommandResult> $results returned in order by run() and tinker()
+     * @param list<CommandResult|\Throwable> $results returned in order by run() and tinker(); a Throwable is thrown by run()
      * @param (\Closure(string): void)|null $onCall receives "console:<command>@<qualifier>" for run()
      */
     public function __construct(private array $results = [], private readonly ?\Closure $onCall = null)
@@ -26,7 +26,8 @@ final class FakeConsole implements Console
         if ($this->onCall !== null) {
             ($this->onCall)("console:$command@$qualifier");
         }
-        return array_shift($this->results) ?? throw new \LogicException("No result queued for \"$command\".");
+        $result = array_shift($this->results) ?? throw new \LogicException("No result queued for \"$command\".");
+        return $result instanceof \Throwable ? throw $result : $result;
     }
 
     public function start(AppConfig $config, string $command, ?int $timeout = null): void
@@ -37,6 +38,7 @@ final class FakeConsole implements Console
     public function tinker(AppConfig $config, string $code, ?string $context): CommandResult
     {
         $this->calls[] = ['tinker', $code, $context, null];
-        return array_shift($this->results) ?? throw new \LogicException('No tinker reply queued.');
+        $result = array_shift($this->results) ?? throw new \LogicException('No tinker reply queued.');
+        return $result instanceof \Throwable ? throw $result : $result;
     }
 }

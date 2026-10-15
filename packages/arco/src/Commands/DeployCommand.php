@@ -175,7 +175,7 @@ final class DeployCommand extends ArcoCommand
                 $io->writeln($outcome->rolledBack
                     ? $this->t('deploy.rolled_back', ['revision' => (string) $outcome->result->previousRevisionId])
                     : $this->t('deploy.not_rolled_back'));
-                $this->commandsNotUndone($io, $outcome->commandsRan, $config);
+                $this->commandsNotUndone($io, $outcome->commandsRan, $config->environment);
                 return self::FAILURE;
             }
 
@@ -201,16 +201,29 @@ final class DeployCommand extends ArcoCommand
             return self::SUCCESS;
         } catch (DeployCommandFailed $e) {
             $steps->finish();
-            $io->error($e->result->crashed()
-                ? $this->t('deploy.command_crashed', ['command' => $e->command, 'type' => (string) $e->result->errorType, 'message' => (string) $e->result->errorMessage])
-                : $this->t('deploy.command_failed', ['command' => $e->command, 'code' => $e->result->exitCode]));
-            foreach ($e->result->logTail as $line) {
+            $result = $e->result;
+            if ($result === null) {
+                // The invoke failed: the command may have partly run, so it is listed with the others.
+                $previous = $e->getPrevious();
+                $io->error($this->t('deploy.command_unknown', [
+                    'command' => $e->command,
+                    'error' => $previous === null ? '' : ($this->describeError($previous) ?? $previous->getMessage()),
+                ]));
+                $io->writeln($this->t('deploy.command_traffic_unchanged'));
+                $this->commandsNotUndone($io, $e->ran, $config->environment, 'deploy.commands_may_have_run');
+                return self::FAILURE;
+            }
+            $io->error($result->crashed()
+                ? $this->t('deploy.command_crashed', ['command' => $e->command, 'type' => (string) $result->errorType, 'message' => (string) $result->errorMessage])
+                : $this->t('deploy.command_failed', ['command' => $e->command, 'code' => $result->exitCode]));
+            foreach ($result->logTail as $line) {
                 $io->writeln('  ' . OutputFormatter::escape($line));
             }
             $io->writeln($this->t('deploy.command_traffic_unchanged'));
-            $io->writeln($this->t('deploy.commands_not_undone', ['commands' => implode(', ', $e->ran)]));
+            // The failing command is reported above; a migrate that failed may have rolled itself back.
+            $this->commandsNotUndone($io, array_slice($e->ran, 0, -1), $config->environment);
             // R12: the command's own exit code; 1 when it has none (a Lambda error, or 0 on a crash).
-            return ! $e->result->crashed() && $e->result->exitCode > 0 ? min($e->result->exitCode, 255) : self::FAILURE;
+            return ! $result->crashed() && $result->exitCode > 0 ? min($result->exitCode, 255) : self::FAILURE;
         } catch (Throwable $e) {
             $steps->finish();
             $message = $this->describeError($e);
@@ -218,7 +231,7 @@ final class DeployCommand extends ArcoCommand
                 $io->error($message);
             }
             if ($config !== null) {
-                $this->commandsNotUndone($io, $ran, $config);
+                $this->commandsNotUndone($io, $ran, $config->environment);
             }
             return $message === null ? throw $e : self::FAILURE;
         }
@@ -229,14 +242,14 @@ final class DeployCommand extends ArcoCommand
      *
      * @param list<string> $ran
      */
-    private function commandsNotUndone(SymfonyStyle $io, array $ran, AppConfig $config): void
+    private function commandsNotUndone(SymfonyStyle $io, array $ran, string $environment, string $key = 'deploy.commands_not_undone'): void
     {
         if ($ran === []) {
             return;
         }
-        $io->writeln($this->t('deploy.commands_not_undone', ['commands' => implode(', ', $ran)]));
+        $io->writeln($this->t($key, ['commands' => implode(', ', $ran)]));
         if (DeployCommands::hasMigrate($ran)) {
-            $io->writeln($this->t('deploy.migrate_rollback_hint', ['environment' => $config->environment]));
+            $io->writeln($this->t('deploy.migrate_rollback_hint', ['environment' => $environment]));
         }
     }
 }

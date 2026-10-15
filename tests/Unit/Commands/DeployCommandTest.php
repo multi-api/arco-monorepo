@@ -383,6 +383,57 @@ final class DeployCommandTest extends TestCase
         self::assertSame(['describe', 'prepare'], $deployer->calls);
     }
 
+    public function test_a_command_failing_after_a_migration_suggests_rolling_it_back(): void
+    {
+        $this->withDeployCommands("['migrate --force', 'config:cache']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+
+        $tester = $this->tester($deployer, console: new FakeConsole([new CommandResult(0, ''), new CommandResult(1, "boom\n")]));
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('Deploy command "config:cache" failed with exit code 1', $display);
+        self::assertStringContainsString('not undone: migrate --force.', $display, 'only the commands that succeeded');
+        self::assertStringContainsString('arco command "migrate:rollback --force" --env=production', $display);
+        self::assertSame(1, substr_count($display, 'not undone'));
+    }
+
+    public function test_a_failed_migration_alone_gets_no_rollback_hint(): void
+    {
+        $this->withDeployCommands("['migrate --force']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+
+        $tester = $this->tester($deployer, console: new FakeConsole([new CommandResult(1, "SQLSTATE\n")]));
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringNotContainsString('not undone', $display);
+        self::assertStringNotContainsString('migrate:rollback', $display);
+    }
+
+    public function test_an_invoke_error_during_a_deploy_command_says_its_outcome_is_unknown(): void
+    {
+        $this->withDeployCommands("['migrate --force']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+
+        $tester = $this->tester($deployer, console: new FakeConsole([new \RuntimeException('cURL error 28: Operation timed out')]));
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('outcome of deploy command "migrate --force" is unknown', $display);
+        self::assertStringContainsString('cURL error 28: Operation timed out', $display);
+        self::assertStringContainsString('previous revision keeps serving', $display);
+        self::assertStringContainsString('may have run', $display);
+        self::assertStringContainsString('migrate --force', $display);
+        self::assertStringContainsString('arco command "migrate:rollback --force" --env=production', $display);
+        self::assertSame(['describe', 'prepare'], $deployer->calls, 'no traffic shift');
+    }
+
     public function test_a_crashed_deploy_command_exits_with_1_and_shows_the_log_tail(): void
     {
         $this->withDeployCommands("['scripts/migrate.php']");
@@ -440,7 +491,7 @@ final class DeployCommandTest extends TestCase
         self::assertSame(1, $tester->getStatusCode());
         $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
         self::assertStringContainsString('not undone: migrate --force', $display);
-        self::assertStringContainsString('arco command "migrate:rollback" --env=production', $display);
+        self::assertStringContainsString('arco command "migrate:rollback --force" --env=production', $display);
         self::assertContains('rollback:rev-1', $deployer->calls);
     }
 
