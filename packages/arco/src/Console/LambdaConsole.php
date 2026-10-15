@@ -21,19 +21,19 @@ final class LambdaConsole implements Console
      * Client options for invocations: no SDK retries (a retried invoke would run the command a second
      * time) and an HTTP timeout above the function timeout (synchronous invokes last up to 15 minutes).
      *
+     * @param bool|null $curl whether Guzzle uses ext-curl (detected when null); without it, the stream
+     *                        handler is used and the CURLOPT_* constants do not exist
      * @return array<string, mixed>
      */
-    public static function clientOptions(AppConfig $config): array
+    public static function clientOptions(AppConfig $config, ?bool $curl = null): array
     {
-        return [
-            'retries' => 0,
-            'http' => [
-                'timeout' => $config->consoleTimeout + 30,
-                'connect_timeout' => 10,
-                // Keeps a long, silent invoke alive through NAT gateways and firewalls.
-                'curl' => [CURLOPT_TCP_KEEPALIVE => 1, CURLOPT_TCP_KEEPIDLE => 30, CURLOPT_TCP_KEEPINTVL => 15],
-            ],
-        ];
+        $curl ??= extension_loaded('curl') && defined('CURLOPT_TCP_KEEPIDLE') && defined('CURLOPT_TCP_KEEPINTVL');
+        $http = ['timeout' => $config->consoleTimeout + 30, 'connect_timeout' => 10];
+        if ($curl) {
+            // Keeps a long, silent invoke alive through NAT gateways and firewalls.
+            $http['curl'] = [CURLOPT_TCP_KEEPALIVE => 1, CURLOPT_TCP_KEEPIDLE => 30, CURLOPT_TCP_KEEPINTVL => 15];
+        }
+        return ['retries' => 0, 'http' => $http];
     }
 
     public function run(AppConfig $config, string $command, ?int $timeout = null, string $qualifier = ConsoleFunction::ALIAS): CommandResult

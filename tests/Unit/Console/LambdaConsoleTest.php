@@ -123,6 +123,16 @@ final class LambdaConsoleTest extends TestCase
         self::assertSame(630, $options['http']['timeout'], 'above the function timeout');
     }
 
+    public function test_without_ext_curl_the_client_options_leave_out_the_curl_keepalive(): void
+    {
+        // Guzzle falls back to its stream handler; the CURLOPT_* constants would not even exist.
+        $options = LambdaConsole::clientOptions($this->config(), curl: false);
+
+        self::assertArrayNotHasKey('curl', $options['http']);
+        self::assertSame(630, $options['http']['timeout']);
+        self::assertSame(1, LambdaConsole::clientOptions($this->config(), curl: true)['http']['curl'][CURLOPT_TCP_KEEPALIVE]);
+    }
+
     public function test_start_uses_an_event_invocation_on_the_live_alias(): void
     {
         $mocks = new AwsMocks();
