@@ -20,5 +20,3 @@ Decision: LIVE_TAIL
 - LIVE_TAIL: `arco logs --follow` uses StartLiveTail through `FullReadStream::wrap()` on the existing log
   groups and falls back to polling FilterLogEvents every 2 s on AccessDenied, LimitExceeded,
   InvalidOperation or ResourceNotFound.
-- POLLING: `arco logs --follow` polls FilterLogEvents every 2 s with a de-duplication window; the docs
-  mention the 10–40 s ingestion delay. `logs:StartLiveTail` is not needed.
