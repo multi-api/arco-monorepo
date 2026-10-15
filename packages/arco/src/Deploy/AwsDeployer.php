@@ -123,21 +123,6 @@ final class AwsDeployer implements Deployer
         $web->route($function, $prepared->revisionId, $config);
         $endpoint = $web->waitEndpoint($function, 600, $prepared->revisionId);
 
-        $codeBucket = new CodeBucket($this->aws->s3());
-        if ($prepared->consoleVersion !== null) {
-            // The live alias still points at the previous version here; it is kept with the newest ones.
-            $this->consoleFunction()->pruneVersions(
-                $config->consoleFunctionName(),
-                self::KEEP_CONSOLE_VERSIONS,
-                array_values(array_filter([$prepared->previousConsoleVersion, $prepared->consoleVersion])),
-            );
-        }
-        // Web and console zips are pruned apart, so a run of console-less deploys never evicts every console zip.
-        $codeBucket->prune($prepared->bucket, self::prefix($config), self::KEEP_PACKAGES, [$prepared->key], self::consolePrefix($config));
-        if ($prepared->consoleKey !== null) {
-            $codeBucket->prune($prepared->bucket, self::consolePrefix($config), self::KEEP_PACKAGES, [$prepared->consoleKey]);
-        }
-
         return new DeployResult(
             WebFunctions::text($endpoint['domainName'] ?? null),
             $prepared->revisionId,
@@ -148,6 +133,39 @@ final class AwsDeployer implements Deployer
             $prepared->consoleVersion,
             $prepared->previousConsoleVersion,
         );
+    }
+
+    public function prune(AppConfig $config, PreparedDeploy $prepared, ?callable $onStep = null): void
+    {
+        $step = $onStep ?? static function (string $key, array $params = []): void {};
+        if ($prepared->consoleVersion !== null) {
+            try {
+                // The live alias is read again right before deleting: it may have moved since prepare().
+                $this->consoleFunction()->pruneVersions(
+                    $config->consoleFunctionName(),
+                    self::KEEP_CONSOLE_VERSIONS,
+                    array_values(array_filter([$prepared->previousConsoleVersion, $prepared->consoleVersion])),
+                );
+            } catch (AwsException $e) {
+                $step('deploy.prune_versions_failed', ['function' => $config->consoleFunctionName(), 'error' => self::awsError($e)]);
+            }
+        }
+        try {
+            // Web and console zips are pruned apart: console zips never count towards the web zips kept.
+            $codeBucket = new CodeBucket($this->aws->s3());
+            $codeBucket->prune($prepared->bucket, self::prefix($config), self::KEEP_PACKAGES, [$prepared->key], self::consolePrefix($config));
+            if ($prepared->consoleKey !== null) {
+                $codeBucket->prune($prepared->bucket, self::consolePrefix($config), self::KEEP_PACKAGES, [$prepared->consoleKey]);
+            }
+        } catch (AwsException $e) {
+            $step('deploy.prune_packages_failed', ['bucket' => $prepared->bucket, 'error' => self::awsError($e)]);
+        }
+    }
+
+    private static function awsError(AwsException $e): string
+    {
+        $message = $e->getAwsErrorMessage();
+        return is_string($message) && $message !== '' ? $message : $e->getMessage();
     }
 
     public function activateConsole(AppConfig $config, string $version): void

@@ -82,6 +82,8 @@ return [
     'deploy.step_traffic' => 'Routing traffic to {revision}',
     'deploy.step_console' => 'Updating console function {function} and publishing a version',
     'deploy.console_skipped_size' => 'The console package is {size} MB unzipped (without FrankenPHP); Lambda allows {max} MB for the console function, so it was not updated and arco command, deploy commands and tinker keep using the previous version. Leave large folders out with ->exclude([...]) in arco.php ("arco package" lists the largest ones).',
+    'deploy.prune_versions_failed' => 'Old versions of console function {function} were not deleted ({error}). The deploy is fine; check that the profile allows lambda:ListVersionsByFunction and lambda:DeleteFunction.',
+    'deploy.prune_packages_failed' => 'Old packages in {bucket} were not deleted ({error}). The deploy is fine; check that the profile allows s3:ListBucket and s3:DeleteObject.',
     'deploy.bucket_forbidden' => 'Bucket {bucket} exists but belongs to another account or denies access.',
     'deploy.read_package_failed' => 'Cannot read package {path}.',
     'deploy.revision_failed' => 'Revision {revision} failed: {reason}',

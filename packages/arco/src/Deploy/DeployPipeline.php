@@ -144,6 +144,10 @@ final class DeployPipeline
                     // The deploy is done and verified; a missing cold start is only shown as unknown.
                 }
             }
+            // Old console versions and packages go only once this deploy is verified and live points at it.
+            if ($verification->ok) {
+                $deployer->prune($config, $prepared, $onStep);
+            }
             return new DeployOutcome($result, $verification, $rolledBack, $package->bytes);
         } finally {
             (new Filesystem())->remove($work);

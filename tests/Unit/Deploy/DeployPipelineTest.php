@@ -62,7 +62,7 @@ final class DeployPipelineTest extends TestCase
 
         self::assertTrue($outcome->verification->ok);
         self::assertFalse($outcome->rolledBack);
-        self::assertSame(['prepare', 'release'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls);
         self::assertSame([
             'LOG_CHANNEL' => 'syslog',
             'SESSION_DRIVER' => 'cookie',
@@ -128,7 +128,7 @@ final class DeployPipelineTest extends TestCase
 
         $outcome = $this->pipeline()->deploy($this->config(domains: true), $preset, $this->project, $deployer, new FakeVerifier(true), fn () => null);
 
-        self::assertSame(['prepare', 'release', 'domains:/build/*'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'domains:/build/*', 'prune'], $deployer->calls);
         self::assertSame(['shop.example.com'], $outcome->result->domains);
     }
 
@@ -155,7 +155,7 @@ final class DeployPipelineTest extends TestCase
         $outcome = $this->pipeline()->deployPackage($this->config(domains: true), new PlainPhpPreset(), $package, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
 
         self::assertTrue($outcome->verification->ok);
-        self::assertSame(['prepare', 'release', 'domains:'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'domains:', 'prune'], $deployer->calls);
         self::assertSame($zip, $deployer->package?->path);
         self::assertSame($built->hash, $deployer->package->hash);
         self::assertSame('production', $deployer->variables['ARCO_ENV']);
@@ -173,7 +173,7 @@ final class DeployPipelineTest extends TestCase
 
         $outcome = $this->pipeline()->deploy($this->config(domains: true), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
 
-        self::assertSame(['prepare', 'release', 'domains:', 'coldStart'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'domains:', 'coldStart', 'prune'], $deployer->calls);
         self::assertSame(950, $outcome->verification->initDurationMs);
         self::assertTrue($outcome->verification->ok);
     }
@@ -187,7 +187,7 @@ final class DeployPipelineTest extends TestCase
 
         self::assertTrue($outcome->verification->ok);
         self::assertNull($outcome->verification->initDurationMs);
-        self::assertSame(['prepare', 'release'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls);
     }
 
     public function test_a_failed_verification_skips_the_cold_start_lookup(): void
@@ -206,7 +206,7 @@ final class DeployPipelineTest extends TestCase
 
         $this->pipeline()->deploy($this->config(domains: true), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
 
-        self::assertSame(['prepare', 'release', 'live:7', 'domains:', 'coldStart'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'live:7', 'domains:', 'coldStart', 'prune'], $deployer->calls);
     }
 
     public function test_a_rollback_leaves_the_console_live_alias_where_it_was(): void
@@ -262,6 +262,30 @@ final class DeployPipelineTest extends TestCase
         self::assertTrue($outcome->verification->ok, 'the web function still deploys');
         self::assertNull($deployer->console);
         self::assertContains('deploy.console_skipped_size', $steps);
-        self::assertSame(['prepare', 'release'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls);
+    }
+
+    public function test_pruning_runs_last_and_only_after_a_verified_deploy(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
+        $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+        self::assertSame(['prepare', 'release', 'live:7', 'prune'], $deployer->calls);
+
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
+        $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(false), fn () => null);
+        self::assertNotContains('prune', $deployer->calls, 'a failed verification and its rollback never prune (a verifier exception: test_verifier_exception_rolls_back_then_rethrows)');
+    }
+
+    public function test_a_refused_prune_is_a_warning_on_a_successful_deploy(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
+        $deployer->pruneWarning = 'deploy.prune_versions_failed';
+        $steps = [];
+
+        $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertFalse($outcome->rolledBack);
+        self::assertSame('deploy.prune_versions_failed', end($steps));
     }
 }

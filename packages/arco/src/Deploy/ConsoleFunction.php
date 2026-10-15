@@ -166,14 +166,18 @@ final class ConsoleFunction
     }
 
     /**
-     * Deletes published versions except the $keep newest and $protected (the live alias target and the
-     * version just published), so Lambda code storage does not grow with every deploy. $LATEST stays.
+     * Deletes published versions except the $keep newest, the version the live alias points to (read
+     * now) and $protected, so Lambda code storage does not grow with every deploy. $LATEST stays.
      *
      * @param list<string> $protected
      * @return list<string> the deleted versions
      */
     public function pruneVersions(string $name, int $keep, array $protected): array
     {
+        $live = $this->liveVersion($name);
+        if ($live !== null) {
+            $protected[] = $live;
+        }
         $versions = [];
         $marker = null;
         do {

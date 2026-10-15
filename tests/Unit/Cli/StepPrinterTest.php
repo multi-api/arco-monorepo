@@ -103,5 +103,7 @@ final class StepPrinterTest extends TestCase
         $text = $output->fetch();
         self::assertStringContainsString('[WARNING] deploy.console_skipped_size {"size":300,"max":250}', $text);
         self::assertStringNotContainsString('•', $text);
+        self::assertContains('deploy.prune_versions_failed', StepPrinter::WARNINGS);
+        self::assertContains('deploy.prune_packages_failed', StepPrinter::WARNINGS);
     }
 }

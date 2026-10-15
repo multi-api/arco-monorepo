@@ -18,6 +18,8 @@ final class FakeDeployer implements Deployer
     public array $variables = [];
     public ?Package $package = null;
     public ?ConsoleArtifacts $console = null;
+    /** step reported by prune(), as AwsDeployer does when AWS refuses the cleanup */
+    public ?string $pruneWarning = null;
 
     public function __construct(
         public ?string $previousRevision = null,
@@ -49,6 +51,14 @@ final class FakeDeployer implements Deployer
     public function activateConsole(AppConfig $config, string $version): void
     {
         $this->calls[] = "live:$version";
+    }
+
+    public function prune(AppConfig $config, PreparedDeploy $prepared, ?callable $onStep = null): void
+    {
+        $this->calls[] = 'prune';
+        if ($this->pruneWarning !== null && $onStep !== null) {
+            $onStep($this->pruneWarning, ['function' => 'f', 'error' => 'AccessDenied']);
+        }
     }
 
     public function rollback(AppConfig $config, string $revisionId, ?string $consoleVersion = null): void

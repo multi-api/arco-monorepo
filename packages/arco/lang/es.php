@@ -82,6 +82,8 @@ return [
     'deploy.step_traffic' => 'Enviando el tráfico a {revision}',
     'deploy.step_console' => 'Actualizando la función de consola {function} y publicando una versión',
     'deploy.console_skipped_size' => 'El paquete de consola ocupa {size} MB descomprimido (sin FrankenPHP); Lambda permite {max} MB para la función de consola, así que no se actualizó y arco command, los comandos de despliegue y tinker siguen usando la versión anterior. Deja fuera carpetas grandes con ->exclude([...]) en arco.php ("arco package" muestra las más grandes).',
+    'deploy.prune_versions_failed' => 'No se eliminaron versiones antiguas de la función de consola {function} ({error}). El despliegue está bien; revisa que el perfil permita lambda:ListVersionsByFunction y lambda:DeleteFunction.',
+    'deploy.prune_packages_failed' => 'No se eliminaron paquetes antiguos de {bucket} ({error}). El despliegue está bien; revisa que el perfil permita s3:ListBucket y s3:DeleteObject.',
     'deploy.bucket_forbidden' => 'El bucket {bucket} existe pero pertenece a otra cuenta o niega el acceso.',
     'deploy.read_package_failed' => 'No se puede leer el paquete {path}.',
     'deploy.revision_failed' => 'La revisión {revision} falló: {reason}',

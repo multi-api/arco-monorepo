@@ -20,8 +20,8 @@ interface Deployer
     public function prepare(AppConfig $config, Package $package, ?ConsoleArtifacts $console, array $variables, ?callable $onStep = null): PreparedDeploy;
 
     /**
-     * Moves traffic to the prepared revision and prunes old packages and console versions. The
-     * console's live alias is left alone until the revision is verified (activateConsole()).
+     * Moves traffic to the prepared revision. The console's live alias is left alone until the
+     * revision is verified (activateConsole()), and nothing is pruned (prune()).
      *
      * @param (callable(string, array<string, string|int>): void)|null $onStep
      */
@@ -29,6 +29,14 @@ interface Deployer
 
     /** Points the console's live alias at $version, once the matching web revision is verified. */
     public function activateConsole(AppConfig $config, string $version): void;
+
+    /**
+     * Best effort, once the deploy is verified: deletes old console versions and old packages. A
+     * failure (e.g. missing permissions) is reported through $onStep as a warning, never thrown.
+     *
+     * @param (callable(string, array<string, string|int>): void)|null $onStep
+     */
+    public function prune(AppConfig $config, PreparedDeploy $prepared, ?callable $onStep = null): void;
 
     /** Sends traffic back to $revisionId and, when given, the console's live alias back to $consoleVersion. */
     public function rollback(AppConfig $config, string $revisionId, ?string $consoleVersion = null): void;

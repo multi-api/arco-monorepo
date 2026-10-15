@@ -14,6 +14,7 @@ use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Deploy\AwsDeployer;
 use Multiapi\Arco\Deploy\DeployResult;
+use Multiapi\Arco\Deploy\PreparedDeploy;
 use Multiapi\Arco\Package\ConsoleArtifacts;
 use Multiapi\Arco\Package\Package;
 use PHPUnit\Framework\TestCase;
@@ -75,13 +76,15 @@ final class AwsDeployerTest extends TestCase
             new Result(['state' => 'Active', 'domainName' => 'abc.xpt.lambda-web.us-east-1.on.aws', 'revisionWeights' => []]),
             new Result([]),                                                                      // UpdateWebFunctionEndpoint
             new Result(['state' => 'Active', 'updateStatus' => 'Successful', 'domainName' => 'abc.xpt.lambda-web.us-east-1.on.aws', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
-            new Result(['Versions' => [['Version' => '$LATEST'], ['Version' => '1']]]),          // ListVersionsByFunction
-            new Result(['Contents' => []]),                                                      // ListObjectsV2 (web zips)
-            new Result(['Contents' => []]),                                                      // ListObjectsV2 (console zips)
             // after verification
             self::lambdaMissing('UpdateAlias'),
             new Result([]),                                                                      // CreateAlias
             new Result([]),                                                                      // PutFunctionEventInvokeConfig
+            // prune
+            new Result(['FunctionVersion' => '1']),                                              // GetAlias
+            new Result(['Versions' => [['Version' => '$LATEST'], ['Version' => '1']]]),          // ListVersionsByFunction
+            new Result(['Contents' => []]),                                                      // ListObjectsV2 (web zips)
+            new Result(['Contents' => []]),                                                      // ListObjectsV2 (console zips)
         );
         $steps = [];
         $record = function (string $key) use (&$steps): void { $steps[] = $key; };
@@ -92,7 +95,9 @@ final class AwsDeployerTest extends TestCase
         self::assertNotContains('UpdateWebFunctionEndpoint', $mocks->calls, 'prepare never moves traffic');
         $result = $deployer->release($this->config(), $prepared, $record);
         self::assertNotContains('UpdateAlias', $mocks->calls, 'live moves only once the revision is verified');
+        self::assertNotContains('ListObjectsV2', $mocks->calls, 'nothing is pruned before the revision is verified');
         $deployer->activateConsole($this->config(), (string) $result->consoleVersion);
+        $deployer->prune($this->config(), $prepared, $record);
 
         self::assertSame([
             'GetCallerIdentity', 'HeadBucket', 'PutPublicAccessBlock', 'PutBucketPolicy', 'PutBucketVersioning', 'PutBucketLifecycleConfiguration', 'HeadObject', 'PutObject', 'GetRole', 'CreateRole', 'PutRolePolicy',
@@ -100,8 +105,8 @@ final class AwsDeployerTest extends TestCase
             'HeadObject', 'PutObject', 'HeadObject', 'PutObject',
             'GetAlias', 'GetFunctionConfiguration', 'CreateFunction', 'GetFunctionConfiguration', 'PublishVersion',
             'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
-            'ListVersionsByFunction', 'ListObjectsV2', 'ListObjectsV2',
             'UpdateAlias', 'CreateAlias', 'PutFunctionEventInvokeConfig',
+            'GetAlias', 'ListVersionsByFunction', 'ListObjectsV2', 'ListObjectsV2',
         ], $mocks->calls);
         $consoleKey = 'shop/production/console-' . str_repeat('c', 64) . '.zip';
         self::assertSame($consoleKey, $mocks->params[15]['Key']);
@@ -127,9 +132,9 @@ final class AwsDeployerTest extends TestCase
         self::assertSame('arco-111111111111-us-east-1', $result->bucket);
         self::assertSame('shop/production/' . str_repeat('a', 64) . '.zip', $result->key);
         self::assertSame([['revisionId' => 'rev-1', 'weight' => 100]], $mocks->params[25]['revisionWeights']);
-        self::assertSame('shop/production/', $mocks->params[28]['Prefix']);
-        self::assertSame('shop/production/console-', $mocks->params[29]['Prefix']);
-        self::assertSame('1', $mocks->params[31]['FunctionVersion']);
+        self::assertSame('1', $mocks->params[28]['FunctionVersion']);
+        self::assertSame('shop/production/', $mocks->params[32]['Prefix']);
+        self::assertSame('shop/production/console-', $mocks->params[33]['Prefix']);
         self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_function', 'deploy.step_console', 'deploy.step_traffic'], $steps);
     }
 
@@ -160,9 +165,6 @@ final class AwsDeployerTest extends TestCase
             new Result(['state' => 'Active', 'domainName' => 'abc.on.aws', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
             new Result([]),
             new Result(['state' => 'Active', 'updateStatus' => 'Successful', 'domainName' => 'abc.on.aws', 'revisionWeights' => [['revisionId' => 'rev-2', 'weight' => 100]]]),
-            new Result(['Versions' => [['Version' => '$LATEST'], ['Version' => '6'], ['Version' => '7']]]),
-            new Result(['Contents' => []]),
-            new Result(['Contents' => []]),
         );
         $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
 
@@ -176,31 +178,31 @@ final class AwsDeployerTest extends TestCase
             'GetCallerIdentity', 'HeadBucket', 'PutPublicAccessBlock', 'PutBucketPolicy', 'PutBucketVersioning', 'PutBucketLifecycleConfiguration', 'HeadObject', 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint',
             'CreateWebFunctionRevision', 'GetWebFunctionRevision', 'HeadObject', 'HeadObject',
             'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion',
-            'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint', 'ListVersionsByFunction', 'ListObjectsV2', 'ListObjectsV2',
-        ], $mocks->calls);
+            'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
+        ], $mocks->calls, 'release neither moves live nor prunes');
         self::assertNotContains('PutObject', $mocks->calls, 'web zip, console zip and binary are uploaded once');
         self::assertSame('', $mocks->params[20]['KMSKeyArn'], 'no kmsKey in the config clears a key set by an earlier deploy');
     }
 
-    public function test_release_keeps_the_live_console_version_and_the_four_newest(): void
+    public function test_prune_keeps_the_live_version_read_now_the_previous_one_and_the_four_newest(): void
     {
         $versions = fn (array $numbers) => array_map(fn (string $v) => ['Version' => $v], $numbers);
         $mocks = new AwsMocks();
         $mocks->handler->append(
-            new Result(['state' => 'Active', 'domainName' => 'abc.on.aws', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
-            new Result([]),
-            new Result(['state' => 'Active', 'updateStatus' => 'Successful', 'domainName' => 'abc.on.aws', 'revisionWeights' => [['revisionId' => 'rev-2', 'weight' => 100]]]),
+            new Result(['FunctionVersion' => '5']),                                              // live moved to 5 since prepare()
             new Result(['Versions' => $versions(['$LATEST', '1', '2', '3', '10']), 'NextMarker' => 'm1']),
-            new Result(['Versions' => $versions(['4', '5', '6', '7', '8', '9', '11'])]),
-            new Result([]), new Result([]), new Result([]), new Result([]), new Result([]), new Result([]), // DeleteFunction 1, 2, 4, 5, 6, 7
+            new Result(['Versions' => $versions(['4', '5', '6', '7', '8', '9', '11', '12'])]),
+            new Result([]), new Result([]), new Result([]), new Result([]), new Result([]), new Result([]), // DeleteFunction 1, 2, 4, 6, 7, 8
             new Result(['Contents' => []]),
             new Result(['Contents' => []]),
         );
-        $prepared = new \Multiapi\Arco\Deploy\PreparedDeploy('rev-2', 'rev-1', 'b', 'shop/production/a.zip', '11', '3', 'shop/production/console-c.zip');
+        $prepared = new PreparedDeploy('rev-2', 'rev-1', 'b', 'shop/production/a.zip', '11', '3', 'shop/production/console-c.zip');
+        $steps = [];
 
-        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->config(), $prepared);
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->config(), $prepared, function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame('m1', $mocks->params[4]['Marker']);
+        self::assertSame(['FunctionName' => 'shop-production-console', 'Name' => 'live'], array_intersect_key($mocks->params[0], ['FunctionName' => 1, 'Name' => 1]));
+        self::assertSame('m1', $mocks->params[2]['Marker']);
         $deleted = [];
         foreach ($mocks->calls as $i => $call) {
             if ($call === 'DeleteFunction') {
@@ -208,7 +210,48 @@ final class AwsDeployerTest extends TestCase
                 $deleted[] = $mocks->params[$i]['Qualifier'];
             }
         }
-        self::assertSame(['1', '2', '4', '5', '6', '7'], $deleted, 'keeps 3 (live), 8 to 11 (newest) and $LATEST');
+        self::assertSame(['1', '2', '4', '6', '7', '8'], $deleted, 'keeps 5 (live now), 3 (live before the deploy), 9 to 12 (newest) and $LATEST');
+        self::assertSame([], $steps, 'no warning when pruning works');
+        self::assertCount(0, $mocks->handler);
+    }
+
+    /** @return iterable<string, array{0: list<mixed>, 1: list<string>}> */
+    public static function pruneFailures(): iterable
+    {
+        $denied = fn (string $operation) => AwsMocks::error(LambdaException::class, $operation, 'AccessDeniedException', 403, "not authorized to perform: lambda:$operation");
+        $old = array_map(fn (int $i) => ['Key' => "shop/production/$i.zip", 'LastModified' => new \DateTimeImmutable("2026-01-01 +$i hours")], range(1, 21));
+        yield 'ListVersionsByFunction' => [[
+            new Result(['FunctionVersion' => '2']), $denied('ListVersionsByFunction'),
+            new Result(['Contents' => []]), new Result(['Contents' => []]),
+        ], ['deploy.prune_versions_failed']];
+        yield 'DeleteFunction' => [[
+            new Result(['FunctionVersion' => '7']), new Result(['Versions' => array_map(fn (int $v) => ['Version' => (string) $v], range(1, 7))]), $denied('DeleteFunction'),
+            new Result(['Contents' => []]), new Result(['Contents' => []]),
+        ], ['deploy.prune_versions_failed']];
+        yield 'S3 DeleteObjects' => [[
+            new Result(['FunctionVersion' => '2']), new Result(['Versions' => [['Version' => '1'], ['Version' => '2']]]),
+            new Result(['Contents' => $old]), AwsMocks::error(S3Exception::class, 'DeleteObjects', 'AccessDenied', 403),
+        ], ['deploy.prune_packages_failed']];
+    }
+
+    /**
+     * @param list<mixed> $responses
+     * @param list<string> $warnings
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('pruneFailures')]
+    public function test_pruning_failures_are_warnings(array $responses, array $warnings): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...$responses);
+        $steps = [];
+        $prepared = new PreparedDeploy('rev-2', 'rev-1', 'b', 'shop/production/a.zip', '2', '1', 'shop/production/console-c.zip');
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->config(), $prepared, function (string $key, array $params = []) use (&$steps): void {
+            $steps[] = $key;
+            self::assertNotSame('', $params['error'] ?? '');
+        });
+
+        self::assertSame($warnings, $steps);
         self::assertCount(0, $mocks->handler);
     }
 
@@ -228,18 +271,19 @@ final class AwsDeployerTest extends TestCase
             new Result(['state' => 'Active', 'domainName' => 'abc.on.aws', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
             new Result([]),
             new Result(['state' => 'Active', 'updateStatus' => 'Successful', 'domainName' => 'abc.on.aws', 'revisionWeights' => [['revisionId' => 'rev-2', 'weight' => 100]]]),
-            new Result(['Contents' => []]),
+            new Result(['Contents' => []]),                   // ListObjectsV2 (web zips only)
         );
         $steps = [];
         $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
 
         $prepared = $deployer->prepare($this->config(), $this->package(), null, [], function (string $key) use (&$steps): void { $steps[] = $key; });
         $result = $deployer->release($this->config(), $prepared);
+        $deployer->prune($this->config(), $prepared);
 
         self::assertNull($prepared->consoleVersion);
         self::assertNull($result->consoleVersion);
         self::assertNotContains('deploy.step_console', $steps);
-        self::assertSame([], array_values(array_intersect(['GetAlias', 'CreateFunction', 'UpdateFunctionCode', 'PublishVersion', 'UpdateAlias', 'ListVersionsByFunction'], $mocks->calls)));
+        self::assertSame([], array_values(array_intersect(['GetAlias', 'CreateFunction', 'UpdateFunctionCode', 'PublishVersion', 'UpdateAlias', 'GetAlias', 'ListVersionsByFunction'], $mocks->calls)));
         self::assertCount(0, $mocks->handler);
     }
 

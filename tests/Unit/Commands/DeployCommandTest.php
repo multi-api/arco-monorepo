@@ -191,7 +191,7 @@ final class DeployCommandTest extends TestCase
 
         $tester->assertCommandIsSuccessful();
         self::assertSame([['acme-prod', null, false]], $this->factoryCalls);
-        self::assertSame(['describe', 'prepare', 'release'], $deployer->calls);
+        self::assertSame(['describe', 'prepare', 'release', 'prune'], $deployer->calls);
     }
 
     /** Builds a real package of the fixture project and optionally rewrites fields of its manifest. */
@@ -229,7 +229,7 @@ final class DeployCommandTest extends TestCase
         self::assertStringNotContainsString('Building shop', $display);
         self::assertStringNotContainsString('Package ready', $display);
         self::assertStringNotContainsString('WARNING', $display, 'a matching package raises no warning');
-        self::assertSame(['describe', 'prepare', 'release'], $deployer->calls);
+        self::assertSame(['describe', 'prepare', 'release', 'prune'], $deployer->calls);
         self::assertSame($zip, $deployer->package?->path);
         self::assertSame(\Multiapi\Arco\Package\PackageReader::open($zip)->hash, $deployer->package->hash);
         self::assertSame(['APP_ENV' => 'production', 'ARCO' => '1', 'ARCO_APP' => 'shop', 'ARCO_ENV' => 'production'], $deployer->variables);
@@ -282,7 +282,7 @@ final class DeployCommandTest extends TestCase
         $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
         self::assertStringContainsString('Arco 0.0.1', $display);
         self::assertStringContainsString('Arco ' . \Multiapi\Arco\Arco::version(), $display);
-        self::assertSame(['describe', 'prepare', 'release'], $deployer->calls);
+        self::assertSame(['describe', 'prepare', 'release', 'prune'], $deployer->calls);
     }
 
     public function test_summary_shows_the_cold_start_or_says_it_is_not_available_yet(): void
@@ -313,7 +313,7 @@ final class DeployCommandTest extends TestCase
         $tester->assertCommandIsSuccessful();
         $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
         self::assertStringContainsString('runtime build 1.0.0-r1', $display);
-        self::assertSame(['describe', 'prepare', 'release'], $deployer->calls);
+        self::assertSame(['describe', 'prepare', 'release', 'prune'], $deployer->calls);
     }
 
     public function test_a_package_built_with_another_preset_is_refused(): void
