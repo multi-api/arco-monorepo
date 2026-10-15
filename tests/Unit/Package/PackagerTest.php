@@ -125,7 +125,7 @@ final class PackagerTest extends TestCase
         self::assertSame('fp1.2.3-php8.4-r2', $manifest['runtime_build']);
         self::assertSame($package->hash, $manifest['hash']);
         self::assertSame($package->bytes, $manifest['bytes']);
-        self::assertSame(\Multiapi\Arco\Arco::VERSION, $manifest['arco_version']);
+        self::assertSame(\Multiapi\Arco\Arco::version(), $manifest['arco_version']);
         self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', $manifest['created_at']);
         self::assertEquals(PackageManifest::fromArray($manifest), $package->manifest);
     }

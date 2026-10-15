@@ -281,7 +281,7 @@ final class DeployCommandTest extends TestCase
         $tester->assertCommandIsSuccessful();
         $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
         self::assertStringContainsString('Arco 0.0.1', $display);
-        self::assertStringContainsString('Arco ' . \Multiapi\Arco\Arco::VERSION, $display);
+        self::assertStringContainsString('Arco ' . \Multiapi\Arco\Arco::version(), $display);
         self::assertSame(['describe', 'deploy'], $deployer->calls);
     }
 
