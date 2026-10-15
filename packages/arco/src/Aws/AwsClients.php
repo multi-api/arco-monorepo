@@ -194,7 +194,8 @@ final class AwsClients
     public function lambdaWeb(): LambdaWebClient { return $this->sdk->createLambdaWeb(); }
     public function ssm(): SsmClient { return $this->sdk->createSsm(); }
     public function secretsManager(): SecretsManagerClient { return $this->sdk->createSecretsManager(); }
-    public function logs(): CloudWatchLogsClient { return $this->sdk->createCloudWatchLogs(); }
+    /** @param array<string, mixed> $overrides extra client config (Live Tail passes an http_handler) */
+    public function logs(array $overrides = []): CloudWatchLogsClient { return $this->sdk->createCloudWatchLogs($overrides); }
     /** CloudFront only uses certificates from us-east-1, whatever the app region. */
     public function acm(): AcmClient { return $this->sdk->createAcm(['region' => 'us-east-1']); }
     public function cloudFormation(): CloudFormationClient { return $this->sdk->createCloudFormation(); }
