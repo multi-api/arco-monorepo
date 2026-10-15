@@ -1,6 +1,7 @@
 # Arco monorepo
 
-Development repository of [Arco](packages/arco/README.md), which deploys Laravel and PHP to AWS
+Development repository of [Arco](packages/arco/README.md), the bridge between PHP and AWS Lambda
+Web Functions. Arco deploys Laravel and PHP to AWS
 Lambda Web Functions with FrankenPHP.
 
 | Package | Directory | Published as |
