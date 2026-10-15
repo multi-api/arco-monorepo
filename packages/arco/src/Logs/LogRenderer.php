@@ -2,7 +2,6 @@
 
 namespace Multiapi\Arco\Logs;
 
-use Symfony\Component\Console\Formatter\OutputFormatter;
 
 /**
  * Formats log lines as `HH:MM:SS LEVEL message [requestId=…]`, colored by level (console markup). Log
@@ -42,7 +41,7 @@ final class LogRenderer
             return $line->level === 'error' || $this->platform ? [$this->line($time, strtoupper((string) $line->level), $line->level, $line->text)] : [];
         }
         if ($line->kind === LogLine::TEXT) {
-            return [self::escape($line->text)];
+            return [LogText::escape($line->text)];
         }
         $suffix = $line->requestId !== null ? " [requestId={$line->requestId}]" : '';
         $lines = [$this->line($time, strtoupper((string) $line->level), $line->level, $line->text . $suffix)];
@@ -53,14 +52,7 @@ final class LogRenderer
     {
         $label = str_pad($label, 7);
         $color = $level === null ? null : (self::COLORS[$level] ?? null);
-        return $time . ' ' . ($color === null ? $label : "<fg=$color>$label</>") . ' ' . self::escape($message);
-    }
-
-    /** Log text as printable console text: line breaks become spaces, other C0 controls but tab (and DEL) go. */
-    private static function escape(string $text): string
-    {
-        $text = (string) preg_replace('/[\x00-\x08\x0B-\x1F\x7F]/', '', str_replace(["\r\n", "\n", "\r"], ' ', $text));
-        return OutputFormatter::escape($text);
+        return $time . ' ' . ($color === null ? $label : "<fg=$color>$label</>") . ' ' . LogText::escape($message);
     }
 
     /**
@@ -73,19 +65,19 @@ final class LogRenderer
         unset($context['exception']);
         $lines = [];
         if ($context !== []) {
-            $lines[] = '    ' . self::escape((string) json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            $lines[] = '    ' . LogText::escape((string) json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
         }
         if (is_string($exception)) {
-            $lines[] = '    ' . self::escape($exception);
+            $lines[] = '    ' . LogText::escape($exception);
         } elseif (is_array($exception)) {
             $class = is_string($exception['class'] ?? null) ? $exception['class'] : 'Exception';
             $message = is_string($exception['message'] ?? null) ? $exception['message'] : '';
             $file = is_string($exception['file'] ?? null) ? ' at ' . $exception['file'] : '';
-            $lines[] = '    ' . self::escape("$class: $message$file");
+            $lines[] = '    ' . LogText::escape("$class: $message$file");
             $trace = $exception['trace'] ?? [];
             foreach (is_array($trace) ? $trace : (is_string($trace) ? explode("\n", $trace) : []) as $frame) {
                 if (is_string($frame) && $frame !== '') {
-                    $lines[] = '      ' . self::escape($frame);
+                    $lines[] = '      ' . LogText::escape($frame);
                 }
             }
         }

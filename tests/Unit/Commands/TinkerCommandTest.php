@@ -89,6 +89,17 @@ final class TinkerCommandTest extends TestCase
         self::assertStringContainsString("  {\"arco\":\"tinker\",\"code\":\"sleep(1000)\"}\n  END RequestId: <abc>\n", $tester->getDisplay(), 'the log tail, like arco command, markup kept as text');
     }
 
+    public function test_a_crash_tail_drops_control_characters(): void
+    {
+        $tester = $this->tester(new FakeConsole([new CommandResult(1, '', 'Sandbox.Timedout', 'Task timed out', ["boom \e[31mred\x07\tend\r\nnext"])]));
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => 'sleep(1000)'], ['interactive' => false]);
+
+        self::assertStringContainsString("  boom [31mred\tend next\n", $tester->getDisplay());
+        self::assertStringNotContainsString("\e", $tester->getDisplay());
+        self::assertStringNotContainsString("\x07", $tester->getDisplay());
+    }
+
     public function test_truncated_values_are_shown_with_their_markers(): void
     {
         $tester = $this->tester(new FakeConsole([FakeConsole::tinkerReply(['output' => "[truncated]\nend of output\n", 'presented' => "start of value[truncated]\n"])]));

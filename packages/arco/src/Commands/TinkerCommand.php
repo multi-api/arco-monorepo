@@ -11,6 +11,7 @@ use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Console\Console;
 use Multiapi\Arco\Console\LambdaConsole;
+use Multiapi\Arco\Logs\LogText;
 use Multiapi\Arco\Tinker\RemoteShell;
 use Multiapi\Arco\Tinker\TinkerReply;
 use Multiapi\Arco\Tinker\TinkerSession;
@@ -110,7 +111,7 @@ final class TinkerCommand extends ArcoCommand
                 $output->writeln('<error>' . OutputFormatter::escape($reply->exception['class'] . ': ' . $reply->exception['message']) . '</error>');
                 // A crash (timeout, out of memory): the end of the function log, as arco command shows it.
                 foreach ($reply->logTail as $line) {
-                    $output->writeln('  ' . OutputFormatter::escape($line));
+                    $output->writeln('  ' . LogText::escape($line));
                 }
             }
             $hint = match ($reply->exception['class']) {
