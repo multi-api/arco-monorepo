@@ -255,7 +255,7 @@ Set with `->runtime(fn (Runtime $r) => ...)`.
 | `workers(min, max)` | min 4, max 64 | Octane worker count / FrankenPHP `max_threads` (`min >= 1`, `max >= min`) |
 | `threads(int)` | 8 | FrankenPHP `num_threads` for non-worker requests (>= 1) |
 | `mode('direct'\|'proxy')` | `direct` | How the runtime hands requests to FrankenPHP |
-| `phpIni(array)` | `[]` | `php.ini` overrides, merged by key |
+| `phpIni(array)` | `[]` | `php.ini` overrides, merged by key; applied to web requests and to commands on the console function (`arco command`, deploy commands, tinker) |
 
 ### Runtime builds
 

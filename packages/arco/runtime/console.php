@@ -5,6 +5,7 @@
 
 use Multiapi\Arco\ConsoleRuntime\Handler;
 use Multiapi\Arco\ConsoleRuntime\InvalidEvent;
+use Multiapi\Arco\ConsoleRuntime\PhpIni;
 use Multiapi\Arco\ConsoleRuntime\ProcessRunner;
 use Multiapi\Arco\ConsoleRuntime\Response;
 use Multiapi\Arco\ConsoleRuntime\RuntimeApi;
@@ -40,6 +41,9 @@ try {
     }
     $tmp = $env['ARCO_TMP'] ?? '/tmp/arco';
     Storage::prepare($tmp);
+    $childEnv = [...$env, ...$resolved, 'HOME' => $tmp];
+    // phpIni() from arco.php, as the web runtime applies it: an .ini file every command's PHP scans.
+    $childEnv = [...$childEnv, ...PhpIni::prepare(is_array($config['phpIni'] ?? null) ? $config['phpIni'] : [], "$tmp/php", $childEnv)];
     $binary = $env['ARCO_PHP_BINARY'] ?? "$root/bin/frankenphp";
     // FrankenPHP's php-cli shifts $argv by one; console-cli.php gives scripts PHP's argv back.
     $php = basename($binary) === 'frankenphp' ? [$binary, 'php-cli', __DIR__ . '/console-cli.php'] : [$binary];
@@ -48,7 +52,7 @@ try {
         $php,
         "$root/app",
         $entry,
-        [...$env, ...$resolved, 'HOME' => $tmp],
+        $childEnv,
         $log,
     );
     $log(['arco' => 'console_ready', 'secrets' => count($resolved)]);

@@ -25,7 +25,7 @@ final class ConsoleRuntimeTest extends TestCase
     private const EXAMPLE = __DIR__ . '/../../examples/laravel';
     private const IMAGE = 'public.ecr.aws/lambda/provided:al2023';
     /** Every external tool runtime/bootstrap calls. */
-    private const BOOTSTRAP_TOOLS = ['curl', 'sha256sum', 'cut', 'mkdir', 'date', 'chmod', 'mv', 'rm', 'wc', 'tr'];
+    private const BOOTSTRAP_TOOLS = ['curl', 'sha256sum', 'cut', 'mkdir', 'date', 'chmod', 'mv', 'rm', 'wc', 'tr', 'sed'];
     private ?string $container = null;
     private ?RuntimeApiEmulator $api = null;
     private ?S3Emulator $s3 = null;
@@ -72,6 +72,10 @@ final class ConsoleRuntimeTest extends TestCase
         $zip->close();
         self::assertFileExists("$work/task/bootstrap");
         self::assertFileDoesNotExist("$work/task/bin/frankenphp");
+        // phpIni() as Packager writes it into arco-runtime.json (the example app sets none).
+        $runtimeConfig = json_decode((string) file_get_contents("$work/task/arco-runtime.json"), true, flags: JSON_THROW_ON_ERROR);
+        $runtimeConfig['phpIni'] = ['memory_limit' => '321M'];
+        file_put_contents("$work/task/arco-runtime.json", json_encode($runtimeConfig, JSON_UNESCAPED_SLASHES));
         // Test this checkout's arco-laravel, not the released one Composer installed.
         (new Filesystem())->mirror(__DIR__ . '/../../packages/arco-laravel/src', "$work/task/app/vendor/multiapi/arco-laravel/src", null, ['override' => true]);
 
@@ -132,6 +136,8 @@ final class ConsoleRuntimeTest extends TestCase
         [$second, $seconds] = $this->timed(fn () => $this->tinker('$x + 1', $first->context));
         self::assertSame('42', $second->presented);
         $this->note(sprintf('tinker statement 2 (warm): %.2F s', $seconds));
+        self::assertSame('"321M"', $this->tinker('ini_get("memory_limit")', null)->presented, 'phpIni() applies to the console function');
+        self::assertStringNotContainsString('ARCO-TINKER', $this->logs(), 'tinker replies stay out of the function log');
         foreach (['$x = 41;', '$x + 1'] as $code) {
             $audit = substr((string) json_encode(['arco' => 'tinker', 'code' => $code], JSON_UNESCAPED_SLASHES), 0, -1);
             self::assertStringContainsString($audit, $this->logs(), 'every statement is audited in the function log');

@@ -24,10 +24,10 @@ final class ConsoleLoopTest extends TestCase
         $fs->mirror(__DIR__ . '/../../../packages/arco/runtime/console', "$this->root/runtime/console");
         $fs->copy(__DIR__ . '/../../../packages/arco/runtime/console.php', "$this->root/runtime/console.php");
         $fs->copy(__DIR__ . '/../../../packages/arco/runtime/console-cli.php', "$this->root/runtime/console-cli.php");
-        $fs->dumpFile("$this->root/arco-runtime.json", '{"console":{"entry":"artisan"}}');
+        $fs->dumpFile("$this->root/arco-runtime.json", '{"phpIni":{"memory_limit":"321M"},"console":{"entry":"artisan"}}');
         $fs->dumpFile("$this->root/app/artisan", <<<'PHP'
             <?php
-            echo 'args:', json_encode(array_slice($argv, 1)), "\n", 'server-args:', json_encode(array_slice($_SERVER['argv'], 1)), "\n", 'greeting:', getenv('GREETING'), "\n", 'cwd:', getcwd(), "\n";
+            echo 'args:', json_encode(array_slice($argv, 1)), "\n", 'server-args:', json_encode(array_slice($_SERVER['argv'], 1)), "\n", 'greeting:', getenv('GREETING'), "\n", 'cwd:', getcwd(), "\n", 'ini:', getenv('PHP_INI_SCAN_DIR'), "\n";
             fwrite(STDERR, "to-stderr\n");
             if (($argv[1] ?? '') === 'arco:tinker') { echo "ARCO-TINKER:scope-with-a-secret\n"; }
             exit(in_array('--fail', $argv, true) ? 3 : 0);
@@ -79,6 +79,9 @@ final class ConsoleLoopTest extends TestCase
         self::assertSame(0, $ok['exitCode']);
         self::assertStringContainsString('args:["greet","--name=A B"]', $ok['output']);
         self::assertStringContainsString('greeting:hola', $ok['output']);
+        // phpIni() applies to commands through an .ini file in the child's scan dir (FrankenPHP: integration test).
+        self::assertStringContainsString("ini::$this->root/tmp/php\n", $ok['output']);
+        self::assertSame(['memory_limit' => '321M'], parse_ini_file("$this->root/tmp/php/99-arco.ini"));
         self::assertStringContainsString('to-stderr', $ok['output']);
         self::assertStringContainsString('cwd:' . realpath("$this->root/app"), $ok['output']);
         self::assertSame(3, $failed['exitCode']);

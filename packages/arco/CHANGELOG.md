@@ -6,7 +6,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 ## Unreleased
 
 - **Added:** every deploy also deploys a console function, `<app>-<env>-console`, with the same code,
-  variables, secrets and role as the web function. Its package leaves out FrankenPHP (Lambda allows
+  variables, secrets, `phpIni()` settings and role as the web function. Its package leaves out FrankenPHP (Lambda allows
   250 MB for classic functions): the binary is uploaded once to `runtime/<build>/frankenphp` in the code
   bucket and downloaded, checksum-verified, at the console function's cold start. The deploy keeps the
   live version and the 4 newest and prunes older ones. `arco remove` deletes it.
