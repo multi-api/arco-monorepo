@@ -13,6 +13,7 @@ use Multiapi\Arco\Config\Runtime;
 use Multiapi\Arco\Console\CommandResult;
 use Multiapi\Arco\Deploy\CommandPlan;
 use Multiapi\Arco\Deploy\ConsoleFunction;
+use Multiapi\Arco\Deploy\ConsoleRetriesNotDisabled;
 use Multiapi\Arco\Deploy\DeployCommandFailed;
 use Multiapi\Arco\Deploy\DeployException;
 use Multiapi\Arco\Deploy\DeployPipeline;
@@ -301,6 +302,24 @@ final class DeployPipelineTest extends TestCase
             'version' => '7',
             'error' => 'not authorized to perform: lambda:UpdateAlias',
         ], $steps['deploy.console_not_activated'] ?? null);
+    }
+
+    public function test_failing_retries_after_the_alias_moved_get_their_own_warning(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
+        $deployer->activateError = new ConsoleRetriesNotDisabled('not authorized to perform: lambda:PutFunctionEventInvokeConfig');
+        $steps = [];
+
+        $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertArrayNotHasKey('deploy.console_not_activated', $steps);
+        self::assertSame([
+            'function' => 'shop-production-console',
+            'version' => '7',
+            'error' => 'not authorized to perform: lambda:PutFunctionEventInvokeConfig',
+        ], $steps['deploy.console_retries_not_disabled'] ?? null);
+        self::assertSame(['prepare', 'release', 'live:7', 'prune'], $deployer->calls);
     }
 
     public function test_a_refused_prune_is_a_warning_on_a_successful_deploy(): void

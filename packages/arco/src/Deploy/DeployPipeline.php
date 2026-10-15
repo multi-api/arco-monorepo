@@ -143,6 +143,13 @@ final class DeployPipeline
             if ($verification->ok && $result->consoleVersion !== null) {
                 try {
                     $deployer->activateConsole($config, $result->consoleVersion);
+                } catch (ConsoleRetriesNotDisabled $e) {
+                    // The alias did move; only Lambda's async retries stay on.
+                    $onStep('deploy.console_retries_not_disabled', [
+                        'function' => $config->consoleFunctionName(),
+                        'version' => $result->consoleVersion,
+                        'error' => self::errorMessage($e),
+                    ]);
                 } catch (Throwable $e) {
                     // Traffic already serves the verified revision: a refused alias move (often a missing
                     // lambda:UpdateAlias during an IAM upgrade) is a warning, not a failed deploy.

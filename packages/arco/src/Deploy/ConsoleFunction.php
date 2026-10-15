@@ -145,6 +145,8 @@ final class ConsoleFunction
     /**
      * Points the live alias at $version and turns off Lambda's retries of asynchronous invocations
      * (`arco command --async`), so a command never runs twice.
+     *
+     * @throws ConsoleRetriesNotDisabled when only the retry setting failed, after the alias moved
      */
     public function point(string $name, string $version): void
     {
@@ -157,12 +159,17 @@ final class ConsoleFunction
             }
             $this->lambda->createAlias($alias);
         }
-        $this->lambda->putFunctionEventInvokeConfig([
-            'FunctionName' => $name,
-            'Qualifier' => self::ALIAS,
-            'MaximumRetryAttempts' => 0,
-            'MaximumEventAgeInSeconds' => 3600,
-        ]);
+        try {
+            $this->lambda->putFunctionEventInvokeConfig([
+                'FunctionName' => $name,
+                'Qualifier' => self::ALIAS,
+                'MaximumRetryAttempts' => 0,
+                'MaximumEventAgeInSeconds' => 3600,
+            ]);
+        } catch (LambdaException $e) {
+            // The alias already moved: told apart so the caller does not report it as unmoved.
+            throw new ConsoleRetriesNotDisabled($e->getAwsErrorMessage() ?: $e->getMessage(), 0, $e);
+        }
     }
 
     /**

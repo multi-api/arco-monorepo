@@ -8,6 +8,7 @@ use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Deploy\ConsoleFunction;
+use Multiapi\Arco\Deploy\ConsoleRetriesNotDisabled;
 use Multiapi\Arco\Deploy\DeployException;
 use PHPUnit\Framework\TestCase;
 
@@ -118,6 +119,28 @@ final class ConsoleFunctionTest extends TestCase
         self::assertSame(['FunctionName' => 'shop-production-console', 'Name' => 'live', 'FunctionVersion' => '7'], array_intersect_key($mocks->params[1], array_flip(['FunctionName', 'Name', 'FunctionVersion'])));
         self::assertSame('live', $mocks->params[2]['Qualifier']);
         self::assertSame(0, $mocks->params[2]['MaximumRetryAttempts'], 'a failed asynchronous command must never run again');
+    }
+
+    public function test_a_failed_retry_setting_after_the_alias_moved_is_told_apart(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result([]), AwsMocks::error(LambdaException::class, 'PutFunctionEventInvokeConfig', 'AccessDeniedException', 403));
+
+        try {
+            $this->console($mocks)->point('shop-production-console', '7');
+            self::fail('A refused retry setting must surface.');
+        } catch (ConsoleRetriesNotDisabled $e) {
+            self::assertSame(['UpdateAlias', 'PutFunctionEventInvokeConfig'], $mocks->calls);
+        }
+    }
+
+    public function test_a_failed_alias_move_is_not_reported_as_retries(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(AwsMocks::error(LambdaException::class, 'UpdateAlias', 'AccessDeniedException', 403));
+
+        $this->expectException(LambdaException::class);
+        $this->console($mocks)->point('shop-production-console', '7');
     }
 
     public function test_live_version_and_delete_tolerate_a_missing_function(): void
