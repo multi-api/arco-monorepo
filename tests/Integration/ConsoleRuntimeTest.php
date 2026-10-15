@@ -132,6 +132,10 @@ final class ConsoleRuntimeTest extends TestCase
         [$second, $seconds] = $this->timed(fn () => $this->tinker('$x + 1', $first->context));
         self::assertSame('42', $second->presented);
         $this->note(sprintf('tinker statement 2 (warm): %.2F s', $seconds));
+        foreach (['$x = 41;', '$x + 1'] as $code) {
+            $audit = substr((string) json_encode(['arco' => 'tinker', 'code' => $code], JSON_UNESCAPED_SLASHES), 0, -1);
+            self::assertStringContainsString($audit, $this->logs(), 'every statement is audited in the function log');
+        }
         self::assertCount(1, $this->s3->requests(), 'the binary is downloaded once per execution environment');
     }
 
