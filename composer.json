@@ -15,8 +15,10 @@
     },
     "require-dev": {
         "laravel/framework": "^11.0 || ^12.0 || ^13.0",
+        "laravel/tinker": "^2.10 || ^3.0",
         "phpstan/phpstan": "^2.1",
-        "phpunit/phpunit": "^11.5"
+        "phpunit/phpunit": "^11.5",
+        "psy/psysh": "^0.12"
     },
     "replace": {
         "multiapi/arco": "self.version",

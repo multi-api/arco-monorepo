@@ -7,6 +7,7 @@ use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Http\Request;
 use Illuminate\Support\ServiceProvider;
+use Multiapi\Arco\Laravel\Console\TinkerCommand;
 use Multiapi\Arco\Laravel\Http\ShareRequestId;
 
 final class ArcoServiceProvider extends ServiceProvider
@@ -35,6 +36,10 @@ final class ArcoServiceProvider extends ServiceProvider
     {
         if (($_SERVER['ARCO'] ?? getenv('ARCO')) !== '1') {
             return;
+        }
+        if ($this->app->runningInConsole()) {
+            // Hidden; used by `arco tinker` through the console function.
+            $this->commands([TinkerCommand::class]);
         }
         $kernel = $this->app->bound(Kernel::class) ? $this->app->make(Kernel::class) : null;
         if (is_object($kernel) && method_exists($kernel, 'prependMiddleware')) {

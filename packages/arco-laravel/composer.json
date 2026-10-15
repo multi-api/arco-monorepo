@@ -27,10 +27,12 @@
     "require": {
         "php": "^8.3",
         "illuminate/support": "^11.0 || ^12.0 || ^13.0",
-        "illuminate/http": "^11.0 || ^12.0 || ^13.0"
+        "illuminate/http": "^11.0 || ^12.0 || ^13.0",
+        "illuminate/console": "^11.0 || ^12.0 || ^13.0"
     },
     "suggest": {
-        "multiapi/arco": "The Arco CLI (install with --dev); it loads LaravelPreset when building and deploying"
+        "multiapi/arco": "The Arco CLI (install with --dev); it loads LaravelPreset when building and deploying",
+        "laravel/tinker": "Required by arco tinker (installed by default in Laravel apps)"
     },
     "autoload": {
         "psr-4": {
