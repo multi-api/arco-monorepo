@@ -21,7 +21,7 @@ final class RevisionFactoryTest extends TestCase
 
         $revision = RevisionFactory::revision($config, 'bucket', 'shop/production/h.zip', 'v1', 'arn:role', ['A' => 'b']);
         self::assertSame([
-            'description' => 'Deployed by Arco',
+            'description' => 'Deployed by Arco ' . \Multiapi\Arco\Arco::version(),
             'kmsKeyArn' => 'arn:kms',
             'buildConfig' => [
                 'codeConfig' => ['s3Object' => ['bucket' => 'bucket', 'key' => 'shop/production/h.zip', 'versionId' => 'v1']],
@@ -30,9 +30,9 @@ final class RevisionFactoryTest extends TestCase
             'serviceConfig' => [
                 'executionRoleArn' => 'arn:role',
                 'timeoutSeconds' => 60,
-                'maxConcurrencyPerEnvironment' => 16,
                 'environmentVariables' => ['A' => 'b'],
                 'telemetryConfig' => ['loggingConfig' => ['applicationLogLevel' => 'DEBUG', 'systemLogLevel' => 'INFO']],
+                'maxConcurrencyPerEnvironment' => 16,
             ],
         ], $revision);
 
@@ -53,5 +53,14 @@ final class RevisionFactoryTest extends TestCase
         $revision = RevisionFactory::revision($config, 'bucket', 'k.zip', null, 'arn:role', ['A' => 'b', 'EMPTY' => '']);
 
         self::assertSame(['A' => 'b'], $revision['serviceConfig']['environmentVariables']);
+    }
+
+    public function test_concurrency_is_sent_only_when_set(): void
+    {
+        $default = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+        self::assertArrayNotHasKey('maxConcurrencyPerEnvironment', RevisionFactory::revision($default, 'b', 'k.zip', null, 'arn:role', [])['serviceConfig']);
+
+        $set = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->concurrency(16)->environment('production')->toArray(), 'production');
+        self::assertSame(16, RevisionFactory::revision($set, 'b', 'k.zip', null, 'arn:role', [])['serviceConfig']['maxConcurrencyPerEnvironment']);
     }
 }

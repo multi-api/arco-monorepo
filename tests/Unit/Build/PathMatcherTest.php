@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Tests\Unit\Build;
 
+use Multiapi\Arco\Build\Builder;
 use Multiapi\Arco\Build\PathMatcher;
 use PHPUnit\Framework\TestCase;
 
@@ -32,5 +33,19 @@ final class PathMatcherTest extends TestCase
         self::assertFalse($m->excludes('storage/app', true));
         self::assertFalse($m->excludes('storage/app/keys/oauth.key', false));
         self::assertTrue($m->excludes('storage/logs', true));
+    }
+
+    public function test_editor_and_ai_assistant_files_are_never_packaged(): void
+    {
+        $m = new PathMatcher(Builder::ALWAYS_EXCLUDED, []);
+
+        foreach (['.idea', '.vscode', '.claude', '.ai', '.junie', '.cursor', '.windsurf', '.gemini', '.codex'] as $dir) {
+            self::assertTrue($m->excludes($dir, true), $dir);
+        }
+        foreach (['.mcp.json', '.aider.conf.yml', '.aider.chat.history.md', 'app/.DS_Store'] as $file) {
+            self::assertTrue($m->excludes($file, false), $file);
+        }
+        self::assertFalse($m->excludes('app/Ai/Agent.php', false));
+        self::assertFalse($m->excludes('config/mcp.php', false));
     }
 }

@@ -144,11 +144,11 @@ final class ConfigResolverTest extends TestCase
         self::assertSame('app', $production->sources['maxInstances']);
     }
 
-    public function test_default_concurrency_is_16(): void
+    public function test_concurrency_is_left_to_aws_by_default(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
 
-        self::assertSame(16, $config->concurrency);
+        self::assertNull($config->concurrency);
         self::assertSame('default', $config->sources['concurrency']);
     }
 }
