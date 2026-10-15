@@ -251,4 +251,13 @@ return [
     'command.started' => 'Se inició "{command}" en {function}. Síguelo con: arco logs --env={environment} --source=console --follow',
     'command.crashed' => 'El comando no terminó: {type} ({message}). Últimas líneas del log:',
     'console.not_deployed' => 'La función de consola {function} aún no existe. Ejecuta primero "arco deploy --env={environment}": cada despliegue la crea y la actualiza.',
+    'tinker.laravel_only' => 'arco tinker necesita una app Laravel (ejecuta el comando arco:tinker de multiapi/arco-laravel). En otras apps usa arco command.',
+    'tinker.psysh_missing' => 'arco tinker ejecuta PsySH en tu máquina, pero psy/psysh no está instalado. Ejecuta: composer require laravel/tinker',
+    'tinker.force_required' => 'El entorno {environment} (cuenta {account}) está protegido. Vuelve a ejecutar con --force para abrir tinker en modo no interactivo.',
+    'tinker.confirm_protected' => '¿Abrir tinker en {environment} (cuenta {account}, función {function})? Las sentencias se ejecutan sobre sus datos reales.',
+    'tinker.connected' => 'Las sentencias se ejecutan en {function} ({environment}), una invocación de Lambda cada una; las transacciones no abarcan varias sentencias. Escribe exit para salir.',
+    'tinker.dropped' => 'No se conservan para la siguiente sentencia (no se pueden serializar, o son demasiado grandes para devolverlas): {variables}',
+    'tinker.no_reply' => 'La función de consola no respondió como arco:tinker. Si la salida anterior no es un error de tu sentencia o de sus variables, revisa que multiapi/arco-laravel esté en "require" de la app (no en require-dev) y que la app se haya desplegado después de instalarlo.',
+    'tinker.remote_tinker_missing' => 'Agrega laravel/tinker a "require" en el composer.json de la app y vuelve a desplegar.',
+    'tinker.no_reply_exit' => 'arco:tinker no dio respuesta (código de salida {code}).',
 ];

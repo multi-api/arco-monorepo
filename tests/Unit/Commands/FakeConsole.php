@@ -6,6 +6,7 @@ use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Console\CommandResult;
 use Multiapi\Arco\Console\Console;
 use Multiapi\Arco\Deploy\ConsoleFunction;
+use Multiapi\Arco\Tinker\TinkerSession;
 
 final class FakeConsole implements Console
 {
@@ -18,6 +19,13 @@ final class FakeConsole implements Console
      */
     public function __construct(private array $results = [], private readonly ?\Closure $onCall = null)
     {
+    }
+
+    /** A console answer as arco:tinker prints it. @param array<string, mixed> $reply */
+    public static function tinkerReply(array $reply, int $exitCode = 0, string $before = ''): CommandResult
+    {
+        $reply += ['output' => '', 'presented' => null, 'context' => null, 'dropped' => [], 'exception' => null];
+        return new CommandResult($exitCode, $before . TinkerSession::MARKER . base64_encode((string) json_encode($reply)) . "\n");
     }
 
     public function run(AppConfig $config, string $command, ?int $timeout = null, string $qualifier = ConsoleFunction::ALIAS): CommandResult

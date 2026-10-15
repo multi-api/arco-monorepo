@@ -251,4 +251,13 @@ return [
     'command.started' => 'Started "{command}" on {function}. Follow it with: arco logs --env={environment} --source=console --follow',
     'command.crashed' => 'The command did not finish: {type} ({message}). Last log lines:',
     'console.not_deployed' => 'The console function {function} does not exist yet. Run "arco deploy --env={environment}" first: every deploy creates and updates it.',
+    'tinker.laravel_only' => 'arco tinker needs a Laravel app (it runs the arco:tinker command of multiapi/arco-laravel). Use arco command for other apps.',
+    'tinker.psysh_missing' => 'arco tinker runs PsySH on your machine, but psy/psysh is not installed. Run: composer require laravel/tinker',
+    'tinker.force_required' => 'Environment {environment} (account {account}) is protected. Re-run with --force to open tinker in non-interactive mode.',
+    'tinker.confirm_protected' => 'Open tinker on {environment} (account {account}, function {function})? Statements run against its real data.',
+    'tinker.connected' => 'Statements run on {function} ({environment}), one Lambda invocation each; transactions do not span statements. Type exit to leave.',
+    'tinker.dropped' => 'Not kept for the next statement (cannot be serialized, or too large to send back): {variables}',
+    'tinker.no_reply' => 'The console function did not answer as arco:tinker. If the output above is not an error from your statement or its variables, check that multiapi/arco-laravel is in the app\'s "require" (not require-dev) and that the app was deployed after installing it.',
+    'tinker.remote_tinker_missing' => 'Add laravel/tinker to the app\'s "require" in composer.json and deploy again.',
+    'tinker.no_reply_exit' => 'arco:tinker gave no answer (exit code {code}).',
 ];
