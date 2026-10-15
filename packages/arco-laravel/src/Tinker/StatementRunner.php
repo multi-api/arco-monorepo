@@ -5,6 +5,7 @@ namespace Multiapi\Arco\Laravel\Tinker;
 use Laravel\Tinker\ClassAliasAutoloader;
 use Psy\CodeCleaner\NoReturnValue;
 use Psy\Configuration;
+use Psy\Readline\Transient;
 use Psy\Shell;
 use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Formatter\OutputFormatterStyle;
@@ -39,6 +40,8 @@ final class StatementRunner
     public function run(string $code, ?string $context): array
     {
         $config = new Configuration(['usePcntl' => false, 'useReadline' => false, 'updateCheck' => 'never', 'rawOutput' => true]);
+        // No line is ever read: the userland readline would probe the terminal (stty < /dev/tty) at boot.
+        $config->setReadline(new Transient());
         $shell = new Shell($config);
         // PsySH routes what the code prints (and warnings) to the shell output, not to PHP's output.
         $captured = self::capturedOutput();

@@ -35,6 +35,22 @@ final class TinkerCommandTest extends TestCase
         return $reply;
     }
 
+    public function test_a_statement_never_probes_the_terminal(): void
+    {
+        // PsySH's userland readline runs `stty ... < /dev/tty` when stdin is a character device (/dev/null
+        // under CI or an IDE): without a terminal, sh prints "/dev/tty: Device not configured".
+        $script = sprintf('require %s; (new %s())->run("1 + 1", null);', var_export(__DIR__ . '/../../../vendor/autoload.php', true), StatementRunner::class);
+        $process = proc_open([PHP_BINARY, '-r', $script], [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        self::assertIsResource($process);
+        $stdout = stream_get_contents($pipes[1]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+
+        self::assertSame(0, proc_close($process), $stdout . $stderr);
+        self::assertSame('', $stderr);
+    }
+
     public function test_variables_persist_through_the_serialized_context(): void
     {
         $first = $this->runStatement('$answer = 40 + 2');
