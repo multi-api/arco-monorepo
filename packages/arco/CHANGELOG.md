@@ -9,7 +9,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   variables, secrets, `phpIni()` settings and role as the web function. Its package leaves out FrankenPHP (Lambda allows
   250 MB for classic functions): the binary is uploaded once to `runtime/<build>/frankenphp` in the code
   bucket and downloaded, checksum-verified, at the console function's cold start. The deploy keeps the
-  live version and the 4 newest and prunes older ones. `arco remove` deletes it.
+  live version and the 4 newest and prunes older ones. If AWS refuses to move its `live` alias after a
+  verified deploy, the deploy still succeeds with a warning. `arco remove` deletes it.
 - **Added:** `arco command "<args>"` runs an artisan (or PHP) command there and exits with its exit code;
   `--async` starts it without waiting, `--timeout` lowers the limit.
 - **Added:** `deployCommands([...])`, `arco deploy --migrate` and `--no-deploy-commands`: commands run
@@ -19,7 +20,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   Laravel apps with a server database.
 - **Added:** `arco tinker`: PsySH on your machine, statements run on the console function, variables kept
   between statements; confirmation on `production` and `->protected()` environments (`--force` skips it);
-  every statement is logged. Needs `laravel/tinker` in the app's `require`.
+  every statement is logged (its result is not). Needs `laravel/tinker` in the app's `require`.
 - **Added:** `arco logs`: web and console logs merged and colored, with `--follow` (CloudWatch Live
   Tail, polling as fallback), `--since`/`--until`, `--level`, `--request`, `--filter`, `--source`,
   `--platform`, `--json`.
