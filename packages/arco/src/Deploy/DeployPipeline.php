@@ -9,8 +9,10 @@ use Multiapi\Arco\Build\CachesPaths;
 use Multiapi\Arco\Build\FrameworkPreset;
 use Multiapi\Arco\Build\ProcessCommandRunner;
 use Multiapi\Arco\Config\AppConfig;
+use Multiapi\Arco\Package\ConsolePackager;
 use Multiapi\Arco\Package\Package;
 use Multiapi\Arco\Package\Packager;
+use Symfony\Component\Filesystem\Filesystem;
 use Throwable;
 
 final class DeployPipeline
@@ -85,45 +87,66 @@ final class DeployPipeline
     }
 
     /**
-     * Deploys a package that is already built (by deploy() or by `arco package`): upload, revision,
-     * traffic, verification with rollback, then custom domains. Variables come from $config.
+     * Deploys a package that is already built (by deploy() or by `arco package`): upload, revision and
+     * console version, traffic, verification with rollback, then custom domains. Variables come from $config.
      *
      * @param callable(string, array<string, string|int>): void $onStep
      */
     public function deployPackage(AppConfig $config, FrameworkPreset $preset, Package $package, Deployer $deployer, Verifier $verifier, callable $onStep): DeployOutcome
     {
         $variables = self::variables($config, $preset);
-        $since = (int) floor(microtime(true) * 1000) - 5000;
-        $result = $deployer->deploy($config, $package, $variables, $onStep);
+        // The console zip and the binary are derived from the web zip in a scratch directory.
+        $work = sys_get_temp_dir() . '/arco-console-' . bin2hex(random_bytes(4));
         try {
-            $onStep('deploy.verifying', ['path' => $preset->healthPath()]);
-            $verification = $verifier->verify($config, $result, $preset->healthPath(), $since, $onStep);
-        } catch (Throwable $e) {
-            // Traffic already moved to an unverified revision: put it back before failing.
-            if ($result->previousRevisionId !== null) {
+            $console = ConsolePackager::fromWeb($package, $work);
+            if ($console->package->bytes > ConsoleFunction::MAX_UNZIPPED_BYTES) {
+                $onStep('deploy.console_skipped_size', [
+                    'size' => (int) round($console->package->bytes / 1048576),
+                    'max' => (int) round(ConsoleFunction::MAX_UNZIPPED_BYTES / 1048576),
+                ]);
+                $console = null;
+            }
+
+            $since = (int) floor(microtime(true) * 1000) - 5000;
+            $prepared = $deployer->prepare($config, $package, $console, $variables, $onStep);
+            $result = $deployer->release($config, $prepared, $onStep);
+            try {
+                $onStep('deploy.verifying', ['path' => $preset->healthPath()]);
+                $verification = $verifier->verify($config, $result, $preset->healthPath(), $since, $onStep);
+            } catch (Throwable $e) {
+                // Traffic already moved to an unverified revision: put it back before failing. The
+                // console's live alias has not moved yet, so it needs no rollback.
+                if ($result->previousRevisionId !== null) {
+                    $onStep('deploy.rolling_back', ['revision' => $result->previousRevisionId]);
+                    $deployer->rollback($config, $result->previousRevisionId);
+                }
+                throw $e;
+            }
+
+            $rolledBack = false;
+            if (! $verification->ok && $result->previousRevisionId !== null) {
                 $onStep('deploy.rolling_back', ['revision' => $result->previousRevisionId]);
                 $deployer->rollback($config, $result->previousRevisionId);
+                $rolledBack = true;
             }
-            throw $e;
-        }
-
-        $rolledBack = false;
-        if (! $verification->ok && $result->previousRevisionId !== null) {
-            $onStep('deploy.rolling_back', ['revision' => $result->previousRevisionId]);
-            $deployer->rollback($config, $result->previousRevisionId);
-            $rolledBack = true;
-        }
-        // Custom domains only once the endpoint is known to work; the origin is the endpoint domain.
-        if ($verification->ok && $config->domains !== []) {
-            $result = $deployer->attachDomains($config, $result, $preset instanceof CachesPaths ? $preset->cachedPaths() : [], $onStep);
-        }
-        if ($verification->ok) {
-            try {
-                $verification = $verifier->coldStart($config, $result, $since, $verification, $onStep);
-            } catch (Throwable) {
-                // The deploy is done and verified; a missing cold start is only shown as unknown.
+            // `arco command` and tinker follow the live alias: it moves only to a version whose web revision works.
+            if ($verification->ok && $result->consoleVersion !== null) {
+                $deployer->activateConsole($config, $result->consoleVersion);
             }
+            // Custom domains only once the endpoint is known to work; the origin is the endpoint domain.
+            if ($verification->ok && $config->domains !== []) {
+                $result = $deployer->attachDomains($config, $result, $preset instanceof CachesPaths ? $preset->cachedPaths() : [], $onStep);
+            }
+            if ($verification->ok) {
+                try {
+                    $verification = $verifier->coldStart($config, $result, $since, $verification, $onStep);
+                } catch (Throwable) {
+                    // The deploy is done and verified; a missing cold start is only shown as unknown.
+                }
+            }
+            return new DeployOutcome($result, $verification, $rolledBack, $package->bytes);
+        } finally {
+            (new Filesystem())->remove($work);
         }
-        return new DeployOutcome($result, $verification, $rolledBack, $package->bytes);
     }
 }

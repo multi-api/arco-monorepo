@@ -65,6 +65,8 @@ final class InfoCommand extends ArcoCommand
                 'revision' => $status?->activeRevisionId,
                 'domains' => $config->domains,
                 'distribution' => $status?->distributionDomain !== null ? ['domain' => $status->distributionDomain, 'status' => $status->distributionStatus] : null,
+                'console' => ['function' => $config->consoleFunctionName(), 'version' => $status?->consoleVersion],
+                'deployCommands' => $config->deployCommands,
                 'settings' => array_map(fn (array $row) => $row[0], $settings),
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             return self::SUCCESS;
@@ -73,7 +75,7 @@ final class InfoCommand extends ArcoCommand
         $io->title($config->functionName());
         $io->table(
             [$this->t('info.setting'), $this->t('info.value'), $this->t('info.source')],
-            array_map(fn (string $key, array $row) => [$key, self::display($row[0]), $row[1]], array_keys($settings), $settings),
+            array_map(fn (string $key, array $row) => [$key, $this->display($row[0]), $row[1]], array_keys($settings), $settings),
         );
 
         $io->section($this->t('info.variables'));
@@ -90,6 +92,9 @@ final class InfoCommand extends ArcoCommand
                 ['URL' => $status->domainName !== null ? 'https://' . $status->domainName : '-'],
                 [$this->t('info.state') => $status->state],
                 [$this->t('info.revision') => $status->activeRevisionId ?? '-'],
+                [$this->t('info.console') => $status->consoleVersion !== null
+                    ? $this->t('info.console_version', ['function' => (string) $status->consoleFunction, 'version' => $status->consoleVersion])
+                    : $this->t('info.console_missing')],
                 ...($status->distributionDomain !== null ? [[$this->t('info.distribution') => "{$status->distributionDomain} ({$status->distributionStatus})"]] : []),
             );
         }
@@ -149,6 +154,9 @@ final class InfoCommand extends ArcoCommand
             'rateLimit' => [$config->rateLimit, $s['rateLimit']],
             'auth' => [$config->auth, $s['auth']],
             'logLevel' => [$config->logLevel, $s['logLevel']],
+            'consoleTimeout' => [$config->consoleTimeout, $s['consoleTimeout']],
+            'protected' => [$config->isProtected(), $s['protected']],
+            'deployCommands' => [$config->deployCommands === [] ? null : implode('; ', $config->deployCommands), $s['deployCommands']],
             'permissions' => [count($config->permissions), $config->permissions === [] ? 'default' : 'app/environment'],
             'domains' => [$config->domains === [] ? null : implode(', ', $config->domains), $s['domains']],
             'dns' => [$config->domains === [] ? null : $this->dnsLabel($config), $s['dns']],
@@ -170,8 +178,12 @@ final class InfoCommand extends ArcoCommand
         };
     }
 
-    private static function display(mixed $value): string
+    private function display(mixed $value): string
     {
-        return is_scalar($value) ? (string) $value : '-';
+        return match (true) {
+            is_bool($value) => $this->t($value ? 'common.yes' : 'common.no'),
+            is_scalar($value) => (string) $value,
+            default => '-',
+        };
     }
 }

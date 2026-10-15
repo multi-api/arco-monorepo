@@ -85,6 +85,7 @@ final class ConsoleFunctionTest extends TestCase
         self::assertArrayNotHasKey('S3ObjectVersion', $mocks->params[2]);
         self::assertSame(600, $mocks->params[5]['Timeout']);
         self::assertArrayNotHasKey('Tags', $mocks->params[5]);
+        self::assertSame('arn:aws:kms:us-east-1:1:key/k', $mocks->params[5]['KMSKeyArn']);
     }
 
     public function test_a_failed_update_stops_the_deploy_with_the_reason(): void

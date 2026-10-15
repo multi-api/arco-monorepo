@@ -72,7 +72,8 @@ final class ConsoleFunction
             $this->wait($name);
             $this->lambda->updateFunctionCode(['FunctionName' => $name, ...$code]);
             $this->wait($name);
-            LambdaHelpers::retryRolePropagation($this->sleeper, $roleJustCreated, self::ROLE_ERRORS, fn () => $this->execute('UpdateFunctionConfiguration', ['FunctionName' => $name, ...$settings]));
+            // An empty KMSKeyArn puts back the AWS managed key when kmsKey() was removed from arco.php.
+            LambdaHelpers::retryRolePropagation($this->sleeper, $roleJustCreated, self::ROLE_ERRORS, fn () => $this->execute('UpdateFunctionConfiguration', ['FunctionName' => $name, ...$settings + ['KMSKeyArn' => '']]));
         }
         $this->wait($name);
 
@@ -162,6 +163,43 @@ final class ConsoleFunction
             'MaximumRetryAttempts' => 0,
             'MaximumEventAgeInSeconds' => 3600,
         ]);
+    }
+
+    /**
+     * Deletes published versions except the $keep newest and $protected (the live alias target and the
+     * version just published), so Lambda code storage does not grow with every deploy. $LATEST stays.
+     *
+     * @param list<string> $protected
+     * @return list<string> the deleted versions
+     */
+    public function pruneVersions(string $name, int $keep, array $protected): array
+    {
+        $versions = [];
+        $marker = null;
+        do {
+            $page = $this->lambda->listVersionsByFunction(['FunctionName' => $name, ...($marker !== null ? ['Marker' => $marker] : [])]);
+            $listed = $page['Versions'] ?? [];
+            foreach (is_array($listed) ? $listed : [] as $version) {
+                $number = is_array($version) ? ($version['Version'] ?? null) : null;
+                if (is_string($number) && ctype_digit($number)) {
+                    $versions[] = (int) $number;
+                }
+            }
+            $marker = is_string($page['NextMarker'] ?? null) && $page['NextMarker'] !== '' ? $page['NextMarker'] : null;
+        } while ($marker !== null);
+
+        rsort($versions);
+        $deleted = [];
+        foreach (array_slice($versions, $keep) as $number) {
+            if (! in_array((string) $number, $protected, true)) {
+                $deleted[] = (string) $number;
+            }
+        }
+        sort($deleted, SORT_NUMERIC);
+        foreach ($deleted as $version) {
+            $this->lambda->deleteFunction(['FunctionName' => $name, 'Qualifier' => $version]);
+        }
+        return $deleted;
     }
 
     public function delete(string $name): void

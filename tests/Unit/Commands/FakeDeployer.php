@@ -6,6 +6,8 @@ use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\AppStatus;
 use Multiapi\Arco\Deploy\Deployer;
 use Multiapi\Arco\Deploy\DeployResult;
+use Multiapi\Arco\Deploy\PreparedDeploy;
+use Multiapi\Arco\Package\ConsoleArtifacts;
 use Multiapi\Arco\Package\Package;
 
 final class FakeDeployer implements Deployer
@@ -15,21 +17,45 @@ final class FakeDeployer implements Deployer
     /** @var array<string, string> */
     public array $variables = [];
     public ?Package $package = null;
+    public ?ConsoleArtifacts $console = null;
 
-    public function __construct(public ?string $previousRevision = null, public ?AppStatus $status = null, public bool $domainResources = false)
-    {
+    public function __construct(
+        public ?string $previousRevision = null,
+        public ?AppStatus $status = null,
+        public bool $domainResources = false,
+        public ?string $consoleVersion = null,
+        public ?string $previousConsoleVersion = null,
+    ) {
     }
 
-    public function deploy(AppConfig $config, Package $package, array $variables, ?callable $onStep = null): DeployResult
+    public function prepare(AppConfig $config, Package $package, ?ConsoleArtifacts $console, array $variables, ?callable $onStep = null): PreparedDeploy
     {
-        $this->calls[] = 'deploy';
+        $this->calls[] = 'prepare';
         $this->variables = $variables;
         $this->package = $package;
-        self::assertZip($package->path);
-        return new DeployResult('abc.on.aws', 'rev-2', $this->previousRevision, 'bucket', 'key');
+        $this->console = $console;
+        if (! is_file($package->path)) {
+            throw new \LogicException("Package $package->path does not exist during deploy");
+        }
+        return new PreparedDeploy('rev-2', $this->previousRevision, 'bucket', 'key', $this->consoleVersion, $this->previousConsoleVersion);
     }
 
-    public function rollback(AppConfig $config, string $revisionId): void { $this->calls[] = "rollback:$revisionId"; }
+    public function release(AppConfig $config, PreparedDeploy $prepared, ?callable $onStep = null): DeployResult
+    {
+        $this->calls[] = 'release';
+        return new DeployResult('abc.on.aws', $prepared->revisionId, $prepared->previousRevisionId, $prepared->bucket, $prepared->key, [], $prepared->consoleVersion, $prepared->previousConsoleVersion);
+    }
+
+    public function activateConsole(AppConfig $config, string $version): void
+    {
+        $this->calls[] = "live:$version";
+    }
+
+    public function rollback(AppConfig $config, string $revisionId, ?string $consoleVersion = null): void
+    {
+        $this->calls[] = "rollback:$revisionId" . ($consoleVersion === null ? '' : ":console=$consoleVersion");
+    }
+
     public function attachDomains(AppConfig $config, DeployResult $result, array $cachedPaths, ?callable $onStep = null): DeployResult
     {
         $this->calls[] = 'domains:' . implode(',', $cachedPaths);
@@ -39,11 +65,4 @@ final class FakeDeployer implements Deployer
     public function hasDomainResources(AppConfig $config): bool { return $this->domainResources; }
     public function remove(AppConfig $config, ?callable $onStep = null): void { $this->calls[] = 'remove'; }
     public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->status; }
-
-    private static function assertZip(string $path): void
-    {
-        if (! is_file($path)) {
-            throw new \LogicException("Package $path does not exist during deploy");
-        }
-    }
 }

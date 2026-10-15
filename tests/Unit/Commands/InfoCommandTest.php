@@ -64,4 +64,28 @@ final class InfoCommandTest extends TestCase
         self::assertNull($json['distribution']);
         $project->restore();
     }
+
+    public function test_shows_console_settings_deploy_commands_and_the_live_version(): void
+    {
+        $config = str_replace("->timeout(60)", "->timeout(60)->consoleTimeout(300)->deployCommands(['migrate --force'])", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        putenv('AWS_PROFILE=p');
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', null, null, 'shop-production-console', '7');
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $status)));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        $display = $tester->getDisplay();
+        self::assertMatchesRegularExpression('/consoleTimeout\s+300\s+environment/', $display);
+        self::assertMatchesRegularExpression('/deployCommands\s+migrate --force\s+environment/', $display);
+        self::assertMatchesRegularExpression('/protected\s+yes\s+default/', $display, 'yes/no come from the translator (en here)');
+        self::assertStringContainsString('shop-production-console (version 7)', $display);
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame(['function' => 'shop-production-console', 'version' => '7'], $json['console']);
+        self::assertSame(['migrate --force'], $json['deployCommands']);
+        self::assertTrue($json['settings']['protected']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
 }

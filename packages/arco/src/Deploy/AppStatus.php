@@ -11,6 +11,9 @@ final readonly class AppStatus
         public ?string $activeRevisionId,
         public ?string $distributionDomain = null,
         public ?string $distributionStatus = null,
+        public ?string $consoleFunction = null,
+        /** version the console's live alias points to; null when not deployed or unreadable */
+        public ?string $consoleVersion = null,
     ) {
     }
 }

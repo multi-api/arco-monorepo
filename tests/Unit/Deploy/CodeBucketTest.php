@@ -78,6 +78,25 @@ final class CodeBucketTest extends TestCase
         self::assertSame([['Key' => 'p/c.zip'], ['Key' => 'p/a.zip']], $mocks->params[1]['Delete']['Objects']);
     }
 
+    public function test_prune_can_leave_a_sub_prefix_to_its_own_prune(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Contents' => [
+                ['Key' => 'p/console-new.zip', 'LastModified' => new \DateTimeImmutable('2026-01-05')],
+                ['Key' => 'p/b.zip', 'LastModified' => new \DateTimeImmutable('2026-01-03')],
+                ['Key' => 'p/console-old.zip', 'LastModified' => new \DateTimeImmutable('2026-01-02')],
+                ['Key' => 'p/a.zip', 'LastModified' => new \DateTimeImmutable('2026-01-01')],
+            ]]),
+            new Result([]),
+        );
+
+        $deleted = (new CodeBucket($mocks->clients()->s3()))->prune('b', 'p/', 1, [], 'p/console-');
+
+        self::assertSame(1, $deleted, 'console zips neither count towards the web zips kept nor get deleted');
+        self::assertSame([['Key' => 'p/a.zip']], $mocks->params[1]['Delete']['Objects']);
+    }
+
     public function test_a_runtime_binary_is_uploaded_once(): void
     {
         $file = (string) tempnam(sys_get_temp_dir(), 'bin');

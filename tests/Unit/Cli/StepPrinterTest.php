@@ -92,4 +92,16 @@ final class StepPrinterTest extends TestCase
 
         self::assertSame("  • package.writing\n  • package.ready {\"size\":1}\n", $output->fetch());
     }
+
+    public function test_warning_steps_are_printed_as_warnings(): void
+    {
+        $output = new BufferedOutput();
+        $printer = $this->printer($output, false);
+
+        $printer('deploy.console_skipped_size', ['size' => 300, 'max' => 250]);
+
+        $text = $output->fetch();
+        self::assertStringContainsString('[WARNING] deploy.console_skipped_size {"size":300,"max":250}', $text);
+        self::assertStringNotContainsString('•', $text);
+    }
 }

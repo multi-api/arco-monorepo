@@ -62,7 +62,7 @@ final class DeployPipelineTest extends TestCase
 
         self::assertTrue($outcome->verification->ok);
         self::assertFalse($outcome->rolledBack);
-        self::assertSame(['deploy'], $deployer->calls);
+        self::assertSame(['prepare', 'release'], $deployer->calls);
         self::assertSame([
             'LOG_CHANNEL' => 'syslog',
             'SESSION_DRIVER' => 'cookie',
@@ -82,7 +82,7 @@ final class DeployPipelineTest extends TestCase
         $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(false), fn () => null);
 
         self::assertTrue($outcome->rolledBack);
-        self::assertSame(['deploy', 'rollback:rev-1'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'rollback:rev-1'], $deployer->calls);
     }
 
     public function test_verifier_exception_rolls_back_then_rethrows(): void
@@ -106,7 +106,7 @@ final class DeployPipelineTest extends TestCase
         } catch (\RuntimeException $e) {
             self::assertSame('CloudWatch Logs throttled', $e->getMessage());
         }
-        self::assertSame(['deploy', 'rollback:rev-1'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'rollback:rev-1'], $deployer->calls);
     }
 
     public function test_failed_first_deploy_has_nothing_to_roll_back(): void
@@ -116,7 +116,7 @@ final class DeployPipelineTest extends TestCase
         $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(false), fn () => null);
 
         self::assertFalse($outcome->rolledBack);
-        self::assertSame(['deploy'], $deployer->calls);
+        self::assertSame(['prepare', 'release'], $deployer->calls);
     }
 
     public function test_domains_are_attached_after_a_verified_deploy_with_the_presets_cached_paths(): void
@@ -128,7 +128,7 @@ final class DeployPipelineTest extends TestCase
 
         $outcome = $this->pipeline()->deploy($this->config(domains: true), $preset, $this->project, $deployer, new FakeVerifier(true), fn () => null);
 
-        self::assertSame(['deploy', 'domains:/build/*'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'domains:/build/*'], $deployer->calls);
         self::assertSame(['shop.example.com'], $outcome->result->domains);
     }
 
@@ -138,7 +138,7 @@ final class DeployPipelineTest extends TestCase
 
         $this->pipeline()->deploy($this->config(domains: true), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(false), fn () => null);
 
-        self::assertSame(['deploy', 'rollback:rev-1'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'rollback:rev-1'], $deployer->calls);
     }
 
     public function test_a_prebuilt_package_is_deployed_without_building(): void
@@ -155,7 +155,7 @@ final class DeployPipelineTest extends TestCase
         $outcome = $this->pipeline()->deployPackage($this->config(domains: true), new PlainPhpPreset(), $package, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
 
         self::assertTrue($outcome->verification->ok);
-        self::assertSame(['deploy', 'domains:'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'domains:'], $deployer->calls);
         self::assertSame($zip, $deployer->package?->path);
         self::assertSame($built->hash, $deployer->package->hash);
         self::assertSame('production', $deployer->variables['ARCO_ENV']);
@@ -173,7 +173,7 @@ final class DeployPipelineTest extends TestCase
 
         $outcome = $this->pipeline()->deploy($this->config(domains: true), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
 
-        self::assertSame(['deploy', 'domains:', 'coldStart'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'domains:', 'coldStart'], $deployer->calls);
         self::assertSame(950, $outcome->verification->initDurationMs);
         self::assertTrue($outcome->verification->ok);
     }
@@ -187,7 +187,7 @@ final class DeployPipelineTest extends TestCase
 
         self::assertTrue($outcome->verification->ok);
         self::assertNull($outcome->verification->initDurationMs);
-        self::assertSame(['deploy'], $deployer->calls);
+        self::assertSame(['prepare', 'release'], $deployer->calls);
     }
 
     public function test_a_failed_verification_skips_the_cold_start_lookup(): void
@@ -197,5 +197,71 @@ final class DeployPipelineTest extends TestCase
         $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, new FakeDeployer('rev-1'), $verifier, fn () => null);
 
         self::assertSame([], $verifier->calls);
+    }
+
+    public function test_the_console_live_alias_moves_only_after_a_verified_deploy(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
+        $verifier = new FakeVerifier(true, 950, function () use ($deployer): void { $deployer->calls[] = 'coldStart'; });
+
+        $this->pipeline()->deploy($this->config(domains: true), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
+
+        self::assertSame(['prepare', 'release', 'live:7', 'domains:', 'coldStart'], $deployer->calls);
+    }
+
+    public function test_a_rollback_leaves_the_console_live_alias_where_it_was(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
+
+        $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(false), fn () => null);
+
+        self::assertTrue($outcome->rolledBack);
+        self::assertSame(['prepare', 'release', 'rollback:rev-1'], $deployer->calls, 'live never moved, so nothing to restore');
+    }
+
+    public function test_a_failed_first_deploy_never_points_the_console_live_alias(): void
+    {
+        $deployer = new FakeDeployer(null, consoleVersion: '1');
+
+        $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(false), fn () => null);
+
+        self::assertSame(['prepare', 'release'], $deployer->calls);
+    }
+
+    public function test_the_console_gets_a_zip_without_the_binary(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $before = glob(sys_get_temp_dir() . '/arco-console-*') ?: [];
+
+        $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+
+        self::assertNotNull($deployer->console);
+        self::assertStringStartsWith('runtime/', $deployer->console->binaryKey);
+        self::assertSame([], array_diff(glob(sys_get_temp_dir() . '/arco-console-*') ?: [], $before), 'the derived files are removed after the deploy');
+    }
+
+    /** A web zip whose console part claims $bytes unzipped (the 3-byte binary is removed from it). */
+    public static function zipClaiming(int $bytes): \Multiapi\Arco\Package\Package
+    {
+        $path = sys_get_temp_dir() . '/arco-big-' . bin2hex(random_bytes(4)) . '.zip';
+        $zip = new \ZipArchive();
+        $zip->open($path, \ZipArchive::CREATE);
+        $zip->addFromString('bin/frankenphp', 'ELF');
+        $zip->addFromString('app/index.php', '<?php');
+        $zip->close();
+        return new \Multiapi\Arco\Package\Package($path, str_repeat('d', 64), $bytes + 3);
+    }
+
+    public function test_an_oversized_console_zip_skips_the_console_function(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $steps = [];
+
+        $outcome = $this->pipeline()->deployPackage($this->config(), new PlainPhpPreset(), self::zipClaiming(\Multiapi\Arco\Deploy\ConsoleFunction::MAX_UNZIPPED_BYTES + 1), $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertTrue($outcome->verification->ok, 'the web function still deploys');
+        self::assertNull($deployer->console);
+        self::assertContains('deploy.console_skipped_size', $steps);
+        self::assertSame(['prepare', 'release'], $deployer->calls);
     }
 }

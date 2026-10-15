@@ -140,11 +140,19 @@ final class CodeBucket
         return self::version($result instanceof ResultInterface ? $result->get('VersionId') : null);
     }
 
-    /** @param list<string> $protectedKeys */
-    public function prune(string $bucket, string $prefix, int $keep, array $protectedKeys): int
+    /**
+     * Deletes all but the $keep newest objects under $prefix, never one of $protectedKeys.
+     *
+     * @param list<string> $protectedKeys
+     * @param string|null $ignorePrefix objects under it are left alone and not counted (pruned on their own)
+     */
+    public function prune(string $bucket, string $prefix, int $keep, array $protectedKeys, ?string $ignorePrefix = null): int
     {
         $objects = $this->s3->listObjectsV2(['Bucket' => $bucket, 'Prefix' => $prefix])['Contents'] ?? [];
         /** @var list<array{Key: string, LastModified: \DateTimeInterface}> $objects */
+        if ($ignorePrefix !== null) {
+            $objects = array_values(array_filter($objects, fn (array $object) => ! str_starts_with($object['Key'], $ignorePrefix)));
+        }
         usort($objects, fn (array $a, array $b) => $b['LastModified'] <=> $a['LastModified']);
 
         $delete = [];
