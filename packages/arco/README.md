@@ -139,6 +139,8 @@ Messages are in English or Spanish (`--lang=es` or `ARCO_LANG=es`).
 
 - 2 vCPU and 2 GB per instance, 512 MB unzipped package, 512 MB `/tmp`, arm64 only
 - Regions: us-east-1, us-east-2, us-west-2, ap-northeast-1, eu-west-1
+- The console function (commands, tinker) is a classic Lambda function: 250 MB unzipped package, no
+  FrankenPHP binary inside (it is downloaded once per new instance)
 - Arco deploys HTTP functions and a console function for commands; queues and the scheduler are on the roadmap
 
 ## Packages

@@ -290,7 +290,8 @@ vendor/bin/arco tinker --env=production --execute="App\\Models\\User::count()"
 ```
 
 The shell (PsySH: history, multi-line input, short class names) runs on your machine, from your project's
-`vendor`, so `laravel/tinker` must be in the app's production dependencies (`require`). Each statement
+`vendor`, so `laravel/tinker` and `multiapi/arco-laravel` (which runs each statement in Lambda) must be in
+the app's production dependencies (`require`). Each statement
 runs in the console function as one invocation (about 100–400 ms). Variables are kept between
 statements through a serialized context; values that cannot be serialized (closures, PDO connections,
 open files) are dropped, and Arco names them. A database transaction cannot span statements.
@@ -355,10 +356,10 @@ The role used by the E2E workflow lives in a dedicated test account and needs:
 - `sts:GetCallerIdentity`
 - for the console function (`arn:aws:lambda:*:*:function:*-console` and `...:*-console:*`):
   `lambda:CreateFunction`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`,
-  `lambda:GetFunction`, `lambda:GetFunctionConfiguration`, `lambda:PublishVersion`, `lambda:CreateAlias`,
+  `lambda:GetFunctionConfiguration`, `lambda:PublishVersion`, `lambda:CreateAlias`,
   `lambda:UpdateAlias`, `lambda:GetAlias`, `lambda:PutFunctionEventInvokeConfig`, `lambda:TagResource`,
   `lambda:ListVersionsByFunction`, `lambda:DeleteFunction`, `lambda:InvokeFunction`
-- `logs:StartLiveTail` and `logs:DescribeLogStreams` for `arco logs --follow` (Live Tail; without
+- `logs:StartLiveTail` for `arco logs --follow` (Live Tail; without
   `logs:StartLiveTail` follow polls instead). `logs:FilterLogEvents` covers `arco logs` without `--follow`
 
 For your own apps, scope the SSM resource to your parameters and add Secrets Manager read access
