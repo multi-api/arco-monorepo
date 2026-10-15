@@ -162,6 +162,8 @@ return [
     'info.console' => 'Función de consola',
     'info.console_version' => '{function} (versión {version})',
     'info.console_missing' => 'aún no desplegada (ejecuta arco deploy)',
+    'info.console_denied' => 'desconocida (permiso denegado: lambda:GetAlias)',
+    'info.console_unknown' => 'desconocida ({error})',
     'info.dns_deploy_account' => 'Route 53, cuenta de despliegue',
     'info.dns_manual' => 'manual (fuera de Route 53)',
     'remove.nothing' => '{function} no existe. No hay nada que borrar.',

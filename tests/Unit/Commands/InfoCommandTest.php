@@ -88,4 +88,25 @@ final class InfoCommandTest extends TestCase
         putenv('AWS_PROFILE');
         $project->restore();
     }
+
+    public function test_a_console_version_that_cannot_be_read_is_unknown_not_missing(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE=p');
+        $denied = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', null, null, 'shop-production-console', null, 'AccessDeniedException');
+        $throttled = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', null, null, 'shop-production-console', null, 'TooManyRequestsException');
+
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $denied)));
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertStringContainsString('unknown (permission denied: lambda:GetAlias)', $tester->getDisplay());
+        self::assertStringNotContainsString('not deployed yet', $tester->getDisplay());
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        self::assertSame(['function' => 'shop-production-console', 'version' => null, 'error' => 'AccessDeniedException'], json_decode($tester->getDisplay(), true)['console']);
+
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $throttled)));
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertStringContainsString('unknown (TooManyRequestsException)', $tester->getDisplay());
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
 }

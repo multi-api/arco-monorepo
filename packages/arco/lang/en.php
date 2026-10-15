@@ -162,6 +162,8 @@ return [
     'info.console' => 'Console function',
     'info.console_version' => '{function} (version {version})',
     'info.console_missing' => 'not deployed yet (run arco deploy)',
+    'info.console_denied' => 'unknown (permission denied: lambda:GetAlias)',
+    'info.console_unknown' => 'unknown ({error})',
     'info.dns_deploy_account' => 'Route 53, deploy account',
     'info.dns_manual' => 'manual (not Route 53)',
     'remove.nothing' => '{function} does not exist. Nothing to remove.',

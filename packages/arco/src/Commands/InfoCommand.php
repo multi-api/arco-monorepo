@@ -65,7 +65,8 @@ final class InfoCommand extends ArcoCommand
                 'revision' => $status?->activeRevisionId,
                 'domains' => $config->domains,
                 'distribution' => $status?->distributionDomain !== null ? ['domain' => $status->distributionDomain, 'status' => $status->distributionStatus] : null,
-                'console' => ['function' => $config->consoleFunctionName(), 'version' => $status?->consoleVersion],
+                'console' => ['function' => $config->consoleFunctionName(), 'version' => $status?->consoleVersion]
+                    + ($status?->consoleVersionError !== null ? ['error' => $status->consoleVersionError] : []),
                 'deployCommands' => $config->deployCommands,
                 'settings' => array_map(fn (array $row) => $row[0], $settings),
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
@@ -92,13 +93,21 @@ final class InfoCommand extends ArcoCommand
                 ['URL' => $status->domainName !== null ? 'https://' . $status->domainName : '-'],
                 [$this->t('info.state') => $status->state],
                 [$this->t('info.revision') => $status->activeRevisionId ?? '-'],
-                [$this->t('info.console') => $status->consoleVersion !== null
-                    ? $this->t('info.console_version', ['function' => (string) $status->consoleFunction, 'version' => $status->consoleVersion])
-                    : $this->t('info.console_missing')],
+                [$this->t('info.console') => $this->consoleStatus($status)],
                 ...($status->distributionDomain !== null ? [[$this->t('info.distribution') => "{$status->distributionDomain} ({$status->distributionStatus})"]] : []),
             );
         }
         return self::SUCCESS;
+    }
+
+    private function consoleStatus(AppStatus $status): string
+    {
+        return match (true) {
+            $status->consoleVersion !== null => $this->t('info.console_version', ['function' => (string) $status->consoleFunction, 'version' => $status->consoleVersion]),
+            $status->consoleVersionError === null => $this->t('info.console_missing'),
+            str_contains($status->consoleVersionError, 'AccessDenied') => $this->t('info.console_denied'),
+            default => $this->t('info.console_unknown', ['error' => $status->consoleVersionError]),
+        };
     }
 
     /** Remote status only when credentials resolve without prompting. */

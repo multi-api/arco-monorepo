@@ -375,12 +375,14 @@ final class AwsDeployerTest extends TestCase
         $status = $deployer->describe($config);
         self::assertSame('shop-production-console', $status?->consoleFunction);
         self::assertSame('7', $status?->consoleVersion);
+        self::assertNull($status?->consoleVersionError);
         self::assertSame('d1.cloudfront.net', $status?->distributionDomain);
         self::assertSame('UPDATE_COMPLETE', $status?->distributionStatus);
 
         $status = $deployer->describe($config);
         self::assertSame('abc.on.aws', $status?->domainName, 'still described without Lambda or CloudFormation read access');
         self::assertNull($status?->consoleVersion);
+        self::assertSame('AccessDeniedException', $status?->consoleVersionError, 'unknown, not "not deployed yet"');
         self::assertNull($status?->distributionDomain);
     }
 

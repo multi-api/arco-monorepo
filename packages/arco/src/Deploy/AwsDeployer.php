@@ -222,10 +222,12 @@ final class AwsDeployer implements Deployer
         }
         $endpoint = $web->endpoint($config->functionName());
         $consoleVersion = null;
+        $consoleVersionError = null;
         try {
             $consoleVersion = $this->consoleFunction()->liveVersion($config->consoleFunctionName());
-        } catch (AwsException) {
-            // Shown as unknown without lambda:GetAlias.
+        } catch (AwsException $e) {
+            // Shown as unknown (e.g. without lambda:GetAlias), never as "not deployed yet".
+            $consoleVersionError = $e->getAwsErrorCode() ?? 'UnknownError';
         }
         $distribution = null;
         if ($config->domains !== []) {
@@ -244,6 +246,7 @@ final class AwsDeployer implements Deployer
             $distribution['status'] ?? null,
             $config->consoleFunctionName(),
             $consoleVersion,
+            $consoleVersionError,
         );
     }
 
