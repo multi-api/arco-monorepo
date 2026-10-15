@@ -232,4 +232,10 @@ return [
     'package.runtime_build_differs' => '{path} contiene el build de runtime {package_build}, pero arco.php ahora usa {build}. Se despliega el build del paquete; vuelve a crearlo para usar el actual.',
     'package.no_console_runtime' => 'El paquete {path} se creó con una versión anterior de Arco y no incluye el runtime de consola. Vuelve a crearlo con "arco package".',
     'package.no_binary' => 'El paquete {path} no contiene bin/frankenphp, que la función de consola descarga desde S3. Vuelve a crearlo con "arco package".',
+    'command.empty' => 'Indica el comando a ejecutar, por ejemplo arco command "migrate:status".',
+    'command.invalid' => 'El comando no se puede separar en argumentos: {reason}',
+    'command.invalid_timeout' => '--timeout debe ser un número entero de segundos entre 1 y {max} (el consoleTimeout); se indicó "{value}".',
+    'command.started' => 'Se inició "{command}" en {function}. Síguelo con: arco logs --env={environment} --source=console --follow',
+    'command.crashed' => 'El comando no terminó: {type} ({message}). Últimas líneas del log:',
+    'console.not_deployed' => 'La función de consola {function} aún no existe. Ejecuta primero "arco deploy --env={environment}": cada despliegue la crea y la actualiza.',
 ];

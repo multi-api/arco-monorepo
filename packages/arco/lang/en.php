@@ -232,4 +232,10 @@ return [
     'package.runtime_build_differs' => '{path} contains runtime build {package_build}, but arco.php now resolves to {build}. The package\'s build is deployed; rebuild it to use the current one.',
     'package.no_console_runtime' => 'Package {path} was built by an older Arco and has no console runtime. Build it again with "arco package".',
     'package.no_binary' => 'Package {path} has no bin/frankenphp, which the console function downloads from S3. Build it again with "arco package".',
+    'command.empty' => 'Give the command to run, e.g. arco command "migrate:status".',
+    'command.invalid' => 'The command cannot be split into arguments: {reason}',
+    'command.invalid_timeout' => '--timeout must be a whole number of seconds from 1 to {max} (the consoleTimeout), got "{value}".',
+    'command.started' => 'Started "{command}" on {function}. Follow it with: arco logs --env={environment} --source=console --follow',
+    'command.crashed' => 'The command did not finish: {type} ({message}). Last log lines:',
+    'console.not_deployed' => 'The console function {function} does not exist yet. Run "arco deploy --env={environment}" first: every deploy creates and updates it.',
 ];

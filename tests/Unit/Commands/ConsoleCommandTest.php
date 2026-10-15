@@ -1,0 +1,96 @@
+<?php declare(strict_types=1);
+
+namespace Multiapi\Arco\Tests\Unit\Commands;
+
+use Aws\MockHandler;
+use Aws\Result;
+use Multiapi\Arco\Aws\AwsClients;
+use Multiapi\Arco\Commands\ConsoleCommand;
+use Multiapi\Arco\Console\CommandResult;
+use Multiapi\Arco\Deploy\DeployException;
+use PHPUnit\Framework\TestCase;
+use Symfony\Component\Console\Tester\CommandTester;
+
+final class ConsoleCommandTest extends TestCase
+{
+    private ProjectFixture $project;
+
+    protected function setUp(): void
+    {
+        $this->project = new ProjectFixture(ProjectFixture::standardConfig());
+    }
+
+    protected function tearDown(): void
+    {
+        $this->project->restore();
+    }
+
+    private function tester(?FakeConsole $console = null, ?\Closure $consoleFactory = null): CommandTester
+    {
+        $mock = new MockHandler([new Result(['Account' => '111111111111'])]);
+        return $this->project->tester(new ConsoleCommand(
+            awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $mock, 'credentials' => false]),
+            consoleFactory: $consoleFactory ?? fn () => $console,
+        ));
+    }
+
+    public function test_prints_the_output_as_is_and_exits_with_the_commands_code(): void
+    {
+        $console = new FakeConsole([new CommandResult(3, "<info>kept as text</info>\nfailed\n")]);
+        $tester = $this->tester($console);
+
+        $tester->execute(['args' => 'migrate --force', '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(3, $tester->getStatusCode());
+        self::assertSame("<info>kept as text</info>\nfailed\n", $tester->getDisplay());
+        self::assertSame([['run', 'migrate --force', null, 'live']], $console->calls);
+    }
+
+    public function test_async_starts_the_command_and_points_to_the_logs(): void
+    {
+        $console = new FakeConsole();
+        $tester = $this->tester($console);
+
+        $tester->execute(['args' => 'reports:build', '--env' => 'staging', '--profile' => 'p', '--async' => true, '--timeout' => '300'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame([['start', 'reports:build', 300, 'live']], $console->calls);
+        self::assertStringContainsString('arco logs --env=staging --source=console --follow', $tester->getDisplay());
+    }
+
+    public function test_a_crash_shows_the_error_type_and_the_last_log_lines(): void
+    {
+        $tester = $this->tester(new FakeConsole([new CommandResult(1, '', 'Sandbox.Timedout', 'Task timed out after 900.00 seconds', ['migrating users...'])]));
+
+        $tester->execute(['args' => 'migrate --force', '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('Sandbox.Timedout', $tester->getDisplay());
+        self::assertStringContainsString('migrating users...', $tester->getDisplay());
+    }
+
+    public function test_an_environment_without_console_function_suggests_a_deploy(): void
+    {
+        $tester = $this->tester(consoleFactory: fn () => throw DeployException::make('console.not_deployed', ['function' => 'shop-staging-console', 'environment' => 'staging']));
+
+        $tester->execute(['args' => 'about', '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('arco deploy --env=staging', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()), 'the error block wraps at the terminal width');
+    }
+
+    public function test_rejects_a_bad_timeout_or_quoting_before_any_aws_call(): void
+    {
+        $console = new FakeConsole();
+        $tester = $this->tester($console);
+
+        $tester->execute(['args' => 'about', '--env' => 'staging', '--profile' => 'p', '--timeout' => '901'], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('901', $tester->getDisplay());
+
+        $tester->execute(['args' => "about --x='y", '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('unclosed', $tester->getDisplay());
+        self::assertSame([], $console->calls);
+    }
+}
