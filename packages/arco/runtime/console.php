@@ -41,7 +41,8 @@ try {
     $tmp = $env['ARCO_TMP'] ?? '/tmp/arco';
     Storage::prepare($tmp);
     $binary = $env['ARCO_PHP_BINARY'] ?? "$root/bin/frankenphp";
-    $php = basename($binary) === 'frankenphp' ? [$binary, 'php-cli'] : [$binary];
+    // FrankenPHP's php-cli shifts $argv by one; console-cli.php gives scripts PHP's argv back.
+    $php = basename($binary) === 'frankenphp' ? [$binary, 'php-cli', __DIR__ . '/console-cli.php'] : [$binary];
     $handler = new Handler(
         new ProcessRunner(static function (string $chunk) use ($stdout): void { fwrite($stdout, $chunk); }),
         $php,

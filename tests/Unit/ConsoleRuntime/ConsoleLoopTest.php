@@ -23,10 +23,11 @@ final class ConsoleLoopTest extends TestCase
         $fs = new Filesystem();
         $fs->mirror(__DIR__ . '/../../../packages/arco/runtime/console', "$this->root/runtime/console");
         $fs->copy(__DIR__ . '/../../../packages/arco/runtime/console.php', "$this->root/runtime/console.php");
+        $fs->copy(__DIR__ . '/../../../packages/arco/runtime/console-cli.php', "$this->root/runtime/console-cli.php");
         $fs->dumpFile("$this->root/arco-runtime.json", '{"console":{"entry":"artisan"}}');
         $fs->dumpFile("$this->root/app/artisan", <<<'PHP'
             <?php
-            echo 'args:', json_encode(array_slice($argv, 1)), "\n", 'greeting:', getenv('GREETING'), "\n", 'cwd:', getcwd(), "\n";
+            echo 'args:', json_encode(array_slice($argv, 1)), "\n", 'server-args:', json_encode(array_slice($_SERVER['argv'], 1)), "\n", 'greeting:', getenv('GREETING'), "\n", 'cwd:', getcwd(), "\n";
             fwrite(STDERR, "to-stderr\n");
             exit(in_array('--fail', $argv, true) ? 3 : 0);
             PHP);
@@ -88,6 +89,31 @@ final class ConsoleLoopTest extends TestCase
         self::assertStringContainsString('{"arco":"console_ready"', $log);
         self::assertStringContainsString('{"arco":"command_failed"', $log);
         self::assertStringContainsString('to-stderr', $log, 'command output is echoed to the function log');
+    }
+
+    public function test_scripts_get_php_argv_under_frankenphp_php_cli(): void
+    {
+        // FrankenPHP's php-cli (v1.13) passes [<binary>, <script>, ...args] where PHP passes [<script>, ...args].
+        $fake = "$this->root/bin/frankenphp";
+        $fs = new Filesystem();
+        $fs->dumpFile("$fake.php", <<<'PHP'
+            <?php
+            [, $binary, , $script] = $argv; // fake.php, frankenphp, php-cli, script
+            $argv = [$binary, ...array_slice($argv, 3)];
+            $_SERVER['argv'] = $argv;
+            $_SERVER['argc'] = $argc = count($argv);
+            require $script;
+            PHP);
+        $fs->dumpFile($fake, sprintf("#!/bin/sh\nexec %s %s \"\$0\" \"\$@\"\n", escapeshellarg(PHP_BINARY), escapeshellarg("$fake.php")));
+        chmod($fake, 0755);
+        $runtime = $this->runtime = $this->runtime(['ARCO_PHP_BINARY' => $fake]);
+        $runtime->start();
+
+        $ok = $this->respond($runtime, $this->api->enqueue(['command' => "greet --name='A B'"]));
+
+        self::assertSame(0, $ok['exitCode'], $ok['output']);
+        self::assertStringContainsString('args:["greet","--name=A B"]', $ok['output']);
+        self::assertStringContainsString('server-args:["greet","--name=A B"]', $ok['output']);
     }
 
     public function test_a_missing_secret_is_an_init_error(): void

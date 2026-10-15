@@ -33,6 +33,7 @@ final class PackagerTest extends TestCase
         file_put_contents("$this->runtimeDir/test/x.test.js", '// test');
         file_put_contents("$this->runtimeDir/bootstrap", "#!/bin/sh\n");
         file_put_contents("$this->runtimeDir/console.php", '<?php // console');
+        file_put_contents("$this->runtimeDir/console-cli.php", '<?php // console-cli');
         mkdir("$this->runtimeDir/console");
         file_put_contents("$this->runtimeDir/console/Handler.php", '<?php // handler');
 
@@ -68,7 +69,7 @@ final class PackagerTest extends TestCase
             $names[] = $zip->getNameIndex($i);
         }
         sort($names);
-        self::assertSame(['app/public/index.php', 'app/vendor/big/blob.bin', 'arco-package.json', 'arco-runtime.json', 'bin/frankenphp', 'bootstrap', 'index.js', 'lib/caddyfile.js', 'runtime/console.php', 'runtime/console/Handler.php'], $names);
+        self::assertSame(['app/public/index.php', 'app/vendor/big/blob.bin', 'arco-package.json', 'arco-runtime.json', 'bin/frankenphp', 'bootstrap', 'index.js', 'lib/caddyfile.js', 'runtime/console-cli.php', 'runtime/console.php', 'runtime/console/Handler.php'], $names);
 
         $zip->getExternalAttributesName('bin/frankenphp', $opsys, $attr);
         self::assertSame(ZipArchive::OPSYS_UNIX, $opsys);
