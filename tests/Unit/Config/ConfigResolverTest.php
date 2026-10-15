@@ -151,4 +151,51 @@ final class ConfigResolverTest extends TestCase
         self::assertNull($config->concurrency);
         self::assertSame('default', $config->sources['concurrency']);
     }
+
+    public function test_console_settings_and_deploy_commands(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->deployCommands(['migrate --force'])
+            ->consoleTimeout(600)
+            ->environment('staging', fn (Environment $e) => $e->deployCommands([]))
+            ->environment('production', fn (Environment $e) => $e->deployCommands(['migrate --force', 'config:cache']))
+            ->environment('qa')
+            ->toArray();
+
+        $production = ConfigResolver::resolve($raw, 'production');
+        self::assertSame(['migrate --force', 'config:cache'], $production->deployCommands);
+        self::assertSame('environment', $production->sources['deployCommands']);
+        self::assertSame(600, $production->consoleTimeout);
+        self::assertSame('app', $production->sources['consoleTimeout']);
+        self::assertSame('shop-production-console', $production->consoleFunctionName());
+
+        $staging = ConfigResolver::resolve($raw, 'staging');
+        self::assertSame([], $staging->deployCommands, 'an environment list replaces the app list, even when empty');
+
+        $qa = ConfigResolver::resolve($raw, 'qa');
+        self::assertSame(['migrate --force'], $qa->deployCommands);
+        self::assertSame('app', $qa->sources['deployCommands']);
+
+        $defaults = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('qa')->toArray(), 'qa');
+        self::assertSame(900, $defaults->consoleTimeout);
+        self::assertSame([], $defaults->deployCommands);
+        self::assertSame('default', $defaults->sources['deployCommands']);
+    }
+
+    public function test_production_is_protected_unless_switched_off(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->environment('production')
+            ->environment('staging')
+            ->environment('critical', fn (Environment $e) => $e->protected())
+            ->toArray();
+
+        self::assertTrue(ConfigResolver::resolve($raw, 'production')->isProtected());
+        self::assertFalse(ConfigResolver::resolve($raw, 'staging')->isProtected());
+        self::assertTrue(ConfigResolver::resolve($raw, 'critical')->isProtected());
+        self::assertSame('environment', ConfigResolver::resolve($raw, 'critical')->sources['protected']);
+
+        $off = App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->protected(false))->toArray();
+        self::assertFalse(ConfigResolver::resolve($off, 'production')->isProtected());
+    }
 }

@@ -6,6 +6,7 @@ use Multiapi\Arco\Arco;
 use Multiapi\Arco\Binary\BinaryException;
 use Multiapi\Arco\Binary\ElfInspector;
 use Multiapi\Arco\Binary\RuntimeManifest;
+use Multiapi\Arco\ConsoleRuntime\ArgumentSplitter;
 use Multiapi\Arco\Secrets\InvalidReference;
 use Multiapi\Arco\Secrets\SecretReference;
 
@@ -42,13 +43,15 @@ final class Validator
         }
         if (strlen($config->functionName()) > 64) {
             $result->error('validation.function_name_length', ['name' => $config->functionName()]);
+        } elseif (strlen($config->consoleFunctionName()) > 64) {
+            $result->error('validation.console_function_name_length', ['name' => $config->consoleFunctionName()]);
         }
         if ($config->region === null) {
             $result->error('validation.region_missing');
         } elseif (! in_array($config->region, Arco::REGIONS, true)) {
             $result->error('validation.region', ['region' => $config->region, 'regions' => implode(', ', Arco::REGIONS)]);
         }
-        $limits = ['concurrency' => $config->concurrency, 'timeout' => $config->timeout, 'maxInstances' => $config->maxInstances, 'rateLimit' => $config->rateLimit];
+        $limits = ['concurrency' => $config->concurrency, 'timeout' => $config->timeout, 'maxInstances' => $config->maxInstances, 'rateLimit' => $config->rateLimit, 'consoleTimeout' => $config->consoleTimeout];
         foreach ($limits as $setting => $value) {
             self::addSettingError($result, $setting, $value);
         }
@@ -100,6 +103,18 @@ final class Validator
 
         self::validateDomains($config, $result);
 
+        foreach ($config->deployCommands as $index => $command) {
+            if (trim($command) === '') {
+                $result->error('validation.deploy_command_empty', ['index' => $index]);
+                continue;
+            }
+            try {
+                ArgumentSplitter::split($command);
+            } catch (\InvalidArgumentException $e) {
+                $result->error('validation.deploy_command', ['command' => $command, 'reason' => $e->getMessage()]);
+            }
+        }
+
         foreach ($config->variables as $name => $value) {
             if (self::isReserved($name)) {
                 $result->error('validation.reserved_variable', ['variable' => $name]);
@@ -145,6 +160,7 @@ final class Validator
             'maxInstances' => ['validation.max_instances', is_int($value) && $value >= 2 && $value <= 10000],
             'rateLimit' => ['validation.rate_limit', is_int($value) && $value >= 100 && $value <= 10000
                 && $value % ($value <= 1000 ? 100 : 1000) === 0],
+            'consoleTimeout' => ['validation.console_timeout', is_int($value) && $value >= 3 && $value <= 900],
             'logLevel' => ['validation.log_level', in_array($value, self::LOG_LEVELS, true)],
             default => throw new \InvalidArgumentException("Unknown setting $setting."),
         };

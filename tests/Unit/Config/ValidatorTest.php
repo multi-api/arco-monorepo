@@ -287,4 +287,26 @@ final class ValidatorTest extends TestCase
         self::assertSame('validation.log_level', Validator::settingError('logLevel', 'loud')['key'] ?? null);
         self::assertSame('validation.log_level', Validator::settingError('logLevel', 3)['key'] ?? null);
     }
+
+    public function test_console_timeout_range(): void
+    {
+        self::assertSame(['validation.console_timeout'], $this->errorKeys(App::make('shop')->region('us-east-1')->consoleTimeout(901)->environment('production')));
+        self::assertSame(['validation.console_timeout'], $this->errorKeys(App::make('shop')->region('us-east-1')->consoleTimeout(2)->environment('production')));
+        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->consoleTimeout(3)->environment('production')));
+    }
+
+    public function test_console_function_name_must_fit_64_characters(): void
+    {
+        // shop-<env>: 60 characters; shop-<env>-console: 68.
+        $env = 'e' . str_repeat('x', 54);
+
+        self::assertSame(['validation.console_function_name_length'], $this->errorKeys(App::make('shop')->region('us-east-1')->environment($env), $env));
+    }
+
+    public function test_deploy_commands_must_be_non_empty_and_well_quoted(): void
+    {
+        $app = App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->deployCommands(['migrate --force', ' ', "db:seed --class='X"]));
+
+        self::assertSame(['validation.deploy_command_empty', 'validation.deploy_command'], $this->errorKeys($app));
+    }
 }

@@ -35,14 +35,16 @@ final class BuildersTest extends TestCase
             'runtime' => ['workers' => ['min' => 4, 'max' => 32], 'phpIni' => ['memory_limit' => '512M']],
             'permissions' => [],
             'domains' => null,
+            'deployCommands' => null,
             'environments' => [
-                'staging' => ['settings' => [], 'variables' => [], 'runtime' => [], 'permissions' => [], 'domains' => null],
+                'staging' => ['settings' => [], 'variables' => [], 'runtime' => [], 'permissions' => [], 'domains' => null, 'deployCommands' => null],
                 'production' => [
                     'settings' => ['account' => '222222222222', 'profile' => 'acme-prod', 'timeout' => 60],
                     'variables' => ['APP_KEY' => 'arco-ssm:/shop/production/app-key'],
                     'runtime' => ['threads' => 16],
                     'permissions' => [],
                     'domains' => null,
+                    'deployCommands' => null,
                 ],
             ],
         ], $app->toArray());
