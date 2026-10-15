@@ -93,6 +93,11 @@ final class DeployPipelineTest extends TestCase
             {
                 throw new \RuntimeException('CloudWatch Logs throttled');
             }
+
+            public function coldStart(AppConfig $config, DeployResult $result, int $sinceMs, VerificationResult $verification, ?callable $onStep = null): VerificationResult
+            {
+                return $verification;
+            }
         };
 
         try {
@@ -159,5 +164,38 @@ final class DeployPipelineTest extends TestCase
         self::assertContains('deploy.verifying', $steps);
         self::assertSame([], array_diff(glob(sys_get_temp_dir() . '/arco-build-*') ?: [], $before), 'nothing is staged');
         self::assertFileExists($zip, 'the user\'s package is left in place');
+    }
+
+    public function test_the_cold_start_is_read_last_after_the_custom_domains(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $verifier = new FakeVerifier(true, 950, function () use ($deployer): void { $deployer->calls[] = 'coldStart'; });
+
+        $outcome = $this->pipeline()->deploy($this->config(domains: true), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
+
+        self::assertSame(['deploy', 'domains:', 'coldStart'], $deployer->calls);
+        self::assertSame(950, $outcome->verification->initDurationMs);
+        self::assertTrue($outcome->verification->ok);
+    }
+
+    public function test_a_failing_cold_start_lookup_never_fails_a_finished_deploy(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $verifier = new FakeVerifier(true, 950, function (): void { throw new \RuntimeException('CloudWatch Logs throttled'); });
+
+        $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertNull($outcome->verification->initDurationMs);
+        self::assertSame(['deploy'], $deployer->calls);
+    }
+
+    public function test_a_failed_verification_skips_the_cold_start_lookup(): void
+    {
+        $verifier = new FakeVerifier(false);
+
+        $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, new FakeDeployer('rev-1'), $verifier, fn () => null);
+
+        self::assertSame([], $verifier->calls);
     }
 }

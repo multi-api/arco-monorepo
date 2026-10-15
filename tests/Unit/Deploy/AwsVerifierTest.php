@@ -18,23 +18,50 @@ use PHPUnit\Framework\TestCase;
 
 final class AwsVerifierTest extends TestCase
 {
-    /** The deploy started here; older events belong to earlier revisions. */
-    private const SINCE = 4000;
+    /** 2026-10-15 16:26:20 UTC: the deploy starts. */
+    private const T0 = 1792081580;
+    private const MIDNIGHT = 1792108800; // 2026-10-16 00:00:00 UTC
 
-    private function config(): AppConfig
-    {
-        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
-    }
+    /** @var list<array{0: string, 1: array<string, string|int>}> */
+    private array $steps = [];
 
-    private function iamConfig(): AppConfig
+    private function config(bool $iam = false): AppConfig
     {
-        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->auth('iam')->environment('production')->toArray(), 'production');
+        $app = App::make('shop')->region('us-east-1');
+        return ConfigResolver::resolve(($iam ? $app->auth('iam') : $app)->environment('production')->toArray(), 'production');
     }
 
     /** @param list<Response|ConnectException> $responses */
-    private function http(array $responses): Client
+    private function verifier(FakeLogGroup $group, array $responses = [new Response(200)], int $attempts = 5): AwsVerifier
     {
-        return new Client(['handler' => HandlerStack::create(new HttpMock($responses))]);
+        return new AwsVerifier($group->client(), new Client(['handler' => HandlerStack::create(new HttpMock($responses))]), $group, attempts: $attempts);
+    }
+
+    private function deployResult(): DeployResult
+    {
+        return new DeployResult('abc.on.aws', 'rev-2', 'rev-1', 'bucket', 'key');
+    }
+
+    private function onStep(): \Closure
+    {
+        return function (string $key, array $params = []): void {
+            $this->steps[] = [$key, $params];
+        };
+    }
+
+    /** Verifies at $verifyAt, spends $domainsSeconds on custom domains, then reads the cold start. */
+    private function deploy(FakeLogGroup $group, int $since = self::T0, int $domainsSeconds = 0): VerificationResult
+    {
+        $verifier = $this->verifier($group);
+        $verification = $verifier->verify($this->config(), $this->deployResult(), '/up', $since * 1000, $this->onStep());
+        $group->sleep($domainsSeconds);
+        return $verifier->coldStart($this->config(), $this->deployResult(), $since * 1000, $verification, $this->onStep());
+    }
+
+    /** The stream name format of Lambda Web Functions. */
+    private static function stream(string $hex, string $revision = 'rev-2', string $date = '2026/10/15'): string
+    {
+        return "$date/shop-production[$revision]$hex-111111111111-us-east-1";
     }
 
     private static function initStart(string $instance, string $revision = 'rev-2'): array
@@ -47,126 +74,215 @@ final class AwsVerifierTest extends TestCase
         return ['type' => 'platform.initReport', 'record' => ['status' => $status, 'instanceId' => $instance, 'metrics' => ['totalDurationMs' => $ms]] + ($errorType === null ? [] : ['errorType' => $errorType])];
     }
 
-    /** @param list<Response|ConnectException> $responses */
-    private function verify(FakeLogGroup $group, array $responses = [new Response(200)], bool $iam = false, int $attempts = 5, ?array &$steps = null): VerificationResult
+    /** One new instance whose init started at T0+10 s and whose events arrive $lag seconds late. */
+    private static function newInstance(FakeLogGroup $group, string $hex, int $atMs, float $ms, float $lag, string $date = '2026/10/15', string $status = 'success'): FakeLogGroup
     {
-        $steps = [];
-        $verifier = new AwsVerifier($group->client(), $this->http($responses), $group, attempts: $attempts);
-        return $verifier->verify($iam ? $this->iamConfig() : $this->config(), new DeployResult('abc.on.aws', 'rev-2', 'rev-1', 'bucket', 'key'), '/up', self::SINCE, function (string $key) use (&$steps): void {
-            $steps[] = $key;
-        });
+        return $group
+            ->add(self::stream($hex, date: $date), $atMs, self::initStart("i-$hex"), $lag)
+            ->add(self::stream($hex, date: $date), $atMs + (int) $ms, self::initReport("i-$hex", $ms, $status, $status === 'success' ? null : 'Runtime.ExitError'), $lag);
     }
 
-    public function test_healthy_deploy(): void
+    public function test_a_public_endpoint_is_verified_by_the_probe_alone(): void
     {
-        $group = (new FakeLogGroup())
-            ->add('new-a', 5000, self::initStart('i-a'))
-            ->add('new-a', 5100, self::initReport('i-other', 9999.0))
-            ->add('new-a', 5900, self::initReport('i-a', 874.0));
+        $group = new FakeLogGroup(self::T0 + 10);
 
-        $result = $this->verify($group, steps: $steps);
+        $verification = $this->verifier($group)->verify($this->config(), $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
 
-        self::assertTrue($result->ok);
-        self::assertSame(200, $result->httpStatus);
+        self::assertTrue($verification->ok);
+        self::assertSame(200, $verification->httpStatus);
+        self::assertNull($verification->initDurationMs);
+        self::assertSame([], $group->queries, 'verification does not wait for CloudWatch');
+        self::assertSame((float) self::T0 + 10, $verification->healthyAt);
+        self::assertSame([], $this->steps);
+    }
+
+    /** The rev-0zdki redeploy: the first initStart was ingested 36 s after it happened. */
+    public function test_the_cold_start_is_found_despite_36_s_of_ingestion_lag(): void
+    {
+        $group = self::newInstance(new FakeLogGroup(self::T0 + 10), 'aaa', (self::T0 + 10) * 1000 + 176, 1234.0, 36);
+        $group->add(self::stream('old', 'rev-1'), (self::T0 + 12) * 1000, self::initReport('i-old', 50.0));
+
+        $result = $this->deploy($group, domainsSeconds: 20);
+
+        self::assertSame(1234, $result->initDurationMs);
         self::assertSame('success', $result->initStatus);
-        self::assertSame(874, $result->initDurationMs);
-        self::assertSame([], $result->logTail);
-        self::assertSame(['deploy.cold_start_lookup'], $steps, 'the user sees that Arco is waiting for the logs');
-    }
-
-    public function test_health_requires_a_2xx_status(): void
-    {
-        foreach ([301, 404] as $status) {
-            $result = $this->verify(new FakeLogGroup(), [new Response($status)], attempts: 1);
-
-            self::assertFalse($result->ok, "HTTP $status");
-            self::assertSame($status, $result->httpStatus);
+        self::assertTrue($result->ok);
+        self::assertSame([['deploy.cold_start_lookup', ['seconds' => 40]]], $this->steps, 'the 20 s spent on domains count');
+        foreach ($group->queriesOf('FilterLogEvents') as $query) {
+            self::assertSame('2026/10/15/shop-production[rev-2]', $query['logStreamNamePrefix']);
+            self::assertStringContainsString('platform.initReport', $query['filterPattern']);
         }
+        self::assertSame([], $group->queriesOf('DescribeLogStreams'));
     }
 
-    public function test_iam_auth_skips_the_probe_and_trusts_a_successful_init_report(): void
+    public function test_the_lookup_ends_60_s_after_the_probe_passed_within_the_call_budget(): void
     {
-        $group = (new FakeLogGroup())->add('new-a', 5000, self::initStart('i-a'))->add('new-a', 5500, self::initReport('i-a', 500.0));
+        $group = self::newInstance(new FakeLogGroup(self::T0 + 10), 'aaa', (self::T0 + 10) * 1000, 900.0, 120);
 
-        // No HTTP responses queued: any probe would fail the test with an empty-queue error.
-        $result = $this->verify($group, [], iam: true);
+        $result = $this->deploy($group, domainsSeconds: 50);
 
         self::assertTrue($result->ok);
-        self::assertNull($result->httpStatus);
-        self::assertSame('success', $result->initStatus);
-        self::assertNull($result->reason);
+        self::assertNull($result->initDurationMs);
+        self::assertLessThanOrEqual(self::T0 + 10 + 60 + 5, $group->clock);
+        self::assertGreaterThanOrEqual(self::T0 + 10 + 56, $group->clock);
+        self::assertLessThanOrEqual(40, count($group->queries));
     }
 
-    public function test_iam_auth_without_an_init_report_fails_with_a_reason(): void
+    public function test_slow_calls_and_a_busy_group_stay_within_the_deadline_and_budget(): void
     {
-        $result = $this->verify(new FakeLogGroup(), [], iam: true);
+        $group = new FakeLogGroup(self::T0 + 10, streamsPerPage: 1, latency: 1.5);
+        for ($i = 0; $i < 30; $i++) {
+            self::newInstance($group, "n$i", (self::T0 + 10) * 1000, 900.0, 500);
+        }
 
-        self::assertFalse($result->ok);
-        self::assertNull($result->initStatus);
-        self::assertSame('deploy.verify_iam_no_report', $result->reason);
+        $result = $this->deploy($group);
+
+        self::assertNull($result->initDurationMs);
+        self::assertLessThanOrEqual(self::T0 + 10 + 60 + 5 + 1.5, $group->clock);
+        self::assertLessThanOrEqual(40, count($group->queries));
     }
 
-    public function test_iam_auth_with_unreadable_logs_fails_with_a_distinct_reason_instead_of_throwing(): void
+    public function test_the_cold_start_is_the_earliest_init_even_when_a_later_one_is_ingested_first(): void
     {
-        $group = new FakeLogGroup();
-        $group->failWith = 'ThrottlingException';
+        $group = new FakeLogGroup(self::T0 + 10);
+        self::newInstance($group, 'early', (self::T0 + 10) * 1000, 1500.0, 30);
+        self::newInstance($group, 'late', (self::T0 + 14) * 1000, 300.0, 20);
 
-        $result = $this->verify($group, [], iam: true);
-
-        self::assertFalse($result->ok);
-        self::assertSame('deploy.verify_iam_logs_unreadable', $result->reason);
-        self::assertSame(['error' => 'ThrottlingException'], $result->reasonParams);
-        self::assertCount(1, $group->queriesOf('DescribeLogStreams'), 'the lookup stops at the first CloudWatch error');
+        self::assertSame(1500, $this->deploy($group)->initDurationMs);
     }
 
-    public function test_cloudwatch_errors_leave_the_cold_start_unknown_when_the_probe_passed(): void
+    public function test_a_deploy_across_midnight_also_searches_the_previous_days_streams(): void
+    {
+        $since = self::MIDNIGHT - 10;
+        $group = self::newInstance(new FakeLogGroup(self::MIDNIGHT + 5), 'aaa', ($since + 8) * 1000, 700.0, 25, date: '2026/10/15');
+
+        $result = $this->deploy($group, since: $since);
+
+        self::assertSame(700, $result->initDurationMs);
+        $prefixes = array_unique(array_column($group->queriesOf('FilterLogEvents'), 'logStreamNamePrefix'));
+        sort($prefixes);
+        self::assertSame(['2026/10/15/shop-production[rev-2]', '2026/10/16/shop-production[rev-2]'], $prefixes);
+    }
+
+    public function test_a_deploy_started_just_after_midnight_also_searches_the_previous_day(): void
+    {
+        $since = self::MIDNIGHT + 120;
+        $group = self::newInstance(new FakeLogGroup($since + 10), 'aaa', ($since + 10) * 1000, 700.0, 5, date: '2026/10/16');
+
+        $result = $this->deploy($group, since: $since);
+
+        self::assertSame(700, $result->initDurationMs);
+        $prefixes = array_unique(array_column($group->queriesOf('FilterLogEvents'), 'logStreamNamePrefix'));
+        sort($prefixes);
+        self::assertSame(['2026/10/15/shop-production[rev-2]', '2026/10/16/shop-production[rev-2]'], $prefixes);
+    }
+
+    public function test_a_daytime_deploy_searches_only_todays_streams(): void
+    {
+        $group = self::newInstance(new FakeLogGroup(self::T0 + 10), 'aaa', (self::T0 + 10) * 1000, 700.0, 0);
+
+        $this->deploy($group);
+
+        self::assertSame(['2026/10/15/shop-production[rev-2]'], array_values(array_unique(array_column($group->queriesOf('FilterLogEvents'), 'logStreamNamePrefix'))));
+    }
+
+    public function test_cloudwatch_errors_leave_the_cold_start_unknown(): void
     {
         foreach (['ThrottlingException', 'AccessDeniedException'] as $code) {
-            $group = new FakeLogGroup();
+            $group = new FakeLogGroup(self::T0 + 10);
             $group->failWith = $code;
 
-            $result = $this->verify($group);
+            $result = $this->deploy($group);
 
             self::assertTrue($result->ok, $code);
             self::assertNull($result->initDurationMs);
-            self::assertNull($result->reason);
+            self::assertCount(1, $group->queries, 'the lookup stops at the first error');
         }
     }
 
     public function test_a_log_group_that_does_not_exist_yet_is_polled_until_the_deadline(): void
     {
-        $group = new FakeLogGroup();
+        $group = new FakeLogGroup(self::T0 + 10);
         $group->missing = true;
 
-        $result = $this->verify($group);
+        $result = $this->deploy($group);
+
+        self::assertNull($result->initDurationMs);
+        self::assertGreaterThanOrEqual(self::T0 + 10 + 56, $group->clock);
+    }
+
+    public function test_iam_auth_waits_up_to_75_s_for_the_report_before_deciding(): void
+    {
+        $group = self::newInstance(new FakeLogGroup(self::T0 + 10), 'aaa', (self::T0 + 10) * 1000, 800.0, 65);
+
+        $result = $this->verifier($group, [])->verify($this->config(iam: true), $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
 
         self::assertTrue($result->ok);
-        self::assertNull($result->initDurationMs);
-        self::assertGreaterThanOrEqual(27, $group->clock);
+        self::assertNull($result->httpStatus);
+        self::assertSame(800, $result->initDurationMs);
+        self::assertSame([['deploy.cold_start_lookup', ['seconds' => 75]]], $this->steps);
+    }
+
+    public function test_iam_auth_without_an_init_report_fails_after_about_75_s(): void
+    {
+        $group = new FakeLogGroup(self::T0 + 10);
+
+        $result = $this->verifier($group, [])->verify($this->config(iam: true), $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
+
+        self::assertFalse($result->ok);
+        self::assertSame('deploy.verify_iam_no_report', $result->reason);
+        self::assertGreaterThanOrEqual(self::T0 + 10 + 71, $group->clock);
+        self::assertLessThanOrEqual(self::T0 + 10 + 80, $group->clock);
         self::assertLessThanOrEqual(40, count($group->queries));
     }
 
-    public function test_failed_init_returns_the_log_tail_of_its_stream(): void
+    public function test_iam_auth_with_unreadable_logs_fails_with_a_distinct_reason(): void
     {
-        $group = (new FakeLogGroup())
-            ->add('new-a', 5000, self::initStart('i-a'))
-            ->add('new-a', 5050, ['arco' => 'secrets_missing', 'missing' => ['arco-ssm:/x']])
-            ->add('new-a', 5100, self::initReport('i-a', 120.0, 'failure', 'Application.InitCodeError'));
+        $group = new FakeLogGroup(self::T0 + 10);
+        $group->failWith = 'ThrottlingException';
 
-        $result = $this->verify($group, [new Response(502), new Response(502), new Response(502)], attempts: 3);
+        $result = $this->verifier($group, [])->verify($this->config(iam: true), $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
+
+        self::assertFalse($result->ok);
+        self::assertSame('deploy.verify_iam_logs_unreadable', $result->reason);
+        self::assertSame(['error' => 'ThrottlingException'], $result->reasonParams);
+    }
+
+    public function test_iam_auth_fails_when_any_new_instance_failed_its_init(): void
+    {
+        $group = new FakeLogGroup(self::T0 + 10);
+        self::newInstance($group, 'aaa', (self::T0 + 10) * 1000, 900.0, 0);
+        self::newInstance($group, 'bbb', (self::T0 + 11) * 1000, 40.0, 0, status: 'error');
+
+        $result = $this->verifier($group, [])->verify($this->config(iam: true), $this->deployResult(), '/up', self::T0 * 1000);
+
+        self::assertFalse($result->ok);
+        self::assertSame('error', $result->initStatus);
+    }
+
+    public function test_a_failed_probe_reads_the_init_error_and_log_tail_without_waiting(): void
+    {
+        $group = new FakeLogGroup(self::T0 + 10);
+        $group->add(self::stream('aaa'), (self::T0 + 9) * 1000, ['arco' => 'secrets_missing', 'missing' => ['arco-ssm:/x']]);
+        self::newInstance($group, 'aaa', (self::T0 + 9) * 1000, 120.0, 0, status: 'failure');
+
+        $result = $this->verifier($group, [new Response(502), new Response(502), new Response(502)], attempts: 3)
+            ->verify($this->config(), $this->deployResult(), '/up', self::T0 * 1000);
 
         self::assertFalse($result->ok);
         self::assertSame(502, $result->httpStatus);
         self::assertSame('failure', $result->initStatus);
-        self::assertSame('Application.InitCodeError', $result->initErrorType);
+        self::assertSame('Runtime.ExitError', $result->initErrorType);
         self::assertContains('{"arco":"secrets_missing","missing":["arco-ssm:\/x"]}', $result->logTail);
+        self::assertSame((float) self::T0 + 10 + 6, $group->clock, 'only the probe retries took time');
     }
 
     public function test_connection_errors_are_retried_then_reported(): void
     {
         $error = new ConnectException('Could not resolve host', new Request('GET', 'https://abc.on.aws/up'));
 
-        $result = $this->verify(new FakeLogGroup(), [$error, $error], attempts: 2);
+        $result = $this->verifier(new FakeLogGroup(self::T0 + 10), [$error, $error], attempts: 2)
+            ->verify($this->config(), $this->deployResult(), '/up', self::T0 * 1000);
 
         self::assertFalse($result->ok);
         self::assertNull($result->httpStatus);
@@ -175,134 +291,27 @@ final class AwsVerifierTest extends TestCase
 
     public function test_group_tail_returns_the_last_30_across_pages(): void
     {
-        $group = new FakeLogGroup(streamsPerPage: 1);
+        $group = new FakeLogGroup(self::T0 + 100, streamsPerPage: 1);
         foreach (range(1, 40) as $n) {
-            $group->add($n <= 20 ? 'a' : 'b', 5000 + $n, ['line' => $n]);
+            $group->add($n <= 20 ? 'a' : 'b', (self::T0 + $n) * 1000, ['line' => $n]);
         }
 
-        $result = $this->verify($group, [new Response(500)], attempts: 1);
+        $result = $this->verifier($group, [new Response(500)], attempts: 1)->verify($this->config(), $this->deployResult(), '/up', self::T0 * 1000);
 
         self::assertCount(30, $result->logTail);
         self::assertSame('{"line":11}', $result->logTail[0]);
         self::assertSame('{"line":40}', $result->logTail[29]);
     }
 
-    /**
-     * A redeploy: the group holds 300 streams of earlier instances (150 pages of the old
-     * whole-group scan), 30 of them still serving traffic. Only recent streams are searched.
-     */
-    public function test_cold_start_is_found_in_a_busy_log_group_beyond_50_pages_of_a_whole_group_scan(): void
+    public function test_the_cold_start_is_not_looked_up_again_when_verification_already_has_it(): void
     {
-        $group = (new FakeLogGroup())->noise(300);
-        for ($i = 0; $i < 30; $i++) {
-            $group->add("a-old-$i", 4500 + $i, ['type' => 'app', 'message' => 'request']);
-        }
-        $group->add('z-new', 5000, self::initStart('i-a'))->add('z-new', 5900, self::initReport('i-a', 874.0));
+        $group = new FakeLogGroup(self::T0 + 10);
+        $known = new VerificationResult(true, null, null, 'success', null, 640, []);
 
-        $result = $this->verify($group);
+        $result = $this->verifier($group)->coldStart($this->config(iam: true), $this->deployResult(), self::T0 * 1000, $known, $this->onStep());
 
-        self::assertSame(874, $result->initDurationMs);
-        self::assertSame(0.0, $group->clock, 'found on the first attempt');
-        self::assertLessThanOrEqual(20, count($group->queries));
-        foreach ($group->queriesOf('FilterLogEvents') as $query) {
-            self::assertArrayHasKey('logStreamNames', $query, 'no whole-group scan');
-        }
-        $describe = $group->queriesOf('DescribeLogStreams')[0];
-        self::assertSame(['LastEventTime', true, 50], [$describe['orderBy'], $describe['descending'], $describe['limit']]);
-        $filters = $group->queriesOf('FilterLogEvents');
-        self::assertContains('z-new', $filters[0]['logStreamNames']);
-        self::assertCount(31, $filters[0]['logStreamNames'], 'only streams written since the deploy started');
-        $reports = array_values(array_filter($filters, fn (array $q) => str_contains($q['filterPattern'], 'initReport')));
-        self::assertStringContainsString('$.record.instanceId = "i-a"', $reports[0]['filterPattern']);
-        self::assertSame(['z-new'], $reports[0]['logStreamNames']);
-    }
-
-    public function test_init_report_that_is_ingested_late_is_still_found_within_about_30_seconds(): void
-    {
-        $group = (new FakeLogGroup())
-            ->add('new-a', 5000, self::initStart('i-a'), visibleAfterSeconds: 6)
-            ->add('new-a', 5900, self::initReport('i-a', 1210.0), visibleAfterSeconds: 20);
-
-        $result = $this->verify($group);
-
-        self::assertSame(1210, $result->initDurationMs);
-        self::assertGreaterThanOrEqual(20, $group->clock);
-        self::assertLessThanOrEqual(30, $group->clock);
-    }
-
-    public function test_a_missing_init_report_stops_after_about_30_seconds_within_the_call_budget(): void
-    {
-        $group = (new FakeLogGroup())->noise(300)->add('new-a', 5000, self::initStart('i-a'));
-
-        $result = $this->verify($group);
-
-        self::assertTrue($result->ok, 'the probe passed; only the cold start is unknown');
-        self::assertNull($result->initDurationMs);
-        self::assertGreaterThanOrEqual(27, $group->clock);
-        self::assertLessThanOrEqual(35, $group->clock);
-        self::assertLessThanOrEqual(40, count($group->queries));
-    }
-
-    public function test_slow_calls_count_against_the_wall_clock_deadline(): void
-    {
-        $group = (new FakeLogGroup(streamsPerPage: 2, latency: 2.0))->noise(300)->add('new-a', 5000, self::initStart('i-a'));
-
-        $result = $this->verify($group);
-
-        self::assertNull($result->initDurationMs);
-        self::assertLessThanOrEqual(37, $group->clock, 'about 30 s, not minutes');
-    }
-
-    public function test_the_cold_start_reported_is_the_earliest_init_of_the_new_revision(): void
-    {
-        $group = (new FakeLogGroup())->noise(5)
-            ->add('new-b', 7000, self::initStart('i-b'))
-            ->add('new-b', 7300, self::initReport('i-b', 300.0))
-            ->add('new-a', 5000, self::initStart('i-a'))
-            ->add('new-a', 6500, self::initReport('i-a', 1500.0))
-            ->add('new-c', 9000, self::initStart('i-c'))
-            ->add('new-c', 9100, self::initReport('i-c', 100.0));
-
-        self::assertSame(1500, $this->verify($group)->initDurationMs);
-    }
-
-    public function test_the_earliest_init_is_awaited_when_a_later_instance_reports_first(): void
-    {
-        $group = (new FakeLogGroup())
-            ->add('new-a', 5000, self::initStart('i-a'))
-            ->add('new-a', 6500, self::initReport('i-a', 1500.0), visibleAfterSeconds: 9)
-            ->add('new-b', 7000, self::initStart('i-b'))
-            ->add('new-b', 7300, self::initReport('i-b', 300.0));
-
-        self::assertSame(1500, $this->verify($group)->initDurationMs);
-    }
-
-    public function test_a_failed_init_of_any_new_instance_fails_verification(): void
-    {
-        $group = (new FakeLogGroup())
-            ->add('new-a', 5000, self::initStart('i-a'))
-            ->add('new-a', 6500, self::initReport('i-a', 900.0))
-            ->add('new-b', 7000, self::initStart('i-b'))
-            ->add('new-b', 7100, self::initReport('i-b', 40.0, 'error'));
-
-        $result = $this->verify($group);
-
-        self::assertFalse($result->ok);
-        self::assertSame('error', $result->initStatus);
-    }
-
-    public function test_instance_ids_that_could_break_the_filter_pattern_are_skipped(): void
-    {
-        $group = (new FakeLogGroup())
-            ->add('new-a', 5000, self::initStart('i-"x'))
-            ->add('new-b', 5100, self::initStart('i-b'))
-            ->add('new-b', 5600, self::initReport('i-b', 640.0));
-
-        $result = $this->verify($group);
-
-        self::assertSame(640, $result->initDurationMs);
-        foreach ($group->queriesOf('FilterLogEvents') as $query) {
-            self::assertStringNotContainsString('i-"x', $query['filterPattern'] ?? '');
-        }
+        self::assertSame($known, $result);
+        self::assertSame([], $group->queries);
+        self::assertSame([], $this->steps);
     }
 }

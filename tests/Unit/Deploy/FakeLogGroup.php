@@ -11,25 +11,26 @@ use GuzzleHttp\Promise\PromiseInterface;
 use Multiapi\Arco\Deploy\Sleeper;
 
 /**
- * A CloudWatch log group that behaves like the real API, and the clock of the verifier:
- * - events become visible only after their ingestion delay;
- * - FilterLogEvents walks the streams a few at a time, so a busy group returns many empty pages
- *   with a nextToken; logStreamNames limits the search;
- * - DescribeLogStreams lists streams by last event time, most recent first;
- * - every call takes $latency seconds, and calls can be throttled.
+ * A CloudWatch log group that behaves like the real API, and the verifier's clock (epoch seconds):
+ * - an event becomes visible only once the clock passes its timestamp plus its ingestion lag
+ *   (10 to 36 s were seen on real redeploys);
+ * - FilterLogEvents walks the streams a few at a time, so a busy group returns empty pages with a
+ *   nextToken; logStreamNames and logStreamNamePrefix limit the search;
+ * - every call takes $latency seconds, and calls can fail.
  */
 final class FakeLogGroup extends Sleeper
 {
-    public float $clock = 0.0;
+    public float $clock;
     /** @var list<array<string, mixed>> parameters of every call, with the operation under '@op' */
     public array $queries = [];
     public ?string $failWith = null;
     public bool $missing = false;
-    /** @var list<array{stream: string, timestamp: int, message: string, visibleAt: int}> */
+    /** @var list<array{stream: string, timestamp: int, message: string, visibleAt: float}> */
     private array $events = [];
 
-    public function __construct(private readonly int $streamsPerPage = 2, private readonly float $latency = 0.0)
+    public function __construct(float $start, private readonly int $streamsPerPage = 2, private readonly float $latency = 0.0)
     {
+        $this->clock = $start;
     }
 
     public function sleep(int $seconds): void
@@ -43,20 +44,9 @@ final class FakeLogGroup extends Sleeper
     }
 
     /** @param array<string, mixed> $message */
-    public function add(string $stream, int $timestamp, array $message, int $visibleAfterSeconds = 0): self
+    public function add(string $stream, int $timestampMs, array $message, float $lagSeconds = 0.0): self
     {
-        $this->events[] = ['stream' => $stream, 'timestamp' => $timestamp, 'message' => (string) json_encode($message), 'visibleAt' => $visibleAfterSeconds];
-        return $this;
-    }
-
-    /** Instances of the previous revision, each in its own stream, written at $timestamp. */
-    public function noise(int $streams, int $timestamp = 1000): self
-    {
-        for ($i = 0; $i < $streams; $i++) {
-            $this->add("a-old-$i", $timestamp, ['type' => 'platform.initStart', 'record' => ['revisionId' => 'rev-1', 'instanceId' => "old-$i"]]);
-            $this->add("a-old-$i", $timestamp + 1, ['type' => 'platform.initReport', 'record' => ['status' => 'success', 'instanceId' => "old-$i", 'metrics' => ['totalDurationMs' => 50.0]]]);
-            $this->add("a-old-$i", $timestamp + 2, ['type' => 'app', 'message' => 'request']);
-        }
+        $this->events[] = ['stream' => $stream, 'timestamp' => $timestampMs, 'message' => (string) json_encode($message), 'visibleAt' => $timestampMs / 1000 + $lagSeconds];
         return $this;
     }
 
@@ -92,25 +82,9 @@ final class FakeLogGroup extends Sleeper
                 fn (array $e) => ['message' => $e['message'], 'timestamp' => $e['timestamp']],
                 array_filter($this->events, fn (array $e) => $e['stream'] === $params['logStreamName'] && $e['visibleAt'] <= $this->clock),
             )), -(int) ($params['limit'] ?? 30))]),
-            'DescribeLogStreams' => $this->describe($params),
-            default => $this->filter($params),
+            'FilterLogEvents' => $this->filter($params),
+            default => throw new \LogicException('Unexpected ' . $command->getName()),
         });
-    }
-
-    /** @param array<string, mixed> $params */
-    private function describe(array $params): Result
-    {
-        $streams = [];
-        foreach ($this->events as $e) {
-            $streams[$e['stream']] ??= ['logStreamName' => $e['stream'], 'creationTime' => $e['timestamp']];
-            $streams[$e['stream']]['creationTime'] = min($streams[$e['stream']]['creationTime'], $e['timestamp']);
-            if ($e['visibleAt'] <= $this->clock) {
-                $streams[$e['stream']]['lastEventTimestamp'] = max($streams[$e['stream']]['lastEventTimestamp'] ?? 0, $e['timestamp']);
-            }
-        }
-        $streams = array_values($streams);
-        usort($streams, fn (array $a, array $b) => ($b['lastEventTimestamp'] ?? 0) <=> ($a['lastEventTimestamp'] ?? 0));
-        return new Result(['logStreams' => array_slice($streams, 0, (int) ($params['limit'] ?? 50))]);
     }
 
     /** @param array<string, mixed> $params */
@@ -123,6 +97,9 @@ final class FakeLogGroup extends Sleeper
         sort($streams);
         if (isset($params['logStreamNames'])) {
             $streams = array_values(array_intersect($streams, $params['logStreamNames']));
+        }
+        if (isset($params['logStreamNamePrefix'])) {
+            $streams = array_values(array_filter($streams, fn (string $s) => str_starts_with($s, $params['logStreamNamePrefix'])));
         }
 
         $offset = (int) ($params['nextToken'] ?? 0);
