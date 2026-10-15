@@ -109,7 +109,7 @@ final class HandlerTest extends TestCase
 
         self::assertStringContainsString('args:["arco:tinker"]', $result['output']);
         self::assertStringContainsString('stdin:{"code":"' . base64_encode('User::count()') . '","context":null}', $result['output']);
-        self::assertSame(['arco' => 'tinker', 'code' => 'User::count()'], $this->logged[0]);
+        self::assertSame(['arco' => 'tinker', 'code' => 'User::count()', 'sha256' => hash('sha256', 'User::count()'), 'length' => 13], $this->logged[0]);
         self::assertSame(['arco' => 'tinker_done', 'exitCode' => 0], $this->logged[1]);
     }
 
@@ -120,6 +120,17 @@ final class HandlerTest extends TestCase
 
         self::assertStringContainsString('stdin:', $result['output']);
         self::assertSame('', $this->echoed);
+    }
+
+    public function test_a_long_tinker_statement_is_audited_truncated_with_the_hash_and_length_of_the_whole_code(): void
+    {
+        $code = str_repeat('$a = 1; ', 600) . 'DB::table("users")->delete();';
+
+        $this->handler()->handle((string) json_encode(['tinker' => ['code' => base64_encode($code), 'context' => null]]), 60_000);
+
+        self::assertSame(substr($code, 0, 4000), $this->logged[0]['code']);
+        self::assertSame(hash('sha256', $code), $this->logged[0]['sha256']);
+        self::assertSame(strlen($code), $this->logged[0]['length']);
     }
 
     /** @return iterable<string, array{string}> */

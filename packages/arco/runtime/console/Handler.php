@@ -98,8 +98,9 @@ final class Handler
         if ($this->entry === null) {
             throw new InvalidEvent('arco tinker needs the Laravel preset (artisan).');
         }
-        // Audit trail: every statement is written to the function log before it runs.
-        ($this->log)(['arco' => 'tinker', 'code' => substr($code, 0, 4000)]);
+        // Audit trail: every statement is written to the function log before it runs. Long code is
+        // cut at 4000 bytes; the hash and length of the whole statement show what ran past the cut.
+        ($this->log)(['arco' => 'tinker', 'code' => substr($code, 0, 4000), 'sha256' => hash('sha256', $code), 'length' => strlen($code)]);
         return [[self::TINKER_COMMAND], json_encode(['code' => $request['code'], 'context' => $context], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)];
     }
 }
