@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "a684098f133a530f844ba1a544f652a3",
+    "content-hash": "c10698ed7ad222b5071ecb5dc6be3f50",
     "packages": [
         {
             "name": "brick/math",
@@ -2318,6 +2318,74 @@
                 }
             ],
             "time": "2026-09-29T19:21:12+00:00"
+        },
+        {
+            "name": "multiapi/arco-laravel",
+            "version": "v0.1.4",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/multi-api/arco-laravel.git",
+                "reference": "77a9cf42582d1f6b645b23e3312b77b0fe008c19"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/multi-api/arco-laravel/zipball/77a9cf42582d1f6b645b23e3312b77b0fe008c19",
+                "reference": "77a9cf42582d1f6b645b23e3312b77b0fe008c19",
+                "shasum": ""
+            },
+            "require": {
+                "illuminate/http": "^11.0 || ^12.0 || ^13.0",
+                "illuminate/support": "^11.0 || ^12.0 || ^13.0",
+                "php": "^8.3"
+            },
+            "suggest": {
+                "multiapi/arco": "The Arco CLI (install with --dev); it loads LaravelPreset when building and deploying"
+            },
+            "type": "library",
+            "extra": {
+                "arco": {
+                    "presets": [
+                        "Multiapi\\Arco\\Laravel\\LaravelPreset"
+                    ]
+                },
+                "laravel": {
+                    "providers": [
+                        "Multiapi\\Arco\\Laravel\\ArcoServiceProvider"
+                    ]
+                }
+            },
+            "autoload": {
+                "psr-4": {
+                    "Multiapi\\Arco\\Laravel\\": "src/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Multiapi",
+                    "homepage": "https://multiapi.cl"
+                }
+            ],
+            "description": "Laravel integration for Arco (Octane on AWS Lambda Web Functions)",
+            "homepage": "https://github.com/multi-api/arco",
+            "keywords": [
+                "aws",
+                "frankenphp",
+                "lambda",
+                "lambda-web-functions",
+                "laravel",
+                "octane",
+                "serverless"
+            ],
+            "support": {
+                "docs": "https://github.com/multi-api/arco/tree/main/docs",
+                "issues": "https://github.com/multi-api/arco/issues",
+                "source": "https://github.com/multi-api/arco"
+            },
+            "time": "2026-10-15T13:17:58+00:00"
         },
         {
             "name": "nesbot/carbon",
