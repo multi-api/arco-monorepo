@@ -1,8 +1,7 @@
 name: E2E
+# Manual only until a dedicated test account and the ARCO_E2E_ROLE_ARN secret exist.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 6 * * *'
 permissions:
   id-token: write
   contents: read
