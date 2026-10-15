@@ -44,7 +44,8 @@ final class BootstrapTest extends TestCase
         }
     }
 
-    private function bootstrap(?string $sha = null): Process
+    /** @param array<string, string> $env */
+    private function bootstrap(?string $sha = null, array $env = []): Process
     {
         $process = new Process(['sh', __DIR__ . '/../../../packages/arco/runtime/bootstrap'], null, [
             'LAMBDA_TASK_ROOT' => $this->root,
@@ -58,6 +59,7 @@ final class BootstrapTest extends TestCase
             'AWS_SECRET_ACCESS_KEY' => 'secret',
             'AWS_SESSION_TOKEN' => 'session-token',
             'AWS_LAMBDA_RUNTIME_API' => "127.0.0.1:{$this->api->port}",
+            ...$env,
         ]);
         $process->run();
         return $process;
@@ -79,6 +81,86 @@ final class BootstrapTest extends TestCase
         self::assertStringStartsWith('AWS4-HMAC-SHA256 Credential=AKIDTEST/', $request['authorization']);
         self::assertStringContainsString('/us-east-1/s3/aws4_request', $request['authorization']);
         self::assertSame('session-token', $request['token']);
+        self::assertSame('', $request['query']);
+    }
+
+    public function test_the_binary_is_not_pinned_to_an_s3_version(): void
+    {
+        // The key is immutable and ARCO_BINARY_SHA256 verifies the bytes: a stale variable from an older deploy is ignored.
+        $run = $this->bootstrap(env: ['ARCO_BINARY_VERSION' => 'a+b/c']);
+
+        self::assertSame(0, $run->getExitCode(), $run->getOutput() . $run->getErrorOutput());
+        self::assertSame('', $this->s3->requests()[0]['query']);
+    }
+
+    public function test_credentials_never_appear_in_the_curl_command_line(): void
+    {
+        $which = new Process(['sh', '-c', 'command -v curl']);
+        $which->mustRun();
+        $shims = "$this->root/shims";
+        mkdir($shims);
+        file_put_contents("$shims/curl", "#!/bin/sh\nprintf '%s\\n' \"\$*\" >> $this->root/curl-argv\nexec " . trim($which->getOutput()) . " \"\$@\"\n");
+        chmod("$shims/curl", 0755);
+
+        $run = $this->bootstrap(env: ['PATH' => $shims . ':' . getenv('PATH')]);
+
+        self::assertSame(0, $run->getExitCode(), $run->getOutput() . $run->getErrorOutput());
+        $argv = (string) file_get_contents("$this->root/curl-argv");
+        self::assertStringContainsString('--aws-sigv4', $argv);
+        self::assertStringNotContainsString('secret', $argv);
+        self::assertStringNotContainsString('session-token', $argv);
+        $request = $this->s3->requests()[0];
+        self::assertStringStartsWith('AWS4-HMAC-SHA256 Credential=AKIDTEST/', $request['authorization']);
+        self::assertSame('session-token', $request['token']);
+    }
+
+    public function test_a_failing_step_under_set_e_reports_an_init_error(): void
+    {
+        file_put_contents("$this->root/not-a-directory", '');
+
+        $run = $this->bootstrap(env: ['ARCO_TMP' => "$this->root/not-a-directory/tmp"]);
+
+        self::assertSame(1, $run->getExitCode());
+        self::assertStringNotContainsString('fake-frankenphp', $run->getOutput());
+        $error = $this->api->initError();
+        self::assertSame('Arco.InitError', $error['type'] ?? null);
+        $body = json_decode($error['body'] ?? '', true, flags: JSON_THROW_ON_ERROR);
+        self::assertStringContainsString("creating $this->root/not-a-directory/tmp/bin", $body['errorMessage']);
+    }
+
+    public function test_a_missing_app_directory_reports_an_init_error(): void
+    {
+        rmdir("$this->root/app");
+
+        $run = $this->bootstrap();
+
+        self::assertSame(1, $run->getExitCode());
+        self::assertStringNotContainsString('fake-frankenphp', $run->getOutput());
+        self::assertSame('Arco.InitError', $this->api->initError()['type'] ?? null);
+    }
+
+    public function test_a_missing_region_reports_an_init_error(): void
+    {
+        $run = $this->bootstrap(env: ['AWS_REGION' => false]);
+
+        self::assertSame(1, $run->getExitCode());
+        self::assertSame('Arco.InitError', $this->api->initError()['type'] ?? null);
+    }
+
+    public function test_the_init_error_and_the_log_line_are_valid_json_whatever_the_message(): void
+    {
+        $key = "runtime/a\"b\\c\td/frankenphp";
+
+        $run = $this->bootstrap(env: ['ARCO_BINARY_KEY' => $key]);
+
+        self::assertSame(1, $run->getExitCode());
+        $error = $this->api->initError();
+        self::assertSame('Arco.BinaryDownload', $error['type'] ?? null);
+        $body = json_decode($error['body'] ?? '', true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame('Arco.BinaryDownload', $body['errorType']);
+        self::assertStringContainsString('runtime/a"b\\cd/frankenphp', $body['errorMessage']);
+        self::assertSame(1, preg_match('/^\{"arco":"fatal".*$/m', $run->getOutput(), $line), $run->getOutput());
+        self::assertSame($body['errorMessage'], json_decode($line[0], true, flags: JSON_THROW_ON_ERROR)['error']);
     }
 
     public function test_a_checksum_mismatch_fails_init_and_never_runs_the_binary(): void

@@ -40,11 +40,11 @@ final class S3Emulator
         copy($sourcePath, $target);
     }
 
-    /** @return list<array{path: string, authorization: string, token: string}> */
+    /** @return list<array{path: string, query: string, authorization: string, token: string}> */
     public function requests(): array
     {
         $lines = array_filter(explode("\n", (string) file_get_contents("$this->dir/requests.jsonl")));
-        /** @var list<array{path: string, authorization: string, token: string}> */
+        /** @var list<array{path: string, query: string, authorization: string, token: string}> */
         return array_values(array_map(fn (string $line) => json_decode($line, true, flags: JSON_THROW_ON_ERROR), $lines));
     }
 

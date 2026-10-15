@@ -6,6 +6,7 @@ $dir = (string) getenv('ARCO_S3_DIR');
 $path = rawurldecode((string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH));
 file_put_contents("$dir/requests.jsonl", json_encode([
     'path' => $path,
+    'query' => (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_QUERY),
     'authorization' => (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? ''),
     'token' => (string) ($_SERVER['HTTP_X_AMZ_SECURITY_TOKEN'] ?? ''),
 ]) . "\n", FILE_APPEND);
