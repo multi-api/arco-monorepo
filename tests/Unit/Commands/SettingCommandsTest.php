@@ -150,7 +150,7 @@ final class SettingCommandsTest extends TestCase
             [['key' => 'concurrency', 'value' => '200', '--env' => 'production'], 'concurrency must be between 1 and 128, got 200.'],
             [['key' => 'concurrency', 'value' => 'lots', '--env' => 'production'], 'concurrency must be between 1 and 128, got lots.'],
             [['key' => 'timeout', 'value' => '2', '--env' => 'production'], 'timeout must be between 3 and 900 seconds, got 2.'],
-            [['key' => 'max-instances', 'value' => '0', '--env' => 'production'], 'must be at least 1, got 0.'],
+            [['key' => 'max-instances', 'value' => '0', '--env' => 'production'], 'must be between 2 and 10000, got 0.'],
             [['key' => 'log-level', 'value' => 'loud', '--env' => 'production'], 'logLevel must be one of trace'],
         ];
         foreach ($cases as [$input, $message]) {

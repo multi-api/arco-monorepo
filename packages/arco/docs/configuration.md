@@ -45,8 +45,8 @@ Settings, `variables()`, `permissions()`, `runtime()` and the custom domain meth
 | `region(string)` | required | AWS region; must be one of us-east-1, us-east-2, us-west-2, ap-northeast-1, eu-west-1 |
 | `concurrency(int)` | 16 | Requests each instance handles at once: revision `maxConcurrencyPerEnvironment` (1 to 128) |
 | `timeout(int)` | 30 | Revision `timeoutSeconds` (3 to 900) |
-| `maxInstances(int)` | unset | Maximum running instances of the function: endpoint `scalingConfig.maxEnvironments` (>= 1). `maxEnvironments(int)` is accepted as an alias |
-| `rateLimit(int)` | unset | Endpoint `throttleConfig.rateLimit` (requests per second, >= 1) |
+| `maxInstances(int)` | unset | Maximum running instances of the function: endpoint `scalingConfig.maxEnvironments` (2 to 10000). `maxEnvironments(int)` is accepted as an alias |
+| `rateLimit(int)` | unset | Endpoint `throttleConfig.rateLimit` (requests per second: 100 to 1000 in steps of 100, or 2000 to 10000 in steps of 1000) |
 | `auth('public'\|'iam')` | `public` | Endpoint `authType`: `public` is `ApplicationManaged`, `iam` is `IamAuth` |
 | `logLevel(string)` | `info` | Revision log level: trace, debug, info, warn, error, fatal |
 | `role(arn)` | managed | Your own execution role ARN instead of the managed `arco-<app>-<env>` role |
@@ -102,8 +102,8 @@ vendor/bin/arco set timeout 60 --app          # app level (all environments)
 | Key | Method | Accepted values |
 |---|---|---|
 | `concurrency` | `concurrency(int)` | 1 to 128 |
-| `max-instances` | `maxInstances(int)` | >= 1 |
-| `rate-limit` | `rateLimit(int)` | >= 1 |
+| `max-instances` | `maxInstances(int)` | 2 to 10000 |
+| `rate-limit` | `rateLimit(int)` | 100–1000 (steps of 100) or 2000–10000 (steps of 1000) |
 | `timeout` | `timeout(int)` | 3 to 900 |
 | `log-level` | `logLevel(string)` | trace, debug, info, warn, error, fatal |
 

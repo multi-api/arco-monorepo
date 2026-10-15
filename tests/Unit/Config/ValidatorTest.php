@@ -271,9 +271,18 @@ final class ValidatorTest extends TestCase
         self::assertSame(['key' => 'validation.concurrency', 'params' => ['value' => 'many']], Validator::settingError('concurrency', 'many'));
         self::assertNull(Validator::settingError('timeout', 3));
         self::assertSame('validation.timeout', Validator::settingError('timeout', 901)['key'] ?? null);
-        self::assertNull(Validator::settingError('maxInstances', 1));
-        self::assertSame('validation.max_instances', Validator::settingError('maxInstances', 0)['key'] ?? null);
-        self::assertSame('validation.rate_limit', Validator::settingError('rateLimit', -5)['key'] ?? null);
+        self::assertNull(Validator::settingError('maxInstances', 2));
+        self::assertNull(Validator::settingError('maxInstances', 10000));
+        foreach ([0, 1, 10001] as $bad) {
+            self::assertSame('validation.max_instances', Validator::settingError('maxInstances', $bad)['key'] ?? null, (string) $bad);
+        }
+        // AWS: multiples of 100 up to 1,000, then multiples of 1,000 up to 10,000; 0 (block all) is refused.
+        foreach ([100, 500, 1000, 2000, 10000] as $good) {
+            self::assertNull(Validator::settingError('rateLimit', $good), (string) $good);
+        }
+        foreach ([-5, 0, 50, 150, 1500, 11000] as $bad) {
+            self::assertSame('validation.rate_limit', Validator::settingError('rateLimit', $bad)['key'] ?? null, (string) $bad);
+        }
         self::assertNull(Validator::settingError('logLevel', 'debug'));
         self::assertSame('validation.log_level', Validator::settingError('logLevel', 'loud')['key'] ?? null);
         self::assertSame('validation.log_level', Validator::settingError('logLevel', 3)['key'] ?? null);
