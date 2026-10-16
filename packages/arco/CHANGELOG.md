@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.3.0
 
 - **Changed:** the console function carries a static PHP CLI (`bin/php`) with the same PHP version and
   extensions as the web runtime, so it no longer downloads FrankenPHP at cold start. Runtime build
@@ -20,6 +20,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   before any AWS change.
 - **Changed:** a console package whose `bin/php` lost its exec bit fails at init with an error naming
   it, instead of asking for `ARCO_BINARY_*` variables.
+- **Fixed:** `arco tinker` no longer contacts api.github.com for PsySH's weekly update check.
 
 ## 0.2.1
 
