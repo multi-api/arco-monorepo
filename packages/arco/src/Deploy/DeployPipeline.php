@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Deploy;
 
 use Aws\Exception\AwsException;
 use Multiapi\Arco\Binary\BinaryProvider;
+use Multiapi\Arco\Binary\RuntimeBuild;
 use Multiapi\Arco\Build\Builder;
 use Multiapi\Arco\Build\BuildResult;
 use Multiapi\Arco\Build\CachesPaths;
@@ -106,10 +107,7 @@ final class DeployPipeline
             // otherwise (custom binary, unknown or older build) it downloads FrankenPHP at cold start.
             $buildId = $package->manifest?->runtimeBuild;
             $build = $buildId === null ? null : $this->binaries->build($buildId);
-            $phpCli = $build === null ? null : $this->binaries->phpCli($build);
-            if ($phpCli === null) {
-                $onStep('deploy.console_downloads_binary', ['reason' => $buildId === null ? 'custom_binary' : 'no_php_cli']);
-            }
+            $phpCli = $build === null ? null : $this->binaries->phpCli($build, self::downloadProgress($build, $onStep));
             $console = ConsolePackager::fromWeb($package, $work, $phpCli);
             if ($console->package->bytes > ConsoleFunction::MAX_UNZIPPED_BYTES) {
                 $params = [
@@ -122,6 +120,9 @@ final class DeployPipeline
                 }
                 $onStep('deploy.console_skipped_size', $params);
                 $console = null;
+            }
+            if ($console?->download !== null) {
+                $onStep('deploy.console_downloads_binary', ['reason' => $buildId === null ? 'custom_binary' : 'no_php_cli']);
             }
 
             $since = (int) floor(microtime(true) * 1000) - 5000;
@@ -188,6 +189,31 @@ final class DeployPipeline
         } finally {
             (new Filesystem())->remove($work);
         }
+    }
+
+    /**
+     * Reports a PHP CLI download (only called when the CLI is not cached yet): one step naming it, then
+     * each whole percent once as package.progress, which the step printer draws as a progress bar.
+     *
+     * @param callable(string, array<string, string|int>): void $onStep
+     * @return callable(int, int): void
+     */
+    private static function downloadProgress(RuntimeBuild $build, callable $onStep): callable
+    {
+        $last = null;
+        return static function (int $downloaded, int $total) use ($build, $onStep, &$last): void {
+            if ($total <= 0) {
+                return;
+            }
+            if ($last === null) {
+                $onStep('deploy.php_cli_downloading', ['build' => $build->id, 'size' => (int) round($total / 1048576)]);
+            }
+            $percent = (int) floor(min($downloaded, $total) * 100 / $total);
+            if ($percent !== $last) {
+                $last = $percent;
+                $onStep('package.progress', ['percent' => $percent]);
+            }
+        };
     }
 
     private static function errorMessage(Throwable $e): string

@@ -273,7 +273,16 @@ final class DeployPipelineTest extends TestCase
             public function __construct(private string $content) {}
             public function download(string $url, string $destination, ?callable $onProgress = null): void
             {
+                // Like Guzzle: an unknown total first, then the bytes as they arrive.
+                if ($onProgress !== null) {
+                    $onProgress(0, 0);
+                    $onProgress(6, strlen($this->content));
+                    $onProgress(6, strlen($this->content));
+                }
                 file_put_contents($destination, $this->content);
+                if ($onProgress !== null) {
+                    $onProgress(strlen($this->content), strlen($this->content));
+                }
             }
         };
         $cache = sys_get_temp_dir() . '/arco-cache-' . bin2hex(random_bytes(4));
@@ -309,6 +318,26 @@ final class DeployPipelineTest extends TestCase
         self::assertNotNull($deployer->console);
         self::assertNull($deployer->console->download);
         self::assertArrayNotHasKey('deploy.console_downloads_binary', $steps);
+    }
+
+    public function test_the_first_php_cli_download_reports_progress_and_the_cached_one_does_not(): void
+    {
+        $pipeline = $this->cliPipeline();
+        $deploy = function () use ($pipeline): array {
+            $steps = [];
+            $pipeline->deployPackage($this->config(), new PlainPhpPreset(), self::webPackage('1.13.0-r2'), new FakeDeployer('rev-1'), new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+            return $steps;
+        };
+
+        $first = $deploy();
+        $second = $deploy();
+
+        self::assertSame([
+            ['deploy.php_cli_downloading', ['build' => '1.13.0-r2', 'size' => 0]],
+            ['package.progress', ['percent' => 46]],
+            ['package.progress', ['percent' => 100]],
+        ], array_slice($first, 0, 3));
+        self::assertSame([], array_filter($second, fn (array $step) => in_array($step[0], ['deploy.php_cli_downloading', 'package.progress'], true)), 'a cached CLI is not downloaded again');
     }
 
     public function test_a_custom_binary_falls_back_to_the_download(): void
@@ -351,6 +380,7 @@ final class DeployPipelineTest extends TestCase
         self::assertTrue($outcome->verification->ok, 'the web function still deploys');
         self::assertNull($deployer->console);
         self::assertContains('deploy.console_skipped_size', $steps);
+        self::assertNotContains('deploy.console_downloads_binary', $steps, 'no console is deployed, so it downloads nothing');
         self::assertSame(['prepare', 'release', 'prune'], $deployer->calls);
     }
 

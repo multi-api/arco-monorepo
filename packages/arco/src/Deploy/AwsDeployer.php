@@ -56,9 +56,10 @@ final class AwsDeployer implements Deployer
             $roleArn = $config->role;
         } else {
             $step('deploy.step_role', ['role' => ExecutionRole::roleName($config)]);
-            // Only a console that downloads FrankenPHP at cold start needs to read runtime/* in the bucket.
-            $downloadsBinary = $console?->download !== null;
-            $policy = PolicyBuilder::document($region, $account, $function, SecretResolver::references($variables), $config->permissions, $downloadsBinary ? $bucket : null);
+            // runtime/* stays readable even when this console carries bin/php: the role is shared by every
+            // console version, and an older download-based one can still be live (a failed verification,
+            // a console skipped for size, arco rollback). Dropping it waits for the storage clean-up.
+            $policy = PolicyBuilder::document($region, $account, $function, SecretResolver::references($variables), $config->permissions, $bucket);
             ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags);
         }
 

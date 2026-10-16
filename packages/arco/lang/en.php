@@ -104,6 +104,7 @@ return [
     'deploy.commands_package_too_large' => 'Deploy commands run on the console function, which Lambda limits to {max} MB unzipped; the console package (without FrankenPHP) is {size} MB. Leave large folders out with ->exclude([...]) in arco.php, or deploy with --no-deploy-commands. Nothing was changed.',
     'deploy.commands_without_console' => 'The console function was not updated, so the deploy commands cannot run.',
     'init.ask_migrate' => 'This app uses a {connection} database. Run "migrate --force" on every deploy, before traffic moves?',
+    'deploy.php_cli_downloading' => 'Downloading the PHP CLI of runtime build {build} for the console function ({size} MB; downloaded once, then cached)',
     'deploy.console_downloads_binary' => 'Console function: downloads the FrankenPHP binary at cold start ({reason}).',
     'deploy.console_reason.custom_binary' => 'custom binary(): no PHP CLI matches it',
     'deploy.console_reason.no_php_cli' => 'this runtime build has no PHP CLI',

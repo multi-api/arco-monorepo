@@ -138,7 +138,7 @@ final class AwsDeployerTest extends TestCase
         self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_function', 'deploy.step_console', 'deploy.step_traffic'], $steps);
     }
 
-    public function test_a_console_with_bin_php_uploads_no_binary_and_sets_no_binary_variables(): void
+    public function test_a_console_with_bin_php_uploads_no_binary_and_sets_no_binary_variables_but_keeps_the_binary_statement(): void
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
@@ -180,7 +180,7 @@ final class AwsDeployerTest extends TestCase
         self::assertSame('production', $variables['APP_ENV']);
         self::assertSame([], array_filter(array_keys($variables), fn (string $name) => str_starts_with($name, 'ARCO_BINARY_')));
         $policy = json_decode($byOperation['PutRolePolicy'][0]['PolicyDocument'], true);
-        self::assertNotContains('ArcoRuntimeBinary', array_column($policy['Statement'], 'Sid'));
+        self::assertContains('ArcoRuntimeBinary', array_column($policy['Statement'], 'Sid'), 'an older live console version may still download its binary');
     }
 
     public function test_redeploy_creates_a_revision_and_remembers_the_previous_one(): void
@@ -328,6 +328,8 @@ final class AwsDeployerTest extends TestCase
         self::assertNull($prepared->consoleVersion);
         self::assertNull($result->consoleVersion);
         self::assertNotContains('deploy.step_console', $steps);
+        $policy = json_decode($mocks->params[8]['PolicyDocument'], true);
+        self::assertContains('ArcoRuntimeBinary', array_column($policy['Statement'], 'Sid'), 'the console left in place may still download its binary');
         self::assertSame([], array_values(array_intersect(['GetAlias', 'CreateFunction', 'UpdateFunctionCode', 'PublishVersion', 'UpdateAlias', 'GetAlias', 'ListVersionsByFunction'], $mocks->calls)));
         self::assertCount(0, $mocks->handler);
     }
