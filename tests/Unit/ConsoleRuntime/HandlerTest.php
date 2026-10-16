@@ -5,6 +5,7 @@ namespace Multiapi\Arco\Tests\Unit\ConsoleRuntime;
 use Multiapi\Arco\ConsoleRuntime\Handler;
 use Multiapi\Arco\ConsoleRuntime\InvalidEvent;
 use Multiapi\Arco\ConsoleRuntime\ProcessRunner;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class HandlerTest extends TestCase
@@ -16,7 +17,7 @@ final class HandlerTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->app = sys_get_temp_dir() . '/arco-handler-' . bin2hex(random_bytes(4));
+        $this->app = TempPaths::path('arco-handler-');
         mkdir("$this->app/scripts", 0777, true);
         // A stand-in for artisan: prints its arguments and stdin, fails with --fail, sleeps with --slow.
         file_put_contents("$this->app/artisan", <<<'PHP'

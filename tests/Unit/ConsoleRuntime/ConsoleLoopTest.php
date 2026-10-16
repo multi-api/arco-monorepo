@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\ConsoleRuntime;
 
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\Process\Process;
@@ -19,7 +20,7 @@ final class ConsoleLoopTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->root = sys_get_temp_dir() . '/arco-task-' . bin2hex(random_bytes(4));
+        $this->root = TempPaths::path('arco-task-');
         $fs = new Filesystem();
         $fs->mirror(__DIR__ . '/../../../packages/arco/runtime/console', "$this->root/runtime/console");
         $fs->copy(__DIR__ . '/../../../packages/arco/runtime/console.php', "$this->root/runtime/console.php");

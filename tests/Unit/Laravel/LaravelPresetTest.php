@@ -5,13 +5,14 @@ namespace Multiapi\Arco\Tests\Unit\Laravel;
 use Multiapi\Arco\Build\BuildException;
 use Multiapi\Arco\Build\PresetRegistry;
 use Multiapi\Arco\Laravel\LaravelPreset;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class LaravelPresetTest extends TestCase
 {
     private function laravelProject(bool $withOctane = true): string
     {
-        $dir = sys_get_temp_dir() . '/arco-laravel-' . bin2hex(random_bytes(4));
+        $dir = TempPaths::path('arco-laravel-');
         mkdir("$dir/public", 0777, true);
         file_put_contents("$dir/artisan", '<?php');
         file_put_contents("$dir/composer.json", json_encode(['require' => ['php' => '^8.3', 'laravel/framework' => '^13.0']]));
@@ -27,7 +28,7 @@ final class LaravelPresetTest extends TestCase
         $preset = new LaravelPreset();
         self::assertTrue($preset->detects($this->laravelProject()));
 
-        $plain = sys_get_temp_dir() . '/arco-plain-' . bin2hex(random_bytes(4));
+        $plain = TempPaths::path('arco-plain-');
         mkdir($plain);
         file_put_contents("$plain/composer.json", '{"require":{"slim/slim":"^4"}}');
         self::assertFalse($preset->detects($plain));

@@ -5,6 +5,7 @@ namespace Multiapi\Arco\Tests\Unit\Build;
 use Multiapi\Arco\Build\FrameworkPreset;
 use Multiapi\Arco\Build\PlainPhpPreset;
 use Multiapi\Arco\Build\PresetRegistry;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class PresetRegistryTest extends TestCase
@@ -16,7 +17,7 @@ final class PresetRegistryTest extends TestCase
             public function detects(string $projectDir): bool { return is_file("$projectDir/special.txt"); }
         };
         $registry = new PresetRegistry([$special]);
-        $dir = sys_get_temp_dir() . '/arco-preset-' . bin2hex(random_bytes(4));
+        $dir = TempPaths::path('arco-preset-');
         mkdir($dir);
 
         self::assertSame('php', $registry->detect($dir)->name());

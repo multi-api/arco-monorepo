@@ -3,13 +3,14 @@
 namespace Multiapi\Arco\Tests\Unit\Cli;
 
 use Multiapi\Arco\Cli\LocaleResolver;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class LocaleResolverTest extends TestCase
 {
     public function test_precedence_flag_env_global_default(): void
     {
-        $global = sys_get_temp_dir() . '/arco-global-' . bin2hex(random_bytes(4)) . '.php';
+        $global = TempPaths::path('arco-global-', '.php');
         file_put_contents($global, "<?php return ['lang' => 'es'];");
 
         self::assertSame('es', LocaleResolver::resolve('es', ['ARCO_LANG' => 'en'], $global));

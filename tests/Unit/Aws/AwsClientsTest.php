@@ -7,6 +7,7 @@ use Aws\Credentials\Credentials;
 use Aws\Credentials\CredentialSources;
 use Aws\MockHandler;
 use Aws\Result;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use Psr\Http\Message\RequestInterface;
 use Multiapi\Arco\Aws\AwsClients;
 use PHPUnit\Framework\TestCase;
@@ -19,7 +20,7 @@ final class AwsClientsTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->dir = sys_get_temp_dir() . '/arco-aws-' . bin2hex(random_bytes(4));
+        $this->dir = TempPaths::path('arco-aws-');
         mkdir($this->dir);
         foreach (['AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE', 'AWS_PROFILE', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] as $name) {
             $this->env[$name] = getenv($name);

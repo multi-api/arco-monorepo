@@ -6,6 +6,7 @@ use Aws\Command;
 use Aws\Exception\AwsException;
 use Aws\Exception\CredentialsException;
 use Multiapi\Arco\Aws\CredentialError;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
@@ -40,9 +41,9 @@ final class CredentialErrorTest extends TestCase
 
     public function test_suggests_sso_login_only_for_sso_profiles(): void
     {
-        $config = tempnam(sys_get_temp_dir(), 'arco-cfg');
+        $config = TempPaths::file('arco-cfg');
         file_put_contents($config, "[profile acme-sso]\nsso_session = acme\nsso_account_id = 111111111111\n\n[profile keys]\nregion = us-east-1\n");
-        $credentials = tempnam(sys_get_temp_dir(), 'arco-cred');
+        $credentials = TempPaths::file('arco-cred');
         file_put_contents($credentials, "[keys]\naws_access_key_id = AKIA\naws_secret_access_key = s\n");
         putenv("AWS_CONFIG_FILE=$config");
         putenv("AWS_SHARED_CREDENTIALS_FILE=$credentials");

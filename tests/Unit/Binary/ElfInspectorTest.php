@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\Binary;
 
 use Multiapi\Arco\Binary\ElfInspector;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class ElfInspectorTest extends TestCase
@@ -10,7 +11,7 @@ final class ElfInspectorTest extends TestCase
     /** Writes a minimal 64-byte ELF header for the given e_machine. */
     public static function fakeElf(int $machine): string
     {
-        $path = tempnam(sys_get_temp_dir(), 'arco-elf-');
+        $path = TempPaths::file('arco-elf-');
         $header = "\x7FELF" . "\x02\x01\x01" . str_repeat("\0", 9) . pack('v', 2) . pack('v', $machine) . str_repeat("\0", 44);
         file_put_contents((string) $path, $header);
         return (string) $path;

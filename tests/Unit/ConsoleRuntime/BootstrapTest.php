@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Tests\Unit\ConsoleRuntime;
 
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
 use Multiapi\Arco\Tests\Support\S3Emulator;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Process\Process;
 
@@ -24,7 +25,7 @@ final class BootstrapTest extends TestCase
         if (! str_contains($curl->getOutput(), '--aws-sigv4')) {
             self::markTestSkipped('curl with --aws-sigv4 (7.75+) is needed.');
         }
-        $this->root = sys_get_temp_dir() . '/arco-boot-' . bin2hex(random_bytes(4));
+        $this->root = TempPaths::path('arco-boot-');
         $this->tmp = "$this->root/tmp";
         mkdir("$this->root/app", 0777, true);
         mkdir("$this->root/runtime", 0777, true);

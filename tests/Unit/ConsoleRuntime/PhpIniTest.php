@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\ConsoleRuntime;
 
 use Multiapi\Arco\ConsoleRuntime\PhpIni;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class PhpIniTest extends TestCase
@@ -11,7 +12,7 @@ final class PhpIniTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->dir = sys_get_temp_dir() . '/arco-ini-' . bin2hex(random_bytes(4));
+        $this->dir = TempPaths::path('arco-ini-');
     }
 
     public function test_the_settings_are_written_as_an_ini_file_in_the_scan_dir(): void

@@ -13,7 +13,7 @@ final class S3Emulator
 
     public function __construct(string $bind = '127.0.0.1')
     {
-        $this->dir = sys_get_temp_dir() . '/arco-s3-' . bin2hex(random_bytes(4));
+        $this->dir = TempPaths::path('arco-s3-');
         mkdir("$this->dir/objects", 0777, true);
         touch("$this->dir/requests.jsonl");
         $this->port = random_int(40000, 49999);

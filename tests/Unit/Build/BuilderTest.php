@@ -8,6 +8,7 @@ use Multiapi\Arco\Build\PlainPhpPreset;
 use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class BuilderTest extends TestCase
@@ -17,7 +18,7 @@ final class BuilderTest extends TestCase
     protected function setUp(): void
     {
         // Review focus: project paths with spaces.
-        $this->project = sys_get_temp_dir() . '/My Projects ' . bin2hex(random_bytes(4)) . '/shop';
+        $this->project = TempPaths::path('My Projects ') . '/shop';
         foreach (['public', 'src', 'tests', 'vendor/foo', 'node_modules/x', '.git', 'storage/app/public'] as $dir) {
             mkdir("$this->project/$dir", 0777, true);
         }

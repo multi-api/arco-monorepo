@@ -3,13 +3,14 @@
 namespace Multiapi\Arco\Tests\Unit\Aws;
 
 use Multiapi\Arco\Aws\ProfileLister;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class ProfileListerTest extends TestCase
 {
     public function test_lists_profiles_from_config_and_credentials(): void
     {
-        $dir = sys_get_temp_dir() . '/arco-aws-' . bin2hex(random_bytes(4));
+        $dir = TempPaths::path('arco-aws-');
         mkdir($dir);
         file_put_contents("$dir/config", <<<'INI'
             [default]

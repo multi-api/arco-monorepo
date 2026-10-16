@@ -4,13 +4,14 @@ namespace Multiapi\Arco\Tests\Unit\Config;
 
 use Multiapi\Arco\Config\ConfigException;
 use Multiapi\Arco\Config\ConfigLoader;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class ConfigLoaderTest extends TestCase
 {
     private function write(string $php): string
     {
-        $dir = sys_get_temp_dir() . '/arco cfg ' . bin2hex(random_bytes(4));
+        $dir = TempPaths::path('arco cfg ');
         mkdir($dir);
         file_put_contents("$dir/arco.php", $php);
         return "$dir/arco.php";

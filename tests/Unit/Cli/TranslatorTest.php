@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\Cli;
 
 use Multiapi\Arco\Cli\Translator;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class TranslatorTest extends TestCase
@@ -11,7 +12,7 @@ final class TranslatorTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->dir = sys_get_temp_dir() . '/arco-lang-' . bin2hex(random_bytes(4));
+        $this->dir = TempPaths::path('arco-lang-');
         mkdir($this->dir);
         file_put_contents($this->dir . '/en.php', "<?php return ['hello' => 'Hello {name}', 'only_en' => 'English only'];");
         file_put_contents($this->dir . '/es.php', "<?php return ['hello' => 'Hola {name}'];");

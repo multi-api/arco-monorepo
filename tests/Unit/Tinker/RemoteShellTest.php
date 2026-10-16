@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Tests\Unit\Tinker;
 
+use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Commands\FakeConsole;
 use Multiapi\Arco\Tinker\RemoteExecution;
 use Multiapi\Arco\Tinker\RemoteShell;
@@ -16,7 +17,7 @@ final class RemoteShellTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->dir = sys_get_temp_dir() . '/arco-remote-shell-' . bin2hex(random_bytes(4));
+        $this->dir = TempPaths::path('arco-remote-shell-');
         mkdir($this->dir);
     }
 

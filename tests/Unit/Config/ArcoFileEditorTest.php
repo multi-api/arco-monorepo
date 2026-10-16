@@ -6,13 +6,14 @@ use Multiapi\Arco\Config\ArcoFileEditor;
 use Multiapi\Arco\Config\ConfigException;
 use Multiapi\Arco\Config\ConfigLoader;
 use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class ArcoFileEditorTest extends TestCase
 {
     private function file(string $php): string
     {
-        $path = sys_get_temp_dir() . '/arco-edit-' . bin2hex(random_bytes(4)) . '.php';
+        $path = TempPaths::path('arco-edit-', '.php');
         file_put_contents($path, $php);
         return $path;
     }

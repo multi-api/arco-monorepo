@@ -9,6 +9,7 @@ use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class ProfileResolverTest extends TestCase
@@ -17,7 +18,7 @@ final class ProfileResolverTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->project = sys_get_temp_dir() . '/arco-proj-' . bin2hex(random_bytes(4));
+        $this->project = TempPaths::path('arco-proj-');
         mkdir($this->project);
     }
 

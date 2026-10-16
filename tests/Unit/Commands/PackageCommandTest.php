@@ -10,6 +10,7 @@ use Multiapi\Arco\Cli\Application;
 use Multiapi\Arco\Commands\PackageCommand;
 use Multiapi\Arco\Deploy\DeployPipeline;
 use Multiapi\Arco\Package\Packager;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Binary\ElfInspectorTest;
 use Multiapi\Arco\Tests\Unit\Build\FakeRunner;
 use PHPUnit\Framework\TestCase;
@@ -23,7 +24,7 @@ final class PackageCommandTest extends TestCase
     protected function setUp(): void
     {
         $this->cwd = (string) getcwd();
-        $this->project = sys_get_temp_dir() . '/arco-pkg-' . bin2hex(random_bytes(4));
+        $this->project = TempPaths::path('arco-pkg-');
         mkdir("$this->project/public", 0777, true);
         file_put_contents("$this->project/public/index.php", '<?php');
         $binary = ElfInspectorTest::fakeElf(0xB7);

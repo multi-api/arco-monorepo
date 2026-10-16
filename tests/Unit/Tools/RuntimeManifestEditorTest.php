@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Tests\Unit\Tools;
 
 use InvalidArgumentException;
 use Multiapi\Arco\Binary\RuntimeManifest;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tools\RuntimeManifestEditor;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -14,7 +15,7 @@ final class RuntimeManifestEditorTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->path = sys_get_temp_dir() . '/arco-manifest-' . bin2hex(random_bytes(4)) . '.php';
+        $this->path = TempPaths::path('arco-manifest-', '.php');
         copy(__DIR__ . '/../../../packages/arco/resources/runtime-builds.php', $this->path);
     }
 

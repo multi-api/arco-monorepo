@@ -14,7 +14,7 @@ final class RuntimeApiEmulator
 
     public function __construct(string $bind = '127.0.0.1')
     {
-        $this->dir = sys_get_temp_dir() . '/arco-emulator-' . bin2hex(random_bytes(4));
+        $this->dir = TempPaths::path('arco-emulator-');
         foreach (['queue', 'responses', 'errors'] as $folder) {
             mkdir("$this->dir/$folder", 0777, true);
         }

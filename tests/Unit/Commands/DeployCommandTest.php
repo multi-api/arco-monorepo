@@ -15,6 +15,7 @@ use Multiapi\Arco\Console\CommandResult;
 use Multiapi\Arco\Deploy\AppStatus;
 use Multiapi\Arco\Deploy\DeployPipeline;
 use Multiapi\Arco\Package\Packager;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Binary\ElfInspectorTest;
 use Multiapi\Arco\Tests\Unit\Build\FakeRunner;
 use PHPUnit\Framework\TestCase;
@@ -29,7 +30,7 @@ final class DeployCommandTest extends TestCase
     protected function setUp(): void
     {
         $this->cwd = (string) getcwd();
-        $this->project = sys_get_temp_dir() . '/arco-cmd-' . bin2hex(random_bytes(4));
+        $this->project = TempPaths::path('arco-cmd-');
         mkdir("$this->project/public", 0777, true);
         file_put_contents("$this->project/public/index.php", '<?php');
         $binary = ElfInspectorTest::fakeElf(0xB7);
@@ -47,7 +48,7 @@ final class DeployCommandTest extends TestCase
             PHP);
         chdir($this->project);
 
-        $home = sys_get_temp_dir() . '/arco-home-' . bin2hex(random_bytes(4));
+        $home = TempPaths::path('arco-home-');
         mkdir("$home/.aws", 0777, true);
         file_put_contents("$home/.aws/config", "[profile acme-prod]\nsso_session = m\nsso_account_id = 222222222222\n\n[profile personal]\nregion = us-east-1\n");
         $keys = "aws_access_key_id = test\naws_secret_access_key = test\n";
@@ -239,7 +240,7 @@ final class DeployCommandTest extends TestCase
         $pipeline = new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager());
         $config = \Multiapi\Arco\Config\ConfigResolver::resolve((new \Multiapi\Arco\Config\ConfigLoader())->load("$this->project/arco.php"), 'production');
         [$build, $package] = $pipeline->package($config, new \Multiapi\Arco\Build\PlainPhpPreset(), $this->project, fn () => null);
-        $zip = sys_get_temp_dir() . '/arco-prebuilt-' . bin2hex(random_bytes(4)) . '.zip';
+        $zip = TempPaths::path('arco-prebuilt-', '.zip');
         copy($package->path, $zip);
         $build->cleanup();
         if ($manifest !== []) {
@@ -295,7 +296,7 @@ final class DeployCommandTest extends TestCase
 
     public function test_a_zip_that_is_not_an_arco_package_is_refused(): void
     {
-        $zip = sys_get_temp_dir() . '/arco-foreign-' . bin2hex(random_bytes(4)) . '.zip';
+        $zip = TempPaths::path('arco-foreign-', '.zip');
         $archive = new \ZipArchive();
         $archive->open($zip, \ZipArchive::CREATE);
         $archive->addFromString('index.js', '//');

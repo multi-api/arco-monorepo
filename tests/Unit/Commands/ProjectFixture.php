@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\Commands;
 
 use Multiapi\Arco\Cli\Application;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -16,7 +17,7 @@ final class ProjectFixture
     public function __construct(?string $arcoPhp = null)
     {
         $this->previousCwd = (string) getcwd();
-        $this->dir = sys_get_temp_dir() . '/arco-fixture-' . bin2hex(random_bytes(4));
+        $this->dir = TempPaths::path('arco-fixture-');
         mkdir($this->dir . '/public', 0777, true);
         if ($arcoPhp !== null) {
             file_put_contents($this->dir . '/arco.php', $arcoPhp);

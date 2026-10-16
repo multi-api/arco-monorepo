@@ -13,6 +13,7 @@ use Multiapi\Arco\Package\PackageManifest;
 use Multiapi\Arco\Package\PackageReader;
 use Multiapi\Arco\Package\PackageTooLarge;
 use Multiapi\Arco\Package\Packager;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 use ZipArchive;
 
@@ -24,7 +25,7 @@ final class PackagerTest extends TestCase
 
     protected function setUp(): void
     {
-        $base = sys_get_temp_dir() . '/arco-pkg-' . bin2hex(random_bytes(4));
+        $base = TempPaths::path('arco-pkg-');
         $this->runtimeDir = "$base/runtime";
         mkdir("$this->runtimeDir/lib", 0777, true);
         mkdir("$this->runtimeDir/test", 0777, true);
@@ -103,7 +104,7 @@ final class PackagerTest extends TestCase
     public function test_a_package_without_the_console_runtime_is_refused(): void
     {
         $built = (new Packager($this->runtimeDir))->package($this->build, $this->binary, $this->config(), new PlainPhpPreset());
-        $old = sys_get_temp_dir() . '/arco-old-' . bin2hex(random_bytes(4)) . '.zip';
+        $old = TempPaths::path('arco-old-', '.zip');
         copy($built->path, $old);
         $zip = new ZipArchive();
         self::assertTrue($zip->open($old));
@@ -166,7 +167,7 @@ final class PackagerTest extends TestCase
     public function test_reading_a_package_back_returns_its_manifest_and_hash(): void
     {
         $built = (new Packager($this->runtimeDir))->package($this->build, $this->binary, $this->config(), new PlainPhpPreset());
-        $copy = sys_get_temp_dir() . '/arco-read-' . bin2hex(random_bytes(4)) . '.zip';
+        $copy = TempPaths::path('arco-read-', '.zip');
         copy($built->path, $copy);
 
         $read = PackageReader::open($copy);
@@ -180,7 +181,7 @@ final class PackagerTest extends TestCase
 
     public function test_reading_something_that_is_not_an_arco_package_fails(): void
     {
-        $dir = sys_get_temp_dir() . '/arco-notpkg-' . bin2hex(random_bytes(4));
+        $dir = TempPaths::path('arco-notpkg-');
         mkdir($dir);
         $plain = "$dir/plain.zip";
         $zip = new ZipArchive();
@@ -226,7 +227,7 @@ final class PackagerTest extends TestCase
         $built = (new Packager($this->runtimeDir))->package($this->build, $this->binary, $this->config(), new PlainPhpPreset());
         $bytes = (string) file_get_contents($built->path);
         $bytes[31] = $bytes[31] === 'Z' ? 'Y' : 'Z'; // first entry's name in its local header no longer matches the central directory
-        $corrupt = sys_get_temp_dir() . '/arco-corrupt-' . bin2hex(random_bytes(4)) . '.zip';
+        $corrupt = TempPaths::path('arco-corrupt-', '.zip');
         file_put_contents($corrupt, $bytes);
 
         try {

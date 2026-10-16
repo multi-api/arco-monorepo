@@ -6,6 +6,7 @@ use Aws\Result;
 use Aws\S3\Exception\S3Exception;
 use Multiapi\Arco\Deploy\CodeBucket;
 use Multiapi\Arco\Deploy\DeployException;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class CodeBucketTest extends TestCase
@@ -45,7 +46,7 @@ final class CodeBucketTest extends TestCase
 
     public function test_upload_skips_existing_key(): void
     {
-        $file = tempnam(sys_get_temp_dir(), 'pkg');
+        $file = TempPaths::file('pkg');
         file_put_contents((string) $file, 'zip');
 
         $mocks = new AwsMocks();
@@ -99,7 +100,7 @@ final class CodeBucketTest extends TestCase
 
     public function test_a_runtime_binary_is_uploaded_once(): void
     {
-        $file = (string) tempnam(sys_get_temp_dir(), 'bin');
+        $file = (string) TempPaths::file('bin');
         file_put_contents($file, 'ELF');
         $mocks = new AwsMocks();
         $mocks->handler->append(

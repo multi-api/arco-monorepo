@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\ConsoleRuntime;
 
 use Multiapi\Arco\ConsoleRuntime\ProcessRunner;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class ProcessRunnerTest extends TestCase
@@ -13,7 +14,7 @@ final class ProcessRunnerTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->dir = sys_get_temp_dir() . '/arco-runner-' . bin2hex(random_bytes(4));
+        $this->dir = TempPaths::path('arco-runner-');
         mkdir($this->dir);
     }
 

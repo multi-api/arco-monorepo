@@ -9,6 +9,7 @@ use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Validator;
 use Multiapi\Arco\Laravel\LaravelPreset;
 use Aws\Route53\Exception\Route53Exception;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Deploy\AwsMocks;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
@@ -189,7 +190,7 @@ ENV);
             'staging' => ['staging.acmeapp.io'],
             'dev' => ['dev.acmeapp.io'],
         ], ['production' => 'acme-dns', 'staging' => false]);
-        $path = sys_get_temp_dir() . '/arco-render-' . bin2hex(random_bytes(4)) . '.php';
+        $path = TempPaths::path('arco-render-', '.php');
         file_put_contents($path, $php);
         $raw = (new ConfigLoader())->load($path);
 
