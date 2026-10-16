@@ -325,4 +325,64 @@ final class ValidatorTest extends TestCase
 
         self::assertSame(['validation.deploy_command_empty', 'validation.deploy_command'], $this->errorKeys($app));
     }
+
+    /**
+     * @param list<string> $commands
+     * @return list<array{key: string, params: array<string, string|int>}>
+     */
+    private function deployCommandWarnings(array $commands): array
+    {
+        $app = App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->deployCommands($commands));
+        $result = (new Validator())->validate(ConfigResolver::resolve($app->toArray(), 'production'), sys_get_temp_dir());
+        self::assertTrue($result->isValid());
+        return $result->warnings;
+    }
+
+    public function test_deploy_commands_that_write_into_the_read_only_code_directory_warn(): void
+    {
+        $commands = ['config:cache', 'route:cache', 'view:cache', 'event:cache', 'optimize', 'optimize:clear', 'config:clear', 'route:clear', 'view:clear', 'storage:link'];
+        $warnings = $this->deployCommandWarnings([...$commands, 'artisan view:cache', 'php artisan route:cache --quiet']);
+
+        self::assertSame(array_fill(0, 12, 'validation.deploy_command_read_only'), array_column($warnings, 'key'));
+        self::assertSame(['command' => 'config:cache', 'name' => 'config:cache'], $warnings[0]['params']);
+        self::assertSame(['command' => 'php artisan route:cache --quiet', 'name' => 'route:cache'], $warnings[11]['params']);
+    }
+
+    public function test_harmless_deploy_commands_do_not_warn(): void
+    {
+        self::assertSame([], $this->deployCommandWarnings(['migrate --force', 'cache:clear', 'queue:restart', 'db:seed --class=Roles --force', 'migrate:status', 'about --only=environment']));
+    }
+
+    public function test_deploy_commands_that_ask_for_confirmation_in_production_warn_without_force(): void
+    {
+        $warnings = $this->deployCommandWarnings(['migrate', 'migrate:rollback --step=1', 'artisan db:seed', 'migrate --force', 'db:seed --force']);
+
+        self::assertSame(array_fill(0, 3, 'validation.deploy_command_needs_force'), array_column($warnings, 'key'));
+        self::assertSame(['command' => 'migrate', 'name' => 'migrate'], $warnings[0]['params']);
+        self::assertSame(['command' => 'artisan db:seed', 'name' => 'db:seed'], $warnings[2]['params']);
+    }
+
+    public function test_deploy_commands_that_destroy_data_warn_even_with_force(): void
+    {
+        $warnings = $this->deployCommandWarnings(['migrate:fresh --force', 'migrate:refresh', 'db:wipe --force']);
+
+        self::assertSame([
+            'validation.deploy_command_destroys_data',
+            'validation.deploy_command_destroys_data',
+            'validation.deploy_command_needs_force',
+            'validation.deploy_command_destroys_data',
+        ], array_column($warnings, 'key'));
+    }
+
+    public function test_every_deploy_command_warning_is_translated(): void
+    {
+        foreach (['en', 'es'] as $locale) {
+            $messages = require __DIR__ . "/../../../packages/arco/lang/$locale.php";
+            foreach (['validation.deploy_command_read_only', 'validation.deploy_command_needs_force', 'validation.deploy_command_destroys_data'] as $key) {
+                self::assertArrayHasKey($key, $messages, "$locale: $key");
+            }
+        }
+        $en = require __DIR__ . '/../../../packages/arco/lang/en.php';
+        self::assertStringContainsString('event:cache', $en['validation.deploy_command_read_only']);
+    }
 }

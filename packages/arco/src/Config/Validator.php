@@ -26,6 +26,18 @@ final class Validator
     private const HOSTNAME = '/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/';
     private const CERTIFICATE = '/^arn:aws[a-z-]*:acm:us-east-1:\d{12}:certificate\/[A-Za-z0-9-]+$/';
     public const MAX_DOMAINS = 10;
+    /** Artisan commands that write into the code directory, which is read-only (/var/task) on Lambda. */
+    private const WRITES_CODE_DIRECTORY = [
+        'config:cache', 'config:clear', 'route:cache', 'route:clear', 'view:cache', 'view:clear',
+        'event:cache', 'event:clear', 'optimize', 'optimize:clear', 'storage:link',
+    ];
+    /** Artisan commands that ask for confirmation in production (ConfirmableTrait) unless given --force. */
+    private const CONFIRMS_IN_PRODUCTION = [
+        'migrate', 'migrate:fresh', 'migrate:refresh', 'migrate:reset', 'migrate:rollback',
+        'db:seed', 'db:wipe', 'key:generate', 'queue:clear',
+    ];
+    /** Artisan commands that drop every table. */
+    private const DESTROYS_DATA = ['migrate:fresh', 'migrate:refresh', 'migrate:reset', 'db:wipe'];
 
     public function __construct(private readonly ?RuntimeManifest $manifest = null)
     {
@@ -116,10 +128,12 @@ final class Validator
                 continue;
             }
             try {
-                ArgumentSplitter::split($command);
+                $arguments = ArgumentSplitter::split($command);
             } catch (\InvalidArgumentException $e) {
                 $result->error('validation.deploy_command', ['command' => $command, 'reason' => $e->getMessage()]);
+                continue;
             }
+            self::addDeployCommandWarnings($result, $command, $arguments);
         }
 
         foreach ($config->variables as $name => $value) {
@@ -172,6 +186,34 @@ final class Validator
             default => throw new \InvalidArgumentException("Unknown setting $setting."),
         };
         return $ok ? null : ['key' => $key, 'params' => ['value' => $value]];
+    }
+
+    /**
+     * Warnings for deploy commands that cannot work on Lambda: the first failing command stops the deploy.
+     *
+     * @param list<string> $arguments
+     */
+    private static function addDeployCommandWarnings(ValidationResult $result, string $command, array $arguments): void
+    {
+        // `php artisan migrate` and `artisan migrate` mean `migrate`: the runtime adds artisan itself.
+        if (($arguments[0] ?? null) === 'php') {
+            array_shift($arguments);
+        }
+        if (($arguments[0] ?? null) === 'artisan') {
+            array_shift($arguments);
+        }
+        $name = $arguments[0] ?? '';
+        $params = ['command' => $command, 'name' => $name];
+        if (in_array($name, self::WRITES_CODE_DIRECTORY, true)) {
+            $result->warning('validation.deploy_command_read_only', $params);
+        }
+        if (in_array($name, self::DESTROYS_DATA, true)) {
+            $result->warning('validation.deploy_command_destroys_data', $params);
+        }
+        $forced = array_filter($arguments, fn (string $a): bool => $a === '--force' || str_starts_with($a, '--force='));
+        if (in_array($name, self::CONFIRMS_IN_PRODUCTION, true) && $forced === []) {
+            $result->warning('validation.deploy_command_needs_force', $params);
+        }
     }
 
     private static function addSettingError(ValidationResult $result, string $setting, int|string|null $value): void

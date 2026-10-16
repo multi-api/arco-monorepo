@@ -402,6 +402,22 @@ final class DeployCommandTest extends TestCase
         self::assertLessThan(strpos($display, 'scripts/warm.php'), strpos($display, 'Migrated.'), 'each output is printed before the next command starts');
     }
 
+    public function test_deploy_commands_that_cannot_work_on_lambda_are_warned_about_before_the_deploy(): void
+    {
+        $this->withDeployCommands("['config:cache', 'migrate']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+        $console = new FakeConsole([new CommandResult(0, ''), new CommandResult(0, '')]);
+
+        $tester = $this->tester($deployer, console: $console);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('read-only on Lambda', $display);
+        self::assertStringContainsString('Add --force', $display);
+        self::assertLessThan(strpos($display, 'Running deploy command'), strpos($display, 'read-only on Lambda'), 'warned before anything runs');
+    }
+
     public function test_a_failing_deploy_command_keeps_traffic_on_the_previous_revision(): void
     {
         $this->withDeployCommands("['scripts/migrate.php']");

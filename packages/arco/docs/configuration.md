@@ -71,6 +71,21 @@ Variable names must be letters, digits and underscores (not starting with a digi
 reserved by Lambda are rejected: `_HANDLER`, `_X_AMZN_TRACE_ID`, `AWS_REGION`, `AWS_DEFAULT_REGION`, `AWS_EXECUTION_ENV`, `AWS_ACCESS_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SECRET_KEY`, `AWS_SESSION_TOKEN`, `LAMBDA_TASK_ROOT`, `LAMBDA_RUNTIME_DIR` and anything starting with `AWS_LAMBDA_` or `AWS_XRAY_`. Values may be references
 (`arco-ssm:...`, `arco-secret:...`).
 
+### Deploy commands
+
+Each `deployCommands()` entry is an artisan command line (for the Laravel preset; `artisan` is added by
+the runtime). They run one by one and the first failure stops the deploy, so `arco deploy` and `arco init`
+warn about entries that cannot work on Lambda:
+
+- Commands that write into the code directory, which is read-only on Lambda (`/var/task`):
+  `config:cache`, `route:cache`, `view:cache`, `event:cache`, `optimize`, `optimize:clear`,
+  `config:clear`, `route:clear`, `view:clear`, `storage:link`. The build already runs `event:cache`.
+- Commands Laravel asks to confirm in production without `--force` (nobody can answer):
+  `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:refresh`, `db:seed`,
+  `db:wipe`, `key:generate`, `queue:clear`. Write `migrate --force`.
+- `migrate:fresh`, `migrate:refresh`, `migrate:reset` and `db:wipe` drop every table on each deploy:
+  they almost never belong in `deployCommands()`; run them once with `arco command` if you must.
+
 ### Sizing
 
 Lambda decides how many requests each instance gets with a dynamic limit based on the instance's
