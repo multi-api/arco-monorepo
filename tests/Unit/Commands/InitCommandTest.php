@@ -438,6 +438,8 @@ ENV);
         $config = ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production');
         self::assertSame(['migrate --force'], $config->deployCommands);
         self::assertSame('app', $config->sources['deployCommands']);
+        self::assertSame([], (new Validator())->validate($config, $project->dir)->warnings, 'the proposed command needs no confirmation in production');
+        self::assertStringNotContainsString('WARNING', $tester->getDisplay());
         $project->restore();
     }
 
