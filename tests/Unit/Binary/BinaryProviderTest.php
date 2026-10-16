@@ -111,8 +111,9 @@ final class BinaryProviderTest extends TestCase
     public function test_corrupted_cache_is_downloaded_again(): void
     {
         // Review focus 2.
+        // Same length, different bytes: the checksum, not the size, rejects the cached file.
         mkdir($this->cache . '/1.13.0-r1', 0777, true);
-        file_put_contents($this->cache . '/1.13.0-r1/frankenphp', 'truncated');
+        file_put_contents($this->cache . '/1.13.0-r1/frankenphp', str_repeat("\0", strlen($this->elf)));
 
         $path = $this->provider($this->manifest(), $this->elf)->get($this->runtime(), '/project');
 
@@ -177,8 +178,9 @@ final class BinaryProviderTest extends TestCase
 
     public function test_a_cached_php_cli_with_a_wrong_checksum_is_downloaded_again(): void
     {
+        // Same length, different bytes: the checksum, not the size, rejects the cached file.
         mkdir($this->cache . '/1.13.0-r2', 0777, true);
-        file_put_contents($this->cache . '/1.13.0-r2/php', 'truncated');
+        file_put_contents($this->cache . '/1.13.0-r2/php', 'PHP-CLI-BYTES');
         $provider = $this->provider($this->cliManifest(), 'php-cli-bytes');
 
         $path = $provider->phpCli($provider->build('1.13.0-r2'));
