@@ -158,6 +158,34 @@ final class TinkerCommandTest extends TestCase
         self::assertStringEndsWith(StatementRunner::TRUNCATED, $reply['presented']);
     }
 
+    public function test_a_model_is_presented_with_its_attributes_like_local_tinker(): void
+    {
+        $presented = (string) $this->runStatement('$m = new ' . TinkerModel::class . '(); $m->forceFill(["name" => "Ada", "email" => "ada@example.com", "secret" => "x"]); $m')['presented'];
+
+        self::assertStringContainsString('name: "Ada"', $presented);
+        self::assertStringContainsString('email: "ada@example.com"', $presented);
+        self::assertStringNotContainsString('connection', $presented);
+        self::assertStringNotContainsString('guarded', $presented);
+        self::assertStringNotContainsString('casts', $presented);
+        self::assertStringNotContainsString('incrementing', $presented);
+    }
+
+    public function test_collections_and_stringables_use_the_tinker_casters(): void
+    {
+        $collection = (string) $this->runStatement('collect([1, 2])')['presented'];
+        self::assertStringContainsString('all: [', $collection);
+        self::assertStringNotContainsString('escapeWhenCastingToString', $collection);
+
+        self::assertStringContainsString('value: "hi"', (string) $this->runStatement('str("hi")')['presented']);
+    }
+
+    public function test_casters_from_the_app_config_are_added(): void
+    {
+        $presented = (string) (new StatementRunner(null, [\ArrayObject::class => TinkerModel::class . '::castArrayObject']))->run('new ArrayObject([1])', null)['presented'];
+
+        self::assertStringContainsString('custom: "cast"', $presented);
+    }
+
     public function test_a_broken_context_starts_an_empty_scope(): void
     {
         self::assertSame([], StatementRunner::restore('not base64 at all ***'));
@@ -195,5 +223,16 @@ final class TinkerCommandTest extends TestCase
         $artisan = new Artisan($app, new Dispatcher($app), 'test');
         self::assertTrue($artisan->has('arco:tinker'));
         self::assertTrue($artisan->get('arco:tinker')->isHidden());
+    }
+}
+
+final class TinkerModel extends \Illuminate\Database\Eloquent\Model
+{
+    protected $hidden = ['secret'];
+
+    /** @return array<string, string> */
+    public static function castArrayObject(): array
+    {
+        return ["\0~\0custom" => 'cast'];
     }
 }

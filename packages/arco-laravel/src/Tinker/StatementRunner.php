@@ -31,9 +31,48 @@ final class StatementRunner
     /** Same marker as the console runtime's OutputBuffer::MARKER (multiapi/arco). */
     public const TRUNCATED = "[truncated]\n";
 
-    /** @param string|null $classMap Composer class map, for tinker's short class names (User for App\Models\User) */
-    public function __construct(private readonly ?string $classMap = null)
+    /**
+     * @param string|null $classMap Composer class map, for tinker's short class names (User for App\Models\User)
+     * @param array<mixed> $casters the app's own casters (config tinker.casters): class => callable
+     */
+    public function __construct(private readonly ?string $classMap = null, private readonly array $casters = [])
     {
+    }
+
+    /**
+     * The casters `php artisan tinker` registers (Laravel\Tinker\Console\TinkerCommand::getCasters()), so a
+     * model shows its attributes, not its internals. Only when laravel/tinker is installed; each class is
+     * checked, since not every Laravel version has them all.
+     *
+     * The app's own casters come last and win; entries that are not callable are left out.
+     *
+     * @param array<mixed> $extra
+     * @return array<string, callable>
+     */
+    public static function casters(array $extra = []): array
+    {
+        $caster = 'Laravel\\Tinker\\TinkerCaster';
+        $tinker = class_exists($caster) ? [
+            'Illuminate\\Support\\Collection' => 'castCollection',
+            'Illuminate\\Support\\HtmlString' => 'castHtmlString',
+            'Illuminate\\Support\\Stringable' => 'castStringable',
+            'Illuminate\\Database\\Eloquent\\Model' => 'castModel',
+            'Illuminate\\Process\\ProcessResult' => 'castProcessResult',
+            'Illuminate\\Foundation\\Application' => 'castApplication',
+        ] : [];
+        $casters = [];
+        foreach ($tinker as $class => $method) {
+            // Older laravel/tinker versions lack some casters (castProcessResult).
+            if (class_exists($class) && method_exists($caster, $method)) {
+                $casters[$class] = [$caster, $method];
+            }
+        }
+        foreach ($extra as $class => $callable) {
+            if (is_string($class) && is_callable($callable)) {
+                $casters[$class] = $callable;
+            }
+        }
+        return $casters;
     }
 
     /** @return array{output: string, presented: string|null, context: string|null, dropped: list<string>, exception: array{class: string, message: string}|null} */
@@ -42,6 +81,7 @@ final class StatementRunner
         $config = new Configuration(['usePcntl' => false, 'useReadline' => false, 'updateCheck' => 'never', 'rawOutput' => true]);
         // No line is ever read: the userland readline would probe the terminal (stty < /dev/tty) at boot.
         $config->setReadline(new Transient());
+        $config->getPresenter()->addCasters(self::casters($this->casters));
         $shell = new Shell($config);
         // PsySH routes what the code prints (and warnings) to the shell output, not to PHP's output.
         $captured = self::capturedOutput();

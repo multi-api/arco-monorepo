@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Laravel\Console;
 
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Config\Repository;
 use Multiapi\Arco\Laravel\Tinker\StatementRunner;
 use Psy\Shell;
 use Symfony\Component\Console\Output\OutputInterface;
@@ -39,7 +40,9 @@ final class TinkerCommand extends Command
     {
         $stdin = fopen('php://stdin', 'rb');
         $input = $stdin === false ? '' : (string) stream_get_contents($stdin);
-        [$exitCode, $line] = self::reply($input, new StatementRunner($this->laravel->basePath('vendor/composer/autoload_classmap.php')));
+        $config = $this->laravel->bound('config') ? $this->laravel->make('config') : null;
+        $casters = $config instanceof Repository ? $config->get('tinker.casters', []) : [];
+        [$exitCode, $line] = self::reply($input, new StatementRunner($this->laravel->basePath('vendor/composer/autoload_classmap.php'), is_array($casters) ? $casters : []));
         $this->getOutput()->writeln($line, OutputInterface::OUTPUT_RAW);
         return $exitCode;
     }
