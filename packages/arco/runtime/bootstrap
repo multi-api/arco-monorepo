@@ -38,6 +38,10 @@ if [ -x "$ROOT/bin/php" ]; then
   step="starting $ARCO_PHP_BINARY"
   trap - EXIT
   exec "$ARCO_PHP_BINARY" "$ROOT/runtime/console.php"
+elif [ -e "$ROOT/bin/php" ]; then
+  # Arco always packages bin/php as 0755: without the bit the zip was damaged, and a redeploy of the
+  # same package will not fix it (nor would the download path, whose variables this deploy never set).
+  fail Arco.InitError "$ROOT/bin/php is not executable (the console zip lost its mode bits; package and deploy again)"
 fi
 
 if [ ! -x "$BIN" ]; then

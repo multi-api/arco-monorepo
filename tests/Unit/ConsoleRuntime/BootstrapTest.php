@@ -251,4 +251,23 @@ final class BootstrapTest extends TestCase
         self::assertStringNotContainsString('fake-php', $run->getOutput());
         self::assertSame('Arco.InitError', $this->api->initError()['type'] ?? null);
     }
+
+    public function test_a_bin_php_without_its_exec_bit_reports_that_instead_of_the_missing_variables(): void
+    {
+        $path = $this->packagedPhp();
+        chmod("$this->root/bin/php", 0644);
+
+        foreach ([false, null] as $variables) {
+            $env = $variables === false ? ['ARCO_BINARY_BUCKET' => false, 'ARCO_BINARY_KEY' => false, 'ARCO_BINARY_SHA256' => false] : [];
+            $run = $this->bootstrap(env: ['PATH' => $path, ...$env]);
+
+            self::assertSame(1, $run->getExitCode());
+            self::assertStringNotContainsString('fake-', $run->getOutput(), 'nothing runs');
+            self::assertSame('Arco.InitError', $this->api->initError()['type'] ?? null);
+            $body = (string) ($this->api->initError()['body'] ?? '');
+            self::assertStringContainsString("$this->root/bin/php is not executable", $body);
+            self::assertStringNotContainsString('ARCO_BINARY_BUCKET', $body);
+        }
+        self::assertCount(0, $this->s3->requests(), 'nothing is downloaded');
+    }
 }
