@@ -46,6 +46,49 @@ final class RuntimeManifestEditorTest extends TestCase
         self::assertSame('1.13.0-r3', RuntimeManifest::load($this->path)->defaultId());
     }
 
+    public function test_adds_the_php_cli_with_a_derived_url(): void
+    {
+        $build = self::buildJson() + ['php_cli' => [
+            'sha256' => str_repeat('c', 64), 'size' => 90000000, 'spc' => '2.7.0', 'extensions' => ['curl'],
+        ]];
+        RuntimeManifestEditor::add($this->path, $build, 'multi-api/arco-runtime', false);
+
+        $cli = RuntimeManifest::load($this->path)->get('1.13.0-r2')->phpCli;
+        self::assertNotNull($cli);
+        self::assertSame(
+            ['https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r2/php-linux-aarch64', str_repeat('c', 64), 90000000],
+            [$cli->url, $cli->sha256, $cli->size],
+        );
+    }
+
+    public function test_release_cross_check_covers_the_php_cli_asset(): void
+    {
+        $build = self::buildJson() + ['php_cli' => ['sha256' => str_repeat('c', 64), 'size' => 90000000]];
+        $cliAsset = ['name' => 'php-linux-aarch64', 'size' => 90000000, 'digest' => 'sha256:' . str_repeat('c', 64)];
+        $release = self::release();
+
+        $release['assets'][] = $cliAsset;
+        RuntimeManifestEditor::assertReleaseMatches($release, $build);
+
+        foreach ([['digest' => 'sha256:' . str_repeat('a', 64)], ['size' => 1]] as $override) {
+            $bad = self::release();
+            $bad['assets'][] = $override + $cliAsset;
+            try {
+                RuntimeManifestEditor::assertReleaseMatches($bad, $build);
+                self::fail('Expected InvalidArgumentException');
+            } catch (InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
+    public function test_release_cross_check_refuses_a_missing_php_cli_asset(): void
+    {
+        $build = self::buildJson() + ['php_cli' => ['sha256' => str_repeat('c', 64), 'size' => 90000000]];
+        $this->expectException(InvalidArgumentException::class);
+        RuntimeManifestEditor::assertReleaseMatches(self::release(), $build);
+    }
+
     /** @return iterable<string, array{array<string, mixed>}> */
     public static function badBuilds(): iterable
     {

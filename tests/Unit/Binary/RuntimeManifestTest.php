@@ -88,6 +88,41 @@ final class RuntimeManifestTest extends TestCase
         }
     }
 
+    public function test_a_build_may_carry_a_php_cli(): void
+    {
+        $manifest = RuntimeManifest::fromArray(['default' => '1.13.0-r2', 'builds' => [
+            '1.13.0-r2' => [
+                'url' => 'https://example.test/frankenphp', 'sha256' => str_repeat('a', 64), 'size' => 10,
+                'frankenphp' => '1.13.0', 'php' => '8.5.11',
+                'php_cli' => ['url' => 'https://example.test/php', 'sha256' => str_repeat('b', 64), 'size' => 5],
+            ],
+        ]]);
+
+        $cli = $manifest->get('1.13.0-r2')->phpCli;
+        self::assertNotNull($cli);
+        self::assertSame(['https://example.test/php', str_repeat('b', 64), 5], [$cli->url, $cli->sha256, $cli->size]);
+    }
+
+    public function test_a_build_without_php_cli_has_none(): void
+    {
+        $manifest = RuntimeManifest::fromArray(['default' => '1.13.0-r1', 'builds' => [
+            '1.13.0-r1' => ['url' => 'https://example.test/f', 'sha256' => str_repeat('a', 64), 'size' => 10, 'frankenphp' => '1.13.0', 'php' => '8.5.11'],
+        ]]);
+
+        self::assertNull($manifest->get('1.13.0-r1')->phpCli);
+    }
+
+    public function test_an_invalid_php_cli_is_refused(): void
+    {
+        $this->expectException(BinaryException::class);
+        RuntimeManifest::fromArray(['default' => '1.13.0-r2', 'builds' => [
+            '1.13.0-r2' => [
+                'url' => 'https://example.test/f', 'sha256' => str_repeat('a', 64), 'size' => 10, 'frankenphp' => '1.13.0', 'php' => '8.5.11',
+                'php_cli' => ['url' => 'http://insecure/php', 'sha256' => 'nothex', 'size' => 0],
+            ],
+        ]]);
+    }
+
     public function test_shipped_manifest_is_valid_and_pins_the_first_build(): void
     {
         $build = RuntimeManifest::load()->resolve(null, null);

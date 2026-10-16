@@ -21,7 +21,7 @@ final class RuntimeManifestEditor
 
     /**
      * Cross-checks the GitHub release metadata against build.json: the release must be immutable and the
-     * binary asset's size and digest must match what build.json claims.
+     * binary assets' (FrankenPHP and, when present, the PHP CLI) size and digest must match what build.json claims.
      *
      * @param array<string, mixed> $release decoded `repos/<repo>/releases/tags/<tag>` response
      * @param array<string, mixed> $buildJson
@@ -31,22 +31,42 @@ final class RuntimeManifestEditor
         if (($release['immutable'] ?? null) !== true) {
             throw new InvalidArgumentException('The release is not immutable; enable release immutability before adding the build.');
         }
-        $asset = null;
+        self::assertAssetMatches($release, 'frankenphp-linux-aarch64', $buildJson);
+        $phpCli = $buildJson['php_cli'] ?? null;
+        if (is_array($phpCli)) {
+            /** @var array<string, mixed> $phpCli */
+            self::assertAssetMatches($release, 'php-linux-aarch64', $phpCli);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $release
+     * @param array<string, mixed> $expected the build.json (or php_cli) object holding size and sha256
+     */
+    private static function assertAssetMatches(array $release, string $name, array $expected): void
+    {
+        $asset = self::asset($release, $name);
+        if (! isset($expected['size'], $expected['sha256']) || ($asset['size'] ?? null) !== $expected['size']) {
+            throw new InvalidArgumentException("Release asset $name size does not match build.json.");
+        }
+        if (! is_string($expected['sha256']) || ($asset['digest'] ?? null) !== 'sha256:' . $expected['sha256']) {
+            throw new InvalidArgumentException("Release asset $name digest does not match build.json sha256.");
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $release
+     * @return array<string, mixed>
+     */
+    private static function asset(array $release, string $name): array
+    {
         foreach (is_array($release['assets'] ?? null) ? $release['assets'] : [] as $candidate) {
-            if (is_array($candidate) && ($candidate['name'] ?? null) === 'frankenphp-linux-aarch64') {
-                $asset = $candidate;
-                break;
+            if (is_array($candidate) && ($candidate['name'] ?? null) === $name) {
+                /** @var array<string, mixed> $candidate */
+                return $candidate;
             }
         }
-        if ($asset === null) {
-            throw new InvalidArgumentException('The release has no frankenphp-linux-aarch64 asset.');
-        }
-        if (! isset($buildJson['size'], $buildJson['sha256']) || ($asset['size'] ?? null) !== $buildJson['size']) {
-            throw new InvalidArgumentException('Release asset size does not match build.json.');
-        }
-        if (! is_string($buildJson['sha256']) || ($asset['digest'] ?? null) !== 'sha256:' . $buildJson['sha256']) {
-            throw new InvalidArgumentException('Release asset digest does not match build.json sha256.');
-        }
+        throw new InvalidArgumentException("The release has no $name asset.");
     }
 
     /** @param array<string, mixed> $buildJson */
@@ -77,6 +97,14 @@ final class RuntimeManifestEditor
             'frankenphp' => $buildJson['frankenphp'] ?? null,
             'php' => $buildJson['php'] ?? null,
         ];
+        $phpCli = $buildJson['php_cli'] ?? null;
+        if (is_array($phpCli)) {
+            $data['builds'][$id]['php_cli'] = [
+                'url' => "https://github.com/$repository/releases/download/frankenphp-$id/php-linux-aarch64",
+                'sha256' => $phpCli['sha256'] ?? null,
+                'size' => $phpCli['size'] ?? null,
+            ];
+        }
         if ($setDefault) {
             $data['default'] = $id;
         }

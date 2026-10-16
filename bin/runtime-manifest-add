@@ -3,7 +3,7 @@
 
 // Maintainer script: adds a published runtime build to packages/arco/resources/runtime-builds.php.
 // Usage: bin/runtime-manifest-add <build-id> [--repo=owner/name] [--from-file=build.json] [--default]
-// When fetching from GitHub, the release metadata is cross-checked (immutable, asset size and digest).
+// When fetching from GitHub, the release metadata is cross-checked (immutable, asset size and digest, including php-linux-aarch64 when build.json has php_cli).
 // --from-file skips that check, since there is no release to compare against.
 
 require __DIR__ . '/../vendor/autoload.php';
