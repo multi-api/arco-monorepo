@@ -23,7 +23,13 @@ final class HandlerTest extends TestCase
             <?php
             $args = array_slice($argv, 1);
             echo 'args:', json_encode($args), "\n";
-            if (($args[0] ?? '') === 'arco:tinker') { echo 'stdin:', stream_get_contents(STDIN), "\n"; }
+            if (($args[0] ?? '') === 'arco:tinker') {
+                $stdin = stream_get_contents(STDIN);
+                echo 'stdin:', $stdin, "\n";
+                // The statement decides the exit code: 1 is an exception in it, 255 a PHP fatal error.
+                $code = base64_decode(json_decode($stdin, true)['code']);
+                exit(match ($code) { 'throw' => 1, 'fatal' => 255, default => 0 });
+            }
             if (in_array('--slow', $args, true)) { sleep(30); }
             exit(in_array('--fail', $args, true) ? 3 : 0);
             PHP);
@@ -52,6 +58,7 @@ final class HandlerTest extends TestCase
         self::assertSame(3, $result['exitCode']);
         self::assertSame('command_failed', $this->logged[1]['arco']);
         self::assertSame(3, $this->logged[1]['exitCode']);
+        self::assertIsInt($this->logged[1]['durationMs'], 'the invocation duration, unlike ms (time since the runtime started)');
     }
 
     public function test_plain_php_runs_the_script_named_first(): void
@@ -111,7 +118,28 @@ final class HandlerTest extends TestCase
         self::assertStringContainsString('args:["arco:tinker"]', $result['output']);
         self::assertStringContainsString('stdin:{"code":"' . base64_encode('User::count()') . '","context":null}', $result['output']);
         self::assertSame(['arco' => 'tinker', 'code' => 'User::count()', 'sha256' => hash('sha256', 'User::count()'), 'length' => 13], $this->logged[0]);
-        self::assertSame(['arco' => 'tinker_done', 'exitCode' => 0], $this->logged[1]);
+        self::assertSame('tinker_done', $this->logged[1]['arco']);
+        self::assertSame(0, $this->logged[1]['exitCode']);
+        self::assertIsInt($this->logged[1]['durationMs']);
+    }
+
+    public function test_a_tinker_statement_that_throws_is_normal_repl_behaviour_not_a_failed_command(): void
+    {
+        $result = $this->handler()->handle((string) json_encode(['tinker' => ['code' => base64_encode('throw'), 'context' => null]]), 60_000);
+
+        self::assertSame(1, $result['exitCode']);
+        self::assertSame(['tinker', 'tinker_done'], array_column($this->logged, 'arco'));
+        self::assertSame(1, $this->logged[1]['exitCode']);
+    }
+
+    public function test_a_tinker_crash_is_still_a_failed_command_with_its_duration(): void
+    {
+        $this->handler()->handle((string) json_encode(['tinker' => ['code' => base64_encode('fatal'), 'context' => null]]), 60_000);
+
+        self::assertSame(['tinker', 'tinker_done', 'command_failed'], array_column($this->logged, 'arco'));
+        self::assertSame(255, $this->logged[2]['exitCode']);
+        self::assertIsInt($this->logged[2]['durationMs']);
+        self::assertGreaterThanOrEqual(0, $this->logged[2]['durationMs']);
     }
 
     public function test_tinker_output_is_never_echoed_to_the_function_log(): void

@@ -10,6 +10,8 @@ namespace Multiapi\Arco\ConsoleRuntime;
 final class Handler
 {
     public const TINKER_COMMAND = 'arco:tinker';
+    /** arco:tinker exits with 1 when the statement threw (the reply still carries the exception). */
+    public const TINKER_EXCEPTION_EXIT_CODE = 1;
 
     /**
      * @param list<string> $php how to run PHP: [<frankenphp>, 'php-cli'] on Lambda
@@ -61,6 +63,7 @@ final class Handler
         }
 
         $argv = [...$this->php, ...($this->entry === null ? [] : [$this->entry]), ...$arguments];
+        $started = hrtime(true);
         try {
             // A tinker reply carries the presented result and the serialized scope (secrets, PII):
             // it never goes to the function log, only to the invoker.
@@ -69,15 +72,20 @@ final class Handler
             // proc_open refuses NUL bytes in arguments and environment values.
             $result = new ProcessResult(2, "The command cannot be run: its arguments or environment contain a NUL byte.\n", false);
         }
+        // `ms` on every log line is the time since the runtime started; this is the command's own.
+        $durationMs = intdiv(hrtime(true) - $started, 1_000_000);
         $output = $result->output;
         if ($result->timedOut) {
             $output .= sprintf("\n[arco] Stopped after %d s: the command reached its time limit.\n", (int) round($timeout));
         }
         if ($tinker) {
-            ($this->log)(['arco' => 'tinker_done', 'exitCode' => $result->exitCode]);
+            ($this->log)(['arco' => 'tinker_done', 'exitCode' => $result->exitCode, 'durationMs' => $durationMs]);
         }
-        if ($result->exitCode !== 0) {
-            ($this->log)(['arco' => 'command_failed', 'arguments' => $arguments, 'exitCode' => $result->exitCode, 'timedOut' => $result->timedOut]);
+        // A tinker statement that throws exits with 1: normal REPL behaviour, not a failed command.
+        // A crash (fatal error, signal) or a timeout still is.
+        $statementThrew = $tinker && $result->exitCode === self::TINKER_EXCEPTION_EXIT_CODE && ! $result->timedOut;
+        if ($result->exitCode !== 0 && ! $statementThrew) {
+            ($this->log)(['arco' => 'command_failed', 'arguments' => $arguments, 'exitCode' => $result->exitCode, 'timedOut' => $result->timedOut, 'durationMs' => $durationMs]);
         }
         return ['exitCode' => $result->exitCode, 'output' => $output];
     }
