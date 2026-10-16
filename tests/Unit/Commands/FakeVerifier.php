@@ -20,7 +20,7 @@ final class FakeVerifier implements Verifier
     public function verify(AppConfig $config, DeployResult $result, string $healthPath, int $sinceMs, ?callable $onStep = null): VerificationResult
     {
         return $this->ok
-            ? new VerificationResult(true, 200, null, null, null, null, [], healthyAt: 0.0)
+            ? new VerificationResult(true, 200, null, null, null, null, [])
             : new VerificationResult(false, 502, null, 'failure', 'Application.InitCodeError', 120, ['{"arco":"fatal","error":"boom"}']);
     }
 

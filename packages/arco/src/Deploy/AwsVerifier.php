@@ -42,7 +42,6 @@ final class AwsVerifier implements Verifier
     {
         $reason = null;
         $reasonParams = [];
-        $healthyAt = null;
         if ($config->auth === 'iam') {
             // An unsigned probe always gets 403 from an IAM-authenticated endpoint, so the
             // platform init report is the only signal: it must exist and say success.
@@ -63,9 +62,7 @@ final class AwsVerifier implements Verifier
             [$status, $error] = $this->probe($result->url() . $healthPath);
             $ok = $status !== null && $status >= 200 && $status < 300;
             $report = null;
-            if ($ok) {
-                $healthyAt = $this->sleeper->now();
-            } else {
+            if (! $ok) {
                 // One look, without waiting, for an init error to explain the failure.
                 [$report] = $this->initReport($config, $result->revisionId, $sinceMs, $this->sleeper->now());
             }
@@ -81,7 +78,6 @@ final class AwsVerifier implements Verifier
             $ok ? [] : $this->tail($this->group($config), $report['stream'] ?? null, $sinceMs),
             $reason,
             $reasonParams,
-            $healthyAt,
         );
     }
 

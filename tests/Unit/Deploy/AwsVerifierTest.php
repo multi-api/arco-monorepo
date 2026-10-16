@@ -92,7 +92,6 @@ final class AwsVerifierTest extends TestCase
         self::assertSame(200, $verification->httpStatus);
         self::assertNull($verification->initDurationMs);
         self::assertSame([], $group->queries, 'verification does not wait for CloudWatch');
-        self::assertSame((float) self::T0 + 10, $verification->healthyAt);
         self::assertSame([], $this->steps);
     }
 
