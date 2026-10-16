@@ -155,8 +155,8 @@ vendor/bin/arco set timeout 60 --app          # app level (all environments)
 ## Permissions
 
 The managed execution role only gets what Arco itself needs: writing logs (web and console), reading
-the console function's FrankenPHP binary (only used when it downloads it) and the secrets your variables reference. When your app uses other AWS resources (an existing bucket,
-a DynamoDB table, SES), add IAM statements with `permissions()`, in the same shape as an IAM
+the console function's FrankenPHP binary (only used when it downloads it) and the secrets your variables reference. When your app uses other AWS
+resources (an existing bucket, a DynamoDB table, SES), add IAM statements with `permissions()`, in the same shape as an IAM
 policy statement:
 
 ```php
