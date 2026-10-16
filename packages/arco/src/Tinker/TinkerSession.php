@@ -10,6 +10,12 @@ final class TinkerSession
 {
     /** Must match Multiapi\Arco\Laravel\Console\TinkerCommand::MARKER (multiapi/arco-laravel). */
     public const MARKER = 'ARCO-TINKER:';
+    /**
+     * arco:tinker's exit code when the statement threw. Must match
+     * Multiapi\Arco\Laravel\Console\TinkerCommand::STATEMENT_THREW. The exception is read from the
+     * reply line; `arco tinker --execute` exits with 1 on it whatever this code is.
+     */
+    public const STATEMENT_THREW = 3;
 
     private ?string $context = null;
 

@@ -90,7 +90,7 @@ final class TinkerCommandTest extends TestCase
 
     public function test_execute_exits_1_on_an_exception(): void
     {
-        $tester = $this->tester(new FakeConsole([FakeConsole::tinkerReply(['exception' => ['class' => 'RuntimeException', 'message' => 'boom']], 1)]));
+        $tester = $this->tester(new FakeConsole([FakeConsole::tinkerReply(['exception' => ['class' => 'RuntimeException', 'message' => 'boom']], TinkerSession::STATEMENT_THREW)]));
 
         $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => 'throw new RuntimeException("boom");'], ['interactive' => false]);
 

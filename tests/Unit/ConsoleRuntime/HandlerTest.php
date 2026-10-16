@@ -26,9 +26,12 @@ final class HandlerTest extends TestCase
             if (($args[0] ?? '') === 'arco:tinker') {
                 $stdin = stream_get_contents(STDIN);
                 echo 'stdin:', $stdin, "\n";
-                // The statement decides the exit code: 1 is an exception in it, 255 a PHP fatal error.
+                // The statement decides the reply: 'throw' is an exception in it (exit 3 with the reply
+                // line), 'failure' a reply arco:tinker refused (exit 1 with the line), 'boot' a failure
+                // before any reply (exit 1, no line), 'bare3' exit 3 without the line, 'fatal' a PHP fatal error.
                 $code = base64_decode(json_decode($stdin, true)['code']);
-                exit(match ($code) { 'throw' => 1, 'fatal' => 255, default => 0 });
+                if (in_array($code, ['throw', 'failure'], true)) { echo "ARCO-TINKER:e30=\n"; }
+                exit(match ($code) { 'throw', 'bare3' => 3, 'failure', 'boot' => 1, 'fatal' => 255, default => 0 });
             }
             if (in_array('--slow', $args, true)) { sleep(30); }
             exit(in_array('--fail', $args, true) ? 3 : 0);
@@ -125,11 +128,40 @@ final class HandlerTest extends TestCase
 
     public function test_a_tinker_statement_that_throws_is_normal_repl_behaviour_not_a_failed_command(): void
     {
-        $result = $this->handler()->handle((string) json_encode(['tinker' => ['code' => base64_encode('throw'), 'context' => null]]), 60_000);
+        $result = $this->handler()->handle($this->tinker('throw'), 60_000);
 
-        self::assertSame(1, $result['exitCode']);
+        self::assertSame(3, $result['exitCode']);
         self::assertSame(['tinker', 'tinker_done'], array_column($this->logged, 'arco'));
-        self::assertSame(1, $this->logged[1]['exitCode']);
+        self::assertSame(3, $this->logged[1]['exitCode']);
+    }
+
+    /** Exit 1 is also Laravel failing to boot, or arco:tinker failing before or after the statement. */
+    public function test_tinker_exit_1_without_a_reply_line_is_a_failed_command(): void
+    {
+        $this->handler()->handle($this->tinker('boot'), 60_000);
+
+        self::assertSame(['tinker', 'tinker_done', 'command_failed'], array_column($this->logged, 'arco'));
+        self::assertSame(1, $this->logged[2]['exitCode']);
+    }
+
+    public function test_a_reply_arco_tinker_refused_is_a_failed_command(): void
+    {
+        // failure() replies (bad input, psysh missing) carry the reply line but exit with 1.
+        $this->handler()->handle($this->tinker('failure'), 60_000);
+
+        self::assertSame(['tinker', 'tinker_done', 'command_failed'], array_column($this->logged, 'arco'));
+    }
+
+    public function test_the_statement_exit_code_without_a_reply_line_is_a_failed_command(): void
+    {
+        $this->handler()->handle($this->tinker('bare3'), 60_000);
+
+        self::assertSame(['tinker', 'tinker_done', 'command_failed'], array_column($this->logged, 'arco'));
+    }
+
+    private function tinker(string $code): string
+    {
+        return (string) json_encode(['tinker' => ['code' => base64_encode($code), 'context' => null]]);
     }
 
     public function test_a_tinker_crash_is_still_a_failed_command_with_its_duration(): void

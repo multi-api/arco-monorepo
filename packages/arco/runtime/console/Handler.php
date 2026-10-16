@@ -10,8 +10,13 @@ namespace Multiapi\Arco\ConsoleRuntime;
 final class Handler
 {
     public const TINKER_COMMAND = 'arco:tinker';
-    /** arco:tinker exits with 1 when the statement threw (the reply still carries the exception). */
-    public const TINKER_EXCEPTION_EXIT_CODE = 1;
+    /**
+     * arco:tinker's exit code when the statement threw (the reply line carries the exception). Must
+     * match Multiapi\Arco\Laravel\Console\TinkerCommand::STATEMENT_THREW (multiapi/arco-laravel).
+     */
+    public const TINKER_STATEMENT_THREW = 3;
+    /** Must match Multiapi\Arco\Laravel\Console\TinkerCommand::MARKER. */
+    public const TINKER_MARKER = 'ARCO-TINKER:';
 
     /**
      * @param list<string> $php how to run PHP: [<frankenphp>, 'php-cli'] on Lambda
@@ -81,9 +86,13 @@ final class Handler
         if ($tinker) {
             ($this->log)(['arco' => 'tinker_done', 'exitCode' => $result->exitCode, 'durationMs' => $durationMs]);
         }
-        // A tinker statement that throws exits with 1: normal REPL behaviour, not a failed command.
-        // A crash (fatal error, signal) or a timeout still is.
-        $statementThrew = $tinker && $result->exitCode === self::TINKER_EXCEPTION_EXIT_CODE && ! $result->timedOut;
+        // A tinker statement that throws is normal REPL behaviour, not a failed command: arco:tinker
+        // exits with its own code and still prints the reply line. Anything else that is not 0 (Laravel
+        // failing to boot, a refused request, a fatal error, a signal, a timeout) still is.
+        $statementThrew = $tinker
+            && $result->exitCode === self::TINKER_STATEMENT_THREW
+            && ! $result->timedOut
+            && preg_match('/^' . preg_quote(self::TINKER_MARKER, '/') . '/m', $result->output) === 1;
         if ($result->exitCode !== 0 && ! $statementThrew) {
             ($this->log)(['arco' => 'command_failed', 'arguments' => $arguments, 'exitCode' => $result->exitCode, 'timedOut' => $result->timedOut, 'durationMs' => $durationMs]);
         }

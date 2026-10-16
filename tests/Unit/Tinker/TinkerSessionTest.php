@@ -153,5 +153,13 @@ final class TinkerSessionTest extends TestCase
     public function test_the_marker_matches_arco_laravel(): void
     {
         self::assertSame(TinkerCommand::MARKER, TinkerSession::MARKER);
+        self::assertSame(TinkerCommand::MARKER, \Multiapi\Arco\ConsoleRuntime\Handler::TINKER_MARKER);
+    }
+
+    public function test_the_statement_exception_exit_code_matches_arco_laravel_and_the_runtime(): void
+    {
+        self::assertSame(TinkerCommand::STATEMENT_THREW, TinkerSession::STATEMENT_THREW);
+        self::assertSame(TinkerCommand::STATEMENT_THREW, \Multiapi\Arco\ConsoleRuntime\Handler::TINKER_STATEMENT_THREW);
+        self::assertNotContains(TinkerCommand::STATEMENT_THREW, [0, 1, 2, 124, 255], 'distinct from success, generic failures, timeouts and fatals');
     }
 }

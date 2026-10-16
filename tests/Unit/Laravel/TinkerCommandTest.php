@@ -173,8 +173,12 @@ final class TinkerCommandTest extends TestCase
         self::assertStringNotContainsString("\n", $line);
         self::assertSame('2', self::decode($line)['presented']);
 
+        [$exitCode, $line] = TinkerCommand::reply((string) json_encode(['code' => base64_encode('throw new RuntimeException("boom");'), 'context' => null]));
+        self::assertSame(TinkerCommand::STATEMENT_THREW, $exitCode, 'an exception in the statement has its own exit code');
+        self::assertSame('boom', self::decode($line)['exception']['message']);
+
         [$exitCode, $line] = TinkerCommand::reply('nope');
-        self::assertSame(1, $exitCode);
+        self::assertSame(1, $exitCode, 'a refused request is a plain failure');
         $exception = self::decode($line)['exception'];
         self::assertIsArray($exception);
         self::assertSame('InvalidArgumentException', $exception['class']);

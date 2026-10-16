@@ -16,6 +16,12 @@ final class TinkerCommand extends Command
 {
     /** Must match Multiapi\Arco\Tinker\TinkerSession::MARKER (multiapi/arco). */
     public const MARKER = 'ARCO-TINKER:';
+    /**
+     * Exit code when the statement threw: 1 also means Laravel failed to boot or this command refused
+     * the request, which the console runtime must still log as a failure. Must match
+     * Multiapi\Arco\Tinker\TinkerSession::STATEMENT_THREW and the runtime's Handler::TINKER_STATEMENT_THREW.
+     */
+    public const STATEMENT_THREW = 3;
 
     /**
      * The console runtime keeps only the last 5 MiB (5,242,880 bytes) of a command's output; a cut
@@ -46,12 +52,15 @@ final class TinkerCommand extends Command
         $context = is_array($request) && is_string($request['context'] ?? null) ? $request['context'] : null;
         if ($code === false) {
             $reply = self::failure('InvalidArgumentException', 'arco:tinker expects {"code": base64, "context": base64|null} on stdin.');
+            $exitCode = 1;
         } elseif (! class_exists(Shell::class)) {
             $reply = self::failure('Arco.TinkerMissing', 'psy/psysh is not installed in this app: add laravel/tinker to "require" in composer.json.');
+            $exitCode = 1;
         } else {
             $reply = ($runner ?? new StatementRunner())->run($code, $context);
+            $exitCode = $reply['exception'] === null ? 0 : self::STATEMENT_THREW;
         }
-        return [$reply['exception'] === null ? 0 : 1, self::MARKER . base64_encode(self::fit($reply))];
+        return [$exitCode, self::MARKER . base64_encode(self::fit($reply))];
     }
 
     /**
