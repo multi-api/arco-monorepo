@@ -424,4 +424,36 @@ final class ValidatorTest extends TestCase
         $en = require __DIR__ . '/../../../packages/arco/lang/en.php';
         self::assertStringContainsString('event:cache', $en['validation.deploy_command_read_only']);
     }
+
+    public function test_scheduler_interval_must_divide_an_hour(): void
+    {
+        foreach ([7, 0] as $bad) {
+            $result = (new Validator())->validate(
+                ConfigResolver::resolve(App::make('shop')->region('us-east-1')->scheduler($bad)->environment('production')->toArray(), 'production'),
+                sys_get_temp_dir(),
+            );
+            self::assertSame(
+                [['key' => 'validation.scheduler_interval', 'params' => ['value' => $bad]]],
+                array_map(fn (array $e) => ['key' => $e['key'], 'params' => $e['params']], $result->errors),
+            );
+        }
+        foreach ([1, 15, 60] as $good) {
+            self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->scheduler($good)->environment('production')), (string) $good);
+        }
+    }
+
+    public function test_log_retention_values(): void
+    {
+        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->logRetention(30)->environment('production')));
+        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->logRetention(false)->environment('production')));
+        self::assertSame(['validation.log_retention'], $this->errorKeys(App::make('shop')->region('us-east-1')->logRetention(31)->environment('production')));
+    }
+
+    public function test_scheduler_needs_console(): void
+    {
+        $app = App::make('shop')->region('us-east-1')->scheduler(5)
+            ->environment('production', fn (Environment $e) => $e->console(false));
+
+        self::assertSame(['validation.scheduler_needs_console'], $this->errorKeys($app));
+    }
 }

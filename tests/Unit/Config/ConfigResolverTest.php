@@ -198,4 +198,36 @@ final class ConfigResolverTest extends TestCase
         $off = App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->protected(false))->toArray();
         self::assertFalse(ConfigResolver::resolve($off, 'production')->isProtected());
     }
+
+    public function test_console_defaults_unset(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+
+        self::assertNull($config->console);
+        self::assertNull($config->scheduler);
+        self::assertNull($config->logRetention);
+        self::assertFalse($config->consoleEnabled());
+    }
+
+    public function test_scheduler_implies_console(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->scheduler(1)->environment('production')->toArray(), 'production');
+
+        self::assertTrue($config->consoleEnabled());
+        self::assertNull($config->console);
+        self::assertSame(1, $config->scheduler);
+    }
+
+    public function test_environment_turns_off_app_scheduler(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->scheduler(5)
+            ->environment('production', fn (Environment $e) => $e->scheduler(false)->logRetention(false))
+            ->toArray();
+        $config = ConfigResolver::resolve($raw, 'production');
+
+        self::assertNull($config->scheduler);
+        self::assertSame('environment', $config->sources['scheduler']);
+        self::assertFalse($config->logRetention);
+        self::assertFalse($config->consoleEnabled());
+    }
 }

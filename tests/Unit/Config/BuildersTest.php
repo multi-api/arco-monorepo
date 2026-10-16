@@ -89,4 +89,17 @@ final class BuildersTest extends TestCase
         self::assertSame(['dns' => 'common', 'certificate' => 'arn:aws:acm:us-east-1:111111111111:certificate/abc'], $array['environments']['prod']['settings']);
         self::assertSame(['dns' => false], $array['environments']['qa']['settings']);
     }
+
+    public function test_console_scheduler_and_retention_setters(): void
+    {
+        self::assertSame(
+            ['console' => true, 'scheduler' => 5, 'logRetention' => 30],
+            App::make('a')->console()->scheduler(5)->logRetention(30)->toArray()['settings'],
+        );
+        self::assertSame(
+            ['console' => false, 'scheduler' => false, 'logRetention' => false],
+            App::make('a')->console(false)->scheduler(false)->logRetention(false)->toArray()['settings'],
+        );
+        self::assertSame(['scheduler' => 1], App::make('a')->scheduler()->toArray()['settings']);
+    }
 }
