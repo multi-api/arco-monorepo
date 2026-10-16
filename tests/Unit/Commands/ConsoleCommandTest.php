@@ -70,6 +70,17 @@ final class ConsoleCommandTest extends TestCase
         self::assertStringContainsString('migrating users...', $tester->getDisplay());
     }
 
+    public function test_credentials_that_expire_mid_command_are_named_with_the_profile(): void
+    {
+        $expired = new \Aws\Exception\AwsException('expired', new \Aws\Command('Invoke'), ['code' => 'ExpiredTokenException']);
+        $tester = $this->tester(new FakeConsole([$expired]));
+
+        $tester->execute(['args' => 'migrate --force', '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('The AWS credentials for profile "p" are missing or expired', preg_replace('/\s+/', ' ', $tester->getDisplay()));
+    }
+
     public function test_an_environment_without_console_function_suggests_a_deploy(): void
     {
         $tester = $this->tester(consoleFactory: fn () => throw DeployException::make('console.not_deployed', ['function' => 'shop-staging-console', 'environment' => 'staging']));

@@ -24,6 +24,8 @@ final class FakeDeployer implements Deployer
     public ?\Throwable $releaseError = null;
     /** thrown by activateConsole(), e.g. AWS refusing lambda:UpdateAlias */
     public ?\Throwable $activateError = null;
+    /** thrown by describe(), e.g. expired credentials */
+    public ?\Throwable $describeError = null;
 
     public function __construct(
         public ?string $previousRevision = null,
@@ -84,5 +86,5 @@ final class FakeDeployer implements Deployer
 
     public function hasDomainResources(AppConfig $config): bool { return $this->domainResources; }
     public function remove(AppConfig $config, ?callable $onStep = null): void { $this->calls[] = 'remove'; }
-    public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->status; }
+    public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->describeError !== null ? throw $this->describeError : $this->status; }
 }

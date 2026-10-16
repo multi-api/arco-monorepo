@@ -109,4 +109,33 @@ final class InfoCommandTest extends TestCase
         putenv('AWS_PROFILE');
         $project->restore();
     }
+
+    public function test_expired_credentials_are_reported_instead_of_not_deployed(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        file_put_contents((string) getenv('AWS_CONFIG_FILE'), "[profile acme-sso]\nsso_session = acme\nsso_account_id = 111111111111\n");
+        $deployer = new FakeDeployer();
+        $deployer->describeError = new \Aws\Exception\CredentialsException('Error retrieving credentials');
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        putenv('AWS_PROFILE=acme-sso');
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringNotContainsString('Not deployed yet', $display);
+        self::assertStringContainsString('The AWS credentials for profile "acme-sso" are missing or expired', $display);
+        self::assertStringContainsString('aws sso login --profile acme-sso', $display);
+        self::assertSame(1, $tester->getStatusCode());
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        self::assertStringContainsString('missing or expired', json_decode($tester->getDisplay(), true)['error']);
+
+        putenv('AWS_PROFILE=p');
+        $deployer->describeError = new \Aws\Exception\AwsException('expired', new \Aws\Command('GetWebFunction'), ['code' => 'ExpiredTokenException']);
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('The AWS credentials for profile "p" are missing or expired', $display);
+        self::assertStringNotContainsString('sso login', $display);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
 }

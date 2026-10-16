@@ -8,6 +8,7 @@ use Multiapi\Arco\Aws\AccountGuard;
 use Multiapi\Arco\Aws\AccountMismatch;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Aws\AwsProfile;
+use Multiapi\Arco\Aws\CredentialError;
 use Multiapi\Arco\Aws\LocalState;
 use Multiapi\Arco\Aws\ProfileLister;
 use Multiapi\Arco\Aws\ProfileResolver;
@@ -31,6 +32,9 @@ trait ResolvesTarget
 {
     /** @var Closure(?string, string): AwsClients */
     protected Closure $awsFactory;
+
+    /** The profile whose clients the command is using, so credential errors can name it. */
+    protected ?string $credentialProfile = null;
 
     protected function loadTarget(InputInterface $input, SymfonyStyle $io): AppConfig
     {
@@ -73,14 +77,13 @@ trait ResolvesTarget
             $io->writeln('<info>' . $this->t('aws.profile_saved', ['environment' => $config->environment]) . '</info>');
         }
 
+        $this->credentialProfile = $profile;
         $clients = ($this->awsFactory)($profile, (string) $config->region);
         try {
             $account = $clients->accountId();
         } catch (Throwable $e) {
-            $hint = SsoHint::command($e, $profile);
-            throw new UserError($hint !== null
-                ? $this->t('aws.sso_expired', ['command' => $hint])
-                : $this->t('aws.credentials_failed', ['profile' => $profile ?? 'environment', 'message' => $e->getMessage()]));
+            throw new UserError($this->credentialProblem($e, $profile)
+                ?? $this->t('aws.credentials_failed', ['profile' => $profile ?? 'environment', 'message' => $e->getMessage()]));
         }
 
         try {
@@ -115,11 +118,26 @@ trait ResolvesTarget
         try {
             return $dns->accountId();
         } catch (Throwable $e) {
-            $hint = SsoHint::command($e, $dns->profile);
-            throw new UserError($hint !== null
-                ? $this->t('aws.sso_expired', ['command' => $hint])
-                : $this->t('aws.credentials_failed', ['profile' => (string) $dns->profile, 'message' => $e->getMessage()]));
+            throw new UserError($this->credentialProblem($e, $dns->profile)
+                ?? $this->t('aws.credentials_failed', ['profile' => (string) $dns->profile, 'message' => $e->getMessage()]));
         }
+    }
+
+    /**
+     * The translated "credentials missing or expired" message, with `aws sso login` for SSO profiles,
+     * or null when the failure is not about credentials.
+     */
+    protected function credentialProblem(Throwable $e, ?string $profile): ?string
+    {
+        $sso = SsoHint::command($e, $profile);
+        if ($sso === null && ! CredentialError::matches($e)) {
+            return null;
+        }
+        $command = CredentialError::loginCommand($e, $profile);
+        $name = $profile ?? 'environment';
+        return $command !== null
+            ? $this->t('aws.credentials_expired', ['profile' => $name, 'command' => $command])
+            : $this->t('aws.credentials_expired_generic', ['profile' => $name]);
     }
 
     protected function askProfile(AppConfig $config, SymfonyStyle $io): string
@@ -147,6 +165,7 @@ trait ResolvesTarget
     {
         return match (true) {
             $e instanceof UserError => $e->getMessage(),
+            CredentialError::matches($e) => (string) $this->credentialProblem($e, $this->credentialProfile),
             $e instanceof ConfigException, $e instanceof BuildException, $e instanceof BinaryException, $e instanceof DeployException
                 => $this->t($e->key, $e->params),
             $e instanceof AwsException => $this->t(in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true) ? 'aws.access_denied' : 'aws.request_failed', [

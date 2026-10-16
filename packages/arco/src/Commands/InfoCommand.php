@@ -55,7 +55,7 @@ final class InfoCommand extends ArcoCommand
             return self::FAILURE;
         }
 
-        $status = $this->remoteStatus($config);
+        [$status, $remoteError] = $this->remoteStatus($config);
         $settings = $this->settings($config);
 
         if ($input->getOption('json')) {
@@ -69,8 +69,8 @@ final class InfoCommand extends ArcoCommand
                     + ($status?->consoleVersionError !== null ? ['error' => $status->consoleVersionError] : []),
                 'deployCommands' => $config->deployCommands,
                 'settings' => array_map(fn (array $row) => $row[0], $settings),
-            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-            return self::SUCCESS;
+            ] + ($remoteError !== null ? ['error' => $remoteError] : []), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $remoteError === null ? self::SUCCESS : self::FAILURE;
         }
 
         $io->title($config->functionName());
@@ -86,6 +86,10 @@ final class InfoCommand extends ArcoCommand
         }
         $io->table([$this->t('info.variable'), $this->t('info.value')], $rows);
 
+        if ($remoteError !== null) {
+            $io->error($remoteError);
+            return self::FAILURE;
+        }
         if ($status === null) {
             $io->note($this->t('info.no_remote'));
         } else {
@@ -110,19 +114,24 @@ final class InfoCommand extends ArcoCommand
         };
     }
 
-    /** Remote status only when credentials resolve without prompting. */
-    private function remoteStatus(AppConfig $config): ?AppStatus
+    /**
+     * Remote status only when a profile resolves without prompting, plus the error to show when
+     * the credentials are missing or expired (anything else still reads as "not deployed").
+     *
+     * @return array{0: ?AppStatus, 1: ?string}
+     */
+    private function remoteStatus(AppConfig $config): array
     {
         /** @var array<string, string> $env */
         $env = getenv();
         $choice = ProfileResolver::resolve(null, $env, $config, new LocalState($this->projectDir()));
         if ($choice === null) {
-            return null;
+            return [null, null];
         }
         try {
-            return ($this->deployerFactory)(($this->awsFactory)($choice->profile, (string) $config->region))->describe($config);
-        } catch (Throwable) {
-            return null;
+            return [($this->deployerFactory)(($this->awsFactory)($choice->profile, (string) $config->region))->describe($config), null];
+        } catch (Throwable $e) {
+            return [null, $this->credentialProblem($e, $choice->profile)];
         }
     }
 
