@@ -267,7 +267,9 @@ final class DeployCommandTest extends TestCase
         self::assertStringContainsString($zip, $display);
         self::assertStringNotContainsString('Building shop', $display);
         self::assertStringNotContainsString('Package ready', $display);
-        self::assertStringNotContainsString('WARNING', $display, 'a matching package raises no warning');
+        // The only warning is the console's fallback note (the fixture uses a custom binary()).
+        self::assertSame(1, substr_count($display, '[WARNING]'), 'a matching package raises no warning of its own');
+        self::assertStringContainsString('[WARNING] Console function: downloads the FrankenPHP binary at cold start', $display);
         self::assertSame(['describe', 'prepare', 'release', 'prune'], $deployer->calls);
         self::assertSame($zip, $deployer->package?->path);
         self::assertSame(\Multiapi\Arco\Package\PackageReader::open($zip)->hash, $deployer->package->hash);

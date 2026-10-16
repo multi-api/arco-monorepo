@@ -16,9 +16,12 @@ final class StepPrinter
 {
     public const PROGRESS = 'package.progress';
     /** Steps that report something the user should act on, not progress. */
-    public const WARNINGS = ['deploy.console_skipped_size', 'deploy.console_not_activated', 'deploy.console_retries_not_disabled', 'deploy.prune_versions_failed', 'deploy.prune_packages_failed'];
+    public const WARNINGS = ['deploy.console_downloads_binary', 'deploy.console_skipped_size', 'deploy.console_not_activated', 'deploy.console_retries_not_disabled', 'deploy.prune_versions_failed', 'deploy.prune_packages_failed'];
     private const MARKS = [25, 50, 75, 100];
-    /** Params holding a code that is translated with the given key prefix before the step is printed. */
+    /**
+     * Params holding a code that is translated with the given key prefix before the step is printed;
+     * the code's text gets the step's other params (e.g. {url} and {message}).
+     */
     private const TRANSLATED_PARAMS = ['deploy.console_downloads_binary' => ['reason' => 'deploy.console_reason.']];
 
     private ?ProgressBar $bar = null;
@@ -43,7 +46,7 @@ final class StepPrinter
         $this->printed = 0;
         foreach (self::TRANSLATED_PARAMS[$key] ?? [] as $param => $prefix) {
             if (isset($params[$param])) {
-                $params[$param] = ($this->translate)($prefix . $params[$param], []);
+                $params[$param] = ($this->translate)($prefix . $params[$param], $params);
             }
         }
         if (in_array($key, self::WARNINGS, true)) {

@@ -33,13 +33,29 @@ final class StepPrinterTest extends TestCase
         self::assertSame("  • build.copying\n  • build.step {\"command\":\"php artisan event:cache\"}\n", $output->fetch());
     }
 
-    public function test_the_console_download_reason_is_translated(): void
+    public function test_the_console_download_note_is_a_warning_with_its_reason_translated(): void
     {
         $output = new BufferedOutput();
 
-        $this->printer($output, false)('deploy.console_downloads_binary', ['reason' => 'no_php_cli']);
+        $this->printer($output, false)('deploy.console_downloads_binary', ['reason' => 'php_cli_too_large']);
 
-        self::assertSame("  • deploy.console_downloads_binary {\"reason\":\"deploy.console_reason.no_php_cli\"}\n", $output->fetch());
+        $text = $output->fetch();
+        self::assertStringContainsString('[WARNING]', $text);
+        self::assertStringContainsString('deploy.console_reason.php_cli_too_large', $text);
+    }
+
+    public function test_the_console_download_reason_gets_the_step_params(): void
+    {
+        $output = new BufferedOutput();
+        $printer = new StepPrinter(
+            new SymfonyStyle(new ArrayInput([]), $output),
+            fn (string $key, array $params = []) => strtr($key === 'deploy.console_downloads_binary' ? 'note ({reason})' : 'from {url}: {message}', array_combine(array_map(fn ($k) => '{' . $k . '}', array_keys($params)), array_map('strval', $params)) ?: []),
+            false,
+        );
+
+        $printer('deploy.console_downloads_binary', ['reason' => 'php_cli_unavailable', 'url' => 'https://x.test/php', 'message' => 'timed out']);
+
+        self::assertStringContainsString('note (from https://x.test/php: timed out)', $output->fetch());
     }
 
     public function test_progress_without_a_terminal_prints_a_few_plain_lines(): void
