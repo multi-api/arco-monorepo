@@ -222,7 +222,7 @@ final class AwsClients
             $account = $credentials instanceof Credentials && in_array($credentials->getSource(), self::ACCOUNT_BOUND_SOURCES, true)
                 ? $credentials->getAccountId()
                 : null;
-            if (! is_string($account) || preg_match('/^\d{12}$/', $account) !== 1) {
+            if (! is_string($account) || preg_match('/^\d{12}$/D', $account) !== 1) {
                 $account = $sts->getCallerIdentity()['Account'];
             }
             if (! is_string($account)) {

@@ -104,7 +104,7 @@ final class AwsClientsTest extends TestCase
     public function test_other_credentials_ask_sts_for_the_account(): void
     {
         // credential_process output and environment variables state an account, but nothing checked it.
-        foreach ([[CredentialSources::PROFILE_PROCESS, '123456789012'], [CredentialSources::ENVIRONMENT, '123456789012'], [CredentialSources::PROFILE, null], [CredentialSources::PROFILE_SSO, null], [CredentialSources::PROFILE_SSO, 'not-an-id']] as [$source, $account]) {
+        foreach ([[CredentialSources::PROFILE_PROCESS, '123456789012'], [CredentialSources::ENVIRONMENT, '123456789012'], [CredentialSources::PROFILE, null], [CredentialSources::PROFILE_SSO, null], [CredentialSources::PROFILE_SSO, 'not-an-id'], [CredentialSources::PROFILE_SSO, "123456789012\n"]] as [$source, $account]) {
             [$aws, $calls] = self::clientsWith(new Credentials('A', 'S', null, null, $account, $source));
 
             self::assertSame('222222222222', $aws->accountId(), $source);
