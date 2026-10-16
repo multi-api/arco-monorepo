@@ -23,8 +23,13 @@ final class RuntimeManifestEditorTest extends TestCase
         @unlink($this->path);
     }
 
-    /** @return array<string, mixed> */
-    private static function buildJson(string $id = '1.13.0-r2'): array
+    /**
+     * A build the shipped manifest (copied in setUp) can never contain, so these tests keep passing as
+     * real builds are added.
+     *
+     * @return array<string, mixed>
+     */
+    private static function buildJson(string $id = '1.13.0-r90'): array
     {
         return [
             'id' => $id, 'frankenphp' => '1.13.0', 'php' => '8.5.12', 'arch' => 'linux-aarch64',
@@ -34,16 +39,17 @@ final class RuntimeManifestEditorTest extends TestCase
 
     public function test_adds_a_build_and_optionally_makes_it_default(): void
     {
+        $default = RuntimeManifest::load($this->path)->defaultId();
         RuntimeManifestEditor::add($this->path, self::buildJson(), 'multi-api/arco-runtime', false);
         $manifest = RuntimeManifest::load($this->path);
-        self::assertSame('1.13.0-r1', $manifest->defaultId());
+        self::assertSame($default, $manifest->defaultId());
         self::assertSame(
-            'https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r2/frankenphp-linux-aarch64',
-            $manifest->get('1.13.0-r2')->url,
+            'https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r90/frankenphp-linux-aarch64',
+            $manifest->get('1.13.0-r90')->url,
         );
 
-        RuntimeManifestEditor::add($this->path, self::buildJson('1.13.0-r3'), 'multi-api/arco-runtime', true);
-        self::assertSame('1.13.0-r3', RuntimeManifest::load($this->path)->defaultId());
+        RuntimeManifestEditor::add($this->path, self::buildJson('1.13.0-r91'), 'multi-api/arco-runtime', true);
+        self::assertSame('1.13.0-r91', RuntimeManifest::load($this->path)->defaultId());
     }
 
     public function test_adds_the_php_cli_with_a_derived_url(): void
@@ -53,10 +59,10 @@ final class RuntimeManifestEditorTest extends TestCase
         ]];
         RuntimeManifestEditor::add($this->path, $build, 'multi-api/arco-runtime', false);
 
-        $cli = RuntimeManifest::load($this->path)->get('1.13.0-r2')->phpCli;
+        $cli = RuntimeManifest::load($this->path)->get('1.13.0-r90')->phpCli;
         self::assertNotNull($cli);
         self::assertSame(
-            ['https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r2/php-linux-aarch64', str_repeat('c', 64), 90000000],
+            ['https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r90/php-linux-aarch64', str_repeat('c', 64), 90000000],
             [$cli->url, $cli->sha256, $cli->size],
         );
     }

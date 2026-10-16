@@ -142,12 +142,23 @@ final class RuntimeManifestTest extends TestCase
         }
     }
 
-    public function test_shipped_manifest_is_valid_and_pins_the_first_build(): void
+    public function test_shipped_manifest_is_valid_and_pins_the_default_build_with_its_php_cli(): void
     {
-        $build = RuntimeManifest::load()->resolve(null, null);
-        self::assertSame('1.13.0-r1', $build->id);
-        self::assertSame('605ff4ae0ae4b8273026d92ee125405b8a589234a196e930f05eff067e9f2ca5', $build->sha256);
+        $manifest = RuntimeManifest::load();
+        $build = $manifest->resolve(null, null);
+        self::assertSame('1.13.0-r2', $build->id);
+        self::assertSame('590762f2aea6b66cdc1d18b262a21ee1b0b938953a617598b8c970b453f2b1f1', $build->sha256);
         self::assertSame(168140016, $build->size);
-        self::assertSame('https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r1/frankenphp-linux-aarch64', $build->url);
+        self::assertSame('https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r2/frankenphp-linux-aarch64', $build->url);
+        self::assertNotNull($build->phpCli);
+        self::assertSame(
+            ['https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r2/php-linux-aarch64', '408921e0132b1874980b5443dcefbd7bfacc52c4cb12864da04e76664d647e76', 95099864],
+            [$build->phpCli->url, $build->phpCli->sha256, $build->phpCli->size],
+        );
+
+        // The first build stays pinnable, and has no PHP CLI (its console downloads FrankenPHP).
+        $first = $manifest->get('1.13.0-r1');
+        self::assertSame('605ff4ae0ae4b8273026d92ee125405b8a589234a196e930f05eff067e9f2ca5', $first->sha256);
+        self::assertNull($first->phpCli);
     }
 }
