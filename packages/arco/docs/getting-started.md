@@ -161,8 +161,8 @@ Cold start: <n> ms
 The cold start is the init duration of the new revision's first instance, read from Lambda's
 init report in CloudWatch Logs (in the streams named after the revision). Those events reach
 CloudWatch Logs up to about 40 seconds late, so the health check alone decides whether the deploy
-passed, and the cold start is read last, after the custom domains: Arco keeps looking until about
-60 seconds after the health check passed (at most 40 CloudWatch Logs calls). If the report has not
+passed, and the cold start is read last, after the custom domains: Arco keeps looking for up to about
+60 seconds from the start of that lookup, however long the domains took (at most 40 CloudWatch Logs calls). If the report has not
 arrived by then, or CloudWatch Logs cannot be read (for example when throttled), the summary says
 `Cold start: not available yet` and the deploy still succeeds. With `->auth('iam')` the report is
 the only health signal, so Arco waits up to about 75 seconds for it before deciding; a missing or
