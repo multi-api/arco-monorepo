@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Deploy;
 
 use Aws\Exception\AwsException;
+use Multiapi\Arco\Binary\BinaryException;
 use Multiapi\Arco\Binary\BinaryProvider;
 use Multiapi\Arco\Binary\RuntimeBuild;
 use Multiapi\Arco\Build\Builder;
@@ -104,17 +105,34 @@ final class DeployPipeline
         $work = sys_get_temp_dir() . '/arco-console-' . bin2hex(random_bytes(4));
         try {
             // The console runs the runtime build's PHP CLI (bin/php in its zip) when the build has one;
-            // otherwise (custom binary, unknown or older build) it downloads FrankenPHP at cold start.
+            // otherwise (custom binary, unknown or older build, CLI unreachable) it downloads FrankenPHP
+            // at cold start. $note holds the reason (and its params) for that fallback.
             $buildId = $package->manifest?->runtimeBuild;
             $build = $buildId === null ? null : $this->binaries->build($buildId);
-            $phpCli = $build === null ? null : $this->binaries->phpCli($build, self::downloadProgress($build, $onStep));
+            $note = match (true) {
+                $buildId === null => ['reason' => 'custom_binary'],
+                $build === null => ['reason' => 'unknown_build', 'build' => $buildId],
+                default => ['reason' => 'no_php_cli'],
+            };
+            $phpCli = null;
+            if ($build !== null) {
+                try {
+                    $phpCli = $this->binaries->phpCli($build, self::downloadProgress($build, $onStep));
+                } catch (BinaryException $e) {
+                    // Only reachability falls back (network, proxy, GitHub outage): a size or checksum
+                    // mismatch or an unwritable cache stops the deploy, still before any AWS change.
+                    if ($e->key !== 'binary.download_failed') {
+                        throw $e;
+                    }
+                    $note = ['reason' => 'php_cli_unavailable', 'url' => (string) ($e->params['url'] ?? ''), 'message' => (string) ($e->params['message'] ?? '')];
+                }
+            }
             $console = ConsolePackager::fromWeb($package, $work, $phpCli);
-            $reason = $buildId === null ? 'custom_binary' : 'no_php_cli';
             if ($phpCli !== null && $console->package->bytes > ConsoleFunction::MAX_UNZIPPED_BYTES) {
                 // bin/php alone can push the console over Lambda's limit: without it, the console still
                 // deploys and downloads FrankenPHP at cold start.
                 $console = ConsolePackager::fromWeb($package, $work, null);
-                $reason = 'php_cli_too_large';
+                $note = ['reason' => 'php_cli_too_large'];
             }
             if ($console->package->bytes > ConsoleFunction::MAX_UNZIPPED_BYTES) {
                 $params = [
@@ -129,7 +147,7 @@ final class DeployPipeline
                 $console = null;
             }
             if ($console?->download !== null) {
-                $onStep('deploy.console_downloads_binary', ['reason' => $reason]);
+                $onStep('deploy.console_downloads_binary', $note);
             }
 
             $since = (int) floor(microtime(true) * 1000) - 5000;

@@ -247,8 +247,11 @@ final class DeployPipelineTest extends TestCase
         self::assertSame([], array_diff(glob(sys_get_temp_dir() . '/arco-console-*') ?: [], $before), 'the derived files are removed after the deploy');
     }
 
-    /** A pipeline whose manifest has 1.13.0-r1 (no PHP CLI) and 1.13.0-r2 (with one); downloads write $content. */
-    private function cliPipeline(string $content = 'php-cli-bytes'): DeployPipeline
+    /**
+     * A pipeline whose manifest has 1.13.0-r1 (no PHP CLI) and 1.13.0-r2 (with one); downloads write
+     * $content, or throw $failure when it is given.
+     */
+    private function cliPipeline(string $content = 'php-cli-bytes', ?\Throwable $failure = null): DeployPipeline
     {
         $elf = (string) file_get_contents(ElfInspectorTest::fakeElf(0xB7));
         $build = fn (string $id) => [
@@ -269,10 +272,13 @@ final class DeployPipelineTest extends TestCase
                 ]],
             ],
         ]);
-        $downloader = new class ($content) implements \Multiapi\Arco\Binary\Downloader {
-            public function __construct(private string $content) {}
+        $downloader = new class ($content, $failure) implements \Multiapi\Arco\Binary\Downloader {
+            public function __construct(private string $content, private ?\Throwable $failure) {}
             public function download(string $url, string $destination, ?callable $onProgress = null): void
             {
+                if ($this->failure !== null) {
+                    throw $this->failure;
+                }
                 // Like Guzzle: an unknown total first, then the bytes as they arrive.
                 if ($onProgress !== null) {
                     $onProgress(0, 0);
@@ -391,14 +397,48 @@ final class DeployPipelineTest extends TestCase
         self::assertSame(['reason' => 'custom_binary'], $steps['deploy.console_downloads_binary'] ?? null);
     }
 
-    public function test_a_package_of_an_unknown_or_old_build_falls_back(): void
+    public function test_a_package_of_an_old_build_without_a_php_cli_falls_back(): void
     {
-        foreach (['9.9.9-r1', '1.13.0-r1'] as $build) {
-            [$deployer, $steps] = $this->deployWeb($this->cliPipeline(), $build);
+        [$deployer, $steps] = $this->deployWeb($this->cliPipeline(), '1.13.0-r1');
 
-            self::assertNotNull($deployer->console?->download, $build);
-            self::assertSame(['reason' => 'no_php_cli'], $steps['deploy.console_downloads_binary'] ?? null, $build);
+        self::assertNotNull($deployer->console?->download);
+        self::assertSame(['reason' => 'no_php_cli'], $steps['deploy.console_downloads_binary'] ?? null);
+    }
+
+    public function test_a_package_of_a_build_this_arco_does_not_know_falls_back_with_its_own_reason(): void
+    {
+        [$deployer, $steps] = $this->deployWeb($this->cliPipeline(), '9.9.9-r1');
+
+        self::assertNotNull($deployer->console?->download);
+        self::assertSame(['reason' => 'unknown_build', 'build' => '9.9.9-r1'], $steps['deploy.console_downloads_binary'] ?? null);
+    }
+
+    public function test_a_php_cli_that_cannot_be_downloaded_falls_back_and_the_deploy_goes_on(): void
+    {
+        $url = 'https://example.test/frankenphp-1.13.0-r2/php-linux-aarch64';
+        $failure = \Multiapi\Arco\Binary\BinaryException::make('binary.download_failed', ['url' => $url, 'message' => 'cURL error 6: Could not resolve host']);
+
+        [$deployer, $steps] = $this->deployWeb($this->cliPipeline(failure: $failure), '1.13.0-r2');
+
+        self::assertNotNull($deployer->console?->download, 'the console downloads FrankenPHP at cold start instead');
+        self::assertSame(
+            ['reason' => 'php_cli_unavailable', 'url' => $url, 'message' => 'cURL error 6: Could not resolve host'],
+            $steps['deploy.console_downloads_binary'] ?? null,
+        );
+        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls, 'the deploy goes on');
+    }
+
+    public function test_a_php_cli_that_fails_its_checksum_stops_the_deploy_before_any_aws_change(): void
+    {
+        // Same length as the expected bytes, so the size check passes and the checksum rejects it.
+        $deployer = new FakeDeployer('rev-1');
+        try {
+            $this->cliPipeline('PHP-CLI-BYTES')->deployPackage($this->config(), new PlainPhpPreset(), self::webPackage('1.13.0-r2'), $deployer, new FakeVerifier(true), fn () => null);
+            self::fail('A PHP CLI with the wrong checksum must stop the deploy.');
+        } catch (\Multiapi\Arco\Binary\BinaryException $e) {
+            self::assertSame('binary.checksum_mismatch', $e->key);
         }
+        self::assertSame([], $deployer->calls);
     }
 
     /** A web zip whose console part claims $bytes unzipped (the 3-byte binary is removed from it). */
