@@ -30,11 +30,32 @@ final class TempPaths
         return self::track($path);
     }
 
-    /** Removes $path (file or directory) when the test finishes; returns it unchanged. */
+    /**
+     * Removes $path (file or directory) when the test finishes; returns it unchanged. Only paths inside
+     * the temp directory are accepted, so a mistake can never delete anything else.
+     */
     public static function track(string $path): string
     {
+        if (! self::insideTempDir($path)) {
+            throw new \InvalidArgumentException("TempPaths only removes paths inside the temp directory, not $path.");
+        }
         self::$paths[$path] = true;
         return $path;
+    }
+
+    private static function insideTempDir(string $path): bool
+    {
+        if (str_contains($path, '..')) {
+            return false;
+        }
+        $temp = rtrim(sys_get_temp_dir(), '/');
+        $real = realpath($temp);
+        foreach (array_unique([$temp, $real === false ? $temp : rtrim($real, '/')]) as $base) {
+            if ($base !== '' && str_starts_with($path, $base . '/') && strlen($path) > strlen($base) + 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static function removeAll(): void
