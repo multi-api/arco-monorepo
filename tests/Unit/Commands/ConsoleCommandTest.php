@@ -95,6 +95,30 @@ final class ConsoleCommandTest extends TestCase
         self::assertStringContainsString('The AWS credentials for profile "p" are missing or expired', preg_replace('/\s+/', ' ', $tester->getDisplay()));
     }
 
+    public function test_a_denied_assume_role_shows_the_aws_message_not_expired_credentials(): void
+    {
+        $denied = new \Aws\Exception\AwsException('denied', new \Aws\Command('AssumeRole'), ['code' => 'AccessDenied', 'message' => 'not authorized to perform sts:AssumeRole']);
+        $tester = $this->tester(new FakeConsole([new \Aws\Exception\CredentialsException('Error in retrieving assume role credentials.', 0, $denied)]));
+
+        $tester->execute(['args' => 'about', '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('not authorized to perform sts:AssumeRole', $display);
+        self::assertStringNotContainsString('missing or expired', $display);
+    }
+
+    public function test_generic_expired_credentials_include_the_aws_message(): void
+    {
+        $tester = $this->tester(new FakeConsole([new \Aws\Exception\CredentialsException('credential_process returned expired credentials')]));
+
+        $tester->execute(['args' => 'about', '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('missing or expired', $display);
+        self::assertStringContainsString('credential_process returned expired credentials', $display);
+    }
+
     public function test_an_environment_without_console_function_suggests_a_deploy(): void
     {
         $tester = $this->tester(consoleFactory: fn () => throw DeployException::make('console.not_deployed', ['function' => 'shop-staging-console', 'environment' => 'staging']));

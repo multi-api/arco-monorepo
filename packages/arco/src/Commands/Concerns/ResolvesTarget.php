@@ -132,20 +132,22 @@ trait ResolvesTarget
     }
 
     /**
-     * The translated "credentials missing or expired" message, with `aws sso login` for SSO profiles,
-     * or null when the failure is not about credentials.
+     * The translated "credentials missing or expired" message, with `aws sso login` for SSO profiles;
+     * "could not get credentials" with AWS's message when they failed for another reason (a denied
+     * AssumeRole, a failing credential_process); null when the failure is not about credentials.
      */
     protected function credentialProblem(Throwable $e, ?string $profile): ?string
     {
-        $sso = SsoHint::command($e, $profile);
-        if ($sso === null && ! CredentialError::matches($e)) {
-            return null;
+        $name = $profile ?? 'environment';
+        if (SsoHint::command($e, $profile) === null && ! CredentialError::matches($e)) {
+            return CredentialError::isCredentialsFailure($e)
+                ? $this->t('aws.credentials_failed', ['profile' => $name, 'message' => CredentialError::message($e)])
+                : null;
         }
         $command = CredentialError::loginCommand($e, $profile);
-        $name = $profile ?? 'environment';
         return $command !== null
             ? $this->t('aws.credentials_expired', ['profile' => $name, 'command' => $command])
-            : $this->t('aws.credentials_expired_generic', ['profile' => $name]);
+            : $this->t('aws.credentials_expired_generic', ['profile' => $name, 'message' => CredentialError::message($e)]);
     }
 
     protected function askProfile(AppConfig $config, SymfonyStyle $io): string
@@ -173,7 +175,7 @@ trait ResolvesTarget
     {
         return match (true) {
             $e instanceof UserError => $e->getMessage(),
-            CredentialError::matches($e) => (string) $this->credentialProblem($e, $this->credentialProfile),
+            CredentialError::isCredentialsFailure($e) || CredentialError::matches($e) => (string) $this->credentialProblem($e, $this->credentialProfile),
             $e instanceof ConfigException, $e instanceof BuildException, $e instanceof BinaryException, $e instanceof DeployException
                 => $this->t($e->key, $e->params),
             $e instanceof AwsException => $this->t(in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true) ? 'aws.access_denied' : 'aws.request_failed', [

@@ -22,6 +22,22 @@ final class CredentialErrorTest extends TestCase
         self::assertFalse(CredentialError::matches(new RuntimeException('boom')));
     }
 
+    /** AssumeRoleCredentialProvider wraps every AssumeRole failure in a CredentialsException. */
+    public function test_a_credentials_exception_wrapping_another_aws_error_is_not_an_expiry(): void
+    {
+        $denied = new AwsException('denied', new Command('AssumeRole'), ['code' => 'AccessDenied', 'message' => 'User is not authorized to perform sts:AssumeRole']);
+        $wrapped = new CredentialsException('Error in retrieving assume role credentials.', 0, $denied);
+        self::assertFalse(CredentialError::matches($wrapped));
+        self::assertSame('User is not authorized to perform sts:AssumeRole', CredentialError::message($wrapped));
+
+        $expired = new AwsException('expired', new Command('AssumeRole'), ['code' => 'ExpiredToken', 'message' => 'The security token included in the request is expired']);
+        $wrapped = new CredentialsException('Error in retrieving assume role credentials.', 0, $expired);
+        self::assertTrue(CredentialError::matches($wrapped));
+        self::assertSame('The security token included in the request is expired', CredentialError::message($wrapped));
+
+        self::assertSame('Token file at /x is expired', CredentialError::message(new CredentialsException('Token file at /x is expired')));
+    }
+
     public function test_suggests_sso_login_only_for_sso_profiles(): void
     {
         $config = tempnam(sys_get_temp_dir(), 'arco-cfg');
