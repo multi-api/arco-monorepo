@@ -3,6 +3,24 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## Unreleased
+
+- **Fixed:** `arco tinker` presents Eloquent models, collections, `Stringable`, `HtmlString` and the
+  application like local `php artisan tinker` (attributes, not internals): the casters of
+  `laravel/tinker` are registered when it is installed, plus the app's `tinker.casters` config.
+- **Added:** config warnings for `deployCommands()` entries that cannot work on Lambda: commands that
+  write into the read-only code directory (`config:cache`, `route:cache`, `view:cache`, `event:cache`,
+  `optimize`, `optimize:clear`, `config:clear`, `route:clear`, `view:clear`, `storage:link`), commands
+  Laravel asks to confirm in production without `--force` (`migrate`, `migrate:rollback`, `db:seed`...),
+  and commands that drop every table (`migrate:fresh`, `migrate:refresh`, `migrate:reset`, `db:wipe`).
+  `arco deploy` and `arco init` show them.
+- **Changed:** the console function's log masks the values of secret-looking options (`--password=...`,
+  `--api-key ...`, `--token`...) as `***` in the command audit line and in `command_failed`.
+- **Changed:** on an environment with an `account()` lock, `arco tinker`, `arco command` and the other
+  commands read the account of IAM Identity Center (SSO) and assumed-role credentials from the credentials
+  themselves instead of calling `sts:GetCallerIdentity`: about 0.6 s less before the first statement. A
+  mismatching account is still refused before anything runs.
+
 ## 0.2.0
 
 - **Added:** every deploy also deploys a console function, `<app>-<env>-console`, with the same code,
