@@ -267,9 +267,11 @@ caches it in `~/.arco/cache/runtime/<build>/php`.
 
 The console falls back to downloading FrankenPHP from the code bucket (`runtime/...`, checksum-verified,
 once per execution environment) when you set a custom `binary()`, when the runtime build has no PHP CLI
-(such as `1.13.0-r1`), or when the console would pass 250 MB unzipped only because of `bin/php`. The
-deploy prints a note saying which case applies; in the size case, leave large folders out with
-`->exclude([...])` to get the faster start back.
+(such as `1.13.0-r1`) or is unknown to your Arco version, when the console would pass 250 MB unzipped
+only because of `bin/php`, or when the PHP CLI cannot be downloaded from GitHub (network, proxy, outage;
+the deploy goes on). The deploy prints a warning saying which case applies; in the size case, leave large
+folders out with `->exclude([...])` to get the faster start back. A PHP CLI whose size or checksum does
+not match stops the deploy before any AWS change.
 
 ### Migrations on deploy
 

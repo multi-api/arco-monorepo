@@ -200,9 +200,10 @@ for your app; MB here are 1,000,000 bytes, while Arco's own output divides by 1,
 as about 91 MB) and runs it directly, with no download at cold start. The CLI is fetched from GitHub releases
 once per runtime build and machine and cached in `~/.arco/cache/runtime/<build>/php`.
 
-The console downloads FrankenPHP instead, with a note in the deploy output, for a custom `binary()`, a runtime
-build without a PHP CLI (`1.13.0-r1`), or when `bin/php` alone would take the console over 250 MB (then
-`->exclude([...])` leaves room). In those cases the deploy uploads the exact binary of the web revision once to
+The console downloads FrankenPHP instead, with a warning in the deploy output, for a custom `binary()`, a runtime
+build without a PHP CLI (`1.13.0-r1`) or unknown to this Arco version, when `bin/php` alone would take the
+console over 250 MB (then `->exclude([...])` leaves room), or when the PHP CLI cannot be downloaded from
+GitHub (the warning names the URL and the error; a size or checksum mismatch still stops the deploy). In those cases the deploy uploads the exact binary of the web revision once to
 the code bucket (`runtime/<build>/frankenphp`); at a cold start the console function downloads it (about 2.5 s
 for 160 MB, once per execution environment), checks its SHA-256 and keeps it in `/tmp`. The managed role may
 read `runtime/*` of the code bucket in every case; with your own `role()`, allow `s3:GetObject` on

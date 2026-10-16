@@ -33,7 +33,7 @@ Never delete or replace a published build; publish a new revision instead.
 
 - `arco info --json`: the key describing the runtime build is now `runtime.build` (renamed).
 - The old cache directory `~/.arco/cache/frankenphp` is orphaned and can be deleted.
-- `arco deploy` and `arco deploy --package` fetch the PHP CLI from GitHub releases once per runtime build and machine, and cache it in `~/.arco/cache/runtime/<build>/php`.
+- `arco deploy` and `arco deploy --package` fetch the PHP CLI from GitHub releases once per runtime build and machine, and cache it in `~/.arco/cache/runtime/<build>/php`. If GitHub cannot be reached, the deploy goes on and that console downloads FrankenPHP at cold start (warning `php_cli_unavailable`); a size or checksum mismatch stops the deploy before any AWS change.
 - Stale `*.part` files in `~/.arco/cache/runtime/` can be deleted.
 
 ## Future hardening (not done)

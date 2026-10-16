@@ -12,9 +12,14 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   measurements, not Lambda guarantees). The PHP CLI takes about 95 MB of the 250 MB of
   unzipped code Lambda allows, leaving about 155 MB for the app. A deploy
   fetches it from GitHub releases once per runtime build and machine (cached in `~/.arco/cache/runtime`).
-- **Changed:** a custom `binary()`, a runtime build without a PHP CLI (`1.13.0-r1`), or an app whose
-  console would pass 250 MB unzipped only because of `bin/php` keeps the download at cold start, and the
-  deploy prints a note (for the size case it suggests `->exclude()`).
+- **Changed:** a custom `binary()`, a runtime build without a PHP CLI (`1.13.0-r1`) or unknown to this Arco
+  version, an app whose console would pass 250 MB unzipped only because of `bin/php`, or a PHP CLI that
+  cannot be downloaded from GitHub (network, proxy, outage) keeps the download at cold start, and the
+  deploy goes on with a warning saying why (for the size case it suggests `->exclude()`; for the download
+  case it names the URL and the error). A PHP CLI whose size or checksum does not match stops the deploy
+  before any AWS change.
+- **Changed:** a console package whose `bin/php` lost its exec bit fails at init with an error naming
+  it, instead of asking for `ARCO_BINARY_*` variables.
 
 ## 0.2.1
 
