@@ -311,4 +311,5 @@ return [
     'logs.retention_days' => '{days} días',
     'logs.retention_never' => 'no expiran',
     'logs.retention_default' => 'por defecto',
+    'scheduler.minutes_required' => 'Indica cada cuántos minutos se ejecuta ({intervals}), por ejemplo: arco scheduler:set 5 --env=production',
 ];

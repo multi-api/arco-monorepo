@@ -3,6 +3,8 @@
 namespace Multiapi\Arco\Tests\Unit\Commands;
 
 use Multiapi\Arco\Commands\ConsoleAddCommand;
+use Multiapi\Arco\Config\ConfigLoader;
+use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Commands\ConsoleRemoveCommand;
 use Multiapi\Arco\Commands\LogsRetentionCommand;
 use Multiapi\Arco\Commands\SchedulerRemoveCommand;
@@ -124,6 +126,43 @@ final class ConsoleSchedulerCommandsTest extends TestCase
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('->scheduler(15)', $this->source());
+    }
+
+    public function test_scheduler_set_replaces_console_false_at_the_same_level(): void
+    {
+        $this->project('->timeout(60)', '->timeout(60)->console(false)');
+
+        $tester = $this->run_(new SchedulerSetCommand(), ['minutes' => '5', '--env' => 'production']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('console(false)', $this->source());
+        self::assertStringContainsString('->console()', $this->source());
+        self::assertStringContainsString('->scheduler(5)', $this->source());
+        self::assertStringContainsString('console (production): off → on', self::display($tester));
+        self::assertStringContainsString('Scheduler (production): off → every 5 min', self::display($tester));
+    }
+
+    public function test_scheduler_set_turns_console_on_when_false_is_inherited(): void
+    {
+        $this->project('->concurrency(48)', '->concurrency(48)->console(false)');
+
+        $this->run_(new SchedulerSetCommand(), ['minutes' => '5', '--env' => 'production'])->assertCommandIsSuccessful();
+
+        self::assertStringContainsString('->console(false)', $this->source());
+        self::assertStringContainsString('->console()', $this->source());
+        self::assertTrue(ConfigResolver::resolve((new ConfigLoader())->load($this->project?->dir . '/arco.php'), 'production')->consoleEnabled());
+    }
+
+    public function test_scheduler_set_without_number_fails_when_not_interactive(): void
+    {
+        $this->project();
+        $before = $this->source();
+
+        $tester = $this->run_(new SchedulerSetCommand(), ['--env' => 'production']);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Pass the number of minutes', self::display($tester));
+        self::assertSame($before, $this->source());
     }
 
     public function test_scheduler_remove_writes_false_and_keeps_console(): void

@@ -311,4 +311,5 @@ return [
     'logs.retention_days' => '{days} days',
     'logs.retention_never' => 'never expire',
     'logs.retention_default' => 'default',
+    'scheduler.minutes_required' => 'Pass the number of minutes between runs ({intervals}), for example: arco scheduler:set 5 --env=production',
 ];

@@ -36,21 +36,25 @@ final class SchedulerSetCommand extends ArcoCommand
             $given = $input->getArgument('minutes');
             $minutes = is_string($given) && $given !== ''
                 ? (preg_match('/^-?\d{1,9}$/', $given) === 1 ? (int) $given : $given)
-                : $this->askInterval($io, 1);
+                : $this->askInterval($input, $io, 1);
             $error = Validator::settingError('scheduler', $minutes);
             if ($error !== null) {
                 throw new UserError($this->t($error['key'], $error['params']));
             }
             [$raw, $environment] = $this->target($input, $io);
+            $consoleOff = false;
             foreach ($environment === null ? ConfigResolver::environments($raw) : [$environment] as $env) {
-                if (ConfigResolver::resolve($raw, $env)->console === false) {
-                    throw new UserError($this->t('validation.scheduler_needs_console'));
-                }
+                $consoleOff = $consoleOff || ConfigResolver::resolve($raw, $env)->console === false;
             }
             $from = $environment === null ? self::levelValue($raw, null, 'scheduler') : ConfigResolver::resolve($raw, $environment)->scheduler;
             if ($from === $minutes) {
                 $io->note($this->t('settings.unchanged', ['where' => $this->where($environment)]));
                 return self::SUCCESS;
+            }
+            if ($consoleOff) {
+                // The scheduler needs the console function: replace console(false), here or inherited, at this level.
+                $this->writeSetting($environment, 'console', true);
+                $io->success($this->t('console.changed', ['environment' => $this->levelLabel($environment), 'from' => $this->t('console.off'), 'to' => $this->t('console.on')]));
             }
             $this->writeSetting($environment, 'scheduler', $minutes);
             $io->success($this->t('scheduler.changed', [
@@ -59,6 +63,9 @@ final class SchedulerSetCommand extends ArcoCommand
                 'to' => $this->t('scheduler.every', ['minutes' => $minutes]),
             ]));
             $io->writeln($this->t('settings.result', ['where' => $this->where($environment)]));
+            if ($consoleOff) {
+                $io->writeln('    ' . ArcoFileEditor::settingLine('console', true));
+            }
             $io->writeln('    ' . ArcoFileEditor::settingLine('scheduler', $minutes));
             $this->printDeployNext($io, $raw, $environment);
             return self::SUCCESS;
@@ -69,8 +76,11 @@ final class SchedulerSetCommand extends ArcoCommand
     }
 
     /** Asks for one of the allowed intervals; $default is the one taken on a plain Enter. */
-    private function askInterval(SymfonyStyle $io, int $default): int
+    private function askInterval(InputInterface $input, SymfonyStyle $io, int $default): int
     {
+        if (! $input->isInteractive()) {
+            throw new UserError($this->t('scheduler.minutes_required', ['intervals' => implode(', ', Validator::SCHEDULER_INTERVALS)]));
+        }
         $choices = [];
         foreach (Validator::SCHEDULER_INTERVALS as $interval) {
             $choices[$interval] = (string) $interval;
