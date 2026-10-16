@@ -167,6 +167,42 @@ final class DeployCommandTest extends TestCase
         self::assertStringContainsString('https://api-arco.acmeapp.io', $display);
     }
 
+    /** The display of a deploy whose domain step fails with $error. */
+    private function deployWithFailingDomains(\Throwable $error): string
+    {
+        file_put_contents("$this->project/arco.php", str_replace(
+            "->variables(['APP_ENV' => 'production'])",
+            "->domain('arco.acmeapp.io')->dns('acme-dns')",
+            (string) file_get_contents("$this->project/arco.php"),
+        ));
+        $this->aws->append(new Result(['Account' => '222222222222']), new Result(['Account' => '333333333333']));
+        $deployer = new FakeDeployer('rev-1', new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'));
+        $deployer->domainsError = $error;
+
+        $tester = $this->tester($deployer);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        return (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+    }
+
+    public function test_an_expired_token_on_a_route_53_call_names_the_dns_profile(): void
+    {
+        $display = $this->deployWithFailingDomains(new \Aws\Exception\AwsException('expired', new \Aws\Command('ChangeResourceRecordSets'), ['code' => 'ExpiredToken', 'message' => 'token expired']));
+
+        self::assertStringContainsString('profile "acme-dns" are missing or expired', $display);
+        self::assertStringNotContainsString('profile "acme-prod" are missing', $display);
+    }
+
+    public function test_expired_credentials_that_cannot_be_attributed_do_not_name_a_wrong_profile(): void
+    {
+        $display = $this->deployWithFailingDomains(new \Aws\Exception\CredentialsException('Cached SSO token returned an expired token'));
+
+        self::assertStringNotContainsString('profile "acme-prod" are missing', $display);
+        self::assertStringContainsString('for profile "acme-prod" or DNS profile "acme-dns" are missing or expired', $display);
+        self::assertStringContainsString('Cached SSO token returned an expired token', $display);
+    }
+
     public function test_dns_profile_flag_overrides_the_config(): void
     {
         file_put_contents("$this->project/arco.php", str_replace(

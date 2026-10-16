@@ -53,6 +53,8 @@ return [
     'aws.no_profile_non_interactive' => 'No hay perfil de AWS para "{environment}". Usa --profile, define AWS_PROFILE o credenciales en el entorno.',
     'aws.credentials_expired' => 'Las credenciales de AWS del perfil "{profile}" faltan o expiraron. Ejecuta: {command}',
     'aws.credentials_expired_generic' => 'Las credenciales de AWS del perfil "{profile}" faltan o expiraron ({message}). Renuévalas (renueva la sesión o actualiza las claves de acceso) y vuelve a ejecutar el comando.',
+    'aws.credentials_expired_either' => 'Las credenciales de AWS del perfil "{profile}" o del perfil DNS "{dns}" faltan o expiraron ({message}). Renuévalas y vuelve a ejecutar el comando.',
+    'aws.sso_login_hint' => 'Para un perfil SSO, ejecuta: {commands}',
     'aws.credentials_failed' => 'No se pudieron obtener credenciales de AWS ({profile}): {message}',
     'aws.account_mismatch' => 'Detenido: el entorno "{environment}" está fijado a la cuenta {expected}, pero el perfil "{profile}" apunta a la cuenta {actual}.',
     'aws.add_account_lock' => '¿Fijar "{environment}" a la cuenta {account} en arco.php? Así se evita desplegarlo por error en otra cuenta.',

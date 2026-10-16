@@ -22,6 +22,7 @@ use Multiapi\Arco\Config\ConfigLoader;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Validator;
 use Multiapi\Arco\Deploy\DeployException;
+use Multiapi\Arco\Deploy\Domains\Dns;
 use Multiapi\Arco\Package\PackageTooLarge;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Question\ChoiceQuestion;
@@ -35,6 +36,8 @@ trait ResolvesTarget
 
     /** The profile whose clients the command is using, so credential errors can name it. */
     protected ?string $credentialProfile = null;
+    /** The DNS profile, when the command also uses one (Route 53 in another account). */
+    protected ?string $dnsCredentialProfile = null;
 
     protected function loadTarget(InputInterface $input, SymfonyStyle $io): AppConfig
     {
@@ -116,6 +119,7 @@ trait ResolvesTarget
     {
         $flag = $input->hasOption('dns-profile') ? $input->getOption('dns-profile') : null;
         $profile = is_string($flag) && $flag !== '' ? $flag : $config->dnsProfile;
+        $this->dnsCredentialProfile = $profile;
         // Route 53 is global; us-east-1 is its signing region.
         return $profile === null ? null : ($this->awsFactory)($profile, 'us-east-1');
     }
@@ -150,6 +154,33 @@ trait ResolvesTarget
             : $this->t('aws.credentials_expired_generic', ['profile' => $name, 'message' => CredentialError::message($e)]);
     }
 
+    /**
+     * credentialProblem() for the profile whose clients failed: the DNS profile for a Route 53 call
+     * when one is in use. When the failing call is unknown (a credential provider error has none),
+     * both profiles are named rather than possibly the wrong one.
+     */
+    private function commandCredentialProblem(Throwable $e): ?string
+    {
+        $deploy = $this->credentialProfile;
+        $dns = $this->dnsCredentialProfile;
+        if ($dns === null || $dns === $deploy) {
+            return $this->credentialProblem($e, $deploy);
+        }
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if ($current instanceof AwsException) {
+                return $this->credentialProblem($e, in_array($current->getCommand()->getName(), Dns::OPERATIONS, true) ? $dns : $deploy);
+            }
+        }
+        if (! CredentialError::matches($e) && SsoHint::command($e, $deploy) === null) {
+            return CredentialError::isCredentialsFailure($e)
+                ? $this->t('aws.credentials_failed', ['profile' => ($deploy ?? 'environment') . ", $dns", 'message' => CredentialError::message($e)])
+                : null;
+        }
+        $commands = array_values(array_filter([CredentialError::loginCommand($e, $deploy), CredentialError::loginCommand($e, $dns)]));
+        return $this->t('aws.credentials_expired_either', ['profile' => $deploy ?? 'environment', 'dns' => $dns, 'message' => CredentialError::message($e)])
+            . ($commands === [] ? '' : "\n" . $this->t('aws.sso_login_hint', ['commands' => implode(' / ', array_unique($commands))]));
+    }
+
     protected function askProfile(AppConfig $config, SymfonyStyle $io): string
     {
         [$configPath, $credentialsPath] = ProfileLister::defaultPaths();
@@ -175,7 +206,7 @@ trait ResolvesTarget
     {
         return match (true) {
             $e instanceof UserError => $e->getMessage(),
-            CredentialError::isCredentialsFailure($e) || CredentialError::matches($e) => (string) $this->credentialProblem($e, $this->credentialProfile),
+            CredentialError::isCredentialsFailure($e) || CredentialError::matches($e) => (string) $this->commandCredentialProblem($e),
             $e instanceof ConfigException, $e instanceof BuildException, $e instanceof BinaryException, $e instanceof DeployException
                 => $this->t($e->key, $e->params),
             $e instanceof AwsException => $this->t(in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true) ? 'aws.access_denied' : 'aws.request_failed', [

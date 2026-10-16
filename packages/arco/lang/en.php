@@ -53,6 +53,8 @@ return [
     'aws.no_profile_non_interactive' => 'No AWS profile selected for "{environment}". Pass --profile, set AWS_PROFILE, or set credentials in the environment.',
     'aws.credentials_expired' => 'The AWS credentials for profile "{profile}" are missing or expired. Run: {command}',
     'aws.credentials_expired_generic' => 'The AWS credentials for profile "{profile}" are missing or expired ({message}). Refresh them (renew the session or update the access keys) and run the command again.',
+    'aws.credentials_expired_either' => 'The AWS credentials for profile "{profile}" or DNS profile "{dns}" are missing or expired ({message}). Refresh them and run the command again.',
+    'aws.sso_login_hint' => 'For an SSO profile, run: {commands}',
     'aws.credentials_failed' => 'Could not get AWS credentials ({profile}): {message}',
     'aws.account_mismatch' => 'Stopped: environment "{environment}" is locked to account {expected}, but profile "{profile}" points to account {actual}.',
     'aws.add_account_lock' => 'Lock "{environment}" to account {account} in arco.php? This prevents deploying it to another account by mistake.',

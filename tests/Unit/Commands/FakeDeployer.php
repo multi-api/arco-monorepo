@@ -24,6 +24,8 @@ final class FakeDeployer implements Deployer
     public ?\Throwable $releaseError = null;
     /** thrown by activateConsole(), e.g. AWS refusing lambda:UpdateAlias */
     public ?\Throwable $activateError = null;
+    /** thrown by attachDomains(), e.g. the DNS profile's credentials expiring mid-deploy */
+    public ?\Throwable $domainsError = null;
     /** thrown by describe(), e.g. expired credentials */
     public ?\Throwable $describeError = null;
 
@@ -81,6 +83,9 @@ final class FakeDeployer implements Deployer
     public function attachDomains(AppConfig $config, DeployResult $result, array $cachedPaths, ?callable $onStep = null): DeployResult
     {
         $this->calls[] = 'domains:' . implode(',', $cachedPaths);
+        if ($this->domainsError !== null) {
+            throw $this->domainsError;
+        }
         return $result->withDomains($config->domains);
     }
 
