@@ -32,6 +32,8 @@ final class RemoteShellTest extends TestCase
         $config = RemoteShell::configuration(TinkerSessionTest::config(), $this->dir);
         $config->setInteractiveMode(Configuration::INTERACTIVE_MODE_FORCED);
         $config->setColorMode(Configuration::COLOR_MODE_DISABLED);
+        // Input comes from addInput(): without a terminal, libedit's readline only prints termcap noise on stderr.
+        $config->setUseReadline(false);
         $shell = new RemoteShell($config, new RemoteExecution(new TinkerSession($console, TinkerSessionTest::config()), fn () => null));
         $shell->addInput([...$lines, 'exit'], true);
 
