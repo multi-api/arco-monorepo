@@ -18,6 +18,7 @@ use Multiapi\Arco\Deploy\PreparedDeploy;
 use Multiapi\Arco\Package\ConsoleArtifacts;
 use Multiapi\Arco\Package\ConsoleDownload;
 use Multiapi\Arco\Package\Package;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class AwsDeployerTest extends TestCase
@@ -29,7 +30,7 @@ final class AwsDeployerTest extends TestCase
 
     private function package(): Package
     {
-        $file = tempnam(sys_get_temp_dir(), 'pkg');
+        $file = TempPaths::file('pkg');
         file_put_contents((string) $file, 'zip');
         return new Package((string) $file, str_repeat('a', 64), 3);
     }
@@ -41,9 +42,9 @@ final class AwsDeployerTest extends TestCase
 
     private function console(): ConsoleArtifacts
     {
-        $zip = (string) tempnam(sys_get_temp_dir(), 'console');
+        $zip = (string) TempPaths::file('console');
         file_put_contents($zip, 'console-zip');
-        $binary = (string) tempnam(sys_get_temp_dir(), 'bin');
+        $binary = (string) TempPaths::file('bin');
         file_put_contents($binary, 'ELF');
         return new ConsoleArtifacts(new Package($zip, str_repeat('c', 64), 11), new ConsoleDownload($binary, (string) hash_file('sha256', $binary), 3, 'runtime/1.13.0-r1/frankenphp'));
     }
@@ -161,7 +162,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']),
             new Result(['Version' => '1']),                                                      // PublishVersion
         );
-        $zip = (string) tempnam(sys_get_temp_dir(), 'console');
+        $zip = (string) TempPaths::file('console');
         file_put_contents($zip, 'console-zip-with-bin-php');
         $console = new ConsoleArtifacts(new Package($zip, str_repeat('c', 64), 24), null);
 

@@ -21,6 +21,7 @@ use Multiapi\Arco\Deploy\DeployResult;
 use Multiapi\Arco\Deploy\VerificationResult;
 use Multiapi\Arco\Deploy\Verifier;
 use Multiapi\Arco\Package\Packager;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Binary\ElfInspectorTest;
 use Multiapi\Arco\Tests\Unit\Build\FakeRunner;
 use Multiapi\Arco\Tests\Unit\Commands\FakeConsole;
@@ -34,7 +35,7 @@ final class DeployPipelineTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->project = sys_get_temp_dir() . '/arco-pipe-' . bin2hex(random_bytes(4));
+        $this->project = TempPaths::path('arco-pipe-');
         mkdir("$this->project/public", 0777, true);
         file_put_contents("$this->project/public/index.php", '<?php echo "ok";');
     }
@@ -151,7 +152,7 @@ final class DeployPipelineTest extends TestCase
     public function test_a_prebuilt_package_is_deployed_without_building(): void
     {
         [$build, $built] = $this->pipeline()->package($this->config(), new PlainPhpPreset(), $this->project, fn () => null);
-        $zip = sys_get_temp_dir() . '/arco-prebuilt-' . bin2hex(random_bytes(4)) . '.zip';
+        $zip = TempPaths::path('arco-prebuilt-', '.zip');
         copy($built->path, $zip);
         $build->cleanup();
         $package = \Multiapi\Arco\Package\PackageReader::open($zip);
@@ -291,7 +292,7 @@ final class DeployPipelineTest extends TestCase
                 }
             }
         };
-        $cache = sys_get_temp_dir() . '/arco-cache-' . bin2hex(random_bytes(4));
+        $cache = TempPaths::path('arco-cache-');
         return new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider($downloader, $cache, $manifest), new Packager());
     }
 
@@ -302,7 +303,7 @@ final class DeployPipelineTest extends TestCase
      */
     private static function webPackage(?string $runtimeBuild, int $bytes = 8): \Multiapi\Arco\Package\Package
     {
-        $path = sys_get_temp_dir() . '/arco-web-' . bin2hex(random_bytes(4)) . '.zip';
+        $path = TempPaths::path('arco-web-', '.zip');
         $zip = new \ZipArchive();
         $zip->open($path, \ZipArchive::CREATE);
         $zip->addFromString('bin/frankenphp', 'ELF');
@@ -444,7 +445,7 @@ final class DeployPipelineTest extends TestCase
     /** A web zip whose console part claims $bytes unzipped (the 3-byte binary is removed from it). */
     public static function zipClaiming(int $bytes): \Multiapi\Arco\Package\Package
     {
-        $path = sys_get_temp_dir() . '/arco-big-' . bin2hex(random_bytes(4)) . '.zip';
+        $path = TempPaths::path('arco-big-', '.zip');
         $zip = new \ZipArchive();
         $zip->open($path, \ZipArchive::CREATE);
         $zip->addFromString('bin/frankenphp', 'ELF');

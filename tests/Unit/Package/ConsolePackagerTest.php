@@ -6,6 +6,7 @@ use Multiapi\Arco\Build\BuildException;
 use Multiapi\Arco\Package\ConsolePackager;
 use Multiapi\Arco\Package\Package;
 use Multiapi\Arco\Package\PackageManifest;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 use ZipArchive;
 
@@ -25,7 +26,7 @@ final class ConsolePackagerTest extends TestCase
 
     private function web(bool $withBinary = true, ?string $runtimeBuild = '1.13.0-r1'): Package
     {
-        $path = sys_get_temp_dir() . '/arco-web-' . bin2hex(random_bytes(4)) . '.zip';
+        $path = TempPaths::path('arco-web-', '.zip');
         $zip = new ZipArchive();
         $zip->open($path, ZipArchive::CREATE);
         $bytes = 0;
@@ -44,7 +45,7 @@ final class ConsolePackagerTest extends TestCase
 
     private function dir(): string
     {
-        return sys_get_temp_dir() . '/arco-consolepkg-' . bin2hex(random_bytes(4));
+        return TempPaths::path('arco-consolepkg-');
     }
 
     public function test_the_console_zip_is_the_web_zip_without_binary_and_node_runtime(): void
@@ -85,7 +86,7 @@ final class ConsolePackagerTest extends TestCase
     public function test_with_a_php_cli_the_console_zip_carries_bin_php_and_no_frankenphp(): void
     {
         $web = $this->web();
-        $cli = sys_get_temp_dir() . '/arco-php-cli-' . bin2hex(random_bytes(4));
+        $cli = TempPaths::path('arco-php-cli-');
         file_put_contents($cli, 'ELF-the-static-php-cli');
 
         $console = ConsolePackager::fromWeb($web, $this->dir(), $cli);
@@ -128,7 +129,7 @@ final class ConsolePackagerTest extends TestCase
     public function test_a_missing_php_cli_is_refused(): void
     {
         try {
-            ConsolePackager::fromWeb($this->web(), $this->dir(), sys_get_temp_dir() . '/arco-no-such-cli-' . bin2hex(random_bytes(4)));
+            ConsolePackager::fromWeb($this->web(), $this->dir(), TempPaths::path('arco-no-such-cli-'));
             self::fail('A PHP CLI that does not exist must be refused.');
         } catch (BuildException $e) {
             self::assertSame('package.write_failed', $e->key);
@@ -137,7 +138,7 @@ final class ConsolePackagerTest extends TestCase
 
     private function cli(string $content): string
     {
-        $path = sys_get_temp_dir() . '/arco-php-cli-' . bin2hex(random_bytes(4));
+        $path = TempPaths::path('arco-php-cli-');
         file_put_contents($path, $content);
         return $path;
     }

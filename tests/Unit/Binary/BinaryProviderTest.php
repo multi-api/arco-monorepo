@@ -7,6 +7,7 @@ use Multiapi\Arco\Binary\BinaryProvider;
 use Multiapi\Arco\Binary\Downloader;
 use Multiapi\Arco\Binary\RuntimeManifest;
 use Multiapi\Arco\Config\RuntimeConfig;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class BinaryProviderTest extends TestCase
@@ -18,7 +19,7 @@ final class BinaryProviderTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->cache = sys_get_temp_dir() . '/arco-cache-' . bin2hex(random_bytes(4));
+        $this->cache = TempPaths::path('arco-cache-');
         $this->elf = (string) file_get_contents(ElfInspectorTest::fakeElf(0xB7));
     }
 
@@ -123,7 +124,7 @@ final class BinaryProviderTest extends TestCase
 
     public function test_custom_binary_bypasses_the_manifest(): void
     {
-        $project = sys_get_temp_dir() . '/arco-bin-' . bin2hex(random_bytes(4));
+        $project = TempPaths::path('arco-bin-');
         mkdir("$project/bin", 0777, true);
         file_put_contents("$project/bin/frankenphp", $this->elf);
         $provider = $this->provider($this->manifest(), '');
