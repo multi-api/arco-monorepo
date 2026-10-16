@@ -10,7 +10,11 @@ namespace Multiapi\Arco\ConsoleRuntime;
 final class SecretArguments
 {
     public const MASK = '***';
-    private const SECRET_NAME = '/pass(word|wd)|secret|token|key|credential|auth|private/i';
+    /** Words of an option name (split on - _ . and camelCase) that make it secret-looking. */
+    private const SECRET_WORDS = [
+        'password', 'passwords', 'passwd', 'secret', 'secrets', 'token', 'tokens', 'key', 'keys',
+        'apikey', 'apikeys', 'credential', 'credentials', 'auth', 'private',
+    ];
     private const OPTION = '/^--?([A-Za-z0-9][A-Za-z0-9_.-]*)(=.*)?$/s';
 
     /**
@@ -22,7 +26,8 @@ final class SecretArguments
         $masked = [];
         $hideNext = false;
         foreach ($arguments as $argument) {
-            if ($hideNext && ! str_starts_with($argument, '-')) {
+            // The value of a secret option given without = is the next argument, even one starting with -.
+            if ($hideNext) {
                 $masked[] = self::MASK;
                 $hideNext = false;
                 continue;
@@ -55,9 +60,16 @@ final class SecretArguments
         return implode(' ', array_map(self::quote(...), $masked));
     }
 
+    /** --api-key, --db_password, --dbPassword, --auth-token: yes; --author, --monkey, --keyboard: no. */
     private static function isSecret(string $name): bool
     {
-        return preg_match(self::SECRET_NAME, $name) === 1;
+        $words = preg_split('/[-_.]+|(?<=[a-z0-9])(?=[A-Z])/', $name) ?: [];
+        foreach ($words as $word) {
+            if (in_array(strtolower($word), self::SECRET_WORDS, true)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function quote(string $argument): string
@@ -68,15 +80,19 @@ final class SecretArguments
         return "'" . str_replace("'", "'\\''", $argument) . "'";
     }
 
-    /** A line with an unclosed quote is logged too (the command then fails): mask word by word. */
+    /**
+     * A line with an unclosed quote is logged too (the command then fails). Without a split nothing tells
+     * where a value ends, so everything from the first secret-looking option on is replaced.
+     */
     private static function maskUnsplittable(string $line): string
     {
-        return (string) preg_replace_callback(
-            '/(?<=^|\s)(--?([A-Za-z0-9][A-Za-z0-9_.-]*))(=\S*|\s+(?!-)\S+)/',
-            fn (array $m): string => self::isSecret($m[2])
-                ? $m[1] . ($m[3][0] === '=' ? '=' : (string) preg_replace('/\S+$/', '', $m[3])) . self::MASK
-                : $m[0],
-            $line,
-        );
+        preg_match_all('/(?<=^|\s)--?([A-Za-z0-9][A-Za-z0-9_.-]*)(=?)/', $line, $matches, PREG_SET_ORDER | PREG_OFFSET_CAPTURE);
+        foreach ($matches as $match) {
+            if (self::isSecret($match[1][0])) {
+                $option = $match[0][1] + strlen($match[0][0]) - strlen($match[2][0]);
+                return substr($line, 0, $option) . ($match[2][0] === '=' ? '=' : ' ') . self::MASK;
+            }
+        }
+        return $line;
     }
 }

@@ -248,9 +248,11 @@ works in scripts and CI. A command can run up to `consoleTimeout()` (15 minutes 
 The console function must exist: run `arco deploy` first.
 
 Every command line is written to the console function's log (CloudWatch), as an audit trail. Values of
-options whose name looks secret (`password`, `passwd`, `secret`, `token`, `key`, `api-key`, `apikey`,
-`credential`, `auth`, `private`, in any case) are masked as `***`, in both `--name=value` and
-`--name value` forms; the rest of the line is kept. The command's own output also goes to that log. Do not
+options whose name has a secret-looking word (`password`, `passwd`, `secret`, `token`, `key`, `apikey`,
+`credential`, `auth`, `private`, in any case; words split on `-`, `_` and camelCase, so `--api-key`,
+`--db-password` and `--auth-token` count but `--author` does not) are masked as `***`, in both
+`--name=value` and `--name value` forms; the rest of the line is kept. A line with an unclosed quote is
+logged only up to the first such option. The command's own output also goes to that log. Do not
 pass secrets as arguments: put them in `variables()` with an `arco-ssm:` reference (`arco secret:set`)
 and read them from the environment.
 
