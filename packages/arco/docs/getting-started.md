@@ -256,12 +256,12 @@ logged only up to the first such option. The command's own output also goes to t
 pass secrets as arguments: put them in `variables()` with an `arco-ssm:` reference (`arco secret:set`)
 and read them from the environment.
 
-With the current runtime builds the console function carries a static PHP CLI (`bin/php`, about 95 MB) with the
+With the current runtime builds the console function carries a static PHP CLI (`bin/php`, about 91 MB) with the
 same PHP version and extensions as the web runtime, and runs it directly: nothing is downloaded at cold
 start. Measured in the Lambda base image in local Docker (not a Lambda guarantee): init about 0.2 s and
 the first command 0.6 to 1 s, against about 3 s and 4 s when the binary is downloaded. The PHP CLI uses
-about 95 MB of the 250 MB of unzipped code Lambda allows, which leaves about 155 MB for your app (MB here
-are 1,000,000 bytes; Arco's own output divides by 1,048,576, so it shows the PHP CLI as about 91 MB). The first deploy on a machine
+about 91 MB of the 250 MB of unzipped code Lambda allows, which leaves about 159 MB for your app (sizes as
+`arco package` prints them). The first deploy on a machine
 (and `arco deploy --package`) fetches the PHP CLI from GitHub releases, once per runtime build, and
 caches it in `~/.arco/cache/runtime/<build>/php`.
 
