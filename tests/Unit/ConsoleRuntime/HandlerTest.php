@@ -96,6 +96,17 @@ final class HandlerTest extends TestCase
         self::assertSame(124, $result['exitCode']);
     }
 
+    public function test_secret_looking_option_values_are_masked_in_the_function_log(): void
+    {
+        $result = $this->handler()->handle('{"command":"migrate --fail --password=hunter2 --api-key abc --name=Ada"}', 60_000);
+
+        self::assertSame(3, $result['exitCode']);
+        self::assertSame("args:[\"migrate\",\"--fail\",\"--password=hunter2\",\"--api-key\",\"abc\",\"--name=Ada\"]\n", $result['output'], 'the command itself gets the real values');
+        self::assertSame(['arco' => 'command', 'command' => 'migrate --fail --password=*** --api-key *** --name=Ada'], $this->logged[0]);
+        self::assertSame(['migrate', '--fail', '--password=***', '--api-key', '***', '--name=Ada'], $this->logged[1]['arguments']);
+        self::assertStringNotContainsString('hunter2', (string) json_encode($this->logged));
+    }
+
     public function test_an_unclosed_quote_is_reported_as_exit_code_2(): void
     {
         $result = $this->handler()->handle('{"command":"migrate \'oops"}', 60_000);

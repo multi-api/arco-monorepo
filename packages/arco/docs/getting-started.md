@@ -247,6 +247,13 @@ works in scripts and CI. A command can run up to `consoleTimeout()` (15 minutes 
 `arco logs --source=console --follow`. For a plain PHP app, name the script: `arco command "bin/console app:sync"`.
 The console function must exist: run `arco deploy` first.
 
+Every command line is written to the console function's log (CloudWatch), as an audit trail. Values of
+options whose name looks secret (`password`, `passwd`, `secret`, `token`, `key`, `api-key`, `apikey`,
+`credential`, `auth`, `private`, in any case) are masked as `***`, in both `--name=value` and
+`--name value` forms; the rest of the line is kept. The command's own output also goes to that log. Do not
+pass secrets as arguments: put them in `variables()` with an `arco-ssm:` reference (`arco secret:set`)
+and read them from the environment.
+
 The console function has no FrankenPHP binary in its zip (Lambda allows 250 MB for classic functions).
 Each new execution environment downloads it once from the code bucket (`runtime/...`) and verifies its
 SHA-256. Measured in the Lambda image: about 2.5 s for a 160 MB binary on a cold start, plus about 0.4 s
