@@ -18,10 +18,17 @@ User documentation lives with the CLI: [README](packages/arco/README.md),
 
 ```bash
 composer install
-vendor/bin/phpunit tests/Unit          # unit tests
-vendor/bin/phpstan analyse --memory-limit=4G
-vendor/bin/phpunit tests/Integration   # Docker simulation of Lambda (needs Docker)
+composer test:docker                   # unit tests, runtime tests and PHPStan, in a container
+composer test:docker:unit -- --filter BootstrapTest   # one test, in the container
+composer test:integration              # Docker simulation of Lambda (needs Docker)
 ```
+
+Run the unit tests, the runtime tests and PHPStan with `composer test:docker`, not on your
+machine. Many tests create and delete temporary files, and a test bug once deleted files from a
+developer's real temporary directory. The container ([`docker/test`](docker/test/Dockerfile))
+sees only the repository, at `/app`: no home directory, no host `/tmp`, no network. A bad
+test can only damage the container. The image is built on first use and rebuilt when its
+Dockerfile changes.
 
 Releases: pushing a tag `vX.Y.Z` splits each package into its repository
 (`.github/workflows/split.yml`). Runtime binaries: see

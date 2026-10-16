@@ -1,0 +1,54 @@
+#!/bin/sh
+# Runs the unit tests, the runtime (node) tests and PHPStan inside a throwaway container, so a test
+# that deletes the wrong path can only damage the container. The container sees the repository at
+# /app and nothing else from the host: no HOME, no /tmp, no Docker socket, no network. PHPStan keeps
+# its result cache on a Docker-managed volume (arco-test-cache), which is not a host directory.
+#
+#   bin/test-docker [all]                 unit tests, runtime tests, PHPStan (composer test:docker)
+#   bin/test-docker unit [phpunit args]   unit tests only, e.g. --filter BootstrapTest
+#   bin/test-docker runtime               node --test runtime tests only
+#   bin/test-docker analyse               PHPStan only
+set -eu
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+IMAGE=arco-test:php84
+CONTEXT="$ROOT/docker/test"
+
+# Rebuild only when the Dockerfile changed since the image was built.
+hash=$(cksum < "$CONTEXT/Dockerfile" | cut -d' ' -f1)
+built=$(docker image inspect --format '{{ index .Config.Labels "arco.dockerfile" }}' "$IMAGE" 2>/dev/null || true)
+if [ "$hash" != "$built" ]; then
+  docker build --platform linux/arm64 --label "arco.dockerfile=$hash" -t "$IMAGE" "$CONTEXT" >&2
+fi
+
+if [ ! -f "$ROOT/vendor/autoload.php" ]; then
+  echo "vendor/ is missing: run composer install first." >&2
+  exit 1
+fi
+
+tty=""
+[ -t 1 ] && tty="-t"
+
+run() {
+  # shellcheck disable=SC2086
+  docker run --rm --init $tty --network none \
+    --user "$(id -u):$(id -g)" \
+    --mount "type=bind,source=$ROOT,target=/app" \
+    --mount "type=volume,source=arco-test-cache,target=/cache" \
+    --workdir /app \
+    "$IMAGE" "$@"
+}
+
+suite=${1:-all}
+[ $# -gt 0 ] && shift
+case "$suite" in
+  unit)    run vendor/bin/phpunit --testsuite unit "$@" ;;
+  runtime) run node --test 'packages/arco/runtime/test/*.test.js' ;;
+  analyse) run vendor/bin/phpstan analyse -c docker/test/phpstan.neon --memory-limit=4G --no-progress "$@" ;;
+  all)
+    run vendor/bin/phpunit --testsuite unit
+    run node --test 'packages/arco/runtime/test/*.test.js'
+    run vendor/bin/phpstan analyse -c docker/test/phpstan.neon --memory-limit=4G --no-progress
+    ;;
+  *) echo "usage: bin/test-docker [all|unit|runtime|analyse] [args]" >&2; exit 2 ;;
+esac

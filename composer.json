@@ -44,7 +44,19 @@
         "test": "phpunit --testsuite unit",
         "test:integration": "phpunit --testsuite integration",
         "test:runtime": "node --test 'packages/arco/runtime/test/*.test.js'",
-        "analyse": "phpstan analyse --memory-limit=4G"
+        "analyse": "phpstan analyse --memory-limit=4G",
+        "test:docker": [
+            "Composer\\Config::disableProcessTimeout",
+            "bin/test-docker all"
+        ],
+        "test:docker:unit": [
+            "Composer\\Config::disableProcessTimeout",
+            "bin/test-docker unit"
+        ]
+    },
+    "scripts-descriptions": {
+        "test:docker": "Unit tests, runtime tests and PHPStan in a throwaway container (the way to run them)",
+        "test:docker:unit": "Unit tests in the container; extra PHPUnit arguments pass through after --"
     },
     "config": {
         "platform": {

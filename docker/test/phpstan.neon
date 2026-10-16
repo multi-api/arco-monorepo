@@ -1,0 +1,6 @@
+# PHPStan in the test container: the repository's config, with the result cache on the container-only
+# arco-test-cache volume (the container's /tmp is gone after each run, so every run would start cold).
+includes:
+    - ../../phpstan.neon
+parameters:
+    tmpDir: /cache/phpstan
