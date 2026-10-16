@@ -197,4 +197,58 @@ final class BootstrapTest extends TestCase
         self::assertStringNotContainsString('binary_ready', $again->getOutput());
         self::assertCount(1, $this->s3->requests());
     }
+
+    /** A packaged bin/php stub and a curl shim that records every call (then runs the real curl). Returns the PATH to run with. */
+    private function packagedPhp(): string
+    {
+        mkdir("$this->root/bin");
+        file_put_contents("$this->root/bin/php", "#!/bin/sh\necho \"fake-php \$*\"\necho \"php-binary \$ARCO_PHP_BINARY\"\necho \"cwd \$(pwd)\"\n");
+        chmod("$this->root/bin/php", 0755);
+        $which = new Process(['sh', '-c', 'command -v curl']);
+        $which->mustRun();
+        $shims = "$this->root/shims";
+        mkdir($shims);
+        file_put_contents("$shims/curl", "#!/bin/sh\necho called >> $this->root/curl-calls\nexec " . trim($which->getOutput()) . " \"\$@\"\n");
+        chmod("$shims/curl", 0755);
+        return $shims . ':' . getenv('PATH');
+    }
+
+    public function test_bin_php_runs_without_a_download(): void
+    {
+        $path = $this->packagedPhp();
+
+        $run = $this->bootstrap(env: ['PATH' => $path, 'ARCO_BINARY_BUCKET' => false, 'ARCO_BINARY_KEY' => false, 'ARCO_BINARY_SHA256' => false]);
+
+        self::assertSame(0, $run->getExitCode(), $run->getOutput() . $run->getErrorOutput());
+        self::assertStringContainsString("fake-php $this->root/runtime/console.php", $run->getOutput());
+        self::assertStringContainsString("php-binary $this->root/bin/php", $run->getOutput());
+        self::assertStringContainsString("cwd $this->root/app", $run->getOutput());
+        self::assertStringNotContainsString('binary_ready', $run->getOutput());
+        self::assertFileDoesNotExist("$this->root/curl-calls");
+        self::assertCount(0, $this->s3->requests());
+    }
+
+    public function test_bin_php_wins_over_binary_variables(): void
+    {
+        $path = $this->packagedPhp();
+
+        $run = $this->bootstrap(env: ['PATH' => $path]);
+
+        self::assertSame(0, $run->getExitCode(), $run->getOutput() . $run->getErrorOutput());
+        self::assertStringContainsString("php-binary $this->root/bin/php", $run->getOutput());
+        self::assertFileDoesNotExist("$this->root/curl-calls");
+        self::assertCount(0, $this->s3->requests());
+    }
+
+    public function test_bin_php_with_a_missing_app_directory_reports_an_init_error(): void
+    {
+        $path = $this->packagedPhp();
+        rmdir("$this->root/app");
+
+        $run = $this->bootstrap(env: ['PATH' => $path]);
+
+        self::assertSame(1, $run->getExitCode());
+        self::assertStringNotContainsString('fake-php', $run->getOutput());
+        self::assertSame('Arco.InitError', $this->api->initError()['type'] ?? null);
+    }
 }
