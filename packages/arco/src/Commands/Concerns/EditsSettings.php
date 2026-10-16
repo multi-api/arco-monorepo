@@ -97,7 +97,7 @@ trait EditsSettings
     }
 
     /** Writes the call (or removes it when $value is null), or explains the line to change by hand. */
-    private function writeSetting(?string $environment, string $method, int|string|null $value): void
+    private function writeSetting(?string $environment, string $method, int|string|bool|null $value): void
     {
         $byHand = $this->t('settings.edit_by_hand', ['where' => $this->where($environment)]) . "\n    "
             . ($value === null ? $this->t('settings.remove_call', ['method' => $method]) : ArcoFileEditor::settingLine($method, $value));
@@ -123,6 +123,12 @@ trait EditsSettings
             fn (string $env) => "`arco deploy --env=$env`",
             ConfigResolver::environments($raw),
         ))]));
+    }
+
+    /** The environment name, or "app" for the app level: how the change lines name where they apply. */
+    private function levelLabel(?string $environment): string
+    {
+        return $environment ?? 'app';
     }
 
     private function arcoPhp(): string
