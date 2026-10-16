@@ -146,5 +146,7 @@ final class StepPrinterTest extends TestCase
         self::assertStringNotContainsString('•', $text);
         self::assertContains('deploy.prune_versions_failed', StepPrinter::WARNINGS);
         self::assertContains('deploy.prune_packages_failed', StepPrinter::WARNINGS);
+        self::assertContains('deploy.console_remove_failed', StepPrinter::WARNINGS);
+        self::assertNotContains('deploy.console_removed', StepPrinter::WARNINGS);
     }
 }

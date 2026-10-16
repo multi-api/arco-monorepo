@@ -779,4 +779,19 @@ final class DeployPipelineTest extends TestCase
 
         self::assertTrue($outcome->verification->ok);
     }
+
+    public function test_a_failed_console_removal_is_a_warning_and_the_deploy_goes_on(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->consoleExists = true;
+        $deployer->removeConsoleError = new \RuntimeException('AccessDenied on lambda:DeleteFunction');
+        $steps = [];
+
+        $outcome = $this->pipeline()->deploy($this->config(domains: true, console: false), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertFalse($outcome->rolledBack);
+        self::assertSame(['prepare', 'release', 'removeConsole', 'domains:', 'prune'], $deployer->calls, 'domains and prune still run');
+        self::assertSame(['function' => 'shop-production-console', 'error' => 'AccessDenied on lambda:DeleteFunction'], $steps['deploy.console_remove_failed'] ?? null);
+    }
 }

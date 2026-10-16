@@ -193,7 +193,16 @@ final class DeployPipeline
             }
             // console(false): the old console goes only once the new revision serves and is verified.
             if ($verification->ok && $removeConsole) {
-                $deployer->removeConsole($config, $onStep(...));
+                try {
+                    $deployer->removeConsole($config, $onStep(...));
+                } catch (Throwable $e) {
+                    // The verified revision is already live: a refused delete (often a missing
+                    // lambda:DeleteFunction) is a warning, and domains, prune and the rest still run.
+                    $onStep('deploy.console_remove_failed', [
+                        'function' => $config->consoleFunctionName(),
+                        'error' => self::errorMessage($e),
+                    ]);
+                }
             }
             // Custom domains only once the endpoint is known to work; the origin is the endpoint domain.
             if ($verification->ok && $config->domains !== []) {

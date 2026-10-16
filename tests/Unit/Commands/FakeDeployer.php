@@ -32,6 +32,8 @@ final class FakeDeployer implements Deployer
     public bool $consoleExists = false;
     /** how many times consoleExists() was asked */
     public int $consoleLookups = 0;
+    /** thrown by removeConsole(), e.g. AWS refusing lambda:DeleteFunction */
+    public ?\Throwable $removeConsoleError = null;
 
     public function __construct(
         public ?string $previousRevision = null,
@@ -96,6 +98,6 @@ final class FakeDeployer implements Deployer
     public function hasDomainResources(AppConfig $config): bool { return $this->domainResources; }
     public function remove(AppConfig $config, ?callable $onStep = null): void { $this->calls[] = 'remove'; }
     public function consoleExists(AppConfig $config): bool { $this->consoleLookups++; return $this->consoleExists; }
-    public function removeConsole(AppConfig $config, \Closure $onStep): void { $this->calls[] = 'removeConsole'; }
+    public function removeConsole(AppConfig $config, \Closure $onStep): void { $this->calls[] = 'removeConsole'; if ($this->removeConsoleError !== null) { throw $this->removeConsoleError; } }
     public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->describeError !== null ? throw $this->describeError : $this->status; }
 }
