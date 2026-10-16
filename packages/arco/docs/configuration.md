@@ -195,8 +195,9 @@ managed role may write. `arco remove` deletes it (log groups are kept).
 
 Lambda limits a classic function to 250 MB of unzipped code, so the console function gets a copy of the
 package **without** the FrankenPHP binary and the Node web runtime. With current runtime builds it carries
-the build's static PHP CLI instead (`bin/php`, 95 MB, same PHP version and extensions, so about 155 MB are left
-for your app) and runs it directly, with no download at cold start. The CLI is fetched from GitHub releases
+the build's static PHP CLI instead (`bin/php`, about 95 MB, same PHP version and extensions, so about 155 MB are left
+for your app; MB here are 1,000,000 bytes, while Arco's own output divides by 1,048,576 and shows the PHP CLI
+as about 91 MB) and runs it directly, with no download at cold start. The CLI is fetched from GitHub releases
 once per runtime build and machine and cached in `~/.arco/cache/runtime/<build>/php`.
 
 The console downloads FrankenPHP instead, with a note in the deploy output, for a custom `binary()`, a runtime
