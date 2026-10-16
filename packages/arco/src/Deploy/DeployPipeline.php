@@ -109,6 +109,13 @@ final class DeployPipeline
             $build = $buildId === null ? null : $this->binaries->build($buildId);
             $phpCli = $build === null ? null : $this->binaries->phpCli($build, self::downloadProgress($build, $onStep));
             $console = ConsolePackager::fromWeb($package, $work, $phpCli);
+            $reason = $buildId === null ? 'custom_binary' : 'no_php_cli';
+            if ($phpCli !== null && $console->package->bytes > ConsoleFunction::MAX_UNZIPPED_BYTES) {
+                // bin/php alone can push the console over Lambda's limit: without it, the console still
+                // deploys and downloads FrankenPHP at cold start.
+                $console = ConsolePackager::fromWeb($package, $work, null);
+                $reason = 'php_cli_too_large';
+            }
             if ($console->package->bytes > ConsoleFunction::MAX_UNZIPPED_BYTES) {
                 $params = [
                     'size' => (int) round($console->package->bytes / 1048576),
@@ -122,7 +129,7 @@ final class DeployPipeline
                 $console = null;
             }
             if ($console?->download !== null) {
-                $onStep('deploy.console_downloads_binary', ['reason' => $buildId === null ? 'custom_binary' : 'no_php_cli']);
+                $onStep('deploy.console_downloads_binary', ['reason' => $reason]);
             }
 
             $since = (int) floor(microtime(true) * 1000) - 5000;

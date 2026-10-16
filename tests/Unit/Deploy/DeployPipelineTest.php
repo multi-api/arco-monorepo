@@ -289,8 +289,12 @@ final class DeployPipelineTest extends TestCase
         return new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider($downloader, $cache, $manifest), new Packager());
     }
 
-    /** A small web zip whose manifest names $runtimeBuild (null: a custom binary). */
-    private static function webPackage(?string $runtimeBuild): \Multiapi\Arco\Package\Package
+    /**
+     * A small web zip whose manifest names $runtimeBuild (null: a custom binary) and claims $bytes
+     * unzipped. Its console zip claims $bytes - 3 without the PHP CLI (the 3-byte binary is removed)
+     * and $bytes + 10 with the 13-byte CLI of cliPipeline().
+     */
+    private static function webPackage(?string $runtimeBuild, int $bytes = 8): \Multiapi\Arco\Package\Package
     {
         $path = sys_get_temp_dir() . '/arco-web-' . bin2hex(random_bytes(4)) . '.zip';
         $zip = new \ZipArchive();
@@ -299,15 +303,15 @@ final class DeployPipelineTest extends TestCase
         $zip->addFromString('app/index.php', '<?php');
         $zip->close();
         $hash = str_repeat('e', 64);
-        return new \Multiapi\Arco\Package\Package($path, $hash, 8, new \Multiapi\Arco\Package\PackageManifest('shop', 'production', 'plain', $runtimeBuild, $hash, 8, 'dev', '2026-10-16T00:00:00Z'));
+        return new \Multiapi\Arco\Package\Package($path, $hash, $bytes, new \Multiapi\Arco\Package\PackageManifest('shop', 'production', 'plain', $runtimeBuild, $hash, $bytes, 'dev', '2026-10-16T00:00:00Z'));
     }
 
     /** @return array{0: FakeDeployer, 1: array<string, array<string, string|int>>} */
-    private function deployWeb(DeployPipeline $pipeline, ?string $runtimeBuild): array
+    private function deployWeb(DeployPipeline $pipeline, ?string $runtimeBuild, int $bytes = 8): array
     {
         $deployer = new FakeDeployer('rev-1');
         $steps = [];
-        $pipeline->deployPackage($this->config(), new PlainPhpPreset(), self::webPackage($runtimeBuild), $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+        $pipeline->deployPackage($this->config(), new PlainPhpPreset(), self::webPackage($runtimeBuild, $bytes), $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
         return [$deployer, $steps];
     }
 
@@ -338,6 +342,45 @@ final class DeployPipelineTest extends TestCase
             ['package.progress', ['percent' => 100]],
         ], array_slice($first, 0, 3));
         self::assertSame([], array_filter($second, fn (array $step) => in_array($step[0], ['deploy.php_cli_downloading', 'package.progress'], true)), 'a cached CLI is not downloaded again');
+    }
+
+    public function test_a_console_that_fits_only_without_the_php_cli_falls_back_to_the_download(): void
+    {
+        [$deployer, $steps] = $this->deployWeb($this->cliPipeline(), '1.13.0-r2', ConsoleFunction::MAX_UNZIPPED_BYTES + 3);
+
+        self::assertNotNull($deployer->console?->download);
+        self::assertSame(ConsoleFunction::MAX_UNZIPPED_BYTES, $deployer->console->package->bytes, 'the rebuilt zip, without bin/php');
+        self::assertSame(['reason' => 'php_cli_too_large'], $steps['deploy.console_downloads_binary'] ?? null);
+        self::assertArrayNotHasKey('deploy.console_skipped_size', $steps);
+    }
+
+    public function test_a_console_too_large_even_without_the_php_cli_is_skipped(): void
+    {
+        $max = ConsoleFunction::MAX_UNZIPPED_BYTES;
+        [$deployer, $steps] = $this->deployWeb($this->cliPipeline(), '1.13.0-r2', $max + 4);
+
+        self::assertNull($deployer->console);
+        self::assertSame(['size' => (int) round(($max + 1) / 1048576), 'max' => (int) round($max / 1048576)], $steps['deploy.console_skipped_size'] ?? null);
+        self::assertArrayNotHasKey('deploy.console_downloads_binary', $steps);
+
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+        try {
+            $this->cliPipeline()->deployPackage($this->config(), new PlainPhpPreset(), self::webPackage('1.13.0-r2', $max + 4), $deployer, new FakeVerifier(true), fn () => null, $this->plan($deployer, []));
+            self::fail('Commands cannot run without the console function.');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.commands_package_too_large', $e->key);
+        }
+        self::assertSame([], $deployer->calls);
+    }
+
+    public function test_a_console_with_the_php_cli_just_under_the_limit_keeps_it(): void
+    {
+        [$deployer, $steps] = $this->deployWeb($this->cliPipeline(), '1.13.0-r2', ConsoleFunction::MAX_UNZIPPED_BYTES - 10);
+
+        self::assertNotNull($deployer->console);
+        self::assertNull($deployer->console->download);
+        self::assertSame(ConsoleFunction::MAX_UNZIPPED_BYTES, $deployer->console->package->bytes);
+        self::assertArrayNotHasKey('deploy.console_downloads_binary', $steps);
     }
 
     public function test_a_custom_binary_falls_back_to_the_download(): void
