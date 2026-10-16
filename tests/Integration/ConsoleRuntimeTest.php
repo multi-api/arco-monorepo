@@ -66,6 +66,8 @@ final class ConsoleRuntimeTest extends TestCase
         $package->run();
         self::assertTrue($package->isSuccessful(), $package->getOutput() . $package->getErrorOutput());
         $console = ConsolePackager::fromWeb(PackageReader::open("$work/package.zip"), "$work/console");
+        $download = $console->download;
+        self::assertNotNull($download);
         $zip = new ZipArchive();
         self::assertTrue($zip->open($console->package->path));
         $zip->extractTo("$work/task");
@@ -82,7 +84,7 @@ final class ConsoleRuntimeTest extends TestCase
         // 2. Local S3 with the binary, the Runtime API emulator, and the runtime in a read-only arm64
         //    provided.al2023 container (1024 MB /tmp, like EphemeralStorage).
         $this->s3 = new S3Emulator('0.0.0.0');
-        $this->s3->put('arco-111111111111-us-east-1', $console->binaryKey, $console->binaryPath);
+        $this->s3->put('arco-111111111111-us-east-1', $download->key, $download->path);
         $this->api = new RuntimeApiEmulator('0.0.0.0');
         $config = ConfigResolver::resolve((new ConfigLoader())->load("$example/arco.php"), 'ci');
         $variables = DeployPipeline::variables($config, PresetRegistry::default()->detect($example));
@@ -96,8 +98,8 @@ final class ConsoleRuntimeTest extends TestCase
             '-e', 'AWS_ACCESS_KEY_ID=AKIDTEST', '-e', 'AWS_SECRET_ACCESS_KEY=secret', '-e', 'AWS_SESSION_TOKEN=token',
             '-e', "ARCO_S3_ENDPOINT=http://host.docker.internal:{$this->s3->port}",
             '-e', 'ARCO_BINARY_BUCKET=arco-111111111111-us-east-1',
-            '-e', "ARCO_BINARY_KEY={$console->binaryKey}",
-            '-e', "ARCO_BINARY_SHA256={$console->binarySha256}"];
+            '-e', "ARCO_BINARY_KEY={$download->key}",
+            '-e', "ARCO_BINARY_SHA256={$download->sha256}"];
         foreach ($variables as $name => $value) {
             array_push($command, '-e', "$name=$value");
         }
@@ -114,11 +116,11 @@ final class ConsoleRuntimeTest extends TestCase
 
         // The binary came from S3, signed, once; download + checksum must fit Lambda's 10 s init.
         self::assertCount(1, $this->s3->requests());
-        self::assertSame("/arco-111111111111-us-east-1/{$console->binaryKey}", $this->s3->requests()[0]['path']);
+        self::assertSame("/arco-111111111111-us-east-1/{$download->key}", $this->s3->requests()[0]['path']);
         self::assertStringStartsWith('AWS4-HMAC-SHA256 ', $this->s3->requests()[0]['authorization']);
         self::assertSame('token', $this->s3->requests()[0]['token']);
         self::assertSame(1, preg_match('/\{"arco":"binary_ready","seconds":(\d+),"bytes":(\d+)\}/', $this->logs(), $ready), $this->logs());
-        self::assertSame($console->binaryBytes, (int) $ready[2]);
+        self::assertSame($download->bytes, (int) $ready[2]);
         $this->note(sprintf('console binary download + SHA-256: %d s (bootstrap, whole seconds), %.2F s (container start to binary_ready) for %.1F MB (local S3)',
             $ready[1], $this->secondsToBinaryReady(), $ready[2] / 1048576));
         self::assertLessThan(10, (int) $ready[1], 'Lambda limits init to 10 s');

@@ -68,10 +68,46 @@ final class ConsolePackagerTest extends TestCase
         $removed = strlen(self::ENTRIES['bin/frankenphp']) + strlen(self::ENTRIES['index.js']) + strlen(self::ENTRIES['lib/caddyfile.js']);
         self::assertSame($web->bytes - $removed, $console->package->bytes);
         self::assertSame(hash('sha256', "console\0" . $web->hash), $console->package->hash);
-        self::assertSame(self::ENTRIES['bin/frankenphp'], file_get_contents($console->binaryPath));
-        self::assertSame(hash('sha256', self::ENTRIES['bin/frankenphp']), $console->binarySha256);
-        self::assertSame(strlen(self::ENTRIES['bin/frankenphp']), $console->binaryBytes);
-        self::assertSame('runtime/1.13.0-r1/frankenphp', $console->binaryKey);
+        self::assertFileExists($web->path, 'the web zip is untouched');
+    }
+
+    public function test_without_a_php_cli_the_console_downloads_the_web_binary(): void
+    {
+        $console = ConsolePackager::fromWeb($this->web(), $this->dir());
+
+        self::assertNotNull($console->download);
+        self::assertSame(self::ENTRIES['bin/frankenphp'], file_get_contents($console->download->path));
+        self::assertSame(hash('sha256', self::ENTRIES['bin/frankenphp']), $console->download->sha256);
+        self::assertSame(strlen(self::ENTRIES['bin/frankenphp']), $console->download->bytes);
+        self::assertSame('runtime/1.13.0-r1/frankenphp', $console->download->key);
+    }
+
+    public function test_with_a_php_cli_the_console_zip_carries_bin_php_and_no_frankenphp(): void
+    {
+        $web = $this->web();
+        $cli = sys_get_temp_dir() . '/arco-php-cli-' . bin2hex(random_bytes(4));
+        file_put_contents($cli, 'ELF-the-static-php-cli');
+
+        $console = ConsolePackager::fromWeb($web, $this->dir(), $cli);
+
+        $zip = new ZipArchive();
+        self::assertTrue($zip->open($console->package->path));
+        $names = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $names[] = (string) $zip->getNameIndex($i);
+        }
+        sort($names);
+        self::assertSame(['app/public/index.php', 'arco-package.json', 'arco-runtime.json', 'bin/php', 'bootstrap', 'runtime/console.php', 'runtime/console/Handler.php'], $names);
+        self::assertSame('ELF-the-static-php-cli', $zip->getFromName('bin/php'));
+        $zip->getExternalAttributesName('bin/php', $opsys, $attr);
+        self::assertSame(ZipArchive::OPSYS_UNIX, $opsys);
+        self::assertSame(0755, ($attr >> 16) & 0777, 'the bootstrap executes bin/php');
+        $zip->close();
+
+        self::assertNull($console->download);
+        $removed = strlen(self::ENTRIES['bin/frankenphp']) + strlen(self::ENTRIES['index.js']) + strlen(self::ENTRIES['lib/caddyfile.js']);
+        self::assertSame($web->bytes - $removed + strlen('ELF-the-static-php-cli'), $console->package->bytes);
+        self::assertSame(hash('sha256', "console\0" . $web->hash), $console->package->hash);
         self::assertFileExists($web->path, 'the web zip is untouched');
     }
 
@@ -79,7 +115,7 @@ final class ConsolePackagerTest extends TestCase
     {
         $console = ConsolePackager::fromWeb($this->web(runtimeBuild: null), $this->dir());
 
-        self::assertSame('runtime/custom/' . hash('sha256', self::ENTRIES['bin/frankenphp']) . '/frankenphp', $console->binaryKey);
+        self::assertSame('runtime/custom/' . hash('sha256', self::ENTRIES['bin/frankenphp']) . '/frankenphp', $console->download?->key);
     }
 
     public function test_a_web_zip_without_binary_is_refused(): void

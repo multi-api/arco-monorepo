@@ -16,6 +16,7 @@ use Multiapi\Arco\Deploy\AwsDeployer;
 use Multiapi\Arco\Deploy\DeployResult;
 use Multiapi\Arco\Deploy\PreparedDeploy;
 use Multiapi\Arco\Package\ConsoleArtifacts;
+use Multiapi\Arco\Package\ConsoleDownload;
 use Multiapi\Arco\Package\Package;
 use PHPUnit\Framework\TestCase;
 
@@ -44,7 +45,7 @@ final class AwsDeployerTest extends TestCase
         file_put_contents($zip, 'console-zip');
         $binary = (string) tempnam(sys_get_temp_dir(), 'bin');
         file_put_contents($binary, 'ELF');
-        return new ConsoleArtifacts(new Package($zip, str_repeat('c', 64), 11), $binary, (string) hash_file('sha256', $binary), 3, 'runtime/1.13.0-r1/frankenphp');
+        return new ConsoleArtifacts(new Package($zip, str_repeat('c', 64), 11), new ConsoleDownload($binary, (string) hash_file('sha256', $binary), 3, 'runtime/1.13.0-r1/frankenphp'));
     }
 
     public function test_first_deploy(): void
@@ -115,7 +116,7 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([
             'ARCO_BINARY_BUCKET' => 'arco-111111111111-us-east-1',
             'ARCO_BINARY_KEY' => 'runtime/1.13.0-r1/frankenphp',
-            'ARCO_BINARY_SHA256' => $console->binarySha256,
+            'ARCO_BINARY_SHA256' => $console->download?->sha256,
         ], array_intersect_key($mocks->params[21]['Environment']['Variables'], array_flip(['ARCO_BINARY_BUCKET', 'ARCO_BINARY_KEY', 'ARCO_BINARY_SHA256', 'ARCO_BINARY_VERSION'])));
         self::assertSame('production', $mocks->params[21]['Environment']['Variables']['APP_ENV']);
         self::assertSame(['arco:app' => 'shop', 'arco:environment' => 'production'], $mocks->params[21]['Tags']);

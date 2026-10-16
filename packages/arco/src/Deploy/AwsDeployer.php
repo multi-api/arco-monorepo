@@ -80,7 +80,9 @@ final class AwsDeployer implements Deployer
             $step('deploy.step_console', ['function' => $config->consoleFunctionName()]);
             $consoleKey = self::consolePrefix($config) . "{$console->package->hash}.zip";
             $consoleObject = $codeBucket->upload($bucket, $consoleKey, $console->package->path);
-            $codeBucket->uploadBinary($bucket, $console->binaryKey, $console->binaryPath, $console->binaryBytes);
+            if ($console->download !== null) {
+                $codeBucket->uploadBinary($bucket, $console->download->key, $console->download->path, $console->download->bytes);
+            }
             $functions = $this->consoleFunction();
             $previousConsole = $functions->liveVersion($config->consoleFunctionName());
             $consoleVersion = $functions->deploy(
@@ -106,7 +108,10 @@ final class AwsDeployer implements Deployer
      */
     private static function binaryVariables(string $bucket, ConsoleArtifacts $console): array
     {
-        return ['ARCO_BINARY_BUCKET' => $bucket, 'ARCO_BINARY_KEY' => $console->binaryKey, 'ARCO_BINARY_SHA256' => $console->binarySha256];
+        if ($console->download === null) {
+            return [];
+        }
+        return ['ARCO_BINARY_BUCKET' => $bucket, 'ARCO_BINARY_KEY' => $console->download->key, 'ARCO_BINARY_SHA256' => $console->download->sha256];
     }
 
     public function release(AppConfig $config, PreparedDeploy $prepared, ?callable $onStep = null): DeployResult

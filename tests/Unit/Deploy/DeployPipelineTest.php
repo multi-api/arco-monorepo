@@ -243,7 +243,7 @@ final class DeployPipelineTest extends TestCase
         $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
 
         self::assertNotNull($deployer->console);
-        self::assertStringStartsWith('runtime/', $deployer->console->binaryKey);
+        self::assertStringStartsWith('runtime/', (string) $deployer->console?->download?->key);
         self::assertSame([], array_diff(glob(sys_get_temp_dir() . '/arco-console-*') ?: [], $before), 'the derived files are removed after the deploy');
     }
 
