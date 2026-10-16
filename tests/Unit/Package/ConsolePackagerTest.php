@@ -107,8 +107,39 @@ final class ConsolePackagerTest extends TestCase
         self::assertNull($console->download);
         $removed = strlen(self::ENTRIES['bin/frankenphp']) + strlen(self::ENTRIES['index.js']) + strlen(self::ENTRIES['lib/caddyfile.js']);
         self::assertSame($web->bytes - $removed + strlen('ELF-the-static-php-cli'), $console->package->bytes);
-        self::assertSame(hash('sha256', "console\0" . $web->hash), $console->package->hash);
         self::assertFileExists($web->path, 'the web zip is untouched');
+    }
+
+    public function test_the_console_hash_depends_on_the_php_cli(): void
+    {
+        $web = $this->web();
+        $cliA = $this->cli('ELF-php-cli-a');
+        $cliB = $this->cli('ELF-php-cli-b');
+
+        $without = ConsolePackager::fromWeb($web, $this->dir())->package->hash;
+        $withA = ConsolePackager::fromWeb($web, $this->dir(), $cliA)->package->hash;
+        $withB = ConsolePackager::fromWeb($web, $this->dir(), $cliB)->package->hash;
+
+        self::assertSame(hash('sha256', "console\0" . $web->hash), $without, 'the fallback hash is unchanged');
+        self::assertNotSame($without, $withA, 'the S3 key of a zip with bin/php differs from the fallback zip');
+        self::assertNotSame($withA, $withB, 'a different PHP CLI gives a different zip');
+    }
+
+    public function test_a_missing_php_cli_is_refused(): void
+    {
+        try {
+            ConsolePackager::fromWeb($this->web(), $this->dir(), sys_get_temp_dir() . '/arco-no-such-cli-' . bin2hex(random_bytes(4)));
+            self::fail('A PHP CLI that does not exist must be refused.');
+        } catch (BuildException $e) {
+            self::assertSame('package.write_failed', $e->key);
+        }
+    }
+
+    private function cli(string $content): string
+    {
+        $path = sys_get_temp_dir() . '/arco-php-cli-' . bin2hex(random_bytes(4));
+        file_put_contents($path, $content);
+        return $path;
     }
 
     public function test_a_custom_binary_is_keyed_by_its_checksum(): void

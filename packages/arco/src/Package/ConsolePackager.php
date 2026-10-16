@@ -25,7 +25,17 @@ final class ConsolePackager
         if (! is_dir($dir) && ! @mkdir($dir, 0777, true) && ! is_dir($dir)) {
             throw BuildException::make('package.write_failed', ['path' => $dir]);
         }
-        $path = "$dir/console-{$web->hash}.zip";
+        // The PHP CLI is part of the console zip's identity: CodeBucket skips keys that already exist, so
+        // a zip with bin/php must never share a key with the fallback zip or one with another CLI.
+        $hash = hash('sha256', "console\0" . $web->hash);
+        if ($phpCli !== null) {
+            $cliSha = @hash_file('sha256', $phpCli);
+            if ($cliSha === false) {
+                throw BuildException::make('package.write_failed', ['path' => $phpCli]);
+            }
+            $hash = hash('sha256', "console\0php\0$cliSha\0" . $web->hash);
+        }
+        $path = "$dir/console-$hash.zip";
         $binary = "$dir/frankenphp-{$web->hash}";
         if (! @copy($web->path, $path)) {
             throw BuildException::make('package.write_failed', ['path' => $path]);
@@ -54,18 +64,18 @@ final class ConsolePackager
         $added = 0;
         if ($phpCli !== null) {
             // addFile() reads the file at close(), which happens below while $phpCli still exists.
-            if (! $zip->addFile($phpCli, self::PHP_CLI)) {
+            if (! @$zip->addFile($phpCli, self::PHP_CLI)
+                || ! $zip->setExternalAttributesName(self::PHP_CLI, ZipArchive::OPSYS_UNIX, (0100000 | 0755) << 16)) {
                 $zip->close();
                 throw BuildException::make('package.write_failed', ['path' => $path]);
             }
-            $zip->setExternalAttributesName(self::PHP_CLI, ZipArchive::OPSYS_UNIX, (0100000 | 0755) << 16);
             $added = (int) filesize($phpCli);
         }
         if (! $zip->close()) {
             throw BuildException::make('package.write_failed', ['path' => $path]);
         }
 
-        $package = new Package($path, hash('sha256', "console\0" . $web->hash), $web->bytes - $removed + $added, $web->manifest);
+        $package = new Package($path, $hash, $web->bytes - $removed + $added, $web->manifest);
         if ($phpCli !== null) {
             return new ConsoleArtifacts($package, null);
         }
