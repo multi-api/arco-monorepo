@@ -101,6 +101,79 @@ final class TinkerCommandTest extends TestCase
         self::assertSame([], $console->calls);
     }
 
+    private function lockTo(string $account): void
+    {
+        file_put_contents('arco.php', str_replace("->environment('staging')", "->environment('staging', fn (Environment \$env) => \$env->account('$account'))", (string) file_get_contents('arco.php')));
+    }
+
+    /**
+     * @param list<string> $calls AWS calls made through the clients
+     * @param list<string> $statements run by the interactive shell
+     */
+    private function sessionTester(FakeConsole $console, array &$calls, ?\Aws\Credentials\Credentials $credentials = null, array $statements = []): CommandTester
+    {
+        $handler = function (\Aws\CommandInterface $command) use (&$calls) {
+            $calls[] = $command->getName();
+            return \GuzzleHttp\Promise\Create::promiseFor(new Result(['Account' => '111111111111']));
+        };
+        return $this->project->tester(new TinkerCommand(
+            awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $handler, 'credentials' => $credentials ?? false]),
+            consoleFactory: fn () => $console,
+            presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
+            shell: function (TinkerSession $session, \Closure $render) use ($statements): int {
+                foreach ($statements as $statement) {
+                    $render($session->execute($statement));
+                }
+                return 0;
+            },
+        ));
+    }
+
+    public function test_an_account_lock_is_checked_once_per_session_not_per_statement(): void
+    {
+        $this->lockTo('111111111111');
+        $calls = [];
+        $console = new FakeConsole([FakeConsole::tinkerReply(['presented' => '1']), FakeConsole::tinkerReply(['presented' => '2']), FakeConsole::tinkerReply(['presented' => '3'])]);
+
+        $tester = $this->sessionTester($console, $calls, statements: ['1', '2', '3']);
+        $tester->execute(['--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['GetCallerIdentity'], $calls);
+        self::assertCount(3, $console->calls);
+    }
+
+    public function test_an_sso_account_lock_is_checked_from_the_credentials_without_an_sts_call(): void
+    {
+        $this->lockTo('111111111111');
+        $calls = [];
+        $console = new FakeConsole([FakeConsole::tinkerReply(['presented' => '2'])]);
+        $sso = new \Aws\Credentials\Credentials('A', 'S', 'T', time() + 3600, '111111111111', \Aws\Credentials\CredentialSources::PROFILE_SSO);
+
+        $tester = $this->sessionTester($console, $calls, $sso, ['1+1']);
+        $tester->execute(['--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame([], $calls);
+        self::assertCount(1, $console->calls);
+    }
+
+    public function test_an_sso_account_mismatch_is_refused_before_any_invoke(): void
+    {
+        $this->lockTo('999999999999');
+        $calls = [];
+        $console = new FakeConsole();
+        $sso = new \Aws\Credentials\Credentials('A', 'S', 'T', time() + 3600, '111111111111', \Aws\Credentials\CredentialSources::PROFILE_SSO);
+
+        $tester = $this->sessionTester($console, $calls, $sso, ['1+1']);
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => '1+1'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('locked to account 999999999999', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+        self::assertSame([], $console->calls);
+        self::assertSame([], $calls);
+    }
+
     public function test_execute_exits_1_on_an_exception(): void
     {
         $tester = $this->tester(new FakeConsole([FakeConsole::tinkerReply(['exception' => ['class' => 'RuntimeException', 'message' => 'boom']], TinkerSession::STATEMENT_THREW)]));

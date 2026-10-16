@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Tests\Unit\Aws;
 
 use Aws\CommandInterface;
 use Aws\Credentials\Credentials;
+use Aws\Credentials\CredentialSources;
 use Aws\MockHandler;
 use Aws\Result;
 use Psr\Http\Message\RequestInterface;
@@ -72,6 +73,43 @@ final class AwsClientsTest extends TestCase
         }
 
         self::assertSame(1, substr_count((string) file_get_contents("{$this->dir}/count"), 'x'));
+    }
+
+    /** @return array{0: AwsClients, 1: \ArrayObject<int, string>} clients whose credentials come from $credentials, and the STS calls */
+    private static function clientsWith(Credentials $credentials): array
+    {
+        $calls = new \ArrayObject();
+        $handler = function (CommandInterface $command) use ($calls) {
+            $calls[] = $command->getName();
+            return \GuzzleHttp\Promise\Create::promiseFor(new Result(['Account' => '222222222222']));
+        };
+        return [new AwsClients(null, 'us-east-1', ['handler' => $handler, 'credentials' => $credentials]), $calls];
+    }
+
+    /**
+     * IAM Identity Center and AssumeRole credentials are issued by AWS for one account, which the SDK
+     * keeps with them: reading it saves sts:GetCallerIdentity (a round trip and a TLS handshake to
+     * another host) before the first statement of a tinker session or command on a locked environment.
+     */
+    public function test_the_account_of_sso_and_assumed_role_credentials_needs_no_sts_call(): void
+    {
+        foreach ([CredentialSources::PROFILE_SSO, CredentialSources::PROFILE_SSO_LEGACY, CredentialSources::STS_ASSUME_ROLE] as $source) {
+            [$aws, $calls] = self::clientsWith(new Credentials('A', 'S', 'T', time() + 3600, '123456789012', $source));
+
+            self::assertSame('123456789012', $aws->accountId(), $source);
+            self::assertSame([], $calls->getArrayCopy(), $source);
+        }
+    }
+
+    public function test_other_credentials_ask_sts_for_the_account(): void
+    {
+        // credential_process output and environment variables state an account, but nothing checked it.
+        foreach ([[CredentialSources::PROFILE_PROCESS, '123456789012'], [CredentialSources::ENVIRONMENT, '123456789012'], [CredentialSources::PROFILE, null], [CredentialSources::PROFILE_SSO, null], [CredentialSources::PROFILE_SSO, 'not-an-id']] as [$source, $account]) {
+            [$aws, $calls] = self::clientsWith(new Credentials('A', 'S', null, null, $account, $source));
+
+            self::assertSame('222222222222', $aws->accountId(), $source);
+            self::assertSame(['GetCallerIdentity'], $calls->getArrayCopy(), $source);
+        }
     }
 
     public function test_reads_a_profile_from_the_credentials_file(): void
