@@ -59,7 +59,12 @@ trait ResolvesTarget
         return $config;
     }
 
-    protected function awsClients(AppConfig $config, InputInterface $input, SymfonyStyle $io): AwsClients
+    /**
+     * @param bool $checkCredentials false skips sts:GetCallerIdentity when there is no account lock to
+     *     check: a round trip (and a TLS handshake) that latency-sensitive commands (tinker, command)
+     *     do not need; missing or expired credentials then surface on their first call, by profile
+     */
+    protected function awsClients(AppConfig $config, InputInterface $input, SymfonyStyle $io, bool $checkCredentials = true): AwsClients
     {
         $state = new LocalState($this->projectDir());
         /** @var array<string, string> $env */
@@ -79,6 +84,9 @@ trait ResolvesTarget
 
         $this->credentialProfile = $profile;
         $clients = ($this->awsFactory)($profile, (string) $config->region);
+        if (! $checkCredentials && $config->account === null) {
+            return $clients;
+        }
         try {
             $account = $clients->accountId();
         } catch (Throwable $e) {

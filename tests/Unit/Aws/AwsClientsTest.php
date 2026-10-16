@@ -51,6 +51,29 @@ final class AwsClientsTest extends TestCase
         self::assertSame('config-key', $credentials->getAccessKeyId());
     }
 
+    /**
+     * A tinker session sends many statements through one LambdaClient: the profile's credentials
+     * (for SSO: a token read and sso:GetRoleCredentials) are resolved once, not per statement.
+     */
+    public function test_credentials_are_resolved_once_across_clients_and_calls(): void
+    {
+        $script = "{$this->dir}/creds.sh";
+        file_put_contents($script, "#!/bin/sh\necho x >> {$this->dir}/count\necho '{\"Version\":1,\"AccessKeyId\":\"A\",\"SecretAccessKey\":\"S\",\"SessionToken\":\"T\",\"Expiration\":\"2099-01-01T00:00:00Z\"}'\n");
+        chmod($script, 0755);
+        file_put_contents("{$this->dir}/config", "[profile proc]\ncredential_process = $script\n");
+        putenv("AWS_CONFIG_FILE={$this->dir}/config");
+        $mock = new MockHandler([new Result(['Account' => '1']), new Result([]), new Result([]), new Result([])]);
+
+        $aws = new AwsClients('proc', 'us-east-1', ['handler' => $mock]);
+        $aws->accountId();
+        $lambda = $aws->lambda(['retries' => 0]);
+        for ($i = 0; $i < 3; $i++) {
+            $lambda->invoke(['FunctionName' => 'f', 'Payload' => '{}']);
+        }
+
+        self::assertSame(1, substr_count((string) file_get_contents("{$this->dir}/count"), 'x'));
+    }
+
     public function test_reads_a_profile_from_the_credentials_file(): void
     {
         file_put_contents("{$this->dir}/credentials", "[legacy]\naws_access_key_id = file-key\naws_secret_access_key = file-secret\n");

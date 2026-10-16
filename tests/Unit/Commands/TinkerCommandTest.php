@@ -54,6 +54,40 @@ final class TinkerCommandTest extends TestCase
         self::assertSame([['tinker', 'User::count()', null, null]], $console->calls);
     }
 
+    /**
+     * Latency: sts:GetCallerIdentity is a round trip (and a TLS handshake to another host) before
+     * the first statement. Without an account lock there is nothing to check, so it is skipped;
+     * expired credentials then surface on the invoke, named by profile.
+     */
+    public function test_without_an_account_lock_no_sts_call_is_made_before_the_statement(): void
+    {
+        $calls = [];
+        $handler = function (\Aws\CommandInterface $command) use (&$calls) {
+            $calls[] = $command->getName();
+            return \GuzzleHttp\Promise\Create::promiseFor(new Result(['Account' => '111111111111']));
+        };
+        $tester = $this->project->tester(new TinkerCommand(
+            awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $handler, 'credentials' => false]),
+            consoleFactory: fn () => new FakeConsole([FakeConsole::tinkerReply(['presented' => '2'])]),
+            presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
+        ));
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => '1+1'], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        self::assertSame([], $calls);
+
+        // An account lock is still checked before anything runs.
+        file_put_contents('arco.php', str_replace("->environment('staging')", "->environment('staging', fn (Environment \$env) => \$env->account('111111111111'))", (string) file_get_contents('arco.php')));
+        $tester = $this->project->tester(new TinkerCommand(
+            awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $handler, 'credentials' => false]),
+            consoleFactory: fn () => new FakeConsole([FakeConsole::tinkerReply(['presented' => '2'])]),
+            presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
+        ));
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => '1+1'], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['GetCallerIdentity'], $calls);
+    }
+
     public function test_execute_exits_1_on_an_exception(): void
     {
         $tester = $this->tester(new FakeConsole([FakeConsole::tinkerReply(['exception' => ['class' => 'RuntimeException', 'message' => 'boom']], 1)]));

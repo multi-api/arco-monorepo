@@ -63,7 +63,7 @@ final class ConsoleCommand extends ArcoCommand
             }
             $timeout = $this->timeout($input->getOption('timeout'), $config);
 
-            $console = ($this->consoleFactory)($this->awsClients($config, $input, $errors), $config);
+            $console = ($this->consoleFactory)($this->awsClients($config, $input, $errors, checkCredentials: false), $config);
             if ($input->getOption('async')) {
                 $console->start($config, $command, $timeout);
                 // stderr: stdout carries only the command's own output, for scripts.

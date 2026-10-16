@@ -46,6 +46,20 @@ final class ConsoleCommandTest extends TestCase
         self::assertSame([['run', 'migrate --force', null, 'live']], $console->calls);
     }
 
+    public function test_without_an_account_lock_no_sts_round_trip_comes_before_the_invoke(): void
+    {
+        $mock = new MockHandler([new Result(['Account' => '111111111111'])]);
+        $tester = $this->project->tester(new ConsoleCommand(
+            awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $mock, 'credentials' => false]),
+            consoleFactory: fn () => new FakeConsole([new CommandResult(0, "ok\n")]),
+        ));
+
+        $tester->execute(['args' => 'about', '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertCount(1, $mock, 'sts:GetCallerIdentity was not called');
+    }
+
     public function test_async_starts_the_command_and_points_to_the_logs(): void
     {
         $console = new FakeConsole();

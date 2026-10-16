@@ -63,7 +63,7 @@ final class TinkerCommand extends ArcoCommand
             if (! is_string($code) && ! class_exists(\Psy\Shell::class)) {
                 throw new UserError($this->t('tinker.psysh_missing'));
             }
-            $aws = $this->awsClients($config, $input, $io);
+            $aws = $this->awsClients($config, $input, $io, checkCredentials: false);
             if ($config->isProtected() && ! $input->getOption('force')) {
                 $params = ['environment' => $config->environment, 'account' => $aws->accountId(), 'function' => $config->consoleFunctionName()];
                 if (! $input->isInteractive()) {
