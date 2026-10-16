@@ -23,7 +23,7 @@ final class AwsVerifier implements Verifier
     private float $deadline = 0.0;
 
     /**
-     * @param int $coldStartSeconds public endpoints: seconds after the probe passed to keep looking for the cold start
+     * @param int $coldStartSeconds public endpoints: seconds the end-of-deploy lookup keeps looking for the cold start
      * @param int $iamReportSeconds auth('iam'): seconds to wait for the init report, the only health signal
      * @param int $callBudget CloudWatch Logs calls one lookup may make (FilterLogEvents has a low TPS quota)
      */
@@ -90,10 +90,11 @@ final class AwsVerifier implements Verifier
         if (! $verification->ok || $verification->initDurationMs !== null) {
             return $verification;
         }
-        // The budget runs from the moment the probe passed, so time spent on custom domains counts.
-        $deadline = ($verification->healthyAt ?? $this->sleeper->now()) + $this->coldStartSeconds;
+        // The lookup has its own budget from now: a slow CloudFront update while attaching custom
+        // domains must not leave it with no time (and so no CloudWatch call) at all.
+        $deadline = $this->sleeper->now() + $this->coldStartSeconds;
         if ($onStep !== null) {
-            $onStep('deploy.cold_start_lookup', ['seconds' => max(0, (int) round($deadline - $this->sleeper->now()))]);
+            $onStep('deploy.cold_start_lookup', ['seconds' => $this->coldStartSeconds]);
         }
         [$report] = $this->initReport($config, $result->revisionId, $sinceMs, $deadline);
 

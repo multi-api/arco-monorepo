@@ -8,7 +8,7 @@ final readonly class VerificationResult
      * @param list<string> $logTail
      * @param string|null $reason translation key explaining a failure the other fields do not
      * @param array<string, string|int> $reasonParams
-     * @param float|null $healthyAt when the HTTP probe passed (Sleeper::now()), the start of the cold-start budget
+     * @param float|null $healthyAt when the HTTP probe passed (Sleeper::now())
      */
     public function __construct(
         public bool $ok,

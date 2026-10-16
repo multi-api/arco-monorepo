@@ -107,7 +107,7 @@ final class AwsVerifierTest extends TestCase
         self::assertSame(1234, $result->initDurationMs);
         self::assertSame('success', $result->initStatus);
         self::assertTrue($result->ok);
-        self::assertSame([['deploy.cold_start_lookup', ['seconds' => 40]]], $this->steps, 'the 20 s spent on domains count');
+        self::assertSame([['deploy.cold_start_lookup', ['seconds' => 60]]], $this->steps, 'the lookup has its own budget');
         foreach ($group->queriesOf('FilterLogEvents') as $query) {
             self::assertSame('2026/10/15/shop-production[rev-2]', $query['logStreamNamePrefix']);
             self::assertStringContainsString('platform.initReport', $query['filterPattern']);
@@ -115,17 +115,28 @@ final class AwsVerifierTest extends TestCase
         self::assertSame([], $group->queriesOf('DescribeLogStreams'));
     }
 
-    public function test_the_lookup_ends_60_s_after_the_probe_passed_within_the_call_budget(): void
+    public function test_the_lookup_ends_60_s_after_it_started_within_the_call_budget(): void
     {
-        $group = self::newInstance(new FakeLogGroup(self::T0 + 10), 'aaa', (self::T0 + 10) * 1000, 900.0, 120);
+        $group = self::newInstance(new FakeLogGroup(self::T0 + 10), 'aaa', (self::T0 + 10) * 1000, 900.0, 500);
 
         $result = $this->deploy($group, domainsSeconds: 50);
 
         self::assertTrue($result->ok);
         self::assertNull($result->initDurationMs);
-        self::assertLessThanOrEqual(self::T0 + 10 + 60 + 5, $group->clock);
-        self::assertGreaterThanOrEqual(self::T0 + 10 + 56, $group->clock);
+        self::assertLessThanOrEqual(self::T0 + 10 + 50 + 60 + 5, $group->clock);
+        self::assertGreaterThanOrEqual(self::T0 + 10 + 50 + 56, $group->clock);
         self::assertLessThanOrEqual(40, count($group->queries));
+    }
+
+    /** Live test: a slow CloudFront update during domain attachment left "up to 0 s" and no lookup at all. */
+    public function test_a_slow_domain_attachment_does_not_eat_the_cold_start_budget(): void
+    {
+        $group = self::newInstance(new FakeLogGroup(self::T0 + 10), 'aaa', (self::T0 + 10) * 1000 + 176, 1234.0, 36);
+
+        $result = $this->deploy($group, domainsSeconds: 300);
+
+        self::assertSame(1234, $result->initDurationMs);
+        self::assertSame([['deploy.cold_start_lookup', ['seconds' => 60]]], $this->steps);
     }
 
     public function test_slow_calls_and_a_busy_group_stay_within_the_deadline_and_budget(): void
