@@ -78,7 +78,7 @@ final class StatementRunner
     /** @return array{output: string, presented: string|null, context: string|null, dropped: list<string>, exception: array{class: string, message: string}|null} */
     public function run(string $code, ?string $context): array
     {
-        $config = new Configuration(['usePcntl' => false, 'useReadline' => false, 'updateCheck' => 'never', 'rawOutput' => true]);
+        $config = new Configuration(['usePcntl' => false, 'useReadline' => false, 'updateCheck' => 'never', 'updateManualCheck' => 'never', 'rawOutput' => true]);
         // No line is ever read: the userland readline would probe the terminal (stty < /dev/tty) at boot.
         $config->setReadline(new Transient());
         $config->getPresenter()->addCasters(self::casters($this->casters));

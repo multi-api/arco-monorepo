@@ -199,7 +199,8 @@ the build's static PHP CLI instead (`bin/php`, about 91 MB, same PHP version and
 are left for your app, in the units `arco package` prints) and runs it directly, with no download at cold start. The CLI is fetched from GitHub releases
 once per runtime build and machine and cached in `~/.arco/cache/runtime/<build>/php`.
 
-The console downloads FrankenPHP instead, with a warning in the deploy output, for a custom `binary()`, a runtime
+The console downloads FrankenPHP instead for a custom `binary()` (the deploy output notes it), and with a
+warning in the deploy output for a runtime
 build without a PHP CLI (`1.13.0-r1`) or unknown to this Arco version, when `bin/php` alone would take the
 console over 250 MB (then `->exclude([...])` leaves room), or when the PHP CLI cannot be downloaded from
 GitHub (the warning names the URL and the error; a size or checksum mismatch still stops the deploy). In those cases the deploy uploads the exact binary of the web revision once to

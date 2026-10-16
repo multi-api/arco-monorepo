@@ -13,11 +13,6 @@ RUN apk add --no-cache curl nodejs libzip \
  && rm -rf /tmp/* /usr/src/php* \
  && echo 'memory_limit=512M' > "$PHP_INI_DIR/conf.d/arco-test.ini"
 
-# The container has no network. PsySH's weekly manual update check (RemoteShell leaves it on) would
-# otherwise wait ~5 s on DNS in every RemoteShellTest shell; a global PsySH config turns it off.
-RUN mkdir -p /etc/xdg/psysh \
- && echo "<?php return ['updateCheck' => 'never', 'updateManualCheck' => 'never'];" > /etc/xdg/psysh/config.php
-
 # Mount point of the arco-test-cache volume (PHPStan result cache); a new volume copies this mode.
 RUN mkdir -m 1777 /cache
 

@@ -18,23 +18,44 @@ final class RuntimeApiEmulator
         foreach (['queue', 'responses', 'errors'] as $folder) {
             mkdir("$this->dir/$folder", 0777, true);
         }
-        $this->port = random_int(30000, 39999);
+        // A random port can be taken by another process: try a few, and only trust a port our server still listens on.
+        for ($attempt = 1; ; $attempt++) {
+            $port = random_int(30000, 39999);
+            $server = $this->startServer($bind, $port);
+            if ($server !== null) {
+                $this->port = $port;
+                $this->server = $server;
+                return;
+            }
+            if ($attempt === 5) {
+                throw new \RuntimeException('The Runtime API emulator did not start on any of 5 random ports.');
+            }
+        }
+    }
+
+    private function startServer(string $bind, int $port): ?Process
+    {
         // Several workers: a runtime parked on /next must never block another request (posting a result, an init error).
-        $this->server = new Process([PHP_BINARY, '-S', "$bind:$this->port", __DIR__ . '/runtime-api-emulator.php'], null, [
+        $server = new Process([PHP_BINARY, '-S', "$bind:$port", __DIR__ . '/runtime-api-emulator.php'], null, [
             'ARCO_EMULATOR_DIR' => $this->dir,
             'PHP_CLI_SERVER_WORKERS' => '4',
         ]);
-        $this->server->start();
+        $server->start();
         $deadline = microtime(true) + 5;
-        while (microtime(true) < $deadline) {
-            $socket = @fsockopen('127.0.0.1', $this->port);
+        while (microtime(true) < $deadline && $server->isRunning()) {
+            $socket = @fsockopen('127.0.0.1', $port);
             if (is_resource($socket)) {
                 fclose($socket);
-                return;
+                if ($server->isRunning()) {
+                    return $server;
+                }
+                break;
             }
             usleep(50_000);
         }
-        throw new \RuntimeException('The Runtime API emulator did not start: ' . $this->server->getErrorOutput());
+        $server->stop(0);
+
+        return null;
     }
 
     /** @param array<string, mixed> $event */

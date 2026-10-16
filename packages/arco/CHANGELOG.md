@@ -15,7 +15,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 - **Changed:** a custom `binary()`, a runtime build without a PHP CLI (`1.13.0-r1`) or unknown to this Arco
   version, an app whose console would pass 250 MB unzipped only because of `bin/php`, or a PHP CLI that
   cannot be downloaded from GitHub (network, proxy, outage) keeps the download at cold start, and the
-  deploy goes on with a warning saying why (for the size case it suggests `->exclude()`; for the download
+  deploy goes on and says why (a plain note for a custom `binary()`, a warning for the other cases) (for the size case it suggests `->exclude()`; for the download
   case it names the URL and the error). A PHP CLI whose size or checksum does not match stops the deploy
   before any AWS change.
 - **Changed:** a console package whose `bin/php` lost its exec bit fails at init with an error naming
