@@ -44,6 +44,22 @@ final class StepPrinterTest extends TestCase
         self::assertStringContainsString('deploy.console_reason.php_cli_too_large', $text);
     }
 
+    public function test_a_custom_binary_console_note_is_a_plain_bullet_and_the_other_reasons_warn(): void
+    {
+        $output = new BufferedOutput();
+        $this->printer($output, false)('deploy.console_downloads_binary', ['reason' => 'custom_binary']);
+        $text = $output->fetch();
+        self::assertStringStartsWith('  • deploy.console_downloads_binary {"reason":"deploy.console_reason.custom_binary', $text, 'a deliberate choice: nothing to act on');
+        self::assertStringNotContainsString('WARNING', $text);
+
+        foreach (['unknown_build', 'no_php_cli', 'php_cli_too_large', 'php_cli_unavailable'] as $reason) {
+            $this->printer($output, false)('deploy.console_downloads_binary', ['reason' => $reason]);
+            $text = $output->fetch();
+            self::assertStringContainsString('[WARNING]', $text, $reason);
+            self::assertStringContainsString("deploy.console_reason.$reason", $text);
+        }
+    }
+
     public function test_the_console_download_reason_gets_the_step_params(): void
     {
         $output = new BufferedOutput();
