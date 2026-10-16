@@ -32,9 +32,8 @@ final class RuntimeManifestEditor
             throw new InvalidArgumentException('The release is not immutable; enable release immutability before adding the build.');
         }
         self::assertAssetMatches($release, 'frankenphp-linux-aarch64', $buildJson);
-        $phpCli = $buildJson['php_cli'] ?? null;
-        if (is_array($phpCli)) {
-            /** @var array<string, mixed> $phpCli */
+        $phpCli = self::phpCli($buildJson);
+        if ($phpCli !== null) {
             self::assertAssetMatches($release, 'php-linux-aarch64', $phpCli);
         }
     }
@@ -52,6 +51,23 @@ final class RuntimeManifestEditor
         if (! is_string($expected['sha256']) || ($asset['digest'] ?? null) !== 'sha256:' . $expected['sha256']) {
             throw new InvalidArgumentException("Release asset $name digest does not match build.json sha256.");
         }
+    }
+
+    /**
+     * @param array<string, mixed> $buildJson
+     * @return array<string, mixed>|null
+     */
+    private static function phpCli(array $buildJson): ?array
+    {
+        $phpCli = $buildJson['php_cli'] ?? null;
+        if ($phpCli === null) {
+            return null;
+        }
+        if (! is_array($phpCli)) {
+            throw new InvalidArgumentException('build.json php_cli must be an object.');
+        }
+        /** @var array<string, mixed> $phpCli */
+        return $phpCli;
     }
 
     /**
@@ -97,8 +113,8 @@ final class RuntimeManifestEditor
             'frankenphp' => $buildJson['frankenphp'] ?? null,
             'php' => $buildJson['php'] ?? null,
         ];
-        $phpCli = $buildJson['php_cli'] ?? null;
-        if (is_array($phpCli)) {
+        $phpCli = self::phpCli($buildJson);
+        if ($phpCli !== null) {
             $data['builds'][$id]['php_cli'] = [
                 'url' => "https://github.com/$repository/releases/download/frankenphp-$id/php-linux-aarch64",
                 'sha256' => $phpCli['sha256'] ?? null,

@@ -72,6 +72,7 @@ final class RuntimeManifestTest extends TestCase
         yield 'id/version mismatch' => [['default' => '1.13.0-r1', 'builds' => ['1.13.0-r1' => self::entry('1.12.0')]]];
         yield 'bad sha' => [['default' => '1.13.0-r1', 'builds' => ['1.13.0-r1' => self::entry('1.13.0', 'xyz')]]];
         yield 'http url' => [['default' => '1.13.0-r1', 'builds' => ['1.13.0-r1' => ['url' => 'http://x/y'] + self::entry('1.13.0')]]];
+        yield 'sha with trailing newline' => [['default' => '1.13.0-r1', 'builds' => ['1.13.0-r1' => self::entry('1.13.0', str_repeat('a', 64) . "\n")]]];
         yield 'zero size' => [['default' => '1.13.0-r1', 'builds' => ['1.13.0-r1' => ['size' => 0] + self::entry('1.13.0')]]];
         yield 'no builds' => [['default' => '1.13.0-r1', 'builds' => []]];
     }
@@ -112,15 +113,33 @@ final class RuntimeManifestTest extends TestCase
         self::assertNull($manifest->get('1.13.0-r1')->phpCli);
     }
 
-    public function test_an_invalid_php_cli_is_refused(): void
+    /** @return iterable<string, array{mixed}> */
+    public static function invalidPhpClis(): iterable
     {
-        $this->expectException(BinaryException::class);
-        RuntimeManifest::fromArray(['default' => '1.13.0-r2', 'builds' => [
-            '1.13.0-r2' => [
-                'url' => 'https://example.test/f', 'sha256' => str_repeat('a', 64), 'size' => 10, 'frankenphp' => '1.13.0', 'php' => '8.5.11',
-                'php_cli' => ['url' => 'http://insecure/php', 'sha256' => 'nothex', 'size' => 0],
-            ],
-        ]]);
+        $ok = ['url' => 'https://example.test/php', 'sha256' => str_repeat('b', 64), 'size' => 5];
+        yield 'http url' => [['url' => 'http://insecure/php'] + $ok];
+        yield 'uppercase sha' => [['sha256' => str_repeat('B', 64)] + $ok];
+        yield 'short sha' => [['sha256' => str_repeat('b', 63)] + $ok];
+        yield 'sha with trailing newline' => [['sha256' => str_repeat('b', 64) . "\n"] + $ok];
+        yield 'zero size' => [['size' => 0] + $ok];
+        yield 'non-int size' => [['size' => '5'] + $ok];
+        yield 'not an array' => ['https://example.test/php'];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('invalidPhpClis')]
+    public function test_an_invalid_php_cli_is_refused(mixed $phpCli): void
+    {
+        try {
+            RuntimeManifest::fromArray(['default' => '1.13.0-r2', 'builds' => [
+                '1.13.0-r2' => [
+                    'url' => 'https://example.test/f', 'sha256' => str_repeat('a', 64), 'size' => 10, 'frankenphp' => '1.13.0', 'php' => '8.5.11',
+                    'php_cli' => $phpCli,
+                ],
+            ]]);
+            self::fail('Expected binary.manifest_invalid');
+        } catch (BinaryException $e) {
+            self::assertSame('binary.manifest_invalid', $e->key);
+        }
     }
 
     public function test_shipped_manifest_is_valid_and_pins_the_first_build(): void

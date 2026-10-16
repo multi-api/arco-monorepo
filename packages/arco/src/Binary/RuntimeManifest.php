@@ -6,7 +6,7 @@ use Multiapi\Arco\Arco;
 
 final class RuntimeManifest
 {
-    public const ID_PATTERN = '/^(\d+\.\d+\.\d+)-r([1-9]\d*)$/';
+    public const ID_PATTERN = '/^(\d+\.\d+\.\d+)-r([1-9]\d*)$/D';
 
     /** @param array<string, RuntimeBuild> $builds sorted by id */
     private function __construct(private readonly string $default, private readonly array $builds)
@@ -49,7 +49,7 @@ final class RuntimeManifest
             if (! is_string($url) || ! str_starts_with($url, 'https://')) {
                 throw self::invalid("build $id needs an https url");
             }
-            if (! is_string($sha) || ! preg_match('/^[0-9a-f]{64}$/', $sha)) {
+            if (! self::isSha256($sha)) {
                 throw self::invalid("build $id needs a lowercase hex sha256");
             }
             if (! is_int($size) || $size <= 0) {
@@ -116,6 +116,12 @@ final class RuntimeManifest
         return $this->get($this->default);
     }
 
+    /** @phpstan-assert-if-true string $sha */
+    private static function isSha256(mixed $sha): bool
+    {
+        return is_string($sha) && preg_match('/^[0-9a-f]{64}$/D', $sha) === 1;
+    }
+
     private static function phpCli(string $id, mixed $cli): ?PhpCli
     {
         if ($cli === null) {
@@ -126,7 +132,7 @@ final class RuntimeManifest
         $size = is_array($cli) ? ($cli['size'] ?? null) : null;
         if (
             ! is_string($url) || ! str_starts_with($url, 'https://')
-            || ! is_string($sha) || ! preg_match('/^[0-9a-f]{64}$/', $sha)
+            || ! self::isSha256($sha)
             || ! is_int($size) || $size <= 0
         ) {
             throw self::invalid("build $id has an invalid php_cli");

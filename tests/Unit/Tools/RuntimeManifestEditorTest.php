@@ -82,6 +82,24 @@ final class RuntimeManifestEditorTest extends TestCase
         }
     }
 
+    public function test_a_non_array_php_cli_is_refused_everywhere(): void
+    {
+        $build = self::buildJson() + ['php_cli' => 'oops'];
+        $before = file_get_contents($this->path);
+        foreach ([
+            fn () => RuntimeManifestEditor::add($this->path, $build, 'multi-api/arco-runtime', false),
+            fn () => RuntimeManifestEditor::assertReleaseMatches(self::release(), $build),
+        ] as $call) {
+            try {
+                $call();
+                self::fail('Expected InvalidArgumentException');
+            } catch (InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+        self::assertSame($before, file_get_contents($this->path));
+    }
+
     public function test_release_cross_check_refuses_a_missing_php_cli_asset(): void
     {
         $build = self::buildJson() + ['php_cli' => ['sha256' => str_repeat('c', 64), 'size' => 90000000]];
