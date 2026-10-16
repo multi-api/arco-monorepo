@@ -43,6 +43,7 @@ final class DeployCommandTest extends TestCase
             return App::make('shop')
                 ->region('us-east-1')
                 ->runtime(fn (Runtime \$r) => \$r->binary('$binary'))
+                ->console()
                 ->environment('production', fn (Environment \$env) => \$env
                     ->variables(['APP_ENV' => 'production']));
             PHP);
@@ -70,7 +71,7 @@ final class DeployCommandTest extends TestCase
     /** @var list<array{0: ?string, 1: ?string, 2: bool}> deploy profile, DNS profile, force */
     private array $factoryCalls = [];
 
-    private function tester(FakeDeployer $deployer, bool $verifies = true, ?int $initMs = 800, ?FakeConsole $console = null): CommandTester
+    private function tester(FakeDeployer $deployer, bool $verifies = true, ?int $initMs = 800, ?FakeConsole $console = null, ?PresetRegistry $presets = null): CommandTester
     {
         $command = new DeployCommand(
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $this->aws, 'credentials' => false]),
@@ -80,7 +81,7 @@ final class DeployCommandTest extends TestCase
                 return $deployer;
             },
             verifierFactory: fn () => new FakeVerifier($verifies, $initMs),
-            presets: new PresetRegistry([]),
+            presets: $presets ?? new PresetRegistry([]),
             consoleFactory: fn () => $console ?? throw new \LogicException('No console expected.'),
         );
         $app = Application::create();
@@ -617,5 +618,23 @@ final class DeployCommandTest extends TestCase
         $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
         self::assertStringContainsString('[WARNING] Old versions of console function f were not deleted (AccessDenied)', $display);
         self::assertStringNotContainsString('• Old versions', $display);
+    }
+
+    public function test_migrate_without_console_fails_before_aws(): void
+    {
+        $path = "$this->project/arco.php";
+        file_put_contents($path, str_replace('->console()', '->console(false)', (string) file_get_contents($path)));
+        $deployer = $this->existing();
+        $laravel = new PresetRegistry([new class extends \Multiapi\Arco\Build\PlainPhpPreset { public function name(): string { return 'laravel'; } }]);
+        $tester = $this->tester($deployer, presets: $laravel);
+
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--migrate' => true], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('arco console:add --env=production', (string) $display);
+        self::assertSame([], $deployer->calls);
+        self::assertSame([], $this->factoryCalls, 'no AWS client is made');
+        self::assertSame(0, $deployer->consoleLookups);
     }
 }

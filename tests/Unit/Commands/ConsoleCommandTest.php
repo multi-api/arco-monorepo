@@ -17,7 +17,7 @@ final class ConsoleCommandTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->project = new ProjectFixture(ProjectFixture::standardConfig());
+        $this->project = new ProjectFixture(ProjectFixture::consoleConfig());
     }
 
     protected function tearDown(): void
@@ -155,5 +155,22 @@ final class ConsoleCommandTest extends TestCase
         self::assertSame(1, $tester->getStatusCode());
         self::assertStringContainsString('unclosed', $tester->getDisplay());
         self::assertSame([], $console->calls);
+    }
+
+    public function test_console_disabled_fails_before_aws(): void
+    {
+        file_put_contents('arco.php', ProjectFixture::standardConfig());
+        $awsCalls = 0;
+        $tester = $this->project->tester(new ConsoleCommand(
+            awsFactory: function () use (&$awsCalls): never { $awsCalls++; throw new \LogicException('No AWS expected.'); },
+            consoleFactory: fn () => throw new \LogicException('No console expected.'),
+        ));
+
+        $tester->execute(['args' => 'about', '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('arco console:add --env=staging', $display);
+        self::assertSame(0, $awsCalls, 'the AWS factory is never called');
     }
 }

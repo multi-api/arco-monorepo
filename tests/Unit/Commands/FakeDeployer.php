@@ -28,6 +28,10 @@ final class FakeDeployer implements Deployer
     public ?\Throwable $domainsError = null;
     /** thrown by describe(), e.g. expired credentials */
     public ?\Throwable $describeError = null;
+    /** answer of consoleExists() */
+    public bool $consoleExists = false;
+    /** how many times consoleExists() was asked */
+    public int $consoleLookups = 0;
 
     public function __construct(
         public ?string $previousRevision = null,
@@ -91,5 +95,7 @@ final class FakeDeployer implements Deployer
 
     public function hasDomainResources(AppConfig $config): bool { return $this->domainResources; }
     public function remove(AppConfig $config, ?callable $onStep = null): void { $this->calls[] = 'remove'; }
+    public function consoleExists(AppConfig $config): bool { $this->consoleLookups++; return $this->consoleExists; }
+    public function removeConsole(AppConfig $config, \Closure $onStep): void { $this->calls[] = 'removeConsole'; }
     public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->describeError !== null ? throw $this->describeError : $this->status; }
 }

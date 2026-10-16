@@ -20,7 +20,7 @@ final class TinkerCommandTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->project = new ProjectFixture(ProjectFixture::standardConfig());
+        $this->project = new ProjectFixture(ProjectFixture::consoleConfig());
     }
 
     protected function tearDown(): void
@@ -308,5 +308,23 @@ final class TinkerCommandTest extends TestCase
 
         self::assertSame(1, $tester->getStatusCode());
         self::assertStringContainsString('Laravel', $tester->getDisplay());
+    }
+
+    public function test_console_disabled_fails_before_aws(): void
+    {
+        file_put_contents('arco.php', ProjectFixture::standardConfig());
+        $awsCalls = 0;
+        $tester = $this->project->tester(new TinkerCommand(
+            awsFactory: function () use (&$awsCalls): never { $awsCalls++; throw new \LogicException('No AWS expected.'); },
+            consoleFactory: fn () => throw new \LogicException('No console expected.'),
+            presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
+        ));
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => '1'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('arco console:add --env=staging', $display);
+        self::assertSame(0, $awsCalls, 'the AWS factory is never called');
     }
 }

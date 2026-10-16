@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Deploy;
 
+use Closure;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Package\ConsoleArtifacts;
 use Multiapi\Arco\Package\Package;
@@ -56,4 +57,14 @@ interface Deployer
     public function remove(AppConfig $config, ?callable $onStep = null): void;
 
     public function describe(AppConfig $config): ?AppStatus;
+
+    /** Whether the environment's console function exists in AWS. */
+    public function consoleExists(AppConfig $config): bool;
+
+    /**
+     * Deletes the console function of an environment whose console is off (a missing one is fine).
+     *
+     * @param Closure(string, array<string, string|int>): void $onStep
+     */
+    public function removeConsole(AppConfig $config, Closure $onStep): void;
 }

@@ -488,4 +488,32 @@ final class AwsDeployerTest extends TestCase
         self::assertFalse($deployer->hasDomainResources($this->config()));
         self::assertTrue($deployer->hasDomainResources($withDomains));
     }
+
+    public function test_remove_console(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result([]), self::lambdaMissing('DeleteFunction'));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $steps = [];
+        $onStep = function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; };
+
+        $deployer->removeConsole($this->config(), $onStep);
+        $deployer->removeConsole($this->config(), $onStep); // already gone: ResourceNotFoundException is swallowed
+
+        self::assertSame(['DeleteFunction', 'DeleteFunction'], $mocks->calls);
+        self::assertSame('shop-production-console', $mocks->params[0]['FunctionName']);
+        self::assertSame([['deploy.console_removed', ['function' => 'shop-production-console']], ['deploy.console_removed', ['function' => 'shop-production-console']]], $steps);
+    }
+
+    public function test_console_exists(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['FunctionName' => 'shop-production-console']), self::lambdaMissing('GetFunctionConfiguration'));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        self::assertTrue($deployer->consoleExists($this->config()));
+        self::assertFalse($deployer->consoleExists($this->config()));
+        self::assertSame(['GetFunctionConfiguration', 'GetFunctionConfiguration'], $mocks->calls);
+        self::assertSame('shop-production-console', $mocks->params[0]['FunctionName']);
+    }
 }

@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Deploy;
 
+use Closure;
 use Multiapi\Arco\Arco;
 use Multiapi\Arco\Aws\AwsClients;
 use Aws\Exception\AwsException;
@@ -219,6 +220,18 @@ final class AwsDeployer implements Deployer
         if ($config->role === null) {
             (new ExecutionRole($this->aws->iam()))->delete(ExecutionRole::roleName($config));
         }
+    }
+
+    public function consoleExists(AppConfig $config): bool
+    {
+        return $this->consoleFunction()->get($config->consoleFunctionName()) !== null;
+    }
+
+    public function removeConsole(AppConfig $config, Closure $onStep): void
+    {
+        // Only the function for now; the scheduler's EventBridge rule is removed before it once it exists.
+        $this->consoleFunction()->delete($config->consoleFunctionName());
+        $onStep('deploy.console_removed', ['function' => $config->consoleFunctionName()]);
     }
 
     public function describe(AppConfig $config): ?AppStatus

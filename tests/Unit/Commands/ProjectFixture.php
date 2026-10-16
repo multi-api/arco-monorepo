@@ -51,6 +51,12 @@ final class ProjectFixture
             PHP;
     }
 
+    /** standardConfig() with the console function on (arco command, tinker, deploy commands). */
+    public static function consoleConfig(): string
+    {
+        return str_replace('->concurrency(48)', "->concurrency(48)\n    ->console()", self::standardConfig());
+    }
+
     public function tester(Command $command): CommandTester
     {
         $app = Application::create();

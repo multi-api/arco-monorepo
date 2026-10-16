@@ -40,10 +40,15 @@ final class DeployPipelineTest extends TestCase
         file_put_contents("$this->project/public/index.php", '<?php echo "ok";');
     }
 
-    private function config(bool $domains = false): AppConfig
+    /** $console null: never set, as in an arco.php written before the console was opt-in. */
+    private function config(bool $domains = false, ?bool $console = true): AppConfig
     {
+        $app = App::make('shop');
+        if ($console !== null) {
+            $app->console($console);
+        }
         return ConfigResolver::resolve(
-            App::make('shop')->region('us-east-1')
+            $app->region('us-east-1')
                 ->domain($domains ? ['shop.example.com'] : [])
                 ->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))
                 ->variables(['LOG_CHANNEL' => 'syslog'])
@@ -654,5 +659,124 @@ final class DeployPipelineTest extends TestCase
             self::assertSame('deploy.commands_without_console', $e->key);
         }
         self::assertSame(['prepare'], $deployer->calls);
+    }
+
+    public function test_console_not_packaged_when_disabled(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $steps = [];
+
+        $outcome = $this->pipeline()->deploy($this->config(console: false), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls, 'no console to remove: it does not exist');
+        self::assertNull($deployer->console);
+        self::assertNotContains('deploy.console_downloads_binary', $steps);
+        self::assertNotContains('deploy.console_skipped_size', $steps);
+    }
+
+    public function test_console_never_set_and_absent_deploys_the_web_function_only(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+
+        $this->pipeline()->deploy($this->config(console: null), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+
+        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls);
+        self::assertNull($deployer->console);
+    }
+
+    public function test_an_oversized_package_without_console_skips_no_console(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $steps = [];
+
+        $this->pipeline()->deployPackage($this->config(console: false), new PlainPhpPreset(), self::zipClaiming(ConsoleFunction::MAX_UNZIPPED_BYTES + 1), $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertNotContains('deploy.console_skipped_size', $steps, 'no console package is built at all');
+        self::assertNull($deployer->console);
+    }
+
+    public function test_upgrade_guard_stops_before_any_change(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->consoleExists = true;
+        $steps = [];
+
+        try {
+            $this->pipeline()->deploy($this->config(console: null), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
+            self::fail('An existing console with no console setting must stop the deploy.');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.console_setting_missing', $e->key);
+            self::assertSame(['environment' => 'production'], $e->params);
+        }
+        self::assertSame([], $deployer->calls, 'no prepare, release or removal');
+        self::assertNotContains('build.staging', $steps, 'nothing is built');
+    }
+
+    public function test_upgrade_guard_also_covers_a_prebuilt_package(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->consoleExists = true;
+
+        try {
+            $this->pipeline()->deployPackage($this->config(console: null), new PlainPhpPreset(), self::webPackage(null), $deployer, new FakeVerifier(true), fn () => null);
+            self::fail('An existing console with no console setting must stop the deploy.');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.console_setting_missing', $e->key);
+        }
+        self::assertSame([], $deployer->calls);
+    }
+
+    public function test_console_false_removes_existing_console_after_release(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->consoleExists = true;
+
+        $this->pipeline()->deploy($this->config(console: false), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+
+        self::assertSame(['prepare', 'release', 'removeConsole', 'prune'], $deployer->calls);
+        self::assertNull($deployer->console);
+
+        $failed = new FakeDeployer('rev-1');
+        $failed->consoleExists = true;
+        $this->pipeline()->deploy($this->config(console: false), new PlainPhpPreset(), $this->project, $failed, new FakeVerifier(false), fn () => null);
+
+        self::assertSame(['prepare', 'release', 'rollback:rev-1'], $failed->calls, 'the console stays while the old revision serves');
+    }
+
+    public function test_an_enabled_console_is_not_looked_up(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+        $deployer->consoleExists = true;
+
+        $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+
+        self::assertSame(0, $deployer->consoleLookups);
+        self::assertSame(['prepare', 'release', 'live:7', 'prune'], $deployer->calls);
+    }
+
+    public function test_deploy_commands_need_console(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+        $steps = [];
+
+        try {
+            $this->pipeline()->deploy($this->config(console: false), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; }, $this->plan($deployer, [], ['migrate --force']));
+            self::fail('Deploy commands need the console function.');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.commands_need_console', $e->key);
+            self::assertSame(['environment' => 'production'], $e->params);
+        }
+        self::assertSame([], $deployer->calls);
+        self::assertNotContains('build.staging', $steps);
+    }
+
+    public function test_an_empty_plan_without_console_deploys(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+
+        $outcome = $this->pipeline()->deploy($this->config(console: false), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null, $this->plan($deployer, [], []));
+
+        self::assertTrue($outcome->verification->ok);
     }
 }
