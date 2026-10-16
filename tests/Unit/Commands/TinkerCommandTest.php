@@ -88,6 +88,19 @@ final class TinkerCommandTest extends TestCase
         self::assertSame(['GetCallerIdentity'], $calls);
     }
 
+    public function test_an_account_lock_mismatch_refuses_before_any_invoke(): void
+    {
+        file_put_contents('arco.php', str_replace("->environment('staging')", "->environment('staging', fn (Environment \$env) => \$env->account('999999999999'))", (string) file_get_contents('arco.php')));
+        $console = new FakeConsole();
+        $tester = $this->tester($console);
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => '1+1'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('locked to account 999999999999', preg_replace('/\s+/', ' ', $tester->getDisplay()));
+        self::assertSame([], $console->calls);
+    }
+
     public function test_execute_exits_1_on_an_exception(): void
     {
         $tester = $this->tester(new FakeConsole([FakeConsole::tinkerReply(['exception' => ['class' => 'RuntimeException', 'message' => 'boom']], TinkerSession::STATEMENT_THREW)]));

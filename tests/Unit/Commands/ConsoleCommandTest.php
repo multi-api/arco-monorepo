@@ -60,6 +60,19 @@ final class ConsoleCommandTest extends TestCase
         self::assertCount(1, $mock, 'sts:GetCallerIdentity was not called');
     }
 
+    public function test_an_account_lock_mismatch_refuses_before_any_invoke(): void
+    {
+        file_put_contents('arco.php', str_replace("->environment('staging')", "->environment('staging', fn (Environment \$env) => \$env->account('999999999999'))", (string) file_get_contents('arco.php')));
+        $console = new FakeConsole();
+        $tester = $this->tester($console);
+
+        $tester->execute(['args' => 'migrate --force', '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('locked to account 999999999999', preg_replace('/\s+/', ' ', $tester->getDisplay()));
+        self::assertSame([], $console->calls);
+    }
+
     public function test_async_starts_the_command_and_points_to_the_logs(): void
     {
         $console = new FakeConsole();
