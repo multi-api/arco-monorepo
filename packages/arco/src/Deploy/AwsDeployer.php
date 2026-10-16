@@ -56,7 +56,9 @@ final class AwsDeployer implements Deployer
             $roleArn = $config->role;
         } else {
             $step('deploy.step_role', ['role' => ExecutionRole::roleName($config)]);
-            $policy = PolicyBuilder::document($region, $account, $function, SecretResolver::references($variables), $config->permissions, $bucket);
+            // Only a console that downloads FrankenPHP at cold start needs to read runtime/* in the bucket.
+            $downloadsBinary = $console?->download !== null;
+            $policy = PolicyBuilder::document($region, $account, $function, SecretResolver::references($variables), $config->permissions, $downloadsBinary ? $bucket : null);
             ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags);
         }
 

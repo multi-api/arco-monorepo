@@ -33,6 +33,15 @@ final class StepPrinterTest extends TestCase
         self::assertSame("  • build.copying\n  • build.step {\"command\":\"php artisan event:cache\"}\n", $output->fetch());
     }
 
+    public function test_the_console_download_reason_is_translated(): void
+    {
+        $output = new BufferedOutput();
+
+        $this->printer($output, false)('deploy.console_downloads_binary', ['reason' => 'no_php_cli']);
+
+        self::assertSame("  • deploy.console_downloads_binary {\"reason\":\"deploy.console_reason.no_php_cli\"}\n", $output->fetch());
+    }
+
     public function test_progress_without_a_terminal_prints_a_few_plain_lines(): void
     {
         $output = new BufferedOutput();

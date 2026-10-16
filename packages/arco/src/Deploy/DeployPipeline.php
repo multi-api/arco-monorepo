@@ -102,7 +102,15 @@ final class DeployPipeline
         // The console zip and the binary are derived from the web zip in a scratch directory.
         $work = sys_get_temp_dir() . '/arco-console-' . bin2hex(random_bytes(4));
         try {
-            $console = ConsolePackager::fromWeb($package, $work);
+            // The console runs the runtime build's PHP CLI (bin/php in its zip) when the build has one;
+            // otherwise (custom binary, unknown or older build) it downloads FrankenPHP at cold start.
+            $buildId = $package->manifest?->runtimeBuild;
+            $build = $buildId === null ? null : $this->binaries->build($buildId);
+            $phpCli = $build === null ? null : $this->binaries->phpCli($build);
+            if ($phpCli === null) {
+                $onStep('deploy.console_downloads_binary', ['reason' => $buildId === null ? 'custom_binary' : 'no_php_cli']);
+            }
+            $console = ConsolePackager::fromWeb($package, $work, $phpCli);
             if ($console->package->bytes > ConsoleFunction::MAX_UNZIPPED_BYTES) {
                 $params = [
                     'size' => (int) round($console->package->bytes / 1048576),

@@ -138,6 +138,51 @@ final class AwsDeployerTest extends TestCase
         self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_function', 'deploy.step_console', 'deploy.step_traffic'], $steps);
     }
 
+    public function test_a_console_with_bin_php_uploads_no_binary_and_sets_no_binary_variables(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '111111111111']),                                             // GetCallerIdentity
+            new Result([]),                                                                      // HeadBucket
+            new Result([]), new Result([]), new Result([]), new Result([]),                      // bucket hardening PUTs
+            AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404),
+            new Result(['VersionId' => 'v1']),                                                   // PutObject (web zip)
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
+            new Result(['Role' => ['Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production']]), // CreateRole
+            new Result([]),                                                                      // PutRolePolicy
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
+            new Result(['revision' => ['revisionId' => 'rev-1'], 'endpoint' => ['domainName' => 'abc.xpt.lambda-web.us-east-1.on.aws']]),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),                           // GetWebFunctionRevision
+            AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404),                // console zip
+            new Result(['VersionId' => 'cv1']),                                                  // PutObject (console zip)
+            self::lambdaMissing('GetAlias'),
+            self::lambdaMissing('GetFunctionConfiguration'),
+            new Result(['State' => 'Pending']),                                                  // CreateFunction
+            new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']),
+            new Result(['Version' => '1']),                                                      // PublishVersion
+        );
+        $zip = (string) tempnam(sys_get_temp_dir(), 'console');
+        file_put_contents($zip, 'console-zip-with-bin-php');
+        $console = new ConsoleArtifacts(new Package($zip, str_repeat('c', 64), 24), null);
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prepare($this->config(), $this->package(), $console, ['APP_ENV' => 'production']);
+
+        self::assertCount(0, $mocks->handler);
+        $byOperation = [];
+        foreach ($mocks->calls as $i => $operation) {
+            $byOperation[$operation][] = $mocks->params[$i];
+        }
+        foreach ([...$byOperation['HeadObject'], ...$byOperation['PutObject']] as $params) {
+            self::assertStringStartsNotWith('runtime/', $params['Key'], 'no binary upload');
+        }
+        self::assertCount(2, $byOperation['PutObject'], 'web zip and console zip only');
+        $variables = $byOperation['CreateFunction'][0]['Environment']['Variables'];
+        self::assertSame('production', $variables['APP_ENV']);
+        self::assertSame([], array_filter(array_keys($variables), fn (string $name) => str_starts_with($name, 'ARCO_BINARY_')));
+        $policy = json_decode($byOperation['PutRolePolicy'][0]['PolicyDocument'], true);
+        self::assertNotContains('ArcoRuntimeBinary', array_column($policy['Statement'], 'Sid'));
+    }
+
     public function test_redeploy_creates_a_revision_and_remembers_the_previous_one(): void
     {
         $ready = fn () => new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']);

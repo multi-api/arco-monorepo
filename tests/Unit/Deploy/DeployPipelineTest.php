@@ -247,6 +247,88 @@ final class DeployPipelineTest extends TestCase
         self::assertSame([], array_diff(glob(sys_get_temp_dir() . '/arco-console-*') ?: [], $before), 'the derived files are removed after the deploy');
     }
 
+    /** A pipeline whose manifest has 1.13.0-r1 (no PHP CLI) and 1.13.0-r2 (with one); downloads write $content. */
+    private function cliPipeline(string $content = 'php-cli-bytes'): DeployPipeline
+    {
+        $elf = (string) file_get_contents(ElfInspectorTest::fakeElf(0xB7));
+        $build = fn (string $id) => [
+            'url' => "https://example.test/frankenphp-$id/frankenphp-linux-aarch64",
+            'sha256' => hash('sha256', $elf),
+            'size' => strlen($elf),
+            'frankenphp' => '1.13.0',
+            'php' => '8.5.11',
+        ];
+        $manifest = \Multiapi\Arco\Binary\RuntimeManifest::fromArray([
+            'default' => '1.13.0-r2',
+            'builds' => [
+                '1.13.0-r1' => $build('1.13.0-r1'),
+                '1.13.0-r2' => [...$build('1.13.0-r2'), 'php_cli' => [
+                    'url' => 'https://example.test/frankenphp-1.13.0-r2/php-linux-aarch64',
+                    'sha256' => hash('sha256', 'php-cli-bytes'),
+                    'size' => strlen('php-cli-bytes'),
+                ]],
+            ],
+        ]);
+        $downloader = new class ($content) implements \Multiapi\Arco\Binary\Downloader {
+            public function __construct(private string $content) {}
+            public function download(string $url, string $destination, ?callable $onProgress = null): void
+            {
+                file_put_contents($destination, $this->content);
+            }
+        };
+        $cache = sys_get_temp_dir() . '/arco-cache-' . bin2hex(random_bytes(4));
+        return new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider($downloader, $cache, $manifest), new Packager());
+    }
+
+    /** A small web zip whose manifest names $runtimeBuild (null: a custom binary). */
+    private static function webPackage(?string $runtimeBuild): \Multiapi\Arco\Package\Package
+    {
+        $path = sys_get_temp_dir() . '/arco-web-' . bin2hex(random_bytes(4)) . '.zip';
+        $zip = new \ZipArchive();
+        $zip->open($path, \ZipArchive::CREATE);
+        $zip->addFromString('bin/frankenphp', 'ELF');
+        $zip->addFromString('app/index.php', '<?php');
+        $zip->close();
+        $hash = str_repeat('e', 64);
+        return new \Multiapi\Arco\Package\Package($path, $hash, 8, new \Multiapi\Arco\Package\PackageManifest('shop', 'production', 'plain', $runtimeBuild, $hash, 8, 'dev', '2026-10-16T00:00:00Z'));
+    }
+
+    /** @return array{0: FakeDeployer, 1: array<string, array<string, string|int>>} */
+    private function deployWeb(DeployPipeline $pipeline, ?string $runtimeBuild): array
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $steps = [];
+        $pipeline->deployPackage($this->config(), new PlainPhpPreset(), self::webPackage($runtimeBuild), $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+        return [$deployer, $steps];
+    }
+
+    public function test_a_build_with_a_php_cli_puts_it_in_the_console_zip(): void
+    {
+        [$deployer, $steps] = $this->deployWeb($this->cliPipeline(), '1.13.0-r2');
+
+        self::assertNotNull($deployer->console);
+        self::assertNull($deployer->console->download);
+        self::assertArrayNotHasKey('deploy.console_downloads_binary', $steps);
+    }
+
+    public function test_a_custom_binary_falls_back_to_the_download(): void
+    {
+        [$deployer, $steps] = $this->deployWeb($this->cliPipeline(), null);
+
+        self::assertNotNull($deployer->console?->download);
+        self::assertSame(['reason' => 'custom_binary'], $steps['deploy.console_downloads_binary'] ?? null);
+    }
+
+    public function test_a_package_of_an_unknown_or_old_build_falls_back(): void
+    {
+        foreach (['9.9.9-r1', '1.13.0-r1'] as $build) {
+            [$deployer, $steps] = $this->deployWeb($this->cliPipeline(), $build);
+
+            self::assertNotNull($deployer->console?->download, $build);
+            self::assertSame(['reason' => 'no_php_cli'], $steps['deploy.console_downloads_binary'] ?? null, $build);
+        }
+    }
+
     /** A web zip whose console part claims $bytes unzipped (the 3-byte binary is removed from it). */
     public static function zipClaiming(int $bytes): \Multiapi\Arco\Package\Package
     {
