@@ -3,6 +3,18 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## Unreleased
+
+- **Changed:** the console function carries a static PHP CLI (`bin/php`) with the same PHP version and
+  extensions as the web runtime, so it no longer downloads FrankenPHP at cold start. Runtime build
+  `1.13.0-r2`, which ships it, is now the default. In local Docker (`provided:al2023`) init took about
+  0.2 s and the first command 0.6 to 1 s, against about 3 s and 4 s with the download (local
+  measurements, not Lambda guarantees). The PHP CLI is about 95 MB of the console's 250 MB. A deploy
+  fetches it from GitHub releases once per runtime build and machine (cached in `~/.arco/cache/runtime`).
+- **Changed:** a custom `binary()`, a runtime build without a PHP CLI (`1.13.0-r1`), or an app whose
+  console would pass 250 MB unzipped only because of `bin/php` keeps the download at cold start, and the
+  deploy prints a note (for the size case it suggests `->exclude()`).
+
 ## 0.2.1
 
 - **Fixed:** `arco tinker` presents Eloquent models, collections, `Stringable`, `HtmlString` and the
