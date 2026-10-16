@@ -73,9 +73,13 @@ reserved by Lambda are rejected: `_HANDLER`, `_X_AMZN_TRACE_ID`, `AWS_REGION`, `
 
 ### Deploy commands
 
-Each `deployCommands()` entry is an artisan command line (for the Laravel preset; `artisan` is added by
-the runtime). They run one by one and the first failure stops the deploy, so `arco deploy` and `arco init`
-warn about entries that cannot work on Lambda:
+Each `deployCommands()` entry is an artisan command line for the Laravel preset (the runtime runs
+`php artisan <entry>`), or a script and its arguments for plain PHP (`bin/console app:sync`). They run one
+by one and the first failure stops the deploy, so for Laravel apps `arco deploy` and `arco init` warn about
+entries that cannot work on Lambda:
+
+- Entries starting with `artisan` or `php artisan`: Arco runs artisan for you, so `artisan migrate` would
+  run `php artisan artisan migrate` and fail. Write `migrate --force`.
 
 - Commands that write into the code directory, which is read-only on Lambda (`/var/task`):
   `config:cache`, `route:cache`, `view:cache`, `event:cache`, `optimize`, `optimize:clear`,

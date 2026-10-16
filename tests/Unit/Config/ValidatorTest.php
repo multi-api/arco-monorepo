@@ -2,6 +2,9 @@
 
 namespace Multiapi\Arco\Tests\Unit\Config;
 
+use Multiapi\Arco\Build\PlainPhpPreset;
+use Multiapi\Arco\Build\PresetRegistry;
+use Multiapi\Arco\Build\RunsCommands;
 use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
@@ -330,10 +333,13 @@ final class ValidatorTest extends TestCase
      * @param list<string> $commands
      * @return list<array{key: string, params: array<string, string|int>}>
      */
-    private function deployCommandWarnings(array $commands): array
+    private function deployCommandWarnings(array $commands, bool $laravel = true): array
     {
+        $preset = $laravel
+            ? new class extends PlainPhpPreset implements RunsCommands { public function name(): string { return 'laravel'; } public function commandEntry(): string { return 'artisan'; } }
+            : new PlainPhpPreset();
         $app = App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->deployCommands($commands));
-        $result = (new Validator())->validate(ConfigResolver::resolve($app->toArray(), 'production'), sys_get_temp_dir());
+        $result = (new Validator(presets: new PresetRegistry([$preset])))->validate(ConfigResolver::resolve($app->toArray(), 'production'), sys_get_temp_dir());
         self::assertTrue($result->isValid());
         return $result->warnings;
     }
@@ -341,11 +347,34 @@ final class ValidatorTest extends TestCase
     public function test_deploy_commands_that_write_into_the_read_only_code_directory_warn(): void
     {
         $commands = ['config:cache', 'route:cache', 'view:cache', 'event:cache', 'optimize', 'optimize:clear', 'config:clear', 'route:clear', 'view:clear', 'storage:link'];
-        $warnings = $this->deployCommandWarnings([...$commands, 'artisan view:cache', 'php artisan route:cache --quiet']);
+        $warnings = $this->deployCommandWarnings($commands);
 
-        self::assertSame(array_fill(0, 12, 'validation.deploy_command_read_only'), array_column($warnings, 'key'));
+        self::assertSame(array_fill(0, 10, 'validation.deploy_command_read_only'), array_column($warnings, 'key'));
         self::assertSame(['command' => 'config:cache', 'name' => 'config:cache'], $warnings[0]['params']);
-        self::assertSame(['command' => 'php artisan route:cache --quiet', 'name' => 'route:cache'], $warnings[11]['params']);
+    }
+
+    /**
+     * The runtime runs `php artisan <args>`: an entry written as `artisan migrate` runs
+     * `php artisan artisan migrate` and fails. The command after the prefix is still checked.
+     */
+    public function test_an_artisan_prefix_is_a_warning_and_the_command_after_it_is_still_checked(): void
+    {
+        $warnings = $this->deployCommandWarnings(['artisan about', 'php artisan route:cache --quiet', 'artisan db:seed']);
+
+        self::assertSame([
+            'validation.deploy_command_artisan_prefix',
+            'validation.deploy_command_artisan_prefix',
+            'validation.deploy_command_read_only',
+            'validation.deploy_command_artisan_prefix',
+            'validation.deploy_command_needs_force',
+        ], array_column($warnings, 'key'));
+        self::assertSame(['command' => 'artisan about', 'entry' => 'artisan'], $warnings[0]['params']);
+        self::assertSame(['command' => 'php artisan route:cache --quiet', 'name' => 'route:cache'], $warnings[2]['params']);
+    }
+
+    public function test_plain_php_deploy_commands_are_scripts_and_get_no_artisan_warnings(): void
+    {
+        self::assertSame([], $this->deployCommandWarnings(['artisan migrate', 'php artisan config:cache', 'migrate', 'config:cache'], laravel: false));
     }
 
     public function test_harmless_deploy_commands_do_not_warn(): void
@@ -355,11 +384,11 @@ final class ValidatorTest extends TestCase
 
     public function test_deploy_commands_that_ask_for_confirmation_in_production_warn_without_force(): void
     {
-        $warnings = $this->deployCommandWarnings(['migrate', 'migrate:rollback --step=1', 'artisan db:seed', 'migrate --force', 'db:seed --force']);
+        $warnings = $this->deployCommandWarnings(['migrate', 'migrate:rollback --step=1', 'db:seed', 'migrate --force', 'db:seed --force']);
 
         self::assertSame(array_fill(0, 3, 'validation.deploy_command_needs_force'), array_column($warnings, 'key'));
         self::assertSame(['command' => 'migrate', 'name' => 'migrate'], $warnings[0]['params']);
-        self::assertSame(['command' => 'artisan db:seed', 'name' => 'db:seed'], $warnings[2]['params']);
+        self::assertSame(['command' => 'db:seed', 'name' => 'db:seed'], $warnings[2]['params']);
     }
 
     public function test_deploy_commands_that_destroy_data_warn_even_with_force(): void
@@ -378,7 +407,7 @@ final class ValidatorTest extends TestCase
     {
         foreach (['en', 'es'] as $locale) {
             $messages = require __DIR__ . "/../../../packages/arco/lang/$locale.php";
-            foreach (['validation.deploy_command_read_only', 'validation.deploy_command_needs_force', 'validation.deploy_command_destroys_data'] as $key) {
+            foreach (['validation.deploy_command_read_only', 'validation.deploy_command_needs_force', 'validation.deploy_command_destroys_data', 'validation.deploy_command_artisan_prefix'] as $key) {
                 self::assertArrayHasKey($key, $messages, "$locale: $key");
             }
         }

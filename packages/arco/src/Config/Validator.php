@@ -6,6 +6,8 @@ use Multiapi\Arco\Arco;
 use Multiapi\Arco\Binary\BinaryException;
 use Multiapi\Arco\Binary\ElfInspector;
 use Multiapi\Arco\Binary\RuntimeManifest;
+use Multiapi\Arco\Build\PresetRegistry;
+use Multiapi\Arco\Build\RunsCommands;
 use Multiapi\Arco\ConsoleRuntime\ArgumentSplitter;
 use Multiapi\Arco\Secrets\InvalidReference;
 use Multiapi\Arco\Secrets\SecretReference;
@@ -39,7 +41,8 @@ final class Validator
     /** Artisan commands that drop every table. */
     private const DESTROYS_DATA = ['migrate:fresh', 'migrate:refresh', 'migrate:reset', 'db:wipe'];
 
-    public function __construct(private readonly ?RuntimeManifest $manifest = null)
+    /** @param PresetRegistry|null $presets detects the app's preset for the deploy command checks */
+    public function __construct(private readonly ?RuntimeManifest $manifest = null, private readonly ?PresetRegistry $presets = null)
     {
     }
 
@@ -122,6 +125,12 @@ final class Validator
 
         self::validateDomains($config, $result);
 
+        // The script every command goes through (artisan), as the console runtime runs it: php <entry> <args>.
+        $entry = null;
+        if ($config->deployCommands !== []) {
+            $preset = ($this->presets ?? PresetRegistry::default())->detect($projectDir);
+            $entry = $preset instanceof RunsCommands ? $preset->commandEntry() : null;
+        }
         foreach ($config->deployCommands as $index => $command) {
             if (trim($command) === '') {
                 $result->error('validation.deploy_command_empty', ['index' => $index]);
@@ -133,7 +142,9 @@ final class Validator
                 $result->error('validation.deploy_command', ['command' => $command, 'reason' => $e->getMessage()]);
                 continue;
             }
-            self::addDeployCommandWarnings($result, $command, $arguments);
+            if ($entry !== null) {
+                self::addDeployCommandWarnings($result, $command, $arguments, $entry);
+            }
         }
 
         foreach ($config->variables as $name => $value) {
@@ -192,15 +203,19 @@ final class Validator
      * Warnings for deploy commands that cannot work on Lambda: the first failing command stops the deploy.
      *
      * @param list<string> $arguments
+     * @param string $entry the script the runtime puts before the arguments (artisan)
      */
-    private static function addDeployCommandWarnings(ValidationResult $result, string $command, array $arguments): void
+    private static function addDeployCommandWarnings(ValidationResult $result, string $command, array $arguments, string $entry): void
     {
-        // `php artisan migrate` and `artisan migrate` mean `migrate`: the runtime adds artisan itself.
-        if (($arguments[0] ?? null) === 'php') {
-            array_shift($arguments);
+        // The runtime runs `php artisan <args>`: `artisan migrate` would run `php artisan artisan migrate`
+        // and fail. Warned about, not rewritten; the command after the prefix is checked as well.
+        $prefix = ($arguments[0] ?? null) === 'php' ? 1 : 0;
+        if (($arguments[$prefix] ?? null) === $entry) {
+            $result->warning('validation.deploy_command_artisan_prefix', ['command' => $command, 'entry' => $entry]);
+            $arguments = array_slice($arguments, $prefix + 1);
         }
-        if (($arguments[0] ?? null) === 'artisan') {
-            array_shift($arguments);
+        if ($entry !== 'artisan') {
+            return;
         }
         $name = $arguments[0] ?? '';
         $params = ['command' => $command, 'name' => $name];

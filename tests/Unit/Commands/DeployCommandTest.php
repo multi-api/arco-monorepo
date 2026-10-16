@@ -405,6 +405,9 @@ final class DeployCommandTest extends TestCase
     public function test_deploy_commands_that_cannot_work_on_lambda_are_warned_about_before_the_deploy(): void
     {
         $this->withDeployCommands("['config:cache', 'migrate']");
+        // A Laravel app for the checks (the build itself uses no preset here).
+        file_put_contents("$this->project/artisan", '<?php');
+        file_put_contents("$this->project/composer.json", (string) json_encode(['require' => ['laravel/framework' => '^13.0']]));
         $this->aws->append(new Result(['Account' => '222222222222']));
         $deployer = $this->existing();
         $console = new FakeConsole([new CommandResult(0, ''), new CommandResult(0, '')]);
