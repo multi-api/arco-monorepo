@@ -30,14 +30,16 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   in the code bucket and write the console log group, and packages built by `arco package` before this
   version must be built again.
 - **Changed:** `multiapi/arco-laravel` registers a hidden `arco:tinker` command on Lambda.
-- **Fixed:** missing or expired AWS credentials are reported as such, naming the profile and suggesting
-  `aws sso login --profile <p>` for SSO profiles, by every command; `arco info` no longer says "Not
+- **Fixed:** missing or expired AWS credentials are reported as such, naming the profile (the DNS profile
+  for Route 53 calls) and suggesting `aws sso login --profile <p>` for SSO profiles, by every command; other
+  credential failures, such as a denied AssumeRole, keep AWS's message; `arco info` no longer says "Not
   deployed yet" in that case (it exits with 1).
 - **Fixed:** the cold-start lookup has its own budget after custom domains are attached; a slow CloudFront
   update no longer leaves it at "not available yet (up to 0 s)".
 - **Fixed:** `arco logs --follow` no longer prints an event twice when Live Tail replays the last history event.
 - **Fixed:** a tinker statement that throws is no longer logged as `command_failed` (ERROR) by the console
-  function; `command_failed` and `tinker_done` carry `durationMs`.
+  function (`arco:tinker` now exits with 3 for it; other failures still are); `command_failed` and
+  `tinker_done` carry `durationMs`.
 - **Changed:** `arco tinker` and `arco command` skip `sts:GetCallerIdentity` when no `account()` lock needs
   checking, saving a round trip and a TLS handshake before the first statement.
 
