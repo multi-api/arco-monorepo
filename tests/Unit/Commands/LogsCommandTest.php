@@ -210,6 +210,31 @@ final class LogsCommandTest extends TestCase
         self::assertSame(['GetCallerIdentity', 'FilterLogEvents', 'StartLiveTail', 'FilterLogEvents'], $this->mocks->calls);
     }
 
+    /** Live test: the last history event came again from Live Tail, which has no eventId. */
+    public function test_follow_does_not_print_a_history_event_again_when_live_tail_replays_it(): void
+    {
+        $stream = '2026/10/15/[$LATEST]abc';
+        $group = '/aws/lambda/shop-staging-console';
+        $this->mocks->handler->append(
+            new Result(['events' => [['eventId' => 'c1', 'logStreamName' => $stream, 'timestamp' => self::T, 'message' => 'history line']]]),
+            new Result(['responseStream' => new ArrayIterator([['sessionUpdate' => ['sessionResults' => [
+                ['logGroupIdentifier' => "arn:aws:logs:us-east-1:111111111111:log-group:$group", 'logStreamName' => $stream, 'timestamp' => self::T, 'message' => 'history line'],
+                ['logGroupIdentifier' => "arn:aws:logs:us-east-1:111111111111:log-group:$group", 'logStreamName' => $stream, 'timestamp' => self::T + 5, 'message' => 'live line'],
+            ]]]])]),
+            new Result(['events' => [
+                ['eventId' => 'c1', 'logStreamName' => $stream, 'timestamp' => self::T, 'message' => 'history line'],
+                ['eventId' => 'c2', 'logStreamName' => $stream, 'timestamp' => self::T + 5, 'message' => 'live line'],
+            ]]),
+        );
+
+        $tester = $this->defaultTester(true);
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--source' => 'console', '--follow' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(1, substr_count($tester->getDisplay(), 'history line'));
+        self::assertSame(1, substr_count($tester->getDisplay(), 'live line'));
+    }
+
     public function test_follow_polls_directly_without_url_fopen(): void
     {
         $this->mocks->handler->append(

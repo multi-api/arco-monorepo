@@ -153,14 +153,15 @@ final class LogsCommand extends ArcoCommand
             $follower = ($this->followerFactory)($aws, $config, $read['existing'], $notify);
             $live = $follower instanceof FallbackFollower && $follower->usesLiveTail($groups);
             $errors->writeln($this->t($live ? 'logs.following' : 'logs.following_polling', ['groups' => implode(', ', $groups)]));
-            // Events already printed from the history are not printed again.
-            $history = array_fill_keys(array_map(fn (LogEvent $event) => $event->id, $read['events']), true);
+            // Events already printed from the history are not printed again. By content, not eventId:
+            // Live Tail events have none, so the same event would get a different id from each source.
+            $history = array_fill_keys(array_map(fn (LogEvent $event) => $event->contentKey(), $read['events']), true);
             $follower->follow(
                 $groups,
                 $sinceMs,
                 $pattern,
                 static function (LogEvent $event) use ($history, $print): void {
-                    if (! isset($history[$event->id])) {
+                    if (! isset($history[$event->contentKey()])) {
                         $print($event);
                     }
                 },

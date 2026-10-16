@@ -325,8 +325,9 @@ rejected. `--since` defaults to `10m`. `--until` cannot be combined with `--foll
 `--follow` uses CloudWatch Live Tail (about one second of delay). If Live Tail is denied
 (`logs:StartLiveTail`) or unreachable, or PHP's `allow_url_fopen` is off, Arco says so and polls every
 2 seconds instead; CloudWatch Logs receives events 10-40 s after they happen, so expect that delay.
-Live Tail does not backfill: events written between the history read and the start of the live session
-can be missed. Ctrl+C ends `--follow` cleanly; a second Ctrl+C exits at once.
+Live Tail does not backfill, and the session needs a few seconds after it starts before new events
+stream: events written between the history read and that moment can be missed. An event that appears
+in both the history and Live Tail is printed once. Ctrl+C ends `--follow` cleanly; a second Ctrl+C exits at once.
 
 ## Using Arco in CI
 
