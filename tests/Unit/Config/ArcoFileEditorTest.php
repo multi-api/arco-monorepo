@@ -431,9 +431,82 @@ final class ArcoFileEditorTest extends TestCase
         self::assertSame($php, file_get_contents($path));
     }
 
+    private static function consoleFile(string $calls): string
+    {
+        return "<?php\nuse Multiapi\\Arco\\Config\\App;\nuse Multiapi\\Arco\\Config\\Environment;\n\n"
+            . "return App::make('shop')\n    ->region('us-east-1')\n"
+            . "    ->environment('production', fn (Environment \$env) => \$env\n        ->timeout(60)" . $calls . ");\n";
+    }
+
+    /** @return array<string, mixed> */
+    private static function productionSettings(string $path): array
+    {
+        /** @var array<string, array<string, mixed>> $environments */
+        $environments = (new ConfigLoader())->load($path)['environments'];
+        /** @var array<string, mixed> $settings */
+        $settings = $environments['production']['settings'];
+        return $settings;
+    }
+
+    public function test_writes_no_argument_call(): void
+    {
+        $path = $this->file(self::consoleFile(''));
+
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'console', true));
+        self::assertStringContainsString("->console()\n        ->timeout(60)", (string) file_get_contents($path));
+        self::assertTrue(self::productionSettings($path)['console']);
+    }
+
+    public function test_replaces_no_argument_call_with_false(): void
+    {
+        $path = $this->file(self::consoleFile("\n        ->console()"));
+
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'console', false));
+        self::assertStringContainsString('->console(false)', (string) file_get_contents($path));
+        self::assertStringNotContainsString('->console()', (string) file_get_contents($path));
+        self::assertFalse(self::productionSettings($path)['console']);
+    }
+
+    public function test_removes_boolean_call(): void
+    {
+        $path = $this->file(str_replace("->timeout(60)", "->console(false)\n        ->timeout(60)", self::consoleFile('')));
+
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'console', null));
+        self::assertSame(self::consoleFile(''), file_get_contents($path));
+    }
+
+    public function test_scheduler_value_replaced(): void
+    {
+        $path = $this->file(self::consoleFile("\n        ->scheduler(1)"));
+
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'scheduler', 5));
+        self::assertStringContainsString('->scheduler(5)', (string) file_get_contents($path));
+        self::assertSame(5, self::productionSettings($path)['scheduler']);
+    }
+
+    public function test_duplicate_console_calls_are_not_edited(): void
+    {
+        $path = $this->file(self::consoleFile("\n        ->console()\n        ->console()"));
+        $before = file_get_contents($path);
+
+        self::assertFalse(ArcoFileEditor::setSetting($path, 'production', 'console', false));
+        self::assertSame($before, file_get_contents($path));
+    }
+
+    public function test_non_literal_argument_is_not_edited(): void
+    {
+        $path = $this->file(self::consoleFile("\n        ->scheduler(\$every)"));
+        $before = file_get_contents($path);
+
+        self::assertFalse(ArcoFileEditor::setSetting($path, 'production', 'scheduler', 5));
+        self::assertSame($before, file_get_contents($path));
+    }
+
     public function test_renders_setting_lines(): void
     {
         self::assertSame('->concurrency(16)', ArcoFileEditor::settingLine('concurrency', 16));
         self::assertSame("->logLevel('debug')", ArcoFileEditor::settingLine('logLevel', 'debug'));
+        self::assertSame('->console()', ArcoFileEditor::settingLine('console', true));
+        self::assertSame('->console(false)', ArcoFileEditor::settingLine('console', false));
     }
 }
