@@ -17,6 +17,7 @@ return [
     'validation.deploy_command' => 'El comando de despliegue "{command}" no se puede separar en argumentos: {reason}',
     'validation.deploy_command_empty' => 'deployCommands()[{index}] está vacío.',
     'validation.deploy_command_artisan_prefix' => 'El comando de despliegue "{command}" empieza con {entry}: Arco ejecuta {entry} por ti, así que se ejecutaría "php {entry} {entry} ..." y fallaría. Quita el prefijo {entry}.',
+    'validation.deploy_command_no_effect' => 'El comando de despliegue "{command}" no hace nada en Lambda: los archivos que borra {name} están en el directorio del código, de solo lectura, así que termina sin error y no cambia nada. Quítalo; ejecuta cache:clear o view:clear directamente si los necesitas.',
     'validation.deploy_command_read_only' => 'El comando de despliegue "{command}" fallará: {name} escribe en el directorio del código, que en Lambda es de solo lectura (/var/task), y el primer comando que falla detiene el despliegue. Quítalo; el build ya ejecuta event:cache.',
     'validation.deploy_command_needs_force' => 'El comando de despliegue "{command}" detendrá el despliegue: en producción Laravel pide confirmar {name} y nadie puede responder. Agrega --force.',
     'validation.deploy_command_destroys_data' => 'El comando de despliegue "{command}" borra todas las tablas en cada despliegue: {name} destruye datos y casi nunca corresponde en deployCommands(). Usa "arco command" para ejecutarlo una vez.',

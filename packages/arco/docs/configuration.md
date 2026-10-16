@@ -80,10 +80,13 @@ entries that cannot work on Lambda:
 
 - Entries starting with `artisan` or `php artisan`: Arco runs artisan for you, so `artisan migrate` would
   run `php artisan artisan migrate` and fail. Write `migrate --force`.
-
-- Commands that write into the code directory, which is read-only on Lambda (`/var/task`):
-  `config:cache`, `route:cache`, `view:cache`, `event:cache`, `optimize`, `optimize:clear`,
-  `config:clear`, `route:clear`, `view:clear`, `storage:link`. The build already runs `event:cache`.
+- Commands that write into the code directory, which is read-only on Lambda (`/var/task`), and fail:
+  `config:cache`, `route:cache`, `event:cache`, `optimize`, `storage:link`. The build already runs
+  `event:cache`.
+- Commands that do nothing on Lambda: `config:clear`, `route:clear`, `event:clear`, `optimize:clear`.
+  The files they delete are in the read-only code directory, so they exit without error and change
+  nothing (`optimize:clear` still runs `cache:clear` and `view:clear`; run those directly if you need them).
+  `view:cache` and `view:clear` work: compiled views live under `LARAVEL_STORAGE_PATH` (`/tmp`).
 - Commands Laravel asks to confirm in production without `--force` (nobody can answer):
   `migrate`, `migrate:rollback`, `migrate:reset`, `migrate:fresh`, `migrate:refresh`, `db:seed`,
   `db:wipe`, `key:generate`, `queue:clear`. Write `migrate --force`.

@@ -269,9 +269,10 @@ or `arco deploy --migrate` for one deploy (Laravel only; `--no-deploy-commands` 
 flags cannot be combined). `arco init` proposes `migrate --force` for Laravel apps with a server database.
 
 Keep `--force`: in production Laravel asks to confirm `migrate`, nobody can answer and the deploy stops.
-Commands that write into the code directory (`config:cache`, `route:cache`, `view:cache`, `optimize`,
-`storage:link`, their `:clear` counterparts...) fail on Lambda, where `/var/task` is read-only; the build
-already runs `event:cache`. `arco deploy` warns about both (see
+Write `migrate`, not `artisan migrate`: Arco runs artisan for you. Commands that write into the code
+directory (`config:cache`, `route:cache`, `event:cache`, `optimize`, `storage:link`) fail on Lambda, where
+`/var/task` is read-only; the build already runs `event:cache`. `config:clear`, `route:clear`,
+`event:clear` and `optimize:clear` do nothing there. `arco deploy` warns about all of these (see
 [Deploy commands](configuration.md#deploy-commands)).
 
 Deploy commands run on the console version published by this deploy, after the new code is uploaded and

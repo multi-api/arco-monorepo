@@ -8,12 +8,13 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 - **Fixed:** `arco tinker` presents Eloquent models, collections, `Stringable`, `HtmlString` and the
   application like local `php artisan tinker` (attributes, not internals): the casters of
   `laravel/tinker` are registered when it is installed, plus the app's `tinker.casters` config.
-- **Added:** config warnings for `deployCommands()` entries that cannot work on Lambda: commands that
-  write into the read-only code directory (`config:cache`, `route:cache`, `view:cache`, `event:cache`,
-  `optimize`, `optimize:clear`, `config:clear`, `route:clear`, `view:clear`, `storage:link`), commands
-  Laravel asks to confirm in production without `--force` (`migrate`, `migrate:rollback`, `db:seed`...),
-  and commands that drop every table (`migrate:fresh`, `migrate:refresh`, `migrate:reset`, `db:wipe`).
-  `arco deploy` and `arco init` show them.
+- **Added:** config warnings for Laravel `deployCommands()` entries that cannot work on Lambda: an
+  `artisan` or `php artisan` prefix (Arco runs artisan itself), commands that fail because they write into
+  the read-only code directory (`config:cache`, `route:cache`, `event:cache`, `optimize`, `storage:link`),
+  commands that do nothing there (`config:clear`, `route:clear`, `event:clear`, `optimize:clear`),
+  commands Laravel asks to confirm in production without `--force` (`migrate`, `migrate:rollback`,
+  `db:seed`...), and commands that drop every table (`migrate:fresh`, `migrate:refresh`,
+  `migrate:reset`, `db:wipe`). `arco deploy` and `arco init` show them.
 - **Changed:** the console function's log masks the values of secret-looking options (`--password=...`,
   `--api-key ...`, `--token`...) as `***` in the command audit line and in `command_failed`.
 - **Changed:** on an environment with an `account()` lock, `arco tinker`, `arco command` and the other

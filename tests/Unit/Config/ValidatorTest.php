@@ -344,13 +344,22 @@ final class ValidatorTest extends TestCase
         return $result->warnings;
     }
 
+    /** Checked against Laravel's source: these write into bootstrap/cache or public/ and throw. */
     public function test_deploy_commands_that_write_into_the_read_only_code_directory_warn(): void
     {
-        $commands = ['config:cache', 'route:cache', 'view:cache', 'event:cache', 'optimize', 'optimize:clear', 'config:clear', 'route:clear', 'view:clear', 'storage:link'];
-        $warnings = $this->deployCommandWarnings($commands);
+        $warnings = $this->deployCommandWarnings(['config:cache', 'route:cache', 'event:cache', 'optimize', 'storage:link']);
 
-        self::assertSame(array_fill(0, 10, 'validation.deploy_command_read_only'), array_column($warnings, 'key'));
+        self::assertSame(array_fill(0, 5, 'validation.deploy_command_read_only'), array_column($warnings, 'key'));
         self::assertSame(['command' => 'config:cache', 'name' => 'config:cache'], $warnings[0]['params']);
+    }
+
+    /** Their deletes in the read-only code directory fail silently: they exit 0 and change nothing. */
+    public function test_clear_commands_for_the_code_directory_warn_that_they_do_nothing(): void
+    {
+        $warnings = $this->deployCommandWarnings(['config:clear', 'route:clear', 'event:clear', 'optimize:clear']);
+
+        self::assertSame(array_fill(0, 4, 'validation.deploy_command_no_effect'), array_column($warnings, 'key'));
+        self::assertSame(['command' => 'event:clear', 'name' => 'event:clear'], $warnings[2]['params']);
     }
 
     /**
@@ -379,7 +388,8 @@ final class ValidatorTest extends TestCase
 
     public function test_harmless_deploy_commands_do_not_warn(): void
     {
-        self::assertSame([], $this->deployCommandWarnings(['migrate --force', 'cache:clear', 'queue:restart', 'db:seed --class=Roles --force', 'migrate:status', 'about --only=environment']));
+        // view:cache and view:clear work: compiled views live under LARAVEL_STORAGE_PATH (/tmp).
+        self::assertSame([], $this->deployCommandWarnings(['view:cache', 'view:clear', 'migrate --force', 'cache:clear', 'queue:restart', 'db:seed --class=Roles --force', 'migrate:status', 'about --only=environment']));
     }
 
     public function test_deploy_commands_that_ask_for_confirmation_in_production_warn_without_force(): void
@@ -407,7 +417,7 @@ final class ValidatorTest extends TestCase
     {
         foreach (['en', 'es'] as $locale) {
             $messages = require __DIR__ . "/../../../packages/arco/lang/$locale.php";
-            foreach (['validation.deploy_command_read_only', 'validation.deploy_command_needs_force', 'validation.deploy_command_destroys_data', 'validation.deploy_command_artisan_prefix'] as $key) {
+            foreach (['validation.deploy_command_read_only', 'validation.deploy_command_needs_force', 'validation.deploy_command_destroys_data', 'validation.deploy_command_artisan_prefix', 'validation.deploy_command_no_effect'] as $key) {
                 self::assertArrayHasKey($key, $messages, "$locale: $key");
             }
         }

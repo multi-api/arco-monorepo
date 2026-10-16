@@ -28,11 +28,16 @@ final class Validator
     private const HOSTNAME = '/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/';
     private const CERTIFICATE = '/^arn:aws[a-z-]*:acm:us-east-1:\d{12}:certificate\/[A-Za-z0-9-]+$/';
     public const MAX_DOMAINS = 10;
-    /** Artisan commands that write into the code directory, which is read-only (/var/task) on Lambda. */
-    private const WRITES_CODE_DIRECTORY = [
-        'config:cache', 'config:clear', 'route:cache', 'route:clear', 'view:cache', 'view:clear',
-        'event:cache', 'event:clear', 'optimize', 'optimize:clear', 'storage:link',
-    ];
+    /**
+     * Artisan commands that write into the code directory (bootstrap/cache, public/storage), which is
+     * read-only on Lambda (/var/task): they throw. view:cache works (views compile under /tmp).
+     */
+    private const WRITES_CODE_DIRECTORY = ['config:cache', 'route:cache', 'event:cache', 'optimize', 'storage:link'];
+    /**
+     * Artisan commands whose deletes in the read-only code directory fail silently: they exit 0 and
+     * change nothing (optimize:clear's cache:clear and view:clear steps are the exception).
+     */
+    private const NO_EFFECT = ['config:clear', 'route:clear', 'event:clear', 'optimize:clear'];
     /** Artisan commands that ask for confirmation in production (ConfirmableTrait) unless given --force. */
     private const CONFIRMS_IN_PRODUCTION = [
         'migrate', 'migrate:fresh', 'migrate:refresh', 'migrate:reset', 'migrate:rollback',
@@ -221,6 +226,9 @@ final class Validator
         $params = ['command' => $command, 'name' => $name];
         if (in_array($name, self::WRITES_CODE_DIRECTORY, true)) {
             $result->warning('validation.deploy_command_read_only', $params);
+        }
+        if (in_array($name, self::NO_EFFECT, true)) {
+            $result->warning('validation.deploy_command_no_effect', $params);
         }
         if (in_array($name, self::DESTROYS_DATA, true)) {
             $result->warning('validation.deploy_command_destroys_data', $params);
