@@ -7,6 +7,7 @@ use Aws\EventBridge\Exception\EventBridgeException;
 use Aws\Iam\Exception\IamException;
 use Aws\Lambda\Exception\LambdaException;
 use Aws\LambdaWeb\Exception\LambdaWebException;
+use Aws\ResourceGroupsTaggingAPI\Exception\ResourceGroupsTaggingAPIException;
 use Aws\Result;
 use Aws\S3\Exception\S3Exception;
 use Multiapi\Arco\Config\App;
@@ -94,6 +95,8 @@ final class AwsDeployerTest extends TestCase
             new Result(['Versions' => [['Version' => '$LATEST'], ['Version' => '1']]]),          // ListVersionsByFunction
             new Result(['Contents' => []]),                                                      // ListObjectsV2 (web zips)
             new Result(['Contents' => []]),                                                      // ListObjectsV2 (console zips)
+            new Result(['ResourceTagMappingList' => []]),                                        // GetResources (runtime binaries)
+            new Result(['Contents' => []]),                                                      // ListObjectsV2 (runtime binaries)
         );
         $steps = [];
         $record = function (string $key) use (&$steps): void { $steps[] = $key; };
@@ -115,8 +118,9 @@ final class AwsDeployerTest extends TestCase
             'GetAlias', 'GetFunctionConfiguration', 'CreateFunction', 'GetFunctionConfiguration', 'PublishVersion',
             'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
             'UpdateAlias', 'CreateAlias', 'PutFunctionEventInvokeConfig',
-            'GetAlias', 'ListVersionsByFunction', 'ListObjectsV2', 'ListObjectsV2',
+            'GetAlias', 'ListVersionsByFunction', 'ListObjectsV2', 'ListObjectsV2', 'GetResources', 'ListObjectsV2',
         ], $mocks->calls);
+        self::assertSame('runtime/', $mocks->params[35]['Prefix']);
         $consoleKey = 'shop/production/console-' . str_repeat('c', 64) . '.zip';
         self::assertSame($consoleKey, $mocks->params[15]['Key']);
         self::assertSame('runtime/1.13.0-r1/frankenphp', $mocks->params[17]['Key']);
@@ -248,6 +252,7 @@ final class AwsDeployerTest extends TestCase
             new Result([]), new Result([]), new Result([]), new Result([]), new Result([]), new Result([]), // DeleteFunction 1, 2, 4, 6, 7, 8
             new Result(['Contents' => []]),
             new Result(['Contents' => []]),
+            new Result(['ResourceTagMappingList' => []]), new Result(['Contents' => []]),
         );
         $prepared = new PreparedDeploy('rev-2', 'rev-1', 'b', 'shop/production/a.zip', '11', '3', 'shop/production/console-c.zip');
         $steps = [];
@@ -272,19 +277,25 @@ final class AwsDeployerTest extends TestCase
     public static function pruneFailures(): iterable
     {
         $denied = fn (string $operation) => AwsMocks::error(LambdaException::class, $operation, 'AccessDeniedException', 403, "not authorized to perform: lambda:$operation");
+        $runtime = [new Result(['ResourceTagMappingList' => []]), new Result(['Contents' => []])];
         $old = array_map(fn (int $i) => ['Key' => "shop/production/$i.zip", 'LastModified' => new \DateTimeImmutable("2026-01-01 +$i hours")], range(1, 21));
         yield 'ListVersionsByFunction' => [[
             new Result(['FunctionVersion' => '2']), $denied('ListVersionsByFunction'),
-            new Result(['Contents' => []]), new Result(['Contents' => []]),
+            new Result(['Contents' => []]), new Result(['Contents' => []]), ...$runtime,
         ], ['deploy.prune_versions_failed']];
         yield 'DeleteFunction' => [[
             new Result(['FunctionVersion' => '7']), new Result(['Versions' => array_map(fn (int $v) => ['Version' => (string) $v], range(1, 7))]), $denied('DeleteFunction'),
-            new Result(['Contents' => []]), new Result(['Contents' => []]),
+            new Result(['Contents' => []]), new Result(['Contents' => []]), ...$runtime,
         ], ['deploy.prune_versions_failed']];
         yield 'S3 DeleteObjects' => [[
             new Result(['FunctionVersion' => '2']), new Result(['Versions' => [['Version' => '1'], ['Version' => '2']]]),
-            new Result(['Contents' => $old]), AwsMocks::error(S3Exception::class, 'DeleteObjects', 'AccessDenied', 403),
+            new Result(['Contents' => $old]), AwsMocks::error(S3Exception::class, 'DeleteObjects', 'AccessDenied', 403), ...$runtime,
         ], ['deploy.prune_packages_failed']];
+        yield 'tagging GetResources' => [[
+            new Result(['FunctionVersion' => '2']), new Result(['Versions' => [['Version' => '1'], ['Version' => '2']]]),
+            new Result(['Contents' => []]), new Result(['Contents' => []]),
+            AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'AccessDeniedException', 400, 'not authorized to perform: tag:GetResources'),
+        ], ['deploy.prune_runtime_failed']];
     }
 
     /**
@@ -325,6 +336,8 @@ final class AwsDeployerTest extends TestCase
             new Result([]),
             new Result(['state' => 'Active', 'updateStatus' => 'Successful', 'domainName' => 'abc.on.aws', 'revisionWeights' => [['revisionId' => 'rev-2', 'weight' => 100]]]),
             new Result(['Contents' => []]),                   // ListObjectsV2 (web zips only)
+            new Result(['ResourceTagMappingList' => []]),     // GetResources (runtime binaries)
+            new Result(['Contents' => []]),                   // ListObjectsV2 (runtime binaries)
         );
         $steps = [];
         $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());

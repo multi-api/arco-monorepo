@@ -14,6 +14,7 @@ use GuzzleHttp\Promise\Create;
 use Aws\Iam\IamClient;
 use Aws\Lambda\LambdaClient;
 use Aws\LambdaWeb\LambdaWebClient;
+use Aws\ResourceGroupsTaggingAPI\ResourceGroupsTaggingAPIClient;
 use Aws\Route53\Route53Client;
 use Aws\S3\S3Client;
 use Aws\Sdk;
@@ -209,6 +210,7 @@ final class AwsClients
     public function acm(): AcmClient { return $this->sdk->createAcm(['region' => 'us-east-1']); }
     public function cloudFormation(): CloudFormationClient { return $this->sdk->createCloudFormation(); }
     public function route53(): Route53Client { return $this->sdk->createRoute53(); }
+    public function taggingApi(): ResourceGroupsTaggingAPIClient { return $this->sdk->createResourceGroupsTaggingAPI(); }
 
     /**
      * The account of these credentials, read once per process. IAM Identity Center (SSO) and AssumeRole

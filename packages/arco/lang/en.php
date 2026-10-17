@@ -131,6 +131,7 @@ return [
     'deploy.console_retries_not_disabled' => 'The live alias of {function} now points to version {version}, so arco command and arco tinker run this deploy, but Lambda\'s retries of asynchronous invocations could not be turned off ({error}): a failing arco command --async may run up to 3 times. Allow lambda:PutFunctionEventInvokeConfig in the profile and deploy again.',
     'deploy.prune_versions_failed' => 'Old versions of console function {function} were not deleted ({error}). The deploy is fine; check that the profile allows lambda:ListVersionsByFunction and lambda:DeleteFunction.',
     'deploy.prune_packages_failed' => 'Old packages in {bucket} were not deleted ({error}). The deploy is fine; check that the profile allows s3:ListBucket and s3:DeleteObject.',
+    'deploy.prune_runtime_failed' => 'Unused runtime binaries in {bucket} were not deleted ({error}). The deploy is fine; check that the profile allows tag:GetResources, lambda:ListVersionsByFunction, s3:ListBucket and s3:DeleteObject.',
     'deploy.bucket_forbidden' => 'Bucket {bucket} exists but belongs to another account or denies access.',
     'deploy.read_package_failed' => 'Cannot read package {path}.',
     'deploy.revision_failed' => 'Revision {revision} failed: {reason}',

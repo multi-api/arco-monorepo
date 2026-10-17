@@ -131,6 +131,7 @@ return [
     'deploy.console_retries_not_disabled' => 'El alias live de {function} ahora apunta a la versión {version}, así que arco command y arco tinker ejecutan este despliegue, pero no se pudieron desactivar los reintentos de Lambda en invocaciones asíncronas ({error}): un arco command --async que falle puede ejecutarse hasta 3 veces. Permite lambda:PutFunctionEventInvokeConfig en el perfil y vuelve a desplegar.',
     'deploy.prune_versions_failed' => 'No se eliminaron versiones antiguas de la función de consola {function} ({error}). El despliegue está bien; revisa que el perfil permita lambda:ListVersionsByFunction y lambda:DeleteFunction.',
     'deploy.prune_packages_failed' => 'No se eliminaron paquetes antiguos de {bucket} ({error}). El despliegue está bien; revisa que el perfil permita s3:ListBucket y s3:DeleteObject.',
+    'deploy.prune_runtime_failed' => 'No se eliminaron binarios de runtime sin uso de {bucket} ({error}). El despliegue está bien; revisa que el perfil permita tag:GetResources, lambda:ListVersionsByFunction, s3:ListBucket y s3:DeleteObject.',
     'deploy.bucket_forbidden' => 'El bucket {bucket} existe pero pertenece a otra cuenta o niega el acceso.',
     'deploy.read_package_failed' => 'No se puede leer el paquete {path}.',
     'deploy.revision_failed' => 'La revisión {revision} falló: {reason}',

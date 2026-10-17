@@ -167,6 +167,15 @@ final class AwsDeployer implements Deployer
         } catch (AwsException $e) {
             $step('deploy.prune_packages_failed', ['bucket' => $prepared->bucket, 'error' => self::awsError($e)]);
         }
+        try {
+            // Shared by every Arco app of the account and region: a binary goes only when no published
+            // version of any Arco function references it (each can be rolled back to).
+            $aws = $this->aws;
+            (new RuntimeBinaries($aws->taggingApi(), $aws->lambda(), $aws->s3()))
+                ->prune($prepared->bucket, (new \DateTimeImmutable())->setTimestamp((int) $this->sleeper->now()));
+        } catch (\Exception $e) {
+            $step('deploy.prune_runtime_failed', ['bucket' => $prepared->bucket, 'error' => $e instanceof AwsException ? self::awsError($e) : $e->getMessage()]);
+        }
     }
 
     private static function awsError(AwsException $e): string
