@@ -53,10 +53,36 @@ final class DeployPipeline
     {
         return [
             ...$preset->defaultVariables(),
+            ...self::queueVariables($config),
             ...$config->variables,
             'ARCO' => '1',
             'ARCO_APP' => $config->app,
             'ARCO_ENV' => $config->environment,
+        ];
+    }
+
+    /**
+     * The variables queues add (the user's own win over them): the sqs connection, the queue URL prefix, the default queue and every queue's URL.
+     *
+     * @return array<string, string>
+     */
+    public static function queueVariables(AppConfig $config): array
+    {
+        if ($config->queues === []) {
+            return [];
+        }
+        $default = $config->defaultQueue();
+        $queues = $config->queues;
+        usort($queues, fn ($a, $b) => ($b === $default) <=> ($a === $default));
+        $urls = [];
+        foreach ($queues as $queue) {
+            $urls[$queue->name] = $queue->url($config);
+        }
+        return [
+            'QUEUE_CONNECTION' => 'sqs',
+            'SQS_PREFIX' => "https://sqs.$config->region.amazonaws.com/$config->account",
+            ...($default === null ? [] : ['SQS_QUEUE' => $default->url($config)]),
+            'ARCO_QUEUES' => json_encode($urls, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
         ];
     }
 
@@ -181,6 +207,11 @@ final class DeployPipeline
     private function deployBuilt(AppConfig $config, FrameworkPreset $preset, Package $package, Deployer $deployer, Verifier $verifier, callable $onStep, ?CommandPlan $plan, bool $removeConsole): DeployOutcome
     {
         $variables = self::variables($config, $preset);
+        foreach (array_keys(self::queueVariables($config)) as $key) {
+            if ($key !== 'ARCO_QUEUES' && array_key_exists($key, $config->variables)) {
+                $onStep('deploy.queue_variable_overridden', ['key' => $key]);
+            }
+        }
         // The console zip and the binary are derived from the web zip in a scratch directory.
         $work = sys_get_temp_dir() . '/arco-console-' . bin2hex(random_bytes(4));
         try {

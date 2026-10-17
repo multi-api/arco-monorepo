@@ -125,6 +125,7 @@ return [
     'deploy.step_resources' => 'Resources stack {stack} (queues)',
     'deploy.queue_created' => 'Queue {queue}: created {name}',
     'deploy.queue_updated' => 'Queue {queue}: {name} up to date',
+    'deploy.queue_variable_overridden' => 'The variable {key} in arco.php overrides the value Arco sets for the queues.',
     'deploy.queue_kept' => 'The queue {queue} is no longer in arco.php. Arco kept it in AWS with its messages (about {messages}): {url}. Move or read any messages you need, then delete it in the SQS console when it is no longer needed.',
     'deploy.queue_retained' => 'Queue "{queue}" cannot be created: an SQS queue with its name already exists in AWS (kept when the queue was removed from arco.php, or created outside Arco). Nothing was changed. To use that queue and its messages, reference it in arco.php: {existing}. Otherwise delete that SQS queue or choose another queue name.',
     'deploy.queue_replaced' => 'Queue "{queue}" cannot change from {from} to {to}: a queue Arco created cannot switch FIFO on or off in place, and CloudFormation would replace it. Nothing was changed. Undo the change in arco.php. To move to a new kind of queue, remove this one ("arco queue:remove {queue}"; the SQS queue is kept with its messages) and add a new queue with another name, or attach the kept queue with existing:.',

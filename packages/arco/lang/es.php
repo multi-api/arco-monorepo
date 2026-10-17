@@ -125,6 +125,7 @@ return [
     'deploy.step_resources' => 'Stack de recursos {stack} (colas)',
     'deploy.queue_created' => 'Cola {queue}: creada {name}',
     'deploy.queue_updated' => 'Cola {queue}: {name} al día',
+    'deploy.queue_variable_overridden' => 'La variable {key} de arco.php reemplaza el valor que Arco define para las colas.',
     'deploy.queue_kept' => 'La cola {queue} ya no está en arco.php. Arco la conservó en AWS con sus mensajes (unos {messages}): {url}. Mueve o lee los mensajes que necesites y elimínala en la consola de SQS cuando ya no la necesites.',
     'deploy.queue_retained' => 'No se puede crear la cola "{queue}": ya existe en AWS una cola SQS con su nombre (conservada al quitar la cola de arco.php, o creada fuera de Arco). No se cambió nada. Para usar esa cola y sus mensajes, refiérela en arco.php: {existing}. Si no, elimina esa cola SQS o elige otro nombre de cola.',
     'deploy.queue_replaced' => 'La cola "{queue}" no puede pasar de {from} a {to}: una cola creada por Arco no puede activar ni desactivar FIFO sin reemplazarse, y CloudFormation la reemplazaría. No se cambió nada. Deshaz el cambio en arco.php. Para pasar a otro tipo de cola, quita esta ("arco queue:remove {queue}"; la cola SQS se conserva con sus mensajes) y añade una cola nueva con otro nombre, o conecta la cola conservada con existing:.',

@@ -88,6 +88,58 @@ final class DeployPipelineTest extends TestCase
         self::assertSame([], glob(sys_get_temp_dir() . '/arco-build-*/package.zip') ?: [], 'staging dirs are removed');
     }
 
+    private function sqsConfig(array $variables = []): AppConfig
+    {
+        return ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')
+                ->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))
+                ->variables($variables)
+                ->queue('jobs')->queue('emails', default: true)
+                ->environment('production', fn (Environment $e) => $e->account('123456789012'))
+                ->toArray(),
+            'production',
+        );
+    }
+
+    public function test_queues_add_their_variables_before_the_users(): void
+    {
+        $variables = DeployPipeline::variables($this->sqsConfig(), new PlainPhpPreset());
+
+        self::assertSame('sqs', $variables['QUEUE_CONNECTION']);
+        self::assertSame('https://sqs.us-east-1.amazonaws.com/123456789012', $variables['SQS_PREFIX']);
+        self::assertSame('https://sqs.us-east-1.amazonaws.com/123456789012/shop-production-emails', $variables['SQS_QUEUE']);
+        self::assertSame(
+            '{"emails":"https://sqs.us-east-1.amazonaws.com/123456789012/shop-production-emails","jobs":"https://sqs.us-east-1.amazonaws.com/123456789012/shop-production-jobs"}',
+            $variables['ARCO_QUEUES'],
+        );
+    }
+
+    public function test_a_user_variable_wins_and_the_override_is_noted(): void
+    {
+        $config = $this->sqsConfig(['QUEUE_CONNECTION' => 'database', 'SQS_QUEUE' => 'mine']);
+        $deployer = new FakeDeployer('rev-1');
+        $steps = [];
+
+        $this->pipeline()->deploy($config, new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame('database', $deployer->variables['QUEUE_CONNECTION']);
+        self::assertSame('mine', $deployer->variables['SQS_QUEUE']);
+        self::assertSame('https://sqs.us-east-1.amazonaws.com/123456789012', $deployer->variables['SQS_PREFIX']);
+        self::assertSame(
+            [['deploy.queue_variable_overridden', ['key' => 'QUEUE_CONNECTION']], ['deploy.queue_variable_overridden', ['key' => 'SQS_QUEUE']]],
+            array_values(array_filter($steps, fn (array $step) => $step[0] === 'deploy.queue_variable_overridden')),
+        );
+    }
+
+    public function test_without_queues_no_queue_variables_are_set(): void
+    {
+        $variables = DeployPipeline::variables($this->config(), new PlainPhpPreset());
+
+        foreach (['QUEUE_CONNECTION', 'SQS_PREFIX', 'SQS_QUEUE', 'ARCO_QUEUES'] as $key) {
+            self::assertArrayNotHasKey($key, $variables);
+        }
+    }
+
     public function test_failed_verification_rolls_back_to_previous_revision(): void
     {
         $deployer = new FakeDeployer('rev-1');

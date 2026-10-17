@@ -54,6 +54,43 @@ final readonly class AppConfig
     ) {
     }
 
+    /** The same configuration with the account the credentials resolved to (arco.php did not lock one). */
+    public function withAccount(string $account): self
+    {
+        return new self(
+            app: $this->app,
+            environment: $this->environment,
+            region: $this->region,
+            concurrency: $this->concurrency,
+            timeout: $this->timeout,
+            maxInstances: $this->maxInstances,
+            rateLimit: $this->rateLimit,
+            auth: $this->auth,
+            logLevel: $this->logLevel,
+            role: $this->role,
+            kmsKey: $this->kmsKey,
+            profile: $this->profile,
+            account: $account,
+            runtime: $this->runtime,
+            variables: $this->variables,
+            exclude: $this->exclude,
+            include: $this->include,
+            sources: $this->sources,
+            permissions: $this->permissions,
+            domains: $this->domains,
+            dnsProfile: $this->dnsProfile,
+            dnsManual: $this->dnsManual,
+            certificate: $this->certificate,
+            deployCommands: $this->deployCommands,
+            consoleTimeout: $this->consoleTimeout,
+            protected: $this->protected,
+            console: $this->console,
+            scheduler: $this->scheduler,
+            logRetention: $this->logRetention,
+            queues: $this->queues,
+        );
+    }
+
     public function functionName(): string
     {
         return $this->app . '-' . $this->environment;

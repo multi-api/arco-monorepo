@@ -22,6 +22,33 @@ final class PolicyBuilderTest extends TestCase
         ], $doc['Statement'][0]['Resource']);
     }
 
+    public function test_queues_and_workers_extend_the_policy(): void
+    {
+        $arns = ['arn:aws:sqs:us-east-1:111111111111:shop-production-jobs', 'arn:aws:sqs:eu-west-1:222222222222:legacy'];
+        $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], null, $arns, ['shop-production-queue-jobs']);
+
+        $bySid = array_column($doc['Statement'], null, 'Sid');
+        self::assertSame(['sqs:SendMessage', 'sqs:ReceiveMessage', 'sqs:DeleteMessage', 'sqs:ChangeMessageVisibility', 'sqs:GetQueueAttributes', 'sqs:GetQueueUrl'], $bySid['ArcoQueues']['Action']);
+        self::assertSame($arns, $bySid['ArcoQueues']['Resource']);
+        self::assertSame('arn:aws:logs:us-east-1:111111111111:log-group:/aws/lambda/shop-production-queue-jobs:*', $bySid['ArcoLogs']['Resource'][3]);
+    }
+
+    public function test_without_queues_there_is_no_queue_statement(): void
+    {
+        $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', []);
+
+        self::assertArrayNotHasKey('ArcoQueues', array_column($doc['Statement'], null, 'Sid'));
+        self::assertCount(3, $doc['Statement'][0]['Resource']);
+    }
+
+    public function test_the_queue_statement_counts_toward_the_size_limit(): void
+    {
+        $this->expectException(DeployException::class);
+        $arns = array_map(fn (int $i) => "arn:aws:sqs:us-east-1:111111111111:shop-production-queue-$i", range(1, 400));
+
+        PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], null, $arns);
+    }
+
     public function test_the_console_may_read_runtime_binaries_from_the_code_bucket_only(): void
     {
         $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], 'arco-111111111111-us-east-1');

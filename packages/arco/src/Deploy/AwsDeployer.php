@@ -7,6 +7,7 @@ use Multiapi\Arco\Arco;
 use Multiapi\Arco\Aws\AwsClients;
 use Aws\Exception\AwsException;
 use Multiapi\Arco\Config\AppConfig;
+use Multiapi\Arco\Config\QueueConfig;
 use Multiapi\Arco\Deploy\Domains\Certificates;
 use Multiapi\Arco\Deploy\Domains\CustomDomains;
 use Multiapi\Arco\Deploy\Domains\DomainStack;
@@ -61,7 +62,9 @@ final class AwsDeployer implements Deployer
             // runtime/* stays readable even when this console carries bin/php: the role is shared by every
             // console version, and an older download-based one can still be live (a failed verification,
             // a console skipped for size, arco rollback). Dropping it waits for the storage clean-up.
-            $policy = PolicyBuilder::document($region, $account, $function, SecretResolver::references($variables), $config->permissions, $bucket);
+            $policy = PolicyBuilder::document($region, $account, $function, SecretResolver::references($variables), $config->permissions, $bucket,
+                array_map(fn (QueueConfig $queue) => $queue->arn($config), $config->queues),
+                array_map(fn (QueueConfig $queue) => $config->workerFunctionName($queue->name), $config->queues));
             ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags);
         }
 
