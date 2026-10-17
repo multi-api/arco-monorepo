@@ -1005,4 +1005,21 @@ final class DeployPipelineTest extends TestCase
 
         self::assertSame(['resources', 'prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
     }
+
+    public function test_only_existing_queues_and_no_stack_need_no_resources_deploy(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $config = ConfigResolver::resolve(
+            App::make('shop')->console(true)->region('us-east-1')
+                ->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))
+                ->queue('legacy', existing: 'legacy', dlq: false)
+                ->environment('production')
+                ->toArray(),
+            'production',
+        );
+
+        $this->pipeline()->deploy($config, new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
+    }
 }

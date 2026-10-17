@@ -498,6 +498,14 @@ final class ValidatorTest extends TestCase
         self::assertContains('validation.queue_default_twice', $this->queueErrors(App::make('shop')->queue('a', default: true)->queue('b', default: true)));
     }
 
+    public function test_a_queue_named_like_another_queues_dlq(): void
+    {
+        self::assertContains('validation.queue_name_clash', $this->queueErrors(App::make('shop')->queue('emails')->queue('emails-dlq')));
+        self::assertContains('validation.queue_name_clash', $this->queueErrors(App::make('shop')->queue('emails-dlq', fifo: true)->queue('emails', fifo: true)));
+        self::assertNotContains('validation.queue_name_clash', $this->queueErrors(App::make('shop')->queue('emails', dlq: false)->queue('emails-dlq')));
+        self::assertNotContains('validation.queue_name_clash', $this->queueErrors(App::make('shop')->queue('emails')->queue('emails-dlq', fifo: true)));
+    }
+
     public function test_existing_queue_reference(): void
     {
         self::assertContains('validation.queue_existing', $this->queueErrors(App::make('shop')->queue('a', existing: 'not a queue!')));

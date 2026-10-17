@@ -382,6 +382,21 @@ final class AwsDeployer implements Deployer
         $owned = $stack === null ? [] : $this->stackQueues($name);
         $queues = new Queues($this->aws->sqs(), $this->aws->lambda());
 
+        // A new QueueName (fifo switched) would make CloudFormation replace the queue: the old one is
+        // retained with its messages and the new one may collide with it. Stop before any change.
+        foreach ($created as $queue) {
+            $names = [ResourcesStack::logicalId($queue->name) => $queue->physicalName($config)];
+            $dlq = $queue->dlqName($config);
+            if ($dlq !== null) {
+                $names[ResourcesStack::dlqLogicalId($queue->name)] = $dlq;
+            }
+            foreach ($names as $id => $to) {
+                if (isset($owned[$id]) && self::queueName($owned[$id]) !== $to) {
+                    throw DeployException::make('deploy.queue_replaced', ['queue' => $queue->name, 'from' => self::queueName($owned[$id]), 'to' => $to]);
+                }
+            }
+        }
+
         // A queue removed earlier is retained under its name: CloudFormation would fail creating it
         // again, so the deploy stops here, before any change, and offers to reference it instead.
         foreach ($created as $queue) {

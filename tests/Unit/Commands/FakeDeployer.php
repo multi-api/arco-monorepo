@@ -149,8 +149,9 @@ final class FakeDeployer implements Deployer
     }
     public function deployResources(AppConfig $config, \Closure $onStep): void
     {
-        // Like AwsDeployer: nothing happens without queues or a stack left from earlier ones.
-        if ($config->queues === [] && ! $this->resourcesStack) {
+        // Like AwsDeployer: nothing happens without created queues or a stack left from earlier ones.
+        $created = array_filter($config->queues, fn ($queue) => $queue->existing === null);
+        if ($created === [] && ! $this->resourcesStack) {
             return;
         }
         $this->calls[] = 'resources';

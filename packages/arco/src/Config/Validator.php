@@ -306,6 +306,20 @@ final class Validator
         if ($defaults > 1) {
             $result->error('validation.queue_default_twice');
         }
+        // A created queue cannot take the name of another queue's dead-letter queue: one SQS name, two resources.
+        $dlqs = [];
+        foreach ($config->queues as $queue) {
+            $dlq = $queue->dlqName($config);
+            if ($dlq !== null) {
+                $dlqs[$dlq] = $queue->name;
+            }
+        }
+        foreach ($config->queues as $queue) {
+            $owner = $queue->existing === null ? ($dlqs[$queue->physicalName($config)] ?? null) : null;
+            if ($owner !== null) {
+                $result->error('validation.queue_name_clash', ['queue' => $queue->name, 'other' => $owner, 'name' => $queue->physicalName($config)]);
+            }
+        }
     }
 
     private static function validateDomains(AppConfig $config, ValidationResult $result): void

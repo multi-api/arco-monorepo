@@ -970,4 +970,52 @@ final class AwsDeployerTest extends TestCase
         }
         self::assertSame(['DescribeStacks'], $mocks->calls);
     }
+
+    public function test_deploy_resources_stops_before_any_change_when_a_queue_would_be_replaced(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->queue('emails', fifo: true)->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::stackResources(['QueueEmails' => 'shop-production-emails', 'QueueEmailsDlq' => 'shop-production-emails-dlq']),
+        );
+
+        try {
+            $this->deployResources($mocks, $config);
+            self::fail('expected deploy.queue_replaced');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.queue_replaced', $e->key);
+            self::assertSame(['queue' => 'emails', 'from' => 'shop-production-emails', 'to' => 'shop-production-emails.fifo'], $e->params);
+        }
+        self::assertSame(['DescribeStacks', 'DescribeStackResources'], $mocks->calls, 'no CreateStack or UpdateStack');
+    }
+
+    public function test_deploy_resources_stops_when_only_the_dlq_would_be_replaced(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::stackResources(['QueueEmails' => 'shop-production-emails', 'QueueEmailsDlq' => 'shop-production-emails-dlq.fifo']),
+        );
+
+        try {
+            $this->deployResources($mocks, $this->queueConfig());
+            self::fail('expected deploy.queue_replaced');
+        } catch (DeployException $e) {
+            self::assertSame(['queue' => 'emails', 'from' => 'shop-production-emails-dlq.fifo', 'to' => 'shop-production-emails-dlq'], $e->params);
+        }
+        self::assertNotContains('UpdateStack', $mocks->calls);
+    }
+
+    public function test_deploy_resources_with_only_existing_queues_and_no_stack_changes_nothing(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->queue('legacy', existing: 'legacy', dlq: false)->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::stackMissing());
+
+        [$calls, $steps] = $this->deployResources($mocks, $config);
+
+        self::assertSame(['DescribeStacks'], $calls);
+        self::assertSame([], $steps);
+    }
 }
