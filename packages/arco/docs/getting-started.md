@@ -271,7 +271,9 @@ Each `->queue('<name>')` in `arco.php` gets an SQS queue (`<app>-<env>-<name>`) 
 worker function (`<app>-<env>-queue-<name>`) that Lambda feeds from it. The worker runs your jobs with
 Laravel's own queue worker, booted once per instance, so retries, `$backoff`, `failed()` and the
 `failed_jobs` table work as with `queue:work`. Arco sets `QUEUE_CONNECTION=sqs` and maps queue names, so
-`dispatch(...)->onQueue('emails')` needs no other change. The app needs `aws/aws-sdk-php` in `require`.
+`dispatch(...)->onQueue('emails')` needs no other change. The app needs `multiapi/arco-laravel` 0.5+ and
+`aws/aws-sdk-php` in `require` (`composer require aws/aws-sdk-php`); the deploy checks the package for both
+and stops before any change when one is missing.
 `arco queue:set` and `arco queue:remove` change a queue in `arco.php`; removed queues stay in AWS with their
 messages. Options, FIFO, existing queues and permissions: [Queues](configuration.md#queues).
 
