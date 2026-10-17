@@ -38,9 +38,16 @@ final class WorkCommandTest extends TestCase
         self::assertTrue($artisan->get('arco:work')->isHidden());
     }
 
-    public function test_the_loop_serves_invocations_with_laravel_booted_once(): void
+    /** Starts the emulator (each invocation gets $timeoutMs) and `arco:work`; returns the boots file. */
+    private function start(int $timeoutMs = 120_000): string
     {
-        $this->api = new RuntimeApiEmulator();
+        // The emulator's server inherits $_ENV when it starts.
+        $_ENV['ARCO_EMULATOR_TIMEOUT_MS'] = (string) $timeoutMs;
+        try {
+            $this->api = new RuntimeApiEmulator();
+        } finally {
+            unset($_ENV['ARCO_EMULATOR_TIMEOUT_MS']);
+        }
         $boots = TempPaths::path('arco-boots-', '.txt');
         $this->worker = new Process([PHP_BINARY, __DIR__ . '/Fixtures/work-app.php'], null, [
             ...QueueTestApp::env(),
@@ -51,7 +58,16 @@ final class WorkCommandTest extends TestCase
             'AWS_SECRET_ACCESS_KEY' => false,
             'AWS_SESSION_TOKEN' => false,
         ]);
+        $this->worker->setTimeout(60);
         $this->worker->start();
+        return $boots;
+    }
+
+    public function test_the_loop_serves_invocations_with_laravel_booted_once(): void
+    {
+        $boots = $this->start();
+        self::assertNotNull($this->api);
+        self::assertNotNull($this->worker);
 
         $first = $this->api->await($this->api->enqueue(['Records' => [QueueTestJob::record('ok')]]));
         $second = $this->api->await($this->api->enqueue(['Records' => [QueueTestJob::record('ok', id: 'a'), QueueTestJob::record('throw')]]));
@@ -64,5 +80,37 @@ final class WorkCommandTest extends TestCase
         self::assertSame(['batchItemFailures' => [['itemIdentifier' => 'm-throw']]], json_decode($second['body'], true));
         self::assertSame('error', $broken['type'], $output);
         self::assertSame("boot\n", file_get_contents($boots), 'Laravel boots once for all invocations');
+    }
+
+    public function test_after_a_timeout_the_answer_is_posted_and_the_process_restarts(): void
+    {
+        // 6 s per invocation: the slow job gets max(1, 5 - 3) = 2 s; then under 4 s are left, so the
+        // next record is not started.
+        $this->start(6_000);
+        self::assertNotNull($this->api);
+        self::assertNotNull($this->worker);
+
+        $reply = $this->api->await($this->api->enqueue(['Records' => [QueueTestJob::record('slow'), QueueTestJob::record('ok')]]), 10);
+
+        self::assertSame('response', $reply['type'], $this->worker->getErrorOutput());
+        self::assertSame(['batchItemFailures' => [['itemIdentifier' => 'm-slow'], ['itemIdentifier' => 'm-ok']]], json_decode($reply['body'], true));
+        $this->worker->wait();
+        self::assertNotSame(0, $this->worker->getExitCode(), 'the next invocation boots a fresh process');
+    }
+
+    public function test_a_job_that_swallows_its_timeout_still_gets_the_batch_answered_before_the_deadline(): void
+    {
+        $this->start(6_000);
+        self::assertNotNull($this->api);
+        self::assertNotNull($this->worker);
+        $started = microtime(true);
+
+        $reply = $this->api->await($this->api->enqueue(['Records' => [QueueTestJob::record('stubborn'), QueueTestJob::record('ok')]]), 10);
+
+        self::assertLessThan(6, microtime(true) - $started, 'answered before the Lambda deadline');
+        self::assertSame('response', $reply['type'], $this->worker->getErrorOutput());
+        self::assertSame(['batchItemFailures' => [['itemIdentifier' => 'm-stubborn'], ['itemIdentifier' => 'm-ok']]], json_decode($reply['body'], true));
+        $this->worker->wait();
+        self::assertNotSame(0, $this->worker->getExitCode());
     }
 }

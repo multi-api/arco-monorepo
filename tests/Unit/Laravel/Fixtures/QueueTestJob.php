@@ -38,9 +38,21 @@ final class QueueTestJob implements ShouldQueue
             'throw' => throw new \RuntimeException('boom'),
             'release' => $this->release(30),
             'slow' => sleep(5),
+            'stubborn' => self::sleepThroughTimeouts(20),
             'scoped' => self::$scoped[] = spl_object_id(Container::getInstance()->make('arco.test.scoped')),
             default => null,
         };
+    }
+
+    /** Swallows every exception, the timeout included, like a careless retry loop. */
+    private static function sleepThroughTimeouts(int $seconds): void
+    {
+        for ($i = 0; $i < $seconds; $i++) {
+            try {
+                sleep(1);
+            } catch (\Exception) {
+            }
+        }
     }
 
     public function failed(?\Throwable $e): void
@@ -49,31 +61,35 @@ final class QueueTestJob implements ShouldQueue
     }
 
     /** The SQS message body Laravel would send for this job. */
-    public static function body(string $mode): string
+    public static function body(string $mode, ?int $timeout = null, ?int $maxTries = null): string
     {
         return (string) json_encode([
             'uuid' => "uuid-$mode",
             'displayName' => self::class,
             'job' => 'Illuminate\\Queue\\CallQueuedHandler@call',
-            'maxTries' => null,
+            'maxTries' => $maxTries,
             'maxExceptions' => null,
             'failOnTimeout' => false,
             'backoff' => null,
-            'timeout' => null,
+            'timeout' => $timeout,
             'retryUntil' => null,
             'data' => ['commandName' => self::class, 'command' => serialize(new self($mode))],
         ]);
     }
 
-    /** @return array<string, mixed> An SQS record as Lambda hands it over. */
-    public static function record(string $mode, int $attempts = 1, ?string $id = null): array
+    /**
+     * @param array<string, string> $attributes extra record attributes (MessageGroupId, ...)
+     * @param array<string, mixed> $messageAttributes
+     * @return array<string, mixed> An SQS record as Lambda hands it over.
+     */
+    public static function record(string $mode, int $attempts = 1, ?string $id = null, ?int $timeout = null, ?int $maxTries = null, array $attributes = [], array $messageAttributes = []): array
     {
         return [
             'messageId' => $id ?? "m-$mode",
             'receiptHandle' => 'rh-' . ($id ?? $mode),
-            'body' => self::body($mode),
-            'attributes' => ['ApproximateReceiveCount' => (string) $attempts, 'SentTimestamp' => '1700000000000'],
-            'messageAttributes' => [],
+            'body' => self::body($mode, $timeout, $maxTries),
+            'attributes' => ['ApproximateReceiveCount' => (string) $attempts, 'SentTimestamp' => '1700000000000', ...$attributes],
+            'messageAttributes' => $messageAttributes,
             'md5OfBody' => '',
             'eventSource' => 'aws:sqs',
             'eventSourceARN' => 'arn:aws:sqs:us-east-1:123456789012:shop-production-emails',

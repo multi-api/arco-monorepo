@@ -45,6 +45,7 @@ final class ArcoSqsQueueTest extends TestCase
         self::assertSame(QueueTestApp::EMAILS_URL, $queue->getQueue('emails'));
         self::assertSame(QueueTestApp::DEFAULT_URL, $queue->getQueue(null));
         self::assertSame('https://sqs.eu-west-1.amazonaws.com/1/other', $queue->getQueue('https://sqs.eu-west-1.amazonaws.com/1/other'));
+        self::assertSame(QueueTestApp::EMAILS_URL, $queue->getQueue(QueueName::Emails));
         self::assertSame(QueueTestApp::PREFIX . '/unknown', $queue->getQueue('unknown'), 'an unknown name keeps Laravel\'s prefix behaviour');
     }
 
@@ -78,4 +79,9 @@ final class ArcoSqsQueueTest extends TestCase
         self::assertSame('session', $test->app->make('config')->get('queue.connections.sqs.token'));
         self::assertSame('session', $queue->getSqs()->getCredentials()->wait()->getSecurityToken());
     }
+}
+
+enum QueueName: string
+{
+    case Emails = 'emails';
 }

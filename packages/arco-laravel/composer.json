@@ -32,6 +32,9 @@
         "illuminate/queue": "^11.0 || ^12.0 || ^13.0"
     },
     "suggest": {
+        "aws/aws-sdk-php": "Required by the SQS queue (Laravel's sqs driver) when Arco deploys queues",
+        "ext-pcntl": "Gives queue jobs on Lambda a time limit (present in Arco's runtime)",
+        "ext-curl": "Used by arco:work to talk to the Lambda Runtime API (present in Arco's runtime)",
         "multiapi/arco": "The Arco CLI (install with --dev); it loads LaravelPreset when building and deploying",
         "laravel/tinker": "Required by arco tinker (installed by default in Laravel apps)"
     },
