@@ -48,14 +48,20 @@ final class QueueSetCommand extends ArcoCommand
             $value = $this->parse($option, $this->argument($input, 'value'));
             [$raw, $environment] = $this->target($input, $io);
 
-            $before = self::resolvedQueue($raw, $environment, $name);
+            $before = $environment === null ? self::appLevelQueue($raw, $name) : self::resolvedQueue($raw, $environment, $name);
             if ($before === null) {
                 throw new UserError($this->t('queue.not_found', ['queue' => $name, 'where' => $this->where($environment)]));
             }
             $levelOptions = self::levelQueues($raw, $environment)[$name] ?? [];
-            $options = [...(is_array($levelOptions) ? $levelOptions : []), $key => $value];
+            $options = is_array($levelOptions) ? $levelOptions : [];
+            if ($value === null) {
+                unset($options[$key]);
+            } else {
+                $options[$key] = $value;
+            }
             $changed = self::withQueue($raw, $environment, $name, $options);
-            $after = self::resolvedQueue($changed, $environment, $name) ?? throw new UserError($this->t('queue.not_found', ['queue' => $name, 'where' => $this->where($environment)]));
+            $after = ($environment === null ? self::appLevelQueue($changed, $name) : self::resolvedQueue($changed, $environment, $name))
+                ?? throw new UserError($this->t('queue.not_found', ['queue' => $name, 'where' => $this->where($environment)]));
             $from = $this->show($before, $key);
             $to = $this->show($after, $key);
             if ($from === $to) {
@@ -75,8 +81,11 @@ final class QueueSetCommand extends ArcoCommand
         }
     }
 
-    private function parse(string $option, string $value): int|bool
+    private function parse(string $option, string $value): int|bool|null
     {
+        if ($option === 'concurrency' && strtolower($value) === 'none') {
+            return null;
+        }
         if (in_array($option, self::FLAGS, true)) {
             $lower = strtolower($value);
             return match (true) {

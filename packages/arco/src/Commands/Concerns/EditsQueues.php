@@ -84,17 +84,54 @@ trait EditsQueues
     }
 
     /** @param array<string, mixed> $raw */
-    private static function resolvedQueue(array $raw, ?string $environment, string $name): ?QueueConfig
+    private static function resolvedQueue(array $raw, string $environment, string $name): ?QueueConfig
     {
-        foreach (self::affectedEnvironments($raw, $environment) as $env) {
-            foreach (ConfigResolver::resolve($raw, $env)->queues as $queue) {
-                if ($queue->name === $name) {
-                    return $queue;
-                }
+        foreach (ConfigResolver::resolve($raw, $environment)->queues as $queue) {
+            if ($queue->name === $name) {
+                return $queue;
             }
-            return null;
         }
         return null;
+    }
+
+    /**
+     * The queue as the app level alone defines it: every environment's own call for it is ignored, so an
+     * environment override never hides what a change at the app level does.
+     *
+     * @param array<string, mixed> $raw
+     */
+    private static function appLevelQueue(array $raw, string $name): ?QueueConfig
+    {
+        $environments = ConfigResolver::environments($raw);
+        if (! is_array(self::levelQueues($raw, null)[$name] ?? null) || $environments === []) {
+            return null;
+        }
+        foreach ($environments as $env) {
+            $raw = self::withQueue($raw, $env, $name, null);
+        }
+        return self::resolvedQueue($raw, $environments[0], $name);
+    }
+
+    /**
+     * Where the queue is already configured: the target level, and for the app level also every
+     * environment. Returns the environment name, null for the app level, or false when it is nowhere.
+     *
+     * @param array<string, mixed> $raw
+     */
+    private static function existsAt(array $raw, ?string $environment, string $name): string|false|null
+    {
+        if ($environment !== null) {
+            return self::resolvedQueue($raw, $environment, $name) !== null ? $environment : false;
+        }
+        if (is_array(self::levelQueues($raw, null)[$name] ?? null)) {
+            return null;
+        }
+        foreach (ConfigResolver::environments($raw) as $env) {
+            if (self::resolvedQueue($raw, $env, $name) !== null) {
+                return $env;
+            }
+        }
+        return false;
     }
 
     /**

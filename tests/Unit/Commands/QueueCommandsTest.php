@@ -122,4 +122,89 @@ final class QueueCommandsTest extends TestCase
         self::assertStringContainsString("->queue('emails', false)", $this->source());
         self::assertStringContainsString("->queue('emails')", $this->source());
     }
+
+    public function test_set_app_level_ignores_environment_override(): void
+    {
+        $this->project("->environment('staging')", "->environment('staging', fn (Environment \$env) => \$env->queue('emails', timeout: 30))");
+        $php = str_replace("->concurrency(48)", "->concurrency(48)->queue('emails', timeout: 30)", (string) file_get_contents($this->project?->dir . '/arco.php'));
+        file_put_contents($this->project?->dir . '/arco.php', $php);
+
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'timeout', 'value' => '30', '--app' => true]);
+        self::assertStringContainsString('already has this value', self::display($tester));
+
+        $php = str_replace("->queue('emails', timeout: 30))", "->queue('emails', timeout: 99))", $php);
+        file_put_contents($this->project?->dir . '/arco.php', $php);
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'timeout', 'value' => '120', '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('timeout 30 → 120', self::display($tester));
+        self::assertStringContainsString("->queue('emails', timeout: 120)", $this->source());
+    }
+
+    public function test_add_app_refused_when_only_second_environment_has_it(): void
+    {
+        $this->project("->timeout(60)", "->timeout(60)->queue('emails')");
+        $before = $this->source();
+
+        $tester = $this->run_(new QueueAddCommand(), ['name' => 'emails', '--app' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('already exists in environment production', self::display($tester));
+        self::assertSame($before, $this->source());
+    }
+
+    public function test_set_concurrency_none_clears_it(): void
+    {
+        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails', concurrency: 5, timeout: 30)");
+
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'concurrency', 'value' => 'none', '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->queue('emails', timeout: 30)", $this->source());
+        self::assertStringNotContainsString('concurrency: 5', $this->source());
+    }
+
+    public function test_set_dlq_false(): void
+    {
+        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails')");
+
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'dlq', 'value' => 'false', '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->queue('emails', dlq: false)", $this->source());
+    }
+
+    public function test_set_rejects_non_number(): void
+    {
+        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails')");
+        $before = $this->source();
+
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'timeout', 'value' => 'abc', '--app' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('needs a whole number', self::display($tester));
+        self::assertSame($before, $this->source());
+    }
+
+    public function test_set_same_value_changes_nothing(): void
+    {
+        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails', timeout: 30)");
+        $before = $this->source();
+
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'timeout', 'value' => '30', '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('already has this value', self::display($tester));
+        self::assertSame($before, $this->source());
+    }
+
+    public function test_remove_missing_queue_not_found(): void
+    {
+        $this->project();
+
+        $tester = $this->run_(new QueueRemoveCommand(), ['name' => 'nope', '--env' => 'production']);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('is not configured in environment production', self::display($tester));
+    }
 }

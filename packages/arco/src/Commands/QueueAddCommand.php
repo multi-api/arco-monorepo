@@ -45,9 +45,9 @@ final class QueueAddCommand extends ArcoCommand
         try {
             $name = $this->queueName($input);
             [$raw, $environment] = $this->target($input, $io);
-            if (isset(self::levelQueues($raw, $environment)[$name]) && self::levelQueues($raw, $environment)[$name] !== false
-                || self::resolvedQueue($raw, $environment, $name) !== null) {
-                throw new UserError($this->t('queue.exists', ['queue' => $name, 'where' => $this->where($environment)]));
+            $found = self::existsAt($raw, $environment, $name);
+            if ($found !== false) {
+                throw new UserError($this->t('queue.exists', ['queue' => $name, 'where' => $this->where($found)]));
             }
             $options = [];
             $existing = $input->getOption('existing');
