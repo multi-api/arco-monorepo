@@ -456,4 +456,53 @@ final class ValidatorTest extends TestCase
 
         self::assertSame(['validation.scheduler_needs_console'], $this->errorKeys($app));
     }
+
+    /** @return list<string> */
+    private function queueErrors(App $app): array
+    {
+        return $this->errorKeys($app->region('us-east-1')->environment('production'));
+    }
+
+    public function test_valid_queues(): void
+    {
+        $app = App::make('shop')->queue('jobs')->queue('emails', timeout: 900, memory: 128, concurrency: 2, batchSize: 10000, tries: 1)
+            ->queue('f', fifo: true, batchSize: 10)->queue('e', existing: 'arn:aws:sqs:us-east-1:123456789012:legacy');
+        self::assertSame([], $this->queueErrors($app));
+    }
+
+    public function test_queue_name_and_lengths(): void
+    {
+        self::assertContains('validation.queue_name', $this->queueErrors(App::make('shop')->queue('Bad_Name')));
+        self::assertContains('validation.queue_name_length', $this->queueErrors(App::make('shop')->queue(str_repeat('a', 70))));
+        self::assertContains('validation.worker_name_length', $this->queueErrors(App::make('shop-with-a-fairly-long-name')->queue(str_repeat('a', 30))));
+    }
+
+    public function test_queue_option_ranges(): void
+    {
+        $cases = [
+            'validation.queue_timeout' => [['timeout' => 0], ['timeout' => 901]],
+            'validation.queue_memory' => [['memory' => 127], ['memory' => 10241]],
+            'validation.queue_concurrency' => [['concurrency' => 1]],
+            'validation.queue_batch_size' => [['batchSize' => 0], ['batchSize' => 10001], ['batchSize' => 11, 'fifo' => true]],
+            'validation.queue_tries' => [['tries' => 0]],
+        ];
+        foreach ($cases as $key => $variants) {
+            foreach ($variants as $options) {
+                self::assertContains($key, $this->queueErrors(App::make('shop')->queue('q', ...$options)), $key . json_encode($options));
+            }
+        }
+    }
+
+    public function test_two_default_queues(): void
+    {
+        self::assertContains('validation.queue_default_twice', $this->queueErrors(App::make('shop')->queue('a', default: true)->queue('b', default: true)));
+    }
+
+    public function test_existing_queue_reference(): void
+    {
+        self::assertContains('validation.queue_existing', $this->queueErrors(App::make('shop')->queue('a', existing: 'not a queue!')));
+        self::assertContains('validation.queue_existing_fifo', $this->queueErrors(App::make('shop')->queue('a', existing: 'legacy.fifo')));
+        self::assertContains('validation.queue_existing_fifo', $this->queueErrors(App::make('shop')->queue('a', existing: 'legacy', fifo: true)));
+        self::assertSame([], $this->queueErrors(App::make('shop')->queue('a', existing: 'legacy.fifo', fifo: true)));
+    }
 }

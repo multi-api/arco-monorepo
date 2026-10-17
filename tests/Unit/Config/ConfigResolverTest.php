@@ -230,4 +230,70 @@ final class ConfigResolverTest extends TestCase
         self::assertFalse($config->logRetention);
         self::assertFalse($config->consoleEnabled());
     }
+
+    public function test_environment_queue_merges_over_app_queue(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->queue('jobs')->queue('emails', timeout: 120)
+            ->environment('production', fn (Environment $e) => $e->queue('emails', memory: 2048)->queue('reports'))
+            ->toArray();
+
+        $config = ConfigResolver::resolve($raw, 'production');
+
+        self::assertSame(['jobs', 'emails', 'reports'], array_map(fn ($q) => $q->name, $config->queues));
+        self::assertSame(60, $config->queues[0]->timeout);
+        self::assertSame(120, $config->queues[1]->timeout);
+        self::assertSame(2048, $config->queues[1]->memory);
+        self::assertSame(1024, $config->queues[0]->memory);
+        self::assertSame('environment', $config->sources['queues']);
+    }
+
+    public function test_environment_false_drops_a_queue(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->queue('jobs')->queue('emails')
+            ->environment('production', fn (Environment $e) => $e->queue('emails', false))
+            ->environment('staging')
+            ->toArray();
+
+        self::assertSame(['jobs'], array_map(fn ($q) => $q->name, ConfigResolver::resolve($raw, 'production')->queues));
+        $staging = ConfigResolver::resolve($raw, 'staging');
+        self::assertSame(['jobs', 'emails'], array_map(fn ($q) => $q->name, $staging->queues));
+        self::assertSame('app', $staging->sources['queues']);
+    }
+
+    public function test_no_queues_is_default_source(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->environment('production')->toArray(), 'production');
+
+        self::assertSame([], $config->queues);
+        self::assertSame('default', $config->sources['queues']);
+        self::assertNull($config->defaultQueue());
+    }
+
+    public function test_default_queue_is_first_unless_marked(): void
+    {
+        $first = ConfigResolver::resolve(App::make('shop')->queue('jobs')->queue('emails')->environment('production')->toArray(), 'production');
+        self::assertSame('jobs', $first->defaultQueue()?->name);
+
+        $marked = ConfigResolver::resolve(App::make('shop')->queue('jobs')->queue('emails', default: true)->environment('production')->toArray(), 'production');
+        self::assertSame('emails', $marked->defaultQueue()?->name);
+        self::assertFalse($marked->queues[0]->default);
+    }
+
+    public function test_existing_queue_defaults_to_no_dlq(): void
+    {
+        $raw = App::make('shop')->queue('legacy', existing: 'old-queue')->queue('own')->queue('own2', dlq: false)->environment('production')->toArray();
+        $queues = ConfigResolver::resolve($raw, 'production')->queues;
+
+        self::assertFalse($queues[0]->dlq);
+        self::assertTrue($queues[1]->dlq);
+        self::assertFalse($queues[2]->dlq);
+    }
+
+    public function test_worker_function_name(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->environment('production')->toArray(), 'production');
+
+        self::assertSame('shop-production-queue-emails', $config->workerFunctionName('emails'));
+    }
 }

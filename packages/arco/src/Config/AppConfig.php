@@ -12,6 +12,7 @@ final readonly class AppConfig
      * @param list<array<string, mixed>> $permissions
      * @param list<string> $domains
      * @param list<string> $deployCommands
+     * @param list<QueueConfig> $queues
      */
     public function __construct(
         public string $app,
@@ -48,6 +49,8 @@ final readonly class AppConfig
         public ?int $scheduler = null,
         /** days to keep logs; false: never expire; null: Arco does not manage retention */
         public int|false|null $logRetention = null,
+        /** declaration order, app level first */
+        public array $queues = [],
     ) {
     }
 
@@ -59,6 +62,21 @@ final readonly class AppConfig
     public function consoleFunctionName(): string
     {
         return $this->functionName() . '-console';
+    }
+
+    public function workerFunctionName(string $queue): string
+    {
+        return $this->functionName() . '-queue-' . $queue;
+    }
+
+    public function defaultQueue(): ?QueueConfig
+    {
+        foreach ($this->queues as $queue) {
+            if ($queue->default) {
+                return $queue;
+            }
+        }
+        return null;
     }
 
     /** Whether the console function is deployed: asked for, or needed by the scheduler. */

@@ -36,8 +36,9 @@ final class BuildersTest extends TestCase
             'permissions' => [],
             'domains' => null,
             'deployCommands' => null,
+            'queues' => [],
             'environments' => [
-                'staging' => ['settings' => [], 'variables' => [], 'runtime' => [], 'permissions' => [], 'domains' => null, 'deployCommands' => null],
+                'staging' => ['settings' => [], 'variables' => [], 'runtime' => [], 'permissions' => [], 'domains' => null, 'deployCommands' => null, 'queues' => []],
                 'production' => [
                     'settings' => ['account' => '222222222222', 'profile' => 'acme-prod', 'timeout' => 60],
                     'variables' => ['APP_KEY' => 'arco-ssm:/shop/production/app-key'],
@@ -45,6 +46,7 @@ final class BuildersTest extends TestCase
                     'permissions' => [],
                     'domains' => null,
                     'deployCommands' => null,
+                    'queues' => [],
                 ],
             ],
         ], $app->toArray());
@@ -101,5 +103,29 @@ final class BuildersTest extends TestCase
             App::make('a')->console(false)->scheduler(false)->logRetention(false)->toArray()['settings'],
         );
         self::assertSame(['scheduler' => 1], App::make('a')->scheduler()->toArray()['settings']);
+    }
+
+    public function test_queues_store_only_explicit_options(): void
+    {
+        $app = App::make('a')->queue('jobs')->queue('emails', timeout: 120)->queue('x', false);
+
+        self::assertSame(['jobs' => [], 'emails' => ['timeout' => 120], 'x' => false], $app->toArray()['queues']);
+    }
+
+    public function test_queue_options_accumulate_per_name(): void
+    {
+        $app = App::make('a')->queue('emails', timeout: 120, fifo: true, default: true, existing: 'q')->queue('emails', memory: 2048);
+
+        self::assertSame(
+            ['emails' => ['timeout' => 120, 'fifo' => true, 'existing' => 'q', 'default' => true, 'memory' => 2048]],
+            $app->toArray()['queues'],
+        );
+    }
+
+    public function test_environment_queues_are_serialized(): void
+    {
+        $app = App::make('a')->environment('prod', fn (Environment $e) => $e->queue('emails', memory: 2048));
+
+        self::assertSame(['emails' => ['memory' => 2048]], $app->toArray()['environments']['prod']['queues']);
     }
 }
