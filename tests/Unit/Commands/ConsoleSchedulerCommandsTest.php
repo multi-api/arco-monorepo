@@ -216,4 +216,33 @@ final class ConsoleSchedulerCommandsTest extends TestCase
         self::assertStringContainsString('logRetention must be', self::display($tester));
         self::assertSame($before, $this->source());
     }
+
+    public function test_scheduler_set_suggests_required_interval(): void
+    {
+        $this->project();
+        $dirs = [];
+        $inspector = function (string $dir) use (&$dirs): array {
+            $dirs[] = $dir;
+            return [['task' => 'reports:send', 'minutes' => range(0, 55, 5)], ['task' => 'backup:run', 'minutes' => [0]]];
+        };
+
+        $tester = $this->run_(new SchedulerSetCommand($inspector), ['--env' => 'production'], ['']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->scheduler(5)', $this->source());
+        self::assertSame([$this->project?->dir], $dirs);
+        self::assertStringContainsString('every 5 minutes', self::display($tester));
+        self::assertStringContainsString('reports:send', self::display($tester));
+        self::assertStringContainsString('[5]', self::display($tester));
+    }
+
+    public function test_scheduler_set_without_a_readable_schedule_defaults_to_one(): void
+    {
+        $this->project();
+
+        $tester = $this->run_(new SchedulerSetCommand(fn (string $dir) => null), ['--env' => 'production'], ['']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->scheduler(1)', $this->source());
+    }
 }

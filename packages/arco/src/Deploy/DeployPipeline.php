@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Deploy;
 
 use Aws\Exception\AwsException;
+use Closure;
 use Multiapi\Arco\Binary\BinaryException;
 use Multiapi\Arco\Binary\BinaryProvider;
 use Multiapi\Arco\Binary\RuntimeBuild;
@@ -11,7 +12,9 @@ use Multiapi\Arco\Build\BuildResult;
 use Multiapi\Arco\Build\CachesPaths;
 use Multiapi\Arco\Build\FrameworkPreset;
 use Multiapi\Arco\Build\ProcessCommandRunner;
+use Multiapi\Arco\Build\ScheduleInspector;
 use Multiapi\Arco\Config\AppConfig;
+use Multiapi\Arco\Config\SchedulerInterval;
 use Multiapi\Arco\Package\ConsoleArtifacts;
 use Multiapi\Arco\Package\ConsolePackager;
 use Multiapi\Arco\Package\Package;
@@ -21,11 +24,17 @@ use Throwable;
 
 final class DeployPipeline
 {
+    /** @var Closure(string): (list<array{task: string, minutes: list<int>}>|null) the app's scheduled tasks, read in the build's app dir */
+    private readonly Closure $scheduleInspector;
+
+    /** @param (Closure(string): (list<array{task: string, minutes: list<int>}>|null))|null $scheduleInspector default: ScheduleInspector with this PHP */
     public function __construct(
         private readonly Builder $builder,
         private readonly BinaryProvider $binaries,
         private readonly Packager $packager,
+        ?Closure $scheduleInspector = null,
     ) {
+        $this->scheduleInspector = $scheduleInspector ?? static fn (string $appDir): ?array => (new ScheduleInspector())->tasks($appDir, PHP_BINARY);
     }
 
     public static function default(): self
@@ -64,6 +73,7 @@ final class DeployPipeline
             foreach ($build->skipped as $path) {
                 $onStep('build.symlink_skipped', ['path' => $path]);
             }
+            $this->checkSchedule($config, $build, $onStep);
             $runtimeBuild = $this->binaries->describe($config->runtime);
             if ($runtimeBuild !== null) {
                 $onStep('binary.using', ['build' => $runtimeBuild->id, 'frankenphp' => $runtimeBuild->frankenphp, 'php' => $runtimeBuild->php]);
@@ -77,6 +87,36 @@ final class DeployPipeline
             throw $e;
         }
         return [$build, $package];
+    }
+
+    /**
+     * Warns (deploy.scheduler_too_slow) when the scheduler runs schedule:run less often than some of
+     * the app's tasks need, so they would be skipped. Best effort: an unreadable schedule says nothing.
+     *
+     * @param callable(string, array<string, string|int>): void $onStep
+     */
+    private function checkSchedule(AppConfig $config, BuildResult $build, callable $onStep): void
+    {
+        if ($config->scheduler === null) {
+            return;
+        }
+        try {
+            $tasks = ($this->scheduleInspector)($build->appDir);
+        } catch (Throwable) {
+            return;
+        }
+        if ($tasks === null) {
+            return;
+        }
+        $missed = SchedulerInterval::missed($config->scheduler, $tasks);
+        if ($missed !== []) {
+            $minutes = array_merge([], ...array_map(static fn (array $task): array => $task['minutes'], $tasks));
+            $onStep('deploy.scheduler_too_slow', [
+                'every' => $config->scheduler,
+                'tasks' => implode(', ', $missed),
+                'required' => SchedulerInterval::required($minutes),
+            ]);
+        }
     }
 
     /** @param callable(string, array<string, string|int>): void $onStep */

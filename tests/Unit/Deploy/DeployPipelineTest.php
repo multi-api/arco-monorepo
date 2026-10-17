@@ -58,9 +58,9 @@ final class DeployPipelineTest extends TestCase
         );
     }
 
-    private function pipeline(): DeployPipeline
+    private function pipeline(?\Closure $scheduleInspector = null): DeployPipeline
     {
-        return new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new \Multiapi\Arco\Binary\GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager());
+        return new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new \Multiapi\Arco\Binary\GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager(), $scheduleInspector ?? fn (string $appDir) => null);
     }
 
     public function test_successful_deploy_merges_variables_and_cleans_up(): void
@@ -793,5 +793,42 @@ final class DeployPipelineTest extends TestCase
         self::assertFalse($outcome->rolledBack);
         self::assertSame(['prepare', 'release', 'removeConsole', 'domains:', 'prune'], $deployer->calls, 'domains and prune still run');
         self::assertSame(['function' => 'shop-production-console', 'error' => 'AccessDenied on lambda:DeleteFunction'], $steps['deploy.console_remove_failed'] ?? null);
+    }
+
+    public function test_warns_when_scheduler_slower_than_tasks(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))->scheduler(30)->environment('production')->toArray(), 'production');
+        $inspected = [];
+        $inspector = function (string $appDir) use (&$inspected): array {
+            $inspected[] = $appDir;
+            return [['task' => 'reports:send', 'minutes' => range(0, 55, 5)], ['task' => 'backup:run', 'minutes' => [0]]];
+        };
+        $steps = [];
+
+        $outcome = $this->pipeline($inspector)->deploy($config, new PlainPhpPreset(), $this->project, new FakeDeployer('rev-1'), new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertCount(1, $inspected);
+        self::assertStringEndsWith('/app', $inspected[0]);
+        self::assertSame(['every' => 30, 'tasks' => 'reports:send', 'required' => 5], $steps['deploy.scheduler_too_slow'] ?? null);
+        self::assertContains('deploy.scheduler_too_slow', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
+    public function test_an_unreadable_schedule_or_no_scheduler_gives_no_warning(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))->scheduler(30)->environment('production')->toArray(), 'production');
+        $steps = [];
+        $record = function (string $key) use (&$steps): void { $steps[] = $key; };
+
+        $outcome = $this->pipeline(fn (string $appDir) => null)->deploy($config, new PlainPhpPreset(), $this->project, new FakeDeployer('rev-1'), new FakeVerifier(true), $record);
+        self::assertTrue($outcome->verification->ok);
+
+        $called = false;
+        $this->pipeline(function () use (&$called): array { $called = true; return []; })->deploy($this->config(), new PlainPhpPreset(), $this->project, new FakeDeployer('rev-1'), new FakeVerifier(true), $record);
+        self::assertFalse($called, 'no scheduler: the schedule is not read');
+
+        $throwing = $this->pipeline(fn () => throw new \RuntimeException('boom'))->deploy($config, new PlainPhpPreset(), $this->project, new FakeDeployer('rev-1'), new FakeVerifier(true), $record);
+        self::assertTrue($throwing->verification->ok);
+        self::assertNotContains('deploy.scheduler_too_slow', $steps);
     }
 }

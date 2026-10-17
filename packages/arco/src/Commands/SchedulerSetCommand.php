@@ -2,12 +2,15 @@
 
 namespace Multiapi\Arco\Commands;
 
+use Closure;
+use Multiapi\Arco\Build\ScheduleInspector;
 use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\EditsSettings;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\ArcoFileEditor;
 use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Config\SchedulerInterval;
 use Multiapi\Arco\Config\Validator;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputArgument;
@@ -23,6 +26,16 @@ final class SchedulerSetCommand extends ArcoCommand
     use ResolvesTarget;
     use EditsSettings;
 
+    /** @var Closure(string): (list<array{task: string, minutes: list<int>}>|null) the app's scheduled tasks, read in the project dir */
+    private readonly Closure $scheduleInspector;
+
+    /** @param (Closure(string): (list<array{task: string, minutes: list<int>}>|null))|null $scheduleInspector default: ScheduleInspector with this PHP */
+    public function __construct(?Closure $scheduleInspector = null)
+    {
+        $this->scheduleInspector = $scheduleInspector ?? static fn (string $dir): ?array => (new ScheduleInspector())->tasks($dir, PHP_BINARY);
+        parent::__construct();
+    }
+
     protected function configure(): void
     {
         $this->addArgument('minutes', InputArgument::OPTIONAL, 'Minutes between schedule:run invocations (' . implode(', ', Validator::SCHEDULER_INTERVALS) . ')');
@@ -36,7 +49,7 @@ final class SchedulerSetCommand extends ArcoCommand
             $given = $input->getArgument('minutes');
             $minutes = is_string($given) && $given !== ''
                 ? (preg_match('/^-?\d{1,9}$/', $given) === 1 ? (int) $given : $given)
-                : $this->askInterval($input, $io, 1);
+                : $this->askInterval($input, $io, $input->isInteractive() ? $this->suggestedInterval($io) : 1);
             $error = Validator::settingError('scheduler', $minutes);
             if ($error !== null) {
                 throw new UserError($this->t($error['key'], $error['params']));
@@ -73,6 +86,30 @@ final class SchedulerSetCommand extends ArcoCommand
             $io->error($this->describeError($e) ?? throw $e);
             return self::FAILURE;
         }
+    }
+
+    /**
+     * The interval the app's schedule needs (1 when it cannot be read), naming the tasks that need it.
+     */
+    private function suggestedInterval(SymfonyStyle $io): int
+    {
+        try {
+            $tasks = ($this->scheduleInspector)($this->projectDir());
+        } catch (Throwable) {
+            $tasks = null;
+        }
+        if ($tasks === null || $tasks === []) {
+            return 1;
+        }
+        $required = SchedulerInterval::required(array_merge([], ...array_map(static fn (array $task): array => $task['minutes'], $tasks)));
+        $names = [];
+        foreach ($tasks as $task) {
+            if (SchedulerInterval::required($task['minutes']) === $required) {
+                $names[] = $task['task'];
+            }
+        }
+        $io->note($this->t('scheduler.suggested', ['minutes' => $required, 'tasks' => implode(', ', $names)]));
+        return $required;
     }
 
     /** Asks for one of the allowed intervals; $default is the one taken on a plain Enter. */

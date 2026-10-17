@@ -7,6 +7,7 @@ use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Http\Request;
 use Illuminate\Support\ServiceProvider;
+use Multiapi\Arco\Laravel\Console\ScheduleIntervalsCommand;
 use Multiapi\Arco\Laravel\Console\TinkerCommand;
 use Multiapi\Arco\Laravel\Http\ShareRequestId;
 
@@ -38,8 +39,9 @@ final class ArcoServiceProvider extends ServiceProvider
             return;
         }
         if ($this->app->runningInConsole()) {
-            // Hidden; used by `arco tinker` through the console function.
-            $this->commands([TinkerCommand::class]);
+            // Hidden: arco:tinker for `arco tinker` through the console function; arco:schedule-intervals
+            // for `arco scheduler:set` and `arco deploy`, which run it locally with ARCO=1.
+            $this->commands([TinkerCommand::class, ScheduleIntervalsCommand::class]);
         }
         $kernel = $this->app->bound(Kernel::class) ? $this->app->make(Kernel::class) : null;
         if (is_object($kernel) && method_exists($kernel, 'prependMiddleware')) {

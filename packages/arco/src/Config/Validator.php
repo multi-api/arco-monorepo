@@ -29,7 +29,7 @@ final class Validator
     private const CERTIFICATE = '/^arn:aws[a-z-]*:acm:us-east-1:\d{12}:certificate\/[A-Za-z0-9-]+$/';
     public const MAX_DOMAINS = 10;
     /** Minutes between schedule:run invocations: the divisors of an hour that an EventBridge rate or cron expresses. */
-    public const SCHEDULER_INTERVALS = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60];
+    public const SCHEDULER_INTERVALS = SchedulerInterval::ALLOWED;
     /** Retention periods (days) CloudWatch Logs accepts. */
     public const LOG_RETENTION_DAYS = [1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653];
     /**
