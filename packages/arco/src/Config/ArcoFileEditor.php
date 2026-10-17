@@ -133,6 +133,9 @@ final class ArcoFileEditor
      */
     public static function setSingleton(string $arcoPhpPath, ?string $environment, string $method, array|bool|null $value): bool
     {
+        if (! in_array($method, self::SINGLETONS, true)) {
+            return false;
+        }
         return self::update($arcoPhpPath, $environment, ['settings' => [$method => $value]]);
     }
 
@@ -147,6 +150,53 @@ final class ArcoFileEditor
             $args[] = $key . ': ' . self::literal($option);
         }
         return '->' . $method . '(' . implode(', ', $args) . ')';
+    }
+
+    /**
+     * Whether named arguments can be written as literals the editor reads back: identifier names, and
+     * values that are an int, string, bool, a list of strings or a map of (non-numeric) strings to ints.
+     *
+     * @param array<mixed> $options
+     */
+    private static function writable(array $options): bool
+    {
+        foreach ($options as $key => $value) {
+            if (! is_string($key) || preg_match('/^[A-Za-z_]\w*$/', $key) !== 1) {
+                return false;
+            }
+            if (is_array($value)) {
+                $list = array_is_list($value);
+                foreach ($value as $k => $item) {
+                    if ($list ? ! is_string($item) : (! is_string($k) || ! is_int($item))) {
+                        return false;
+                    }
+                }
+            } elseif (! is_int($value) && ! is_string($value) && ! is_bool($value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Strict comparison that ignores the order of string-keyed entries (the loader's option order
+     * differs from the order of the changes) but not the order of lists.
+     */
+    private static function same(mixed $a, mixed $b): bool
+    {
+        return self::normalized($a) === self::normalized($b);
+    }
+
+    private static function normalized(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+        $value = array_map(self::normalized(...), $value);
+        if (! array_is_list($value)) {
+            ksort($value);
+        }
+        return $value;
     }
 
     /**
@@ -210,11 +260,13 @@ final class ArcoFileEditor
             if ($updated !== null) {
                 if ($value === null) {
                     $line = null;
-                } elseif (in_array($method, self::SINGLETONS, true) || is_array($value)) {
-                    $line = is_array($value) || is_bool($value) ? self::singletonLine($method, $value) : null;
-                    if ($line === null) {
+                } elseif (in_array($method, self::SINGLETONS, true)) {
+                    if (! (is_bool($value) || (is_array($value) && self::writable($value)))) {
                         return false;
                     }
+                    $line = self::singletonLine($method, $value);
+                } elseif (is_array($value)) {
+                    return false;
                 } else {
                     $line = self::settingLine($method, $value);
                 }
@@ -233,6 +285,9 @@ final class ArcoFileEditor
             foreach ($changes[$key] ?? [] as $name => $options) {
                 if ($updated !== null) {
                     $name = (string) $name;
+                    if (is_array($options) && ! self::writable($options)) {
+                        return false;
+                    }
                     $updated = self::edit($updated, $environment, $method, $options === null ? null : self::namedLine($method, $name, $options), $name);
                 }
             }
@@ -248,7 +303,7 @@ final class ArcoFileEditor
             } catch (ConfigException) {
                 return false;
             }
-            return $raw == self::expected($raw, $environment, $changes);
+            return self::same($raw, self::expected($raw, $environment, $changes));
         }
         self::verifiedWrite($arcoPhpPath, $updated, $environment, $changes);
         return true;
@@ -278,7 +333,7 @@ final class ArcoFileEditor
         $before = self::load($arcoPhpPath);
         self::write($arcoPhpPath, $contents);
         try {
-            $ok = self::load($arcoPhpPath) == self::expected($before, $environment, $changes);
+            $ok = self::same(self::load($arcoPhpPath), self::expected($before, $environment, $changes));
         } catch (ConfigException) {
             $ok = false;
         }

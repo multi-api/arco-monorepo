@@ -664,7 +664,7 @@ final class ArcoFileEditorTest extends TestCase
             "->storage('files', existing: 'legacy', public: ['a/', 'b/'], expire: ['tmp/' => 1, 'exports/' => 30], cors: ['https://example.com', '*'])",
             (string) file_get_contents($path),
         );
-        self::assertEquals(['files' => $options], self::rawKey($path, 'storage'));
+        self::assertSame(['files' => ['public' => ['a/', 'b/'], 'expire' => ['tmp/' => 1, 'exports/' => 30], 'cors' => ['https://example.com', '*'], 'existing' => 'legacy']], self::rawKey($path, 'storage'));
 
         // An array option written by hand can be replaced, too.
         self::assertTrue(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', ['expire' => ['tmp/' => 2]]));
@@ -770,5 +770,68 @@ final class ArcoFileEditorTest extends TestCase
         self::assertTrue(ArcoFileEditor::setNamed($path, null, 'storage', 'files', null));
         self::assertTrue(ArcoFileEditor::setQueue($path, null, 'jobs', null));
         self::assertSame(self::settingsFile(), file_get_contents($path));
+    }
+
+    /**
+     * @param array<string, mixed> $changes
+     */
+    private function assertRolledBack(string $php, string $written, ?string $environment, array $changes): void
+    {
+        $path = $this->file($php);
+        try {
+            /** @phpstan-ignore argument.type */
+            ArcoFileEditor::verifiedWrite($path, $written, $environment, $changes);
+            self::fail('Expected a verification failure: ' . $written);
+        } catch (ConfigException $e) {
+            self::assertSame($environment === null ? 'editor.verify_failed_app' : 'editor.verify_failed', $e->key);
+        }
+        self::assertSame($php, file_get_contents($path));
+    }
+
+    public function test_verification_tells_false_from_no_options_and_true_from_existing(): void
+    {
+        $php = self::queueFile('');
+        $this->assertRolledBack($php, self::queueFile("\n        ->storage('files', false)"), 'production', ['storage' => ['files' => []]]);
+        $this->assertRolledBack($php, self::queueFile("\n        ->storage('files')"), 'production', ['storage' => ['files' => false]]);
+        $this->assertRolledBack($php, self::queueFile("\n        ->cache(existing: 'x')"), 'production', ['settings' => ['cache' => true]]);
+        $this->assertRolledBack($php, self::queueFile("\n        ->cache()"), 'production', ['settings' => ['cache' => ['existing' => 'x']]]);
+        $this->assertRolledBack($php, str_replace("    ->region('us-east-1')\n", "    ->region('us-east-1')\n    ->cache(existing: 'x')\n", $php), null, ['settings' => ['cache' => true]]);
+    }
+
+    public function test_verification_sees_a_later_environment_block_win(): void
+    {
+        $php = self::queueFile('');
+        $second = static fn (string $call) => str_replace(");\n", ")\n    ->environment('production', fn (Environment \$env) => \$env->$call);\n", self::queueFile("\n        ->" . ($call === "cache(existing: 'x')" ? 'cache()' : "storage('files')")));
+        $this->assertRolledBack($php, $second("cache(existing: 'x')"), 'production', ['settings' => ['cache' => true]]);
+        $this->assertRolledBack($php, $second("storage('files', false)"), 'production', ['storage' => ['files' => []]]);
+    }
+
+    public function test_verification_ignores_option_order_but_not_list_order(): void
+    {
+        $php = self::queueFile('');
+        $path = $this->file($php);
+        $written = self::queueFile("\n        ->storage('files', cors: ['*'], public: ['a/', 'b/'], expire: ['x/' => 1, 'y/' => 2])");
+        ArcoFileEditor::verifiedWrite($path, $written, 'production', ['storage' => ['files' => ['expire' => ['y/' => 2, 'x/' => 1], 'public' => ['a/', 'b/'], 'cors' => ['*']]]]);
+        self::assertSame($written, file_get_contents($path));
+
+        $this->assertRolledBack($php, $written, 'production', ['storage' => ['files' => ['public' => ['b/', 'a/'], 'cors' => ['*'], 'expire' => ['x/' => 1, 'y/' => 2]]]]);
+    }
+
+    public function test_refuses_values_it_cannot_write(): void
+    {
+        $path = $this->file(self::queueFile(''));
+        $php = (string) file_get_contents($path);
+
+        self::assertFalse(ArcoFileEditor::setSingleton($path, 'production', 'timeout', true));
+        self::assertFalse(ArcoFileEditor::setSingleton($path, 'production', 'console', ['existing' => 'x']));
+        /** @phpstan-ignore argument.type */
+        self::assertFalse(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', ['public' => [['a/']]]));
+        /** @phpstan-ignore argument.type */
+        self::assertFalse(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', ['public' => ['a/', 1]]));
+        self::assertFalse(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', ['expire' => ['tmp/' => 'x']]));
+        self::assertFalse(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', ['expire' => [3 => 1, 'a/' => 2]]));
+        self::assertFalse(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', ['public' => [1 => 'a/']]));
+        self::assertFalse(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', ['1bad' => true]));
+        self::assertSame($php, file_get_contents($path));
     }
 }
