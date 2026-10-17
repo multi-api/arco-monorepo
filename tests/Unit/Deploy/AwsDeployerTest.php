@@ -10,11 +10,13 @@ use Aws\LambdaWeb\Exception\LambdaWebException;
 use Aws\ResourceGroupsTaggingAPI\Exception\ResourceGroupsTaggingAPIException;
 use Aws\Result;
 use Aws\S3\Exception\S3Exception;
+use Aws\Sqs\Exception\SqsException;
 use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Deploy\AwsDeployer;
+use Multiapi\Arco\Deploy\DeployException;
 use Multiapi\Arco\Deploy\SchedulerRule;
 use Multiapi\Arco\Deploy\DeployResult;
 use Multiapi\Arco\Deploy\PreparedDeploy;
@@ -767,5 +769,205 @@ final class AwsDeployerTest extends TestCase
         self::assertFalse($deployer->consoleExists($this->config()));
         self::assertSame(['GetFunctionConfiguration', 'GetFunctionConfiguration'], $mocks->calls);
         self::assertSame('shop-production-console', $mocks->params[0]['FunctionName']);
+    }
+
+    private function queueConfig(bool $withQueue = true): AppConfig
+    {
+        $app = App::make('shop')->region('us-east-1');
+        if ($withQueue) {
+            $app = $app->queue('emails', timeout: 120);
+        }
+        return ConfigResolver::resolve($app->environment('production')->toArray(), 'production');
+    }
+
+    private static function stackMissing(): CloudFormationException
+    {
+        return AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production-resources does not exist');
+    }
+
+    private static function noQueue(string $operation = 'GetQueueUrl'): SqsException
+    {
+        return AwsMocks::error(SqsException::class, $operation, 'AWS.SimpleQueueService.NonExistentQueue', 400);
+    }
+
+    private static function resourcesStack(string $status = 'UPDATE_COMPLETE', string $app = 'shop'): Result
+    {
+        return new Result(['Stacks' => [[
+            'StackName' => 'arco-shop-production-resources',
+            'StackStatus' => $status,
+            'Tags' => [['Key' => 'arco:app', 'Value' => $app], ['Key' => 'arco:environment', 'Value' => 'production']],
+        ]]]);
+    }
+
+    /** @param array<string, string> $logical physical queue name by logical id */
+    private static function stackResources(array $logical): Result
+    {
+        return new Result(['StackResources' => array_map(fn (string $id, string $name) => [
+            'LogicalResourceId' => $id,
+            'PhysicalResourceId' => "https://sqs.us-east-1.amazonaws.com/111111111111/$name",
+            'ResourceType' => 'AWS::SQS::Queue',
+            'ResourceStatus' => 'CREATE_COMPLETE',
+        ], array_keys($logical), $logical)]);
+    }
+
+    /**
+     * @return array{0: list<string>, 1: list<array{0: string, 1: array<string, string|int>}>}
+     */
+    private function deployResources(AwsMocks $mocks, AppConfig $config): array
+    {
+        $steps = [];
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->deployResources($config, function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+        return [$mocks->calls, $steps];
+    }
+
+    public function test_deploy_resources_creates_the_stack_with_the_queues(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackMissing(),
+            self::noQueue(), self::noQueue(),                    // queue and DLQ names are free
+            self::stackMissing(),                                // Stacks::deploy
+            new Result([]),                                      // CreateStack
+            self::resourcesStack('CREATE_COMPLETE'),
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->queueConfig());
+
+        self::assertSame(['DescribeStacks', 'GetQueueUrl', 'GetQueueUrl', 'DescribeStacks', 'CreateStack', 'DescribeStacks'], $calls);
+        self::assertSame('shop-production-emails', $mocks->params[1]['QueueName']);
+        self::assertSame('shop-production-emails-dlq', $mocks->params[2]['QueueName']);
+        self::assertSame('arco-shop-production-resources', $mocks->params[4]['StackName']);
+        self::assertSame([['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']], $mocks->params[4]['Tags']);
+        $template = json_decode((string) $mocks->params[4]['TemplateBody'], true);
+        self::assertIsArray($template);
+        self::assertSame(['QueueEmails', 'QueueEmailsDlq'], array_keys($template['Resources']));
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.queue_created', ['queue' => 'emails', 'name' => 'shop-production-emails']],
+        ], $steps);
+    }
+
+    public function test_deploy_resources_stops_before_any_change_when_a_queue_name_is_retained_in_aws(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackMissing(),
+            new Result(['QueueUrl' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails']),
+        );
+
+        try {
+            $this->deployResources($mocks, $this->queueConfig());
+            self::fail('expected deploy.queue_retained');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.queue_retained', $e->key);
+            self::assertSame([
+                'queue' => 'emails',
+                'existing' => "queue('emails', existing: 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails')",
+            ], $e->params);
+        }
+        self::assertSame(['DescribeStacks', 'GetQueueUrl'], $mocks->calls, 'no CreateStack or UpdateStack');
+    }
+
+    public function test_deploy_resources_stops_when_only_the_dlq_name_is_retained(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackMissing(),
+            self::noQueue(),
+            new Result(['QueueUrl' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails-dlq']),
+        );
+
+        try {
+            $this->deployResources($mocks, $this->queueConfig());
+            self::fail('expected deploy.queue_dlq_retained');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.queue_dlq_retained', $e->key);
+            self::assertSame(['queue' => 'emails', 'dlq' => 'shop-production-emails-dlq'], $e->params);
+        }
+        self::assertSame(['DescribeStacks', 'GetQueueUrl', 'GetQueueUrl'], $mocks->calls);
+    }
+
+    public function test_deploy_resources_retains_a_removed_queue_and_names_its_messages(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::stackResources(['QueueEmails' => 'shop-production-emails', 'QueueEmailsDlq' => 'shop-production-emails-dlq', 'QueueOld' => 'shop-production-old']),
+            self::resourcesStack(),                              // Stacks::deploy
+            new Result([]),                                      // UpdateStack
+            self::resourcesStack(),
+            new Result(['Attributes' => ['ApproximateNumberOfMessages' => '12']]),
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->queueConfig());
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'UpdateStack', 'DescribeStacks', 'GetQueueAttributes'], $calls, 'queues the stack owns need no name check');
+        $template = json_decode((string) $mocks->params[3]['TemplateBody'], true);
+        self::assertIsArray($template);
+        self::assertSame(['QueueEmails', 'QueueEmailsDlq'], array_keys($template['Resources']));
+        self::assertSame('https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-old', $mocks->params[5]['QueueUrl']);
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.queue_updated', ['queue' => 'emails', 'name' => 'shop-production-emails']],
+            ['deploy.queue_kept', ['queue' => 'shop-production-old', 'url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-old', 'messages' => 12]],
+        ], $steps);
+        self::assertContains('deploy.queue_kept', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
+    public function test_deploy_resources_deletes_the_stack_when_the_last_queue_is_removed_and_keeps_the_queue(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::stackResources(['QueueEmails' => 'shop-production-emails']),
+            self::resourcesStack(),                              // Stacks::delete
+            new Result([]),                                      // DeleteStack
+            self::stackMissing(),
+            self::noQueue('GetQueueAttributes'),                 // deleted by hand meanwhile: count unknown
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->queueConfig(false));
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'GetQueueAttributes'], $calls);
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.queue_kept', ['queue' => 'shop-production-emails', 'url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', 'messages' => '?']],
+        ], $steps);
+    }
+
+    public function test_deploy_resources_without_queues_or_stack_changes_nothing(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::stackMissing());
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->queueConfig(false));
+
+        self::assertSame(['DescribeStacks'], $calls, 'one read, no CloudFormation change');
+        self::assertSame([], $steps);
+    }
+
+    public function test_deploy_resources_without_queues_tolerates_missing_cloudformation_permissions(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403));
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->queueConfig(false));
+
+        self::assertSame(['DescribeStacks'], $calls);
+        self::assertSame([], $steps);
+    }
+
+    public function test_deploy_resources_refuses_a_stack_arco_did_not_create(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::resourcesStack('CREATE_COMPLETE', 'other'));
+
+        try {
+            $this->deployResources($mocks, $this->queueConfig());
+            self::fail('expected stack.not_ours');
+        } catch (DeployException $e) {
+            self::assertSame('stack.not_ours', $e->key);
+        }
+        self::assertSame(['DescribeStacks'], $mocks->calls);
     }
 }

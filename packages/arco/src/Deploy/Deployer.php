@@ -93,4 +93,17 @@ interface Deployer
      * @param Closure(string, array<string, string|int>): void $onStep
      */
     public function applyLogRetention(AppConfig $config, Closure $onStep): void;
+
+    /**
+     * After the build and before anything else changes: creates or updates the resources stack
+     * (ResourcesStack) with the queues Arco creates, and deletes it once none remain. Queues are
+     * retained: a queue removed from arco.php stays in AWS with its messages (warning step
+     * deploy.queue_kept, with its approximate message count). Nothing happens, no change, without
+     * queues or a stack left from earlier ones.
+     *
+     * @param Closure(string, array<string, string|int>): void $onStep
+     * @throws DeployException deploy.queue_retained (with an `existing:` reference to use instead) or
+     *         deploy.queue_dlq_retained when a queue to create already exists outside the stack, before any change
+     */
+    public function deployResources(AppConfig $config, Closure $onStep): void;
 }

@@ -957,4 +957,52 @@ final class DeployPipelineTest extends TestCase
         self::assertTrue($throwing->verification->ok);
         self::assertNotContains('deploy.scheduler_too_slow', $steps);
     }
+
+    private function queueConfig(): AppConfig
+    {
+        return ConfigResolver::resolve(
+            App::make('shop')->console(true)->region('us-east-1')
+                ->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))
+                ->queue('emails')
+                ->environment('production')
+                ->toArray(),
+            'production',
+        );
+    }
+
+    public function test_resources_are_deployed_after_the_build_and_before_prepare(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $steps = [];
+
+        $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame(['resources', 'prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
+        self::assertContains('deploy.queue_created', $steps);
+        self::assertLessThan(array_search('deploy.queue_created', $steps, true), array_search('package.ready', $steps, true));
+    }
+
+    public function test_a_failed_resources_deploy_stops_before_any_traffic_moves(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->resourcesError = DeployException::make('deploy.queue_retained', ['queue' => 'emails', 'existing' => "queue('emails', existing: 'arn')"]);
+
+        try {
+            $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+            self::fail('expected deploy.queue_retained');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.queue_retained', $e->key);
+        }
+        self::assertSame(['resources'], $deployer->calls);
+    }
+
+    public function test_a_resources_stack_left_without_queues_is_still_handled(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->resourcesStack = true;
+
+        $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+
+        self::assertSame(['resources', 'prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
+    }
 }

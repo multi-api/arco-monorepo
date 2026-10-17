@@ -40,6 +40,10 @@ final class FakeDeployer implements Deployer
     public ?\Throwable $syncSchedulerError = null;
     /** thrown by applyLogRetention(), e.g. AWS refusing logs:PutRetentionPolicy */
     public ?\Throwable $logRetentionError = null;
+    /** whether the resources stack exists: deployResources() then acts even without queues */
+    public bool $resourcesStack = false;
+    /** thrown by deployResources(), e.g. a queue name retained in AWS */
+    public ?\Throwable $resourcesError = null;
     /** @var list<array{0: string, 1: array<string, string|int>}> steps reported by remove() */
     public array $removeSteps = [];
 
@@ -142,6 +146,22 @@ final class FakeDeployer implements Deployer
             throw $this->logRetentionError;
         }
         $onStep(...\Multiapi\Arco\Deploy\AwsDeployer::logRetentionStep($config->logRetention, $config->consoleEnabled() ? 'all' : 'web'));
+    }
+    public function deployResources(AppConfig $config, \Closure $onStep): void
+    {
+        // Like AwsDeployer: nothing happens without queues or a stack left from earlier ones.
+        if ($config->queues === [] && ! $this->resourcesStack) {
+            return;
+        }
+        $this->calls[] = 'resources';
+        if ($this->resourcesError !== null) {
+            throw $this->resourcesError;
+        }
+        foreach ($config->queues as $queue) {
+            if ($queue->existing === null) {
+                $onStep('deploy.queue_created', ['queue' => $queue->name, 'name' => $queue->physicalName($config)]);
+            }
+        }
     }
     public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->describeError !== null ? throw $this->describeError : $this->status; }
 }

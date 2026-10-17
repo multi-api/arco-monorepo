@@ -186,6 +186,9 @@ final class DeployPipeline
         try {
             $console = $config->consoleEnabled() ? $this->consoleArtifacts($package, $work, $plan, $onStep) : null;
 
+            // Queues exist before any code that could use them; a failure stops the deploy before traffic moves.
+            $deployer->deployResources($config, $onStep(...));
+
             $since = (int) floor(microtime(true) * 1000) - 5000;
             $prepared = $deployer->prepare($config, $package, $console, $variables, $onStep);
             $ran = $plan === null ? [] : $this->runCommands($config, $prepared, $plan, $onStep);

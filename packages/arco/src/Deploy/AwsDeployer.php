@@ -359,6 +359,94 @@ final class AwsDeployer implements Deployer
         );
     }
 
+    public function deployResources(AppConfig $config, Closure $onStep): void
+    {
+        $name = ResourcesStack::name($config);
+        $created = ResourcesStack::createdQueues($config);
+        $stacks = new Stacks($this->aws->cloudFormation(), $this->sleeper);
+        try {
+            $stack = $stacks->describe($name);
+        } catch (AwsException $e) {
+            // Without queues, profiles that never used them may lack CloudFormation permissions: no stack.
+            if ($created !== [] || ! in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
+                throw $e;
+            }
+            return;
+        }
+        if ($stack === null && $created === []) {
+            return;
+        }
+        if ($stack !== null && (($stack['tags']['arco:app'] ?? null) !== $config->app || ($stack['tags']['arco:environment'] ?? null) !== $config->environment)) {
+            throw DeployException::make('stack.not_ours', ['stack' => $name, 'app' => $config->app, 'environment' => $config->environment]);
+        }
+        $owned = $stack === null ? [] : $this->stackQueues($name);
+        $queues = new Queues($this->aws->sqs(), $this->aws->lambda());
+
+        // A queue removed earlier is retained under its name: CloudFormation would fail creating it
+        // again, so the deploy stops here, before any change, and offers to reference it instead.
+        foreach ($created as $queue) {
+            if (! isset($owned[ResourcesStack::logicalId($queue->name)])) {
+                $url = $queues->url($queue->physicalName($config));
+                if ($url !== null) {
+                    throw DeployException::make('deploy.queue_retained', ['queue' => $queue->name, 'existing' => "queue('{$queue->name}', existing: '" . self::queueArn($url) . "')"]);
+                }
+            }
+            $dlq = $queue->dlqName($config);
+            if ($dlq !== null && ! isset($owned[ResourcesStack::dlqLogicalId($queue->name)]) && $queues->url($dlq) !== null) {
+                throw DeployException::make('deploy.queue_dlq_retained', ['queue' => $queue->name, 'dlq' => $dlq]);
+            }
+        }
+
+        $template = ResourcesStack::template($config);
+        /** @var array<string, mixed> $resources */
+        $resources = $template['Resources'];
+        $removed = array_diff_key($owned, $resources);
+
+        $onStep('deploy.step_resources', ['stack' => $name]);
+        if ($created === []) {
+            // The queues stay (Retain): only the empty stack goes.
+            $stacks->delete($name);
+        } else {
+            $stacks->deploy($name, ResourcesStack::body($template), self::tags($config));
+            foreach ($created as $queue) {
+                $key = isset($owned[ResourcesStack::logicalId($queue->name)]) ? 'deploy.queue_updated' : 'deploy.queue_created';
+                $onStep($key, ['queue' => $queue->name, 'name' => $queue->physicalName($config)]);
+            }
+        }
+        foreach ($removed as $url) {
+            $onStep('deploy.queue_kept', ['queue' => self::queueName($url), 'url' => $url, 'messages' => $queues->messageCount($url) ?? '?']);
+        }
+    }
+
+    /** @return array<string, string> URL of each SQS queue the stack owns, by logical id */
+    private function stackQueues(string $stack): array
+    {
+        $queues = [];
+        $result = Domains\Aws::call($this->aws->cloudFormation(), 'DescribeStackResources', ['StackName' => $stack]);
+        foreach (Domains\Aws::maps($result['StackResources'] ?? []) as $resource) {
+            $id = Domains\Aws::string($resource['LogicalResourceId'] ?? null);
+            $url = Domains\Aws::string($resource['PhysicalResourceId'] ?? null);
+            $status = (string) Domains\Aws::string($resource['ResourceStatus'] ?? null);
+            if ($id !== null && $url !== null && ($resource['ResourceType'] ?? null) === 'AWS::SQS::Queue'
+                && ! in_array($status, ['CREATE_FAILED', 'DELETE_COMPLETE', 'DELETE_SKIPPED'], true)) {
+                $queues[$id] = $url;
+            }
+        }
+        return $queues;
+    }
+
+    private static function queueName(string $url): string
+    {
+        return substr($url, (int) strrpos($url, '/') + 1);
+    }
+
+    /** The ARN of a queue from its URL (https://sqs.<region>.amazonaws.com/<account>/<name>). */
+    private static function queueArn(string $url): string
+    {
+        $parsed = \Multiapi\Arco\Config\QueueConfig::parseExisting($url);
+        return $parsed === null ? $url : "arn:aws:sqs:{$parsed['region']}:{$parsed['account']}:{$parsed['name']}";
+    }
+
     /** @return array<string, string> */
     private static function tags(AppConfig $config): array
     {
