@@ -240,6 +240,33 @@ final class ConsoleSchedulerCommandsTest extends TestCase
         }
     }
 
+    public function test_app_level_change_lines_name_the_app_in_the_user_language(): void
+    {
+        $this->project();
+        $run = function (string $lang): string {
+            $app = \Multiapi\Arco\Cli\Application::create();
+            $app->addCommands([new LogsRetentionCommand()]);
+            $app->setAutoExit(false);
+            $tester = new \Symfony\Component\Console\Tester\ApplicationTester($app);
+            $tester->run(['command' => 'logs:retention', 'days' => $lang === 'es' ? '30' : '14', '--app' => true, '--lang' => $lang], ['interactive' => false]);
+            return (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        };
+
+        self::assertStringContainsString('Log retention (app): default → 14 days', $run('en'));
+        self::assertStringContainsString('Retención de logs (toda la app): 14 días → 30 días', $run('es'));
+    }
+
+    public function test_logs_retention_one_day_is_singular(): void
+    {
+        $this->project('->timeout(60)', '->timeout(60)->logRetention(14)');
+
+        $tester = $this->run_(new LogsRetentionCommand(), ['days' => '1', '--env' => 'production']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('Log retention (production): 14 days → 1 day', self::display($tester));
+        self::assertStringNotContainsString('1 days', self::display($tester));
+    }
+
     public function test_logs_retention_sets_days(): void
     {
         $this->project();

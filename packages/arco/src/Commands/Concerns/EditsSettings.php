@@ -142,10 +142,10 @@ trait EditsSettings
         ))]));
     }
 
-    /** The environment name, or "app" for the app level: how the change lines name where they apply. */
+    /** The environment name, or the app level's label ("app"): how the change lines name where they apply. */
     private function levelLabel(?string $environment): string
     {
-        return $environment ?? 'app';
+        return $environment ?? $this->t('settings.level_app');
     }
 
     private function arcoPhp(): string

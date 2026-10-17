@@ -103,15 +103,23 @@ final class InfoCommandTest extends TestCase
 
         $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true);
-        self::assertSame('on', $json['settings']['console']);
-        self::assertSame('every 5 min', $json['settings']['scheduler']);
-        self::assertSame('30 days', $json['settings']['logRetention']);
+        // --json carries machine values, as arco.php writes them.
+        self::assertTrue($json['settings']['console']);
+        self::assertSame(5, $json['settings']['scheduler']);
+        self::assertSame(30, $json['settings']['logRetention']);
 
         $tester->execute(['--env' => 'staging'], ['interactive' => false]);
         $display = $tester->getDisplay();
         self::assertMatchesRegularExpression('/\bconsole\s+not set\s+default/', $display);
         self::assertMatchesRegularExpression('/scheduler\s+off\s+default/', $display);
         self::assertMatchesRegularExpression('/logRetention\s+not managed\s+default/', $display);
+
+        $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertArrayHasKey('console', $json['settings']);
+        self::assertNull($json['settings']['console']);
+        self::assertNull($json['settings']['scheduler']);
+        self::assertNull($json['settings']['logRetention']);
         $project->restore();
     }
 
@@ -122,9 +130,52 @@ final class InfoCommandTest extends TestCase
         $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
         $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true);
-        self::assertSame('off', $json['settings']['console']);
-        self::assertSame('never', $json['settings']['logRetention']);
+        self::assertFalse($json['settings']['console']);
+        self::assertFalse($json['settings']['logRetention']);
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/\bconsole\s+off\s+environment/', $tester->getDisplay());
+        self::assertMatchesRegularExpression('/logRetention\s+never expire\s+environment/', $tester->getDisplay());
         $project->restore();
+    }
+
+    public function test_one_day_retention_is_singular(): void
+    {
+        $project = new ProjectFixture(str_replace("->timeout(60)", "->timeout(60)->logRetention(1)", ProjectFixture::standardConfig()));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/logRetention\s+1 day\s+environment/', $tester->getDisplay());
+        $project->restore();
+    }
+
+    public function test_setting_values_read_as_spanish(): void
+    {
+        $on = str_replace("->timeout(60)", "->timeout(60)->console()->scheduler(5)->logRetention(30)", ProjectFixture::standardConfig());
+        $off = str_replace("->timeout(60)", "->timeout(60)->console(false)->logRetention(false)", ProjectFixture::standardConfig());
+        $run = function (string $config, string $env): string {
+            $project = new ProjectFixture($config);
+            $app = \Multiapi\Arco\Cli\Application::create();
+            $app->addCommands([new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected'))]);
+            $app->setAutoExit(false);
+            $tester = new \Symfony\Component\Console\Tester\ApplicationTester($app);
+            $tester->run(['command' => 'info', '--env' => $env, '--lang' => 'es'], ['interactive' => false]);
+            $project->restore();
+            return $tester->getDisplay();
+        };
+
+        $display = $run($on, 'production');
+        self::assertMatchesRegularExpression('/\bconsole\s+activada\s+environment/', $display);
+        self::assertMatchesRegularExpression('/scheduler\s+cada 5 min\s+environment/', $display);
+        self::assertMatchesRegularExpression('/logRetention\s+30 días\s+environment/', $display);
+
+        $display = $run($on, 'staging');
+        self::assertMatchesRegularExpression('/\bconsole\s+sin definir\s+default/', $display);
+        self::assertMatchesRegularExpression('/scheduler\s+desactivado\s+default/', $display);
+        self::assertMatchesRegularExpression('/logRetention\s+sin gestionar\s+default/', $display);
+
+        $display = $run($off, 'production');
+        self::assertMatchesRegularExpression('/\bconsole\s+desactivada\s+environment/', $display);
+        self::assertMatchesRegularExpression('/logRetention\s+no expiran\s+environment/', $display);
     }
 
     public function test_a_console_that_is_off_is_not_looked_up(): void

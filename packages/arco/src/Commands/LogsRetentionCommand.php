@@ -79,6 +79,7 @@ final class LogsRetentionCommand extends ArcoCommand
     {
         return match (true) {
             $retention === false => $this->t('logs.retention_never'),
+            $retention === 1 => $this->t('logs.retention_one_day'),
             is_int($retention) => $this->t('logs.retention_days', ['days' => $retention]),
             default => $this->t('logs.retention_default'),
         };

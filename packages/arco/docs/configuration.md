@@ -189,7 +189,9 @@ The console function is **opt-in**: by default `arco deploy` creates only the we
 `->console()` in `arco.php` (or `arco console:add`); `->console(false)` (or `arco console:remove`) deletes it
 on the next deploy, and a failed delete is a warning. `arco command`, `arco tinker`, `deployCommands()` and
 `arco deploy --migrate` need it and fail before touching AWS when it is off, naming `arco console:add`.
-`arco info` shows it as `on`, `off` or `not set`.
+`arco info` shows it as `on`, `off` or `not set` (in your language); in `--json`, `settings.console` is `true`,
+`false` or `null`, `settings.scheduler` the minutes or `null`, and `settings.logRetention` the days, `false`
+(never expire) or `null` (not managed), as `arco.php` writes them.
 
 **Upgrading to 0.4.** An environment deployed with Arco 0.2 or 0.3 already has a console function. If
 `arco.php` has no `console()` setting for it, `arco deploy` stops before changing anything: add `->console()`

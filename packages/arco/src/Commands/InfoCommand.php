@@ -79,7 +79,7 @@ final class InfoCommand extends ArcoCommand
         $io->title($config->functionName());
         $io->table(
             [$this->t('info.setting'), $this->t('info.value'), $this->t('info.source')],
-            array_map(fn (string $key, array $row) => [$key, $this->display($row[0]), $row[1]], array_keys($settings), $settings),
+            array_map(fn (string $key, array $row) => [$key, $this->display($key, $row[0]), $row[1]], array_keys($settings), $settings),
         );
 
         $io->section($this->t('info.variables'));
@@ -175,17 +175,10 @@ final class InfoCommand extends ArcoCommand
             'rateLimit' => [$config->rateLimit, $s['rateLimit']],
             'auth' => [$config->auth, $s['auth']],
             'logLevel' => [$config->logLevel, $s['logLevel']],
-            'console' => [match (true) {
-                $config->consoleEnabled() => 'on',
-                $config->console === false => 'off',
-                default => 'not set',
-            }, $s['console']],
-            'scheduler' => [$config->scheduler === null ? 'off' : "every {$config->scheduler} min", $s['scheduler']],
-            'logRetention' => [match (true) {
-                $config->logRetention === null => 'not managed',
-                $config->logRetention === false => 'never',
-                default => "{$config->logRetention} days",
-            }, $s['logRetention']],
+            // Machine values, as arco.php writes them (--json); display() words them for the table.
+            'console' => [$config->consoleEnabled() ? true : $config->console, $s['console']],
+            'scheduler' => [$config->scheduler, $s['scheduler']],
+            'logRetention' => [$config->logRetention, $s['logRetention']],
             'consoleTimeout' => [$config->consoleTimeout, $s['consoleTimeout']],
             'protected' => [$config->isProtected(), $s['protected']],
             'deployCommands' => [$config->deployCommands === [] ? null : implode('; ', $config->deployCommands), $s['deployCommands']],
@@ -210,9 +203,21 @@ final class InfoCommand extends ArcoCommand
         };
     }
 
-    private function display(mixed $value): string
+    private function display(string $key, mixed $value): string
     {
         return match (true) {
+            $key === 'console' => $this->t(match ($value) {
+                true => 'console.on',
+                false => 'console.off',
+                default => 'info.console_not_set',
+            }),
+            $key === 'scheduler' => is_int($value) ? $this->t('scheduler.every', ['minutes' => $value]) : $this->t('scheduler.off'),
+            $key === 'logRetention' => match (true) {
+                $value === null => $this->t('info.retention_not_managed'),
+                $value === false => $this->t('logs.retention_never'),
+                $value === 1 => $this->t('logs.retention_one_day'),
+                default => $this->t('logs.retention_days', ['days' => is_int($value) ? $value : 0]),
+            },
             is_bool($value) => $this->t($value ? 'common.yes' : 'common.no'),
             is_scalar($value) => (string) $value,
             default => '-',

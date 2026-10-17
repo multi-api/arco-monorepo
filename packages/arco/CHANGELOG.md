@@ -26,7 +26,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `--remove`. Applied to the web and console log groups on deploy; not set means Arco does not manage it.
 - **Added:** `arco info` shows `console`, `scheduler` and `logRetention`; with the console off, the `console`
   block of `--json` is `{"enabled": false, "function": "<name>"}` with no remote lookup, and with it on it
-  gains `"enabled": true`.
+  gains `"enabled": true`. In `--json`, `settings.console` is `true`/`false`/`null`, `settings.scheduler` the
+  minutes or `null` and `settings.logRetention` the days, `false` (never expire) or `null` (not managed).
 - **Added:** a deploy removes runtime binaries (`runtime/*` in the code bucket) older than 24 hours that no
   published version of any Arco function in the region references, best effort (a warning when it cannot).
 - **Added:** deploy-profile permissions for the above (see Minimal IAM permissions in the getting-started
