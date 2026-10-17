@@ -34,10 +34,24 @@ final class TablesTest extends TestCase
     public function test_exists_does_not_guess_on_other_errors(): void
     {
         $mocks = new AwsMocks();
-        $mocks->handler->append(AwsMocks::error(DynamoDbException::class, 'DescribeTable', 'AccessDeniedException', 400));
+        $mocks->handler->append(AwsMocks::error(DynamoDbException::class, 'DescribeTable', 'ValidationException', 400));
 
         $this->expectException(DynamoDbException::class);
         $this->tables($mocks)->exists('shop-production-cache');
+    }
+
+    public function test_a_profile_that_may_not_describe_tables_gets_an_arco_error_naming_the_permission(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(AwsMocks::error(DynamoDbException::class, 'DescribeTable', 'AccessDeniedException', 400));
+
+        try {
+            $this->tables($mocks)->exists('shop-production-cache');
+            self::fail('expected deploy.lookup_denied');
+        } catch (\Multiapi\Arco\Deploy\DeployException $e) {
+            self::assertSame('deploy.lookup_denied', $e->key);
+            self::assertSame(['permission' => 'dynamodb:DescribeTable', 'name' => 'shop-production-cache'], $e->params);
+        }
     }
 
     public function test_item_count(): void

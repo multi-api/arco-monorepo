@@ -46,7 +46,7 @@ final class ResourcesStackTest extends TestCase
         self::assertSame([
             'QueueEmails' => [
                 'Type' => 'AWS::SQS::Queue',
-                'DeletionPolicy' => 'Retain',
+                'DeletionPolicy' => 'RetainExceptOnCreate',
                 'UpdateReplacePolicy' => 'Retain',
                 'Properties' => [
                     'QueueName' => 'shop-production-emails',
@@ -60,7 +60,7 @@ final class ResourcesStackTest extends TestCase
             ],
             'QueueEmailsDlq' => [
                 'Type' => 'AWS::SQS::Queue',
-                'DeletionPolicy' => 'Retain',
+                'DeletionPolicy' => 'RetainExceptOnCreate',
                 'UpdateReplacePolicy' => 'Retain',
                 'Properties' => [
                     'QueueName' => 'shop-production-emails-dlq',
@@ -70,7 +70,7 @@ final class ResourcesStackTest extends TestCase
             ],
             'QueueHighXpriority' => [
                 'Type' => 'AWS::SQS::Queue',
-                'DeletionPolicy' => 'Retain',
+                'DeletionPolicy' => 'RetainExceptOnCreate',
                 'UpdateReplacePolicy' => 'Retain',
                 'Properties' => [
                     'QueueName' => 'shop-production-high-priority.fifo',
@@ -141,7 +141,7 @@ final class ResourcesStackTest extends TestCase
 
         self::assertSame([
             'Type' => 'AWS::S3::Bucket',
-            'DeletionPolicy' => 'Retain',
+            'DeletionPolicy' => 'RetainExceptOnCreate',
             'UpdateReplacePolicy' => 'Retain',
             'Properties' => [
                 'BucketName' => 'shop-production-uploads-111111111111',
@@ -161,7 +161,7 @@ final class ResourcesStackTest extends TestCase
 
         self::assertSame([
             'Type' => 'AWS::S3::Bucket',
-            'DeletionPolicy' => 'Retain',
+            'DeletionPolicy' => 'RetainExceptOnCreate',
             'UpdateReplacePolicy' => 'Retain',
             'Properties' => [
                 'BucketName' => 'shop-production-media-111111111111',
@@ -188,8 +188,8 @@ final class ResourcesStackTest extends TestCase
                 'PolicyDocument' => [
                     'Version' => '2012-10-17',
                     'Statement' => [
-                        ['Sid' => 'ArcoPublicRead1', 'Effect' => 'Allow', 'Principal' => '*', 'Action' => 's3:GetObject', 'Resource' => 'arn:aws:s3:::shop-production-media-111111111111/public/*'],
-                        ['Sid' => 'ArcoPublicRead2', 'Effect' => 'Allow', 'Principal' => '*', 'Action' => 's3:GetObject', 'Resource' => 'arn:aws:s3:::shop-production-media-111111111111/avatars/*'],
+                        ['Sid' => 'ArcoPublicRead1', 'Effect' => 'Allow', 'Principal' => '*', 'Action' => 's3:GetObject', 'Resource' => ['Fn::Join' => ['', ['arn:', ['Ref' => 'AWS::Partition'], ':s3:::shop-production-media-111111111111/public/*']]]],
+                        ['Sid' => 'ArcoPublicRead2', 'Effect' => 'Allow', 'Principal' => '*', 'Action' => 's3:GetObject', 'Resource' => ['Fn::Join' => ['', ['arn:', ['Ref' => 'AWS::Partition'], ':s3:::shop-production-media-111111111111/avatars/*']]]],
                     ],
                 ],
             ],
@@ -205,7 +205,7 @@ final class ResourcesStackTest extends TestCase
 
         self::assertSame([
             'Type' => 'AWS::DynamoDB::Table',
-            'DeletionPolicy' => 'Retain',
+            'DeletionPolicy' => 'RetainExceptOnCreate',
             'UpdateReplacePolicy' => 'Retain',
             'Properties' => [
                 'TableName' => 'shop-production-cache',
@@ -218,7 +218,7 @@ final class ResourcesStackTest extends TestCase
         ], $resources['TableCache']);
         self::assertSame([
             'Type' => 'AWS::DynamoDB::Table',
-            'DeletionPolicy' => 'Retain',
+            'DeletionPolicy' => 'RetainExceptOnCreate',
             'UpdateReplacePolicy' => 'Retain',
             'Properties' => [
                 'TableName' => 'shop-production-failed-jobs',

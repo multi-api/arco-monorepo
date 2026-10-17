@@ -10,9 +10,12 @@ use Multiapi\Arco\Config\TableConfig;
 /**
  * The CloudFormation template of an environment's AWS resources other than functions: the SQS
  * queues Arco creates and their dead-letter queues, the S3 buckets of its storage, and the DynamoDB
- * cache and failed-jobs tables. Every queue, bucket and table is retained (DeletionPolicy and
- * UpdateReplacePolicy Retain): removing it from arco.php, or deleting the stack, never deletes its
- * messages, files or items. Resources referenced with `existing` are not in the template.
+ * cache and failed-jobs tables. Every queue, bucket and table is retained when it is removed from
+ * arco.php or when the stack is deleted, with its messages, files or items (DeletionPolicy
+ * RetainExceptOnCreate, UpdateReplacePolicy Retain). It is deleted only when the very operation that
+ * created it rolls back: it is then new and unused, since the resources stack deploys before the app
+ * that could use it, and keeping it would block the next deploy with "name already exists".
+ * Resources referenced with `existing` are not in the template.
  */
 final class ResourcesStack
 {
@@ -21,6 +24,8 @@ final class ResourcesStack
     public const VISIBILITY_FACTOR = 6;
     /** Receives a message gets before it goes to the dead-letter queue, besides the worker's tries. */
     public const EXTRA_RECEIVES = 2;
+    /** See the class docblock: retained, except when the operation that created the resource rolls back. */
+    public const DELETION_POLICY = 'RetainExceptOnCreate';
     /** The attribute Laravel's DynamoDB cache store and failed-job provider write the expiry to. */
     public const TTL_ATTRIBUTE = 'expires_at';
 
@@ -155,7 +160,7 @@ final class ResourcesStack
     {
         return [
             'Type' => 'AWS::SQS::Queue',
-            'DeletionPolicy' => 'Retain',
+            'DeletionPolicy' => self::DELETION_POLICY,
             'UpdateReplacePolicy' => 'Retain',
             'Properties' => $properties,
         ];
@@ -199,7 +204,7 @@ final class ResourcesStack
         $properties['Tags'] = self::tags($config, "storage:{$storage->name}");
         return [
             'Type' => 'AWS::S3::Bucket',
-            'DeletionPolicy' => 'Retain',
+            'DeletionPolicy' => self::DELETION_POLICY,
             'UpdateReplacePolicy' => 'Retain',
             'Properties' => $properties,
         ];
@@ -221,7 +226,8 @@ final class ResourcesStack
                 'Effect' => 'Allow',
                 'Principal' => '*',
                 'Action' => 's3:GetObject',
-                'Resource' => "arn:aws:s3:::{$bucket}/{$prefix}*",
+                // The partition of the stack's region (aws, aws-cn, aws-us-gov).
+                'Resource' => ['Fn::Join' => ['', ['arn:', ['Ref' => 'AWS::Partition'], ":s3:::{$bucket}/{$prefix}*"]]],
             ];
         }
         return [
@@ -252,7 +258,7 @@ final class ResourcesStack
         }
         return [
             'Type' => 'AWS::DynamoDB::Table',
-            'DeletionPolicy' => 'Retain',
+            'DeletionPolicy' => self::DELETION_POLICY,
             'UpdateReplacePolicy' => 'Retain',
             'Properties' => [
                 'TableName' => $table->tableName($config),

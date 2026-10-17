@@ -13,7 +13,10 @@ final class Tables
     {
     }
 
-    /** Whether a table with this name exists in the account and region. Errors other than "not found" are not guessed at. */
+    /**
+     * Whether a table with this name exists in the account and region. A profile that may not
+     * describe tables gets deploy.lookup_denied; other errors are not guessed at.
+     */
     public function exists(string $name): bool
     {
         try {
@@ -22,6 +25,9 @@ final class Tables
         } catch (AwsException $e) {
             if ($e->getAwsErrorCode() === 'ResourceNotFoundException') {
                 return false;
+            }
+            if (in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
+                throw DeployException::make('deploy.lookup_denied', ['permission' => 'dynamodb:DescribeTable', 'name' => $name], $e);
             }
             throw $e;
         }

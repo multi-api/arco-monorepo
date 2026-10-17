@@ -116,8 +116,9 @@ interface Deployer
     /**
      * After the build and before anything else changes: creates or updates the resources stack
      * (ResourcesStack) with the queues, buckets and tables Arco creates, and deletes it once none
-     * remain. They are retained: one removed from arco.php stays in AWS with its data (warning steps
-     * deploy.queue_kept, deploy.storage_kept and deploy.table_kept). Nothing happens, no change,
+     * remain. They are retained: one removed from arco.php, or left when the stack is deleted, stays
+     * in AWS with its data (warning steps deploy.queue_kept, deploy.storage_kept, deploy.table_kept);
+     * only a resource whose own creating operation rolls back is deleted, new and unused. Nothing happens, no change,
      * without such resources or a stack left from earlier ones (a stack with this name Arco did not
      * create is then left alone).
      *
@@ -125,7 +126,8 @@ interface Deployer
      * @throws DeployException before any change: deploy.queue_retained, deploy.storage_retained or
      *         deploy.table_retained (with an `existing:` reference to use instead) or
      *         deploy.queue_dlq_retained when a resource to create already exists outside the stack;
-     *         deploy.bucket_taken when another account holds a bucket name; deploy.queue_replaced or
+     *         deploy.bucket_taken when another account (or region) holds a bucket name;
+     *         deploy.lookup_denied when the profile may not look a table up; deploy.queue_replaced or
      *         deploy.resource_replaced when a name would change. After the stack fails:
      *         deploy.public_blocked or deploy.public_policy_denied for a refused public bucket policy
      */

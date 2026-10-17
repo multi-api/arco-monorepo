@@ -1218,10 +1218,39 @@ final class AwsDeployerTest extends TestCase
                 self::fail('expected deploy.table_retained');
             } catch (DeployException $e) {
                 self::assertSame('deploy.table_retained', $e->key);
-                self::assertSame(['kind' => $kind, 'existing' => $existing], $e->params);
+                self::assertSame(['kind' => $kind, 'table' => "shop-production-$kind", 'existing' => $existing], $e->params);
             }
             self::assertSame(['DescribeStacks', 'DescribeTable'], $mocks->calls, 'no CreateStack or UpdateStack');
         }
+    }
+
+    public function test_a_profile_that_may_not_look_up_tables_stops_before_any_change_naming_the_permission(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::stackMissing(), AwsMocks::error(DynamoDbException::class, 'DescribeTable', 'AccessDeniedException', 400));
+
+        try {
+            $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->cache()));
+            self::fail('expected deploy.lookup_denied');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.lookup_denied', $e->key);
+            self::assertSame(['permission' => 'dynamodb:DescribeTable', 'name' => 'shop-production-cache'], $e->params);
+        }
+        self::assertSame(['DescribeStacks', 'DescribeTable'], $mocks->calls);
+    }
+
+    public function test_a_bucket_name_answering_for_another_region_stops_before_any_change(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::stackMissing(), AwsMocks::error(S3Exception::class, 'HeadBucket', 'AuthorizationHeaderMalformed', 400));
+
+        try {
+            $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->storage('uploads')));
+            self::fail('expected deploy.bucket_taken');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.bucket_taken', $e->key);
+        }
+        self::assertSame(['DescribeStacks', 'HeadBucket'], $mocks->calls);
     }
 
     public function test_deploy_resources_keeps_a_removed_bucket_and_updates_the_stack(): void
@@ -1280,9 +1309,10 @@ final class AwsDeployerTest extends TestCase
             ['deploy.queue_kept', ['queue' => 'shop-production-emails', 'url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', 'messages' => 3]],
             ['deploy.storage_kept', ['bucket' => 'shop-production-uploads-111111111111', 'objects' => 'none']],
             ['deploy.table_kept', ['table' => 'shop-production-cache', 'items' => 120]],
-            ['deploy.table_kept', ['table' => 'shop-production-failed-jobs', 'items' => '?']],
+            ['deploy.table_kept_unknown', ['table' => 'shop-production-failed-jobs']],
         ], $steps);
         self::assertContains('deploy.table_kept', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertContains('deploy.table_kept_unknown', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
 
     public function test_a_created_bucket_or_table_switched_to_existing_itself_is_not_offered_for_deletion(): void

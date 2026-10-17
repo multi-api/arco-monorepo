@@ -40,6 +40,14 @@ final class BucketsTest extends TestCase
         self::assertSame('taken', $this->buckets($mocks)->exists('shop-production-uploads-111111111111'));
     }
 
+    public function test_a_bucket_answering_for_another_region_is_taken(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(AwsMocks::error(S3Exception::class, 'HeadBucket', 'AuthorizationHeaderMalformed', 400));
+
+        self::assertSame('taken', $this->buckets($mocks)->exists('shop-production-uploads-111111111111'));
+    }
+
     public function test_a_missing_bucket_is_free(): void
     {
         $mocks = new AwsMocks();
@@ -51,7 +59,7 @@ final class BucketsTest extends TestCase
     public function test_other_errors_are_not_guessed(): void
     {
         $mocks = new AwsMocks();
-        $mocks->handler->append(AwsMocks::error(S3Exception::class, 'HeadBucket', 'BadRequest', 400));
+        $mocks->handler->append(AwsMocks::error(S3Exception::class, 'HeadBucket', 'MethodNotAllowed', 405));
 
         $this->expectException(S3Exception::class);
         $this->buckets($mocks)->exists('shop-production-uploads-111111111111');

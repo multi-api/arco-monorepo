@@ -16,9 +16,10 @@ final class Buckets
     /**
      * Who holds a bucket name. S3 names are global: 200 means this account can read the bucket
      * ("ours", e.g. one kept when its storage left arco.php); 403 means another account has the name
-     * (or this profile may not read it), and 301 that a bucket with the name lives in another region:
-     * either way CloudFormation could not create it here ("taken"). 404: "free". Other errors are
-     * not guessed at.
+     * (or this profile lacks s3:ListBucket on it: HeadBucket answers both with a bare 403), and 301 or
+     * 400 that a bucket with the name lives in another region (a redirect, or a request signed for the
+     * wrong region): either way CloudFormation could not create it here ("taken"). 404: "free".
+     * Other errors are not guessed at.
      *
      * @return 'ours'|'taken'|'free'
      */
@@ -30,7 +31,7 @@ final class Buckets
         } catch (AwsException $e) {
             return match ($e->getStatusCode()) {
                 404 => 'free',
-                301, 403 => 'taken',
+                301, 400, 403 => 'taken',
                 default => throw $e,
             };
         }

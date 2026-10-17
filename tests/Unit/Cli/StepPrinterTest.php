@@ -156,12 +156,34 @@ final class StepPrinterTest extends TestCase
         $output = new BufferedOutput();
         $printer = new StepPrinter(new SymfonyStyle(new ArrayInput([]), $output), $translator->trans(...), false);
 
-        $printer('deploy.storage_kept', ['bucket' => 'shop-production-old-111111111111', 'objects' => 'some']);
-        $printer('remove.storage_kept', ['bucket' => 'shop-production-old-111111111111', 'objects' => 'unknown']);
+        $printer('deploy.storage_kept', ['bucket' => 'b-1', 'objects' => 'some']);
+        $printer('deploy.storage_kept', ['bucket' => 'b-2', 'objects' => 'none']);
+        $printer('remove.storage_kept', ['bucket' => 'b-3', 'objects' => 'unknown']);
 
         $text = (string) preg_replace('/\s+/', ' ', $output->fetch());
-        self::assertStringContainsString('[WARNING] The bucket shop-production-old-111111111111 is no longer in arco.php. Arco kept it in AWS with its files (it still has files).', $text);
-        self::assertStringContainsString('with its files (its files could not be listed)', $text);
+        self::assertStringContainsString('[WARNING] The bucket b-1 is no longer in arco.php. Arco kept it in AWS: it still has files.', $text);
+        self::assertStringContainsString('The bucket b-2 is no longer in arco.php. Arco kept it in AWS: it is empty.', $text);
+        self::assertStringContainsString('The bucket b-3 was kept in AWS: its files could not be listed.', $text);
+        self::assertStringNotContainsString('with its files (it is empty)', $text);
+    }
+
+    public function test_table_kinds_are_translated(): void
+    {
+        foreach (['en' => ['Created the cache table t-1', 'The failed-jobs table t-2 is up to date', 'its existing cache table'], 'es' => ['Creada la tabla de caché t-1', 'La tabla de trabajos fallidos t-2 está al día', 'su tabla de caché existente']] as $locale => $expected) {
+            $translator = new \Multiapi\Arco\Cli\Translator($locale, dirname(__DIR__, 3) . '/packages/arco/lang');
+            $output = new BufferedOutput();
+            $printer = new StepPrinter(new SymfonyStyle(new ArrayInput([]), $output), $translator->trans(...), false);
+
+            $printer('deploy.table_created', ['kind' => 'cache', 'name' => 't-1']);
+            $printer('deploy.table_updated', ['kind' => 'failed-jobs', 'name' => 't-2']);
+            $printer('deploy.table_now_existing', ['table' => 't-3', 'as' => 'cache']);
+
+            $text = (string) preg_replace('/\s+/', ' ', $output->fetch());
+            foreach ($expected as $line) {
+                self::assertStringContainsString($line, $text, $locale);
+            }
+            self::assertStringNotContainsString('{', $text);
+        }
     }
 
     public function test_the_log_retention_lines_read_as_spanish(): void

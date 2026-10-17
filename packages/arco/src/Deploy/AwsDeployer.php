@@ -630,7 +630,7 @@ final class AwsDeployer implements Deployer
         foreach ($tables as $table) {
             if (! isset($owned[ResourcesStack::tableLogicalId($table->kind)]) && $lookup->exists($table->tableName($config))) {
                 $method = $table->kind === 'cache' ? 'cache' : 'failedJobsTable';
-                throw DeployException::make('deploy.table_retained', ['kind' => $table->kind, 'existing' => "{$method}(existing: '{$table->tableName($config)}')"]);
+                throw DeployException::make('deploy.table_retained', ['kind' => $table->kind, 'table' => $table->tableName($config), 'existing' => "{$method}(existing: '{$table->tableName($config)}')"]);
             }
         }
 
@@ -720,7 +720,9 @@ final class AwsDeployer implements Deployer
                     false => 'none',
                     null => 'unknown',
                 }]),
-                default => $step($prefix . 'table_kept', ['table' => $id, 'items' => $tables->itemCount($id) ?? '?']),
+                default => ($items = $tables->itemCount($id)) === null
+                    ? $step($prefix . 'table_kept_unknown', ['table' => $id])
+                    : $step($prefix . 'table_kept', ['table' => $id, 'items' => $items]),
             };
         }
     }
