@@ -32,7 +32,7 @@ final class QueueAddCommand extends ArcoCommand
             ->addOption('memory', null, InputOption::VALUE_REQUIRED, 'Worker memory in MB')
             ->addOption('concurrency', null, InputOption::VALUE_REQUIRED, 'Maximum concurrent worker invocations')
             ->addOption('batch-size', null, InputOption::VALUE_REQUIRED, 'Messages per worker invocation')
-            ->addOption('tries', null, InputOption::VALUE_REQUIRED, 'Receives before a message goes to the dead-letter queue')
+            ->addOption('tries', null, InputOption::VALUE_REQUIRED, 'Attempts of a job without its own $tries (the dead-letter queue receives it after tries + 2 deliveries)')
             ->addOption('no-dlq', null, InputOption::VALUE_NONE, 'Do not create a dead-letter queue')
             ->addOption('fifo', null, InputOption::VALUE_NONE, 'Create a FIFO queue')
             ->addOption('default', null, InputOption::VALUE_NONE, 'Make this the default queue');

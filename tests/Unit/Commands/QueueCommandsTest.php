@@ -42,6 +42,13 @@ final class QueueCommandsTest extends TestCase
         return (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
     }
 
+    public function test_add_tries_help_describes_laravel_attempts_and_the_dead_letter_queue(): void
+    {
+        $help = (new QueueAddCommand())->getDefinition()->getOption('tries')->getDescription();
+
+        self::assertSame('Attempts of a job without its own $tries (the dead-letter queue receives it after tries + 2 deliveries)', $help);
+    }
+
     public function test_add_writes_queue_with_options(): void
     {
         $this->project();
