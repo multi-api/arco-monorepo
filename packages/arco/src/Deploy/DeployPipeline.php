@@ -145,6 +145,43 @@ final class DeployPipeline
         }
     }
 
+    /**
+     * Files in the package that show each package the queues need, and the requirement to install:
+     * WorkCommand (`arco:work`) first shipped in multiapi/arco-laravel 0.5.
+     */
+    public const QUEUE_PACKAGES = [
+        'multiapi/arco-laravel:^0.5' => 'app/vendor/multiapi/arco-laravel/src/Console/WorkCommand.php',
+        'aws/aws-sdk-php' => 'app/vendor/aws/aws-sdk-php/src/Sdk.php',
+    ];
+
+    /**
+     * With queues, stops the deploy when the package lacks multiapi/arco-laravel 0.5+ (the worker's
+     * `arco:work` and the queue name mapping) or aws/aws-sdk-php: every job would land in the
+     * dead-letter queue while the deploy reported success.
+     *
+     * @throws DeployException deploy.queues_need_packages
+     */
+    private static function checkQueuePackages(AppConfig $config, Package $package): void
+    {
+        if ($config->queues === []) {
+            return;
+        }
+        $zip = new \ZipArchive();
+        if ($zip->open($package->path, \ZipArchive::RDONLY) !== true) {
+            return; // the upload reports an unreadable package
+        }
+        $missing = [];
+        foreach (self::QUEUE_PACKAGES as $requirement => $file) {
+            if ($zip->locateName($file) === false) {
+                $missing[] = $requirement;
+            }
+        }
+        $zip->close();
+        if ($missing !== []) {
+            throw DeployException::make('deploy.queues_need_packages', ['packages' => implode(' ', $missing)]);
+        }
+    }
+
     /** @param callable(string, array<string, string|int>): void $onStep */
     public function deploy(AppConfig $config, FrameworkPreset $preset, string $projectDir, Deployer $deployer, Verifier $verifier, callable $onStep, ?CommandPlan $plan = null): DeployOutcome
     {
@@ -212,6 +249,8 @@ final class DeployPipeline
                 $onStep('deploy.queue_variable_overridden', ['key' => $key]);
             }
         }
+        // Before any AWS change: workers need arco:work and Laravel's SQS driver needs the AWS SDK.
+        self::checkQueuePackages($config, $package);
         // The console zip and the binary are derived from the web zip in a scratch directory.
         $work = sys_get_temp_dir() . '/arco-console-' . bin2hex(random_bytes(4));
         try {

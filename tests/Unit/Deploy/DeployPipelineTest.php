@@ -38,7 +38,27 @@ final class DeployPipelineTest extends TestCase
         $this->project = TempPaths::path('arco-pipe-');
         mkdir("$this->project/public", 0777, true);
         file_put_contents("$this->project/public/index.php", '<?php echo "ok";');
+        file_put_contents("$this->project/composer.json", '{}');
     }
+
+    /** Stands in for `composer install`: writes what a queue worker needs (DeployPipeline::QUEUE_PACKAGES), minus $this->withoutVendor. */
+    private function composerInstall(): \Closure
+    {
+        return function (array $command, string $cwd): void {
+            if (($command[1] ?? '') !== 'install') {
+                return;
+            }
+            foreach (array_diff(self::QUEUE_FILES, $this->withoutVendor) as $file) {
+                @mkdir(dirname("$cwd/$file"), 0777, true);
+                file_put_contents("$cwd/$file", '<?php');
+            }
+        };
+    }
+
+    /** @var list<string> */
+    private array $withoutVendor = [];
+
+    private const QUEUE_FILES = ['vendor/multiapi/arco-laravel/src/Console/WorkCommand.php', 'vendor/aws/aws-sdk-php/src/Sdk.php'];
 
     /** $console null: never set, as in an arco.php written before the console was opt-in. */
     private function config(bool $domains = false, ?bool $console = true): AppConfig
@@ -60,7 +80,7 @@ final class DeployPipelineTest extends TestCase
 
     private function pipeline(?\Closure $scheduleInspector = null): DeployPipeline
     {
-        return new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new \Multiapi\Arco\Binary\GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager(), $scheduleInspector ?? fn (string $appDir) => null);
+        return new DeployPipeline(new Builder(new FakeRunner(onRun: $this->composerInstall())), new BinaryProvider(new \Multiapi\Arco\Binary\GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager(), $scheduleInspector ?? fn (string $appDir) => null);
     }
 
     public function test_successful_deploy_merges_variables_and_cleans_up(): void
@@ -356,15 +376,20 @@ final class DeployPipelineTest extends TestCase
     /**
      * A small web zip whose manifest names $runtimeBuild (null: a custom binary) and claims $bytes
      * unzipped. Its console zip claims $bytes - 3 without the PHP CLI (the 3-byte binary is removed)
-     * and $bytes + 10 with the 13-byte CLI of cliPipeline().
+     * and $bytes + 10 with the 13-byte CLI of cliPipeline(). It holds what queue workers need, except $without.
+     *
+     * @param list<string> $without
      */
-    private static function webPackage(?string $runtimeBuild, int $bytes = 8): \Multiapi\Arco\Package\Package
+    private static function webPackage(?string $runtimeBuild, int $bytes = 8, array $without = []): \Multiapi\Arco\Package\Package
     {
         $path = TempPaths::path('arco-web-', '.zip');
         $zip = new \ZipArchive();
         $zip->open($path, \ZipArchive::CREATE);
         $zip->addFromString('bin/frankenphp', 'ELF');
         $zip->addFromString('app/index.php', '<?php');
+        foreach (array_diff(self::QUEUE_FILES, $without) as $file) {
+            $zip->addFromString("app/$file", '<?php');
+        }
         $zip->close();
         $hash = str_repeat('e', 64);
         return new \Multiapi\Arco\Package\Package($path, $hash, $bytes, new \Multiapi\Arco\Package\PackageManifest('shop', 'production', 'plain', $runtimeBuild, $hash, $bytes, 'dev', '2026-10-16T00:00:00Z'));
@@ -1112,6 +1137,42 @@ final class DeployPipelineTest extends TestCase
             self::assertSame('deploy.workers_package_too_large', $e->key);
         }
         self::assertSame([], $deployer->calls);
+    }
+
+    public function test_queues_need_a_package_with_arco_laravel_and_the_aws_sdk_before_any_change(): void
+    {
+        foreach ([
+            [[self::QUEUE_FILES[0]], 'multiapi/arco-laravel:^0.5'],
+            [[self::QUEUE_FILES[1]], 'aws/aws-sdk-php'],
+            [self::QUEUE_FILES, 'multiapi/arco-laravel:^0.5 aws/aws-sdk-php'],
+        ] as [$without, $packages]) {
+            $deployer = new FakeDeployer('rev-1');
+            try {
+                $this->pipeline()->deployPackage($this->workersOnlyConfig(), new PlainPhpPreset(), self::webPackage(null, without: $without), $deployer, new FakeVerifier(true), fn () => null);
+                self::fail('expected deploy.queues_need_packages');
+            } catch (DeployException $e) {
+                self::assertSame('deploy.queues_need_packages', $e->key);
+                self::assertSame($packages, $e->params['packages'] ?? null);
+            }
+            self::assertSame([], $deployer->calls, 'nothing in AWS changed');
+        }
+    }
+
+    public function test_the_package_check_also_runs_on_a_fresh_build_and_never_without_queues(): void
+    {
+        $this->withoutVendor = [self::QUEUE_FILES[0]];
+        $deployer = new FakeDeployer('rev-1');
+        try {
+            $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+            self::fail('expected deploy.queues_need_packages');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.queues_need_packages', $e->key);
+        }
+        self::assertSame([], $deployer->calls);
+
+        $deployer = new FakeDeployer('rev-1');
+        $this->pipeline()->deployPackage($this->config(), new PlainPhpPreset(), self::webPackage(null, without: self::QUEUE_FILES), $deployer, new FakeVerifier(true), fn () => null);
+        self::assertContains('release', $deployer->calls, 'apps without queues need neither package');
     }
 
     public function test_a_worker_failure_after_release_is_a_warning_and_the_deploy_goes_on(): void

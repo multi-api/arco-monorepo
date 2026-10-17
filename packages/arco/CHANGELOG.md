@@ -20,7 +20,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `failed_jobs`, so jobs whose own `$tries`, `retryUntil()` or releasing middleware go beyond the queue's
   `tries` end there earlier than they asked. In maintenance mode jobs wait without spending attempts.
   Job time limits use `pcntl` signals; a job blocked in one long C call (curl, a database query) times out
-  only when the call returns. The app needs `aws/aws-sdk-php`.
+  only when the call returns. The app needs `multiapi/arco-laravel` 0.5+ and `aws/aws-sdk-php`: with
+  queues, the deploy checks the package for both before any change and names the `composer require` to run.
 - **Added:** Arco sets `QUEUE_CONNECTION=sqs`, `SQS_PREFIX`, `SQS_QUEUE` (the default queue) and `ARCO_QUEUES`
   (every queue's URL) on all functions, and `multiapi/arco-laravel` maps queue names to their URLs, so
   `->onQueue('emails')` and `Queue::route(...)` work without app changes (Laravel 11 to 13). Your own

@@ -139,6 +139,7 @@ return [
     'deploy.queue_other_consumer' => 'The queue {queue} already has other consumers ({functions}). Arco added its worker anyway: jobs will be split between all of them. Remove the other event source mapping if only Arco\'s worker should read it.',
     'deploy.worker_missing' => 'The worker function {function} disappeared during the deploy.',
     'deploy.worker_update_failed' => 'Updating the worker function {function} failed: {reason}',
+    'deploy.queues_need_packages' => 'Queues need these packages in the app, and the package being deployed lacks them: {packages}. Nothing was changed. Run `composer require {packages}` and deploy again.',
     'deploy.workers_package_too_large' => 'The queue workers run the console package, which is over Lambda\'s {max} MB limit for classic functions, so the queues would never be read. Nothing was changed. Make the package smaller and deploy again.',
     'remove.step_worker' => 'Deleting worker function {function} (queue {queue}) and its event source mappings',
     'remove.step_resources' => 'Deleting resources stack {stack} (the queues stay)',

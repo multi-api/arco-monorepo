@@ -335,8 +335,10 @@ has no per-message delay) the job is released for 60 seconds, and replaced by a 
 message group once its deliveries reach its tries or the last delivery before the dead-letter queue (the
 copy goes to the back of its group).
 
-**Requirements for the app.** `aws/aws-sdk-php` must be in `require` (Laravel's SQS driver needs it; Arco
-does not install it). Job time limits use `pcntl` signals, which Arco's PHP runtime has. A signal lands
+**Requirements for the app.** `multiapi/arco-laravel` 0.5 or later (the worker's `arco:work` and the
+queue name mapping) and `aws/aws-sdk-php` (Laravel's SQS driver needs it; Arco does not install it) must be
+in `require`. With queues in `arco.php`, the deploy checks the package for both before any change and stops
+with the `composer require` line to run when one is missing. Job time limits use `pcntl` signals, which Arco's PHP runtime has. A signal lands
 between PHP instructions, so a job blocked inside one long C call (a `curl` request, a database query) only
 times out when that call returns: give HTTP clients and database connections their own timeouts.
 
