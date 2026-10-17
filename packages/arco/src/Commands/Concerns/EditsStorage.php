@@ -83,6 +83,11 @@ trait EditsStorage
         ]));
         $io->writeln($this->t('settings.result', ['where' => $this->where($environment)]));
         $io->writeln('    ' . ($write === null ? $this->t('settings.remove_call', ['method' => 'storage']) : self::namedLine($name, $write)));
+        $bucket = self::storageAt($changed, $environment, $name)?->existing;
+        if ($bucket !== null && $new !== []) {
+            // Arco manages no policy, lifecycle or CORS on a bucket it did not create.
+            $io->warning($this->t('validation.storage_existing_options', ['storage' => $name, 'options' => $option, 'bucket' => $bucket]));
+        }
         $this->printDeployNext($io, $raw, $environment);
         return self::SUCCESS;
     }

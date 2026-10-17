@@ -554,7 +554,13 @@ name add to each other.
   `->storage('uploads', false)` on an environment drops an app-level storage there.
 - The **default storage** is the first one (app-level storage comes first) unless one says `default: true`.
 - `public`, `expire` and `cors` apply only to buckets Arco creates. On an `existing` bucket they are
-  ignored: configure that bucket yourself.
+  ignored, with a validation warning (also from `storage:public`, `storage:expire` and `storage:cors`):
+  configure that bucket yourself.
+- Storage cannot be named `s3`, `public` or `local` (a validation error): those are the disks of Laravel's
+  stock `config/filesystems.php`, which keep their own settings, so `Storage::disk('public')` would stay the
+  local disk, on the function's temporary disk, lost when Lambda starts a new instance.
+- Public and expire prefixes cannot contain `*` or `?` (a validation error), so a wildcard never makes more
+  of a bucket public than the prefix names.
 
 ### Laravel disks
 
@@ -574,10 +580,9 @@ Arco sets these variables on the web, console and worker functions:
   `ARCO_STORAGE`: `Storage::disk('uploads')->put(...)`. It uses the `s3` driver, the function's region and its
   temporary credentials.
 - A disk your `config/filesystems.php` already defines under the same name stays as the app defines it, and
-  `multiapi/arco-laravel` writes a log line `{"arco":"disk_skipped", ...}`. Laravel's stock config defines
-  `local`, `public` and `s3`, so a storage with one of these names does not become a named disk
-  (`Storage::disk('public')` stays the local disk). Give storages other names. A default storage still feeds
-  the stock `s3` disk through `AWS_BUCKET`, whatever its name.
+  `multiapi/arco-laravel` writes a log line `{"arco":"disk_skipped", ...}`. The stock names `local`, `public`
+  and `s3` are refused by the validation for that reason. A default storage still feeds the stock `s3` disk
+  through `AWS_BUCKET`, whatever its name.
 - Your own `variables()` win over Arco's: setting `FILESYSTEM_DISK`, `AWS_BUCKET` or `AWS_URL` there overrides
   them, and the deploy prints a note (an `ARCO_STORAGE` of your own overrides the map without a note).
 - Laravel's S3 driver needs `league/flysystem-aws-s3-v3` in `require`
@@ -627,6 +632,10 @@ Buckets and tables are kept like [queues](#removing-a-queue-and-what-stays), so 
   `->cache(existing: '<table>')` or `->failedJobsTable(existing: '<table>')`.
 - Pointing a storage Arco created at its own bucket with `existing:` hands the bucket over to you: the deploy
   keeps it, says Arco no longer manages it, and the app goes on using it. The same works for a table.
+- The bucket policy of public prefixes is not kept: it goes with the storage (or with its public prefixes).
+  Re-attaching a formerly public bucket with `existing:` leaves it **private**, so its public URLs answer 403
+  even if `arco.php` still lists `public:` prefixes (they are ignored on an `existing` bucket, with a
+  warning). Add a bucket policy yourself in the S3 console if those files must stay public.
 - S3 bucket names are global. Before creating a bucket the deploy checks its name: when another account
   (or this account, in another region) holds it, the deploy stops before any change. AWS answers the same
   way (403) when the profile lacks `s3:ListBucket` on a bucket of this account: allow it and deploy again.

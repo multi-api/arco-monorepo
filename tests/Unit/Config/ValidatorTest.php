@@ -551,6 +551,44 @@ final class ValidatorTest extends TestCase
         self::assertContains('validation.storage_default_twice', $this->queueErrors(App::make('shop')->storage('a', default: true)->storage('b', default: true)));
     }
 
+    public function test_laravels_own_disk_names_are_not_storage_names(): void
+    {
+        foreach (['s3', 'public', 'local'] as $name) {
+            self::assertContains('validation.storage_reserved', $this->queueErrors(App::make('shop')->storage($name)), $name);
+            self::assertContains('validation.storage_reserved', $this->queueErrors(App::make('shop')->storage($name, existing: 'legacy-bucket')), $name);
+        }
+        self::assertNotContains('validation.storage_reserved', $this->queueErrors(App::make('shop')->storage('uploads')));
+    }
+
+    public function test_wildcards_in_public_and_expire_prefixes_are_errors(): void
+    {
+        foreach (['*/', 'a*/', 'img?/', 'a/*/'] as $prefix) {
+            self::assertContains('validation.storage_public_wildcard', $this->queueErrors(App::make('shop')->storage('files', public: [$prefix])), $prefix);
+            self::assertContains('validation.storage_expire_wildcard', $this->queueErrors(App::make('shop')->storage('files', expire: [$prefix => 3])), $prefix);
+        }
+        self::assertSame([], $this->queueErrors(App::make('shop')->storage('files', public: ['img/a-b.c/'], expire: ['tmp/' => 1])));
+    }
+
+    public function test_options_on_an_existing_bucket_are_a_warning_not_an_error(): void
+    {
+        $warnings = function (App $app): array {
+            $result = (new Validator())->validate(ConfigResolver::resolve($app->region('us-east-1')->environment('production')->toArray(), 'production'), sys_get_temp_dir());
+            self::assertSame([], array_map(fn (array $e) => $e['key'], $result->errors));
+            return $result->warnings;
+        };
+
+        self::assertSame(
+            [['key' => 'validation.storage_existing_options', 'params' => ['storage' => 'media', 'options' => 'public, expire, cors', 'bucket' => 'legacy-bucket']]],
+            $warnings(App::make('shop')->storage('media', existing: 'legacy-bucket', public: ['img/'], expire: ['tmp/' => 1], cors: ['*'])),
+        );
+        self::assertSame(
+            [['key' => 'validation.storage_existing_options', 'params' => ['storage' => 'media', 'options' => 'public', 'bucket' => 'legacy-bucket']]],
+            $warnings(App::make('shop')->storage('media', existing: 'legacy-bucket', public: ['img/'])),
+        );
+        self::assertSame([], $warnings(App::make('shop')->storage('media', existing: 'legacy-bucket')));
+        self::assertSame([], $warnings(App::make('shop')->storage('media', public: ['img/'])));
+    }
+
     public function test_existing_table_names(): void
     {
         self::assertContains('validation.table_existing', $this->queueErrors(App::make('shop')->cache(existing: 'a b')));

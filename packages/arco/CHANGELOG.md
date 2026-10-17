@@ -13,12 +13,14 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   manage, in the app's region) and `default` (the first storage unless one says `default: true`).
 - **Added:** the default storage is Laravel's `s3` disk and default disk (Arco sets `FILESYSTEM_DISK=s3`,
   `AWS_BUCKET` and `AWS_URL`), and `multiapi/arco-laravel` registers every storage as a disk of its own name
-  from `ARCO_STORAGE` (`Storage::disk('uploads')`). A disk the app already defines under that name (stock:
-  `local`, `public`, `s3`) is left alone, with a `disk_skipped` log line. The app needs
-  `league/flysystem-aws-s3-v3`.
+  from `ARCO_STORAGE` (`Storage::disk('uploads')`). A disk the app already defines under that name is left
+  alone, with a `disk_skipped` log line; the stock names `s3`, `public` and `local` are refused by the
+  validation. The app needs `league/flysystem-aws-s3-v3`.
 - **Added:** public prefixes use a bucket policy (`s3:GetObject` on `<prefix>*` only) and relax only
   `BlockPublicPolicy` and `RestrictPublicBuckets` on that bucket. When the account's own Block Public Access
   refuses the policy, the deploy stops with an error that names the setting.
+- **Added:** validation of storage: public and expire prefixes cannot contain `*` or `?`; `public`, `expire`
+  or `cors` on an `existing` bucket are ignored, with a warning (also from the `storage:*` commands).
 - **Added:** DynamoDB tables. `->cache()` creates `<app>-<env>-cache` (key `key`, TTL on `expires_at`) and sets
   `CACHE_STORE=dynamodb` and `DYNAMODB_CACHE_TABLE`; `multiapi/arco-laravel` points the `dynamodb` store at it
   with the attributes `key` / `value` / `expires_at`, whatever `config/cache.php` says. With

@@ -244,6 +244,41 @@ final class StorageCommandsTest extends TestCase
         self::assertSame($before, $this->source());
     }
 
+    public function test_add_with_a_laravel_disk_name_is_rejected(): void
+    {
+        $this->project();
+        $before = $this->source();
+
+        $tester = $this->run_(new StorageAddCommand(), ['name' => 'public', '--env' => 'production']);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('Storage cannot be named "public"', self::display($tester));
+        self::assertSame($before, $this->source());
+    }
+
+    public function test_public_prefix_with_a_wildcard_is_rejected(): void
+    {
+        $this->withStorage("->storage('uploads')");
+        $before = $this->source();
+
+        $tester = $this->run_(new StoragePublicCommand(), ['name' => 'uploads', 'prefix' => '*/', '--app' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('cannot contain * or ?', self::display($tester));
+        self::assertSame($before, $this->source());
+    }
+
+    public function test_an_option_on_an_existing_bucket_is_written_with_a_warning(): void
+    {
+        $this->withStorage("->storage('media', existing: 'legacy-bucket')");
+
+        $tester = $this->run_(new StoragePublicCommand(), ['name' => 'media', 'prefix' => 'img/', '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->storage('media', existing: 'legacy-bucket', public: ['img/'])", $this->source());
+        self::assertStringContainsString('public is ignored for the existing bucket legacy-bucket', self::display($tester));
+    }
+
     public function test_option_of_missing_storage_not_found(): void
     {
         $this->project();
