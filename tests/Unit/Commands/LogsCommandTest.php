@@ -154,7 +154,7 @@ final class LogsCommandTest extends TestCase
         self::assertStringContainsString('--level must be one of debug, info, warning, error, got "loud"', $tester->getDisplay());
 
         $tester->execute(['--env' => 'staging', '--profile' => 'p', '--source' => 'db'], ['interactive' => false]);
-        self::assertStringContainsString('--source must be all, web or console, got "db"', $tester->getDisplay());
+        self::assertStringContainsString('--source must be all, web, console or queues, got "db"', $tester->getDisplay());
 
         $tester->execute(['--env' => 'staging', '--profile' => 'p', '--since' => '1500'], ['interactive' => false]);
         self::assertStringContainsString('"1500" is not a time', $tester->getDisplay());
@@ -268,6 +268,84 @@ final class LogsCommandTest extends TestCase
         self::assertStringContainsString('No logs yet in /aws/lambda/shop-staging-console', $display);
         self::assertStringContainsString('by polling every 2 s', $display);
         self::assertStringContainsString('first ever', $display);
+        self::assertNotContains('StartLiveTail', $this->mocks->calls);
+    }
+
+    private function withQueues(string ...$queues): void
+    {
+        $this->project->restore();
+        $calls = implode('', array_map(fn (string $queue) => "->queue('$queue')", $queues));
+        $this->project = new ProjectFixture(str_replace('->concurrency(48)', '->concurrency(48)' . $calls, ProjectFixture::standardConfig()));
+    }
+
+    public function test_queue_reads_only_that_workers_log_group(): void
+    {
+        $this->withQueues('emails', 'reports');
+        $this->mocks->handler->append(new Result(['events' => [['eventId' => 'q1', 'timestamp' => self::T, 'message' => "Processed App\\Jobs\\SendMail\n"]]]));
+
+        $tester = $this->tester();
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--queue' => 'emails'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['/aws/lambda/shop-staging-queue-emails'], array_column(array_slice($this->mocks->params, 1), 'logGroupName'));
+        self::assertStringContainsString('Processed App\\Jobs\\SendMail', $tester->getDisplay());
+    }
+
+    public function test_source_queues_reads_every_worker(): void
+    {
+        $this->withQueues('emails', 'reports');
+        $this->mocks->handler->append(new Result(['events' => []]), new Result(['events' => []]));
+
+        $tester = $this->tester();
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--source' => 'queues'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['/aws/lambda/shop-staging-queue-emails', '/aws/lambda/shop-staging-queue-reports'], array_column(array_slice($this->mocks->params, 1), 'logGroupName'));
+    }
+
+    public function test_console_is_a_shorthand_for_source_console(): void
+    {
+        $this->mocks->handler->append(new Result(['events' => []]));
+
+        $tester = $this->tester();
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--console' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['/aws/lambda/shop-staging-console'], array_column(array_slice($this->mocks->params, 1), 'logGroupName'));
+    }
+
+    public function test_an_unknown_queue_or_conflicting_sources_fail_before_any_aws_call(): void
+    {
+        $this->withQueues('emails');
+        $tester = $this->tester();
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--queue' => 'nope'], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('No queue "nope" in arco.php (queues: emails)', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--queue' => 'emails', '--source' => 'web'], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('Use only one of --source, --console and --queue', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--queue' => 'emails', '--console' => true], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+
+        self::assertSame([], $this->mocks->calls);
+    }
+
+    public function test_following_more_log_groups_than_live_tail_allows_polls_and_says_so(): void
+    {
+        // 3 web and console groups + 8 workers = 11: Live Tail takes at most 10 log groups.
+        $this->withQueues('q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8');
+        $this->mocks->handler->append(...array_fill(0, 60, new Result(['events' => []])));
+
+        $tester = $this->defaultTester(true);
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--follow' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('Live Tail follows at most 10 log groups and there are 11', $display);
+        self::assertStringContainsString('by polling every 2 s', $display);
         self::assertNotContains('StartLiveTail', $this->mocks->calls);
     }
 }

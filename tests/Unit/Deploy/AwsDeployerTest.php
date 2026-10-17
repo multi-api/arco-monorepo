@@ -709,6 +709,60 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([], $mocks->calls);
     }
 
+    public function test_log_retention_covers_the_queue_workers(): void
+    {
+        $with = function (bool $console): AppConfig {
+            $app = App::make('shop')->console($console)->region('us-east-1')->logRetention(14)->queue('emails')->queue('reports');
+            return ConfigResolver::resolve($app->environment('production')->toArray(), 'production');
+        };
+
+        // Console off: web plus each worker's group, never the console's.
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...array_fill(0, 8, new Result()));
+        $steps = [];
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(false), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+        $groups = array_values(array_unique(array_column($mocks->params, 'logGroupName')));
+        self::assertSame(['/aws/lambda/web/shop-production', '/aws/lambda/web/shop-production.local', '/aws/lambda/shop-production-queue-emails', '/aws/lambda/shop-production-queue-reports'], $groups);
+        self::assertSame([['deploy.log_retention', ['days' => 14, 'groups' => 'web_queues']]], $steps);
+
+        // Console on: web, console and workers.
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...array_fill(0, 10, new Result()));
+        $steps = [];
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(true), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+        self::assertContains('/aws/lambda/shop-production-console', array_column($mocks->params, 'logGroupName'));
+        self::assertContains('/aws/lambda/shop-production-queue-reports', array_column($mocks->params, 'logGroupName'));
+        self::assertSame([['deploy.log_retention', ['days' => 14, 'groups' => 'all_queues']]], $steps);
+
+        $translator = new \Multiapi\Arco\Cli\Translator('en', \Multiapi\Arco\Arco::packageRoot() . '/lang');
+        self::assertSame('web, console and queue worker', $translator->trans('deploy.log_groups.all_queues'));
+        self::assertSame('web and queue worker', $translator->trans('deploy.log_groups.web_queues'));
+    }
+
+    public function test_describe_includes_the_queue_urls_and_worker_versions(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')
+            ->queue('emails')
+            ->queue('legacy', existing: 'arn:aws:sqs:us-east-1:222222222222:legacy-jobs', dlq: false)
+            ->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => []]),
+            new Result(['Account' => '111111111111']),                                           // GetCallerIdentity
+            new Result(['FunctionVersion' => '4']),                                              // GetAlias emails
+            AwsMocks::error(LambdaException::class, 'GetAlias', 'ResourceNotFoundException', 404), // legacy: not deployed
+        );
+
+        $status = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->describe($config);
+
+        self::assertSame([
+            'emails' => ['url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', 'version' => '4', 'error' => null],
+            'legacy' => ['url' => 'https://sqs.us-east-1.amazonaws.com/222222222222/legacy-jobs', 'version' => null, 'error' => null],
+        ], $status?->queues);
+        self::assertSame('shop-production-queue-emails', $mocks->params[3]['FunctionName']);
+    }
+
     public function test_sync_scheduler_off_deletes_a_left_rule_only(): void
     {
         $mocks = new AwsMocks();

@@ -29,6 +29,67 @@ final class Queues
         }
     }
 
+    /** Whether the error says the queue does not exist. */
+    public static function missing(AwsException $e): bool
+    {
+        return in_array($e->getAwsErrorCode(), self::MISSING, true);
+    }
+
+    /**
+     * The approximate message counts of the queue, by attribute name (ApproximateNumberOfMessages,
+     * ApproximateNumberOfMessagesNotVisible). Throws, e.g. when the queue does not exist (see missing()).
+     *
+     * @param list<string> $names
+     * @return array<string, int>
+     */
+    public function counts(string $url, array $names): array
+    {
+        $attributes = Aws::map(Aws::call($this->sqs, 'GetQueueAttributes', ['QueueUrl' => $url, 'AttributeNames' => $names])['Attributes'] ?? null);
+        $counts = [];
+        foreach ($names as $name) {
+            $value = $attributes[$name] ?? null;
+            $counts[$name] = is_numeric($value) ? (int) $value : 0;
+        }
+        return $counts;
+    }
+
+    /**
+     * Up to $max messages, read without consuming them: VisibilityTimeout 0 leaves them visible at once
+     * (their receive count still goes up).
+     *
+     * @return list<array{id: string, body: string, receives: ?int, sent: ?int}> sent in milliseconds
+     */
+    public function peek(string $url, int $max = 10): array
+    {
+        $result = Aws::call($this->sqs, 'ReceiveMessage', [
+            'QueueUrl' => $url,
+            'MaxNumberOfMessages' => $max,
+            'VisibilityTimeout' => 0,
+            'WaitTimeSeconds' => 0,
+            'MessageSystemAttributeNames' => ['ApproximateReceiveCount', 'SentTimestamp'],
+        ]);
+        $messages = [];
+        foreach (Aws::maps($result['Messages'] ?? []) as $message) {
+            $attributes = Aws::map($message['Attributes'] ?? null);
+            $receives = $attributes['ApproximateReceiveCount'] ?? null;
+            $sent = $attributes['SentTimestamp'] ?? null;
+            $messages[] = [
+                'id' => Aws::string($message['MessageId'] ?? null) ?? '-',
+                'body' => Aws::string($message['Body'] ?? null) ?? '',
+                'receives' => is_numeric($receives) ? (int) $receives : null,
+                'sent' => is_numeric($sent) ? (int) $sent : null,
+            ];
+        }
+        return $messages;
+    }
+
+    /** Starts moving the messages of a dead-letter queue back to its source queue; returns the task handle. */
+    public function redrive(string $dlqArn, string $queueArn): string
+    {
+        $result = Aws::call($this->sqs, 'StartMessageMoveTask', ['SourceArn' => $dlqArn, 'DestinationArn' => $queueArn]);
+        return Aws::string($result['TaskHandle'] ?? null) ?? '-';
+    }
+
     /**
      * The approximate number of visible messages, or null when it cannot be read (the queue is gone,
      * or the profile may not read it): only ever shown in warnings.

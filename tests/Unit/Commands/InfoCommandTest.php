@@ -290,4 +290,48 @@ final class InfoCommandTest extends TestCase
         putenv('AWS_PROFILE');
         $project->restore();
     }
+
+    public function test_shows_the_queues_with_their_urls_and_worker_versions(): void
+    {
+        $config = str_replace('->concurrency(48)', "->concurrency(48)->queue('emails')->queue('legacy', existing: 'legacy-jobs', dlq: false)", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        putenv('AWS_PROFILE=p');
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', queues: [
+            'emails' => ['url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', 'version' => '4', 'error' => null],
+            'legacy' => ['url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/legacy-jobs', 'version' => null, 'error' => null],
+        ]);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $status)));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('Queue emails https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails · worker shop-production-queue-emails (version 4)', $display);
+        self::assertStringContainsString('Queue legacy https://sqs.us-east-1.amazonaws.com/111111111111/legacy-jobs · worker not deployed yet (run arco deploy)', $display);
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        self::assertSame([
+            ['name' => 'emails', 'url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', 'existing' => false, 'dlq' => 'shop-production-emails-dlq', 'worker' => ['function' => 'shop-production-queue-emails', 'version' => '4']],
+            ['name' => 'legacy', 'url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/legacy-jobs', 'existing' => true, 'dlq' => null, 'worker' => ['function' => 'shop-production-queue-legacy', 'version' => null]],
+        ], json_decode($tester->getDisplay(), true)['queues']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_queues_without_remote_status_have_no_url_or_version(): void
+    {
+        $project = new ProjectFixture(str_replace('->concurrency(48)', "->concurrency(48)->queue('emails')", ProjectFixture::standardConfig()));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        self::assertSame(
+            [['name' => 'emails', 'url' => null, 'existing' => false, 'dlq' => 'shop-production-emails-dlq', 'worker' => ['function' => 'shop-production-queue-emails', 'version' => null]]],
+            json_decode($tester->getDisplay(), true)['queues'],
+        );
+
+        $project->restore();
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        self::assertSame([], json_decode($tester->getDisplay(), true)['queues']);
+        $project->restore();
+    }
 }

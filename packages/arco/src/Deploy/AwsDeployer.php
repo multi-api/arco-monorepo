@@ -423,10 +423,23 @@ final class AwsDeployer implements Deployer
         if ($config->logRetention === null) {
             return;
         }
-        $scope = $config->consoleEnabled() ? 'all' : 'web';
-        (new LogRetention($this->aws->logs()))->apply(LogGroups::for($config, $scope), $config->logRetention);
-        // {groups} is a code (web, all) the step printer translates: only the groups touched are named.
+        $scope = self::logRetentionScope($config);
+        $groups = LogGroups::for($config, 'web');
+        if ($config->consoleEnabled()) {
+            $groups = [...$groups, ...LogGroups::for($config, 'console')];
+        }
+        (new LogRetention($this->aws->logs()))->apply([...$groups, ...LogGroups::for($config, 'queues')], $config->logRetention);
+        // {groups} is a code (web, all, web_queues, all_queues) the step printer translates: only the groups touched are named.
         $onStep(...self::logRetentionStep($config->logRetention, $scope));
+    }
+
+    /**
+     * Which log groups get the retention: web always, the console's while it is on, and each queue
+     * worker's whenever queues exist (workers run even with the console off).
+     */
+    public static function logRetentionScope(AppConfig $config): string
+    {
+        return ($config->consoleEnabled() ? 'all' : 'web') . ($config->queues === [] ? '' : '_queues');
     }
 
     /**
@@ -490,7 +503,42 @@ final class AwsDeployer implements Deployer
             $consoleVersion,
             $consoleVersionError,
             $schedulerPaused,
+            $this->queueStatus($config),
         );
+    }
+
+    /**
+     * The URL of each queue and the live version of its worker. A version that cannot be read (e.g.
+     * without lambda:GetAlias) is unknown, with its error code, never "not deployed yet".
+     *
+     * @return array<string, array{url: ?string, version: ?string, error: ?string}>
+     */
+    private function queueStatus(AppConfig $config): array
+    {
+        if ($config->queues === []) {
+            return [];
+        }
+        $located = $config;
+        if ($config->account === null) {
+            try {
+                $located = $config->withAccount($this->aws->accountId());
+            } catch (\Throwable) {
+                $located = null;
+            }
+        }
+        $workers = $this->workerFunctions()->function();
+        $status = [];
+        foreach ($config->queues as $queue) {
+            $version = null;
+            $error = null;
+            try {
+                $version = $workers->liveVersion($config->workerFunctionName($queue->name));
+            } catch (AwsException $e) {
+                $error = $e->getAwsErrorCode() ?? 'UnknownError';
+            }
+            $status[$queue->name] = ['url' => $located === null ? null : $queue->url($located), 'version' => $version, 'error' => $error];
+        }
+        return $status;
     }
 
     public function deployResources(AppConfig $config, Closure $onStep): void

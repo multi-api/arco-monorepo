@@ -168,7 +168,7 @@ final class FakeDeployer implements Deployer
         if ($this->logRetentionError !== null) {
             throw $this->logRetentionError;
         }
-        $onStep(...\Multiapi\Arco\Deploy\AwsDeployer::logRetentionStep($config->logRetention, $config->consoleEnabled() ? 'all' : 'web'));
+        $onStep(...\Multiapi\Arco\Deploy\AwsDeployer::logRetentionStep($config->logRetention, \Multiapi\Arco\Deploy\AwsDeployer::logRetentionScope($config)));
     }
     public function deployResources(AppConfig $config, \Closure $onStep): void
     {

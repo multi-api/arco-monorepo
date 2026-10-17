@@ -40,6 +40,8 @@ final class Application extends SymfonyApplication
             new \Multiapi\Arco\Commands\QueueAddCommand(),
             new \Multiapi\Arco\Commands\QueueSetCommand(),
             new \Multiapi\Arco\Commands\QueueRemoveCommand(),
+            new \Multiapi\Arco\Commands\QueueListCommand(),
+            new \Multiapi\Arco\Commands\QueueDlqCommand(),
             new \Multiapi\Arco\Commands\LogsRetentionCommand(),
         ]);
         return $app;

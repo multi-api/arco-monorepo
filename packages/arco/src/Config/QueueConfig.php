@@ -70,6 +70,16 @@ final readonly class QueueConfig
         return "arn:aws:sqs:$region:$account:" . $this->physicalName($config);
     }
 
+    public function dlqUrl(AppConfig $config): ?string
+    {
+        $name = $this->dlqName($config);
+        if ($name === null) {
+            return null;
+        }
+        [$region, $account] = $this->location($config);
+        return "https://sqs.$region.amazonaws.com/$account/$name";
+    }
+
     public function dlqArn(AppConfig $config): ?string
     {
         $name = $this->dlqName($config);
