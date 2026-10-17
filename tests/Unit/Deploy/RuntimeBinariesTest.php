@@ -32,10 +32,11 @@ final class RuntimeBinariesTest extends TestCase
         return ['ARCO_BINARY_BUCKET' => $bucket, 'ARCO_BINARY_KEY' => $key, 'ARCO_BINARY_SHA256' => str_repeat('a', 64)];
     }
 
-    private static function prune(AwsMocks $mocks): int
+    /** @param list<string> $keep */
+    private static function prune(AwsMocks $mocks, array $keep = []): int
     {
         $aws = $mocks->clients();
-        return (new RuntimeBinaries($aws->taggingApi(), $aws->lambda(), $aws->s3()))->prune(self::BUCKET, self::now());
+        return (new RuntimeBinaries($aws->taggingApi(), $aws->lambda(), $aws->s3()))->prune(self::BUCKET, self::now(), $keep);
     }
 
     /** @return list<string> */
@@ -90,6 +91,19 @@ final class RuntimeBinariesTest extends TestCase
 
         self::assertSame(1, self::prune($mocks));
         self::assertSame(['runtime/1.12.0-r1/frankenphp'], self::deletedKeys($mocks));
+    }
+
+    public function test_never_deletes_a_kept_key_even_when_unreferenced_and_old(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['ResourceTagMappingList' => []]),
+            new Result(['Contents' => [self::object('runtime/1.13.0-r1/frankenphp', '90 days'), self::object('runtime/1.12.0-r1/frankenphp', '90 days')]]),
+            new Result([]),
+        );
+
+        self::assertSame(1, self::prune($mocks, ['runtime/1.13.0-r1/frankenphp']));
+        self::assertSame(['runtime/1.12.0-r1/frankenphp'], self::deletedKeys($mocks), 'the binary this deploy uses stays while the tag listing lags');
     }
 
     public function test_follows_every_page_of_the_three_listings(): void

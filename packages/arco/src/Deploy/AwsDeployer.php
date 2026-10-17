@@ -102,7 +102,7 @@ final class AwsDeployer implements Deployer
             );
         }
 
-        return new PreparedDeploy($revisionId, $previous, $bucket, $key, $consoleVersion, $previousConsole, $consoleKey);
+        return new PreparedDeploy($revisionId, $previous, $bucket, $key, $consoleVersion, $previousConsole, $consoleKey, $console?->download?->key);
     }
 
     /**
@@ -169,10 +169,11 @@ final class AwsDeployer implements Deployer
         }
         try {
             // Shared by every Arco app of the account and region: a binary goes only when no published
-            // version of any Arco function references it (each can be rolled back to).
+            // version of any Arco function references it (each can be rolled back to). This deploy's own
+            // binary is kept outright: the tag listing may not show a function created seconds ago.
             $aws = $this->aws;
             (new RuntimeBinaries($aws->taggingApi(), $aws->lambda(), $aws->s3()))
-                ->prune($prepared->bucket, (new \DateTimeImmutable())->setTimestamp((int) $this->sleeper->now()));
+                ->prune($prepared->bucket, (new \DateTimeImmutable())->setTimestamp((int) $this->sleeper->now()), $prepared->binaryKey === null ? [] : [$prepared->binaryKey]);
         } catch (\Exception $e) {
             $step('deploy.prune_runtime_failed', ['bucket' => $prepared->bucket, 'error' => $e instanceof AwsException ? self::awsError($e) : $e->getMessage()]);
         }

@@ -95,8 +95,8 @@ final class AwsDeployerTest extends TestCase
             new Result(['Versions' => [['Version' => '$LATEST'], ['Version' => '1']]]),          // ListVersionsByFunction
             new Result(['Contents' => []]),                                                      // ListObjectsV2 (web zips)
             new Result(['Contents' => []]),                                                      // ListObjectsV2 (console zips)
-            new Result(['ResourceTagMappingList' => []]),                                        // GetResources (runtime binaries)
-            new Result(['Contents' => []]),                                                      // ListObjectsV2 (runtime binaries)
+            new Result(['ResourceTagMappingList' => []]),                                        // GetResources: the new function is not listed yet
+            new Result(['Contents' => [['Key' => 'runtime/1.13.0-r1/frankenphp', 'LastModified' => new \DateTimeImmutable('1969-01-01')]]]), // ListObjectsV2 (runtime binaries)
         );
         $steps = [];
         $record = function (string $key) use (&$steps): void { $steps[] = $key; };
@@ -121,6 +121,8 @@ final class AwsDeployerTest extends TestCase
             'GetAlias', 'ListVersionsByFunction', 'ListObjectsV2', 'ListObjectsV2', 'GetResources', 'ListObjectsV2',
         ], $mocks->calls);
         self::assertSame('runtime/', $mocks->params[35]['Prefix']);
+        self::assertSame('runtime/1.13.0-r1/frankenphp', $prepared->binaryKey);
+        self::assertNotContains('DeleteObjects', $mocks->calls, 'the binary this deploy uses is never pruned, even before the tag listing shows its function');
         $consoleKey = 'shop/production/console-' . str_repeat('c', 64) . '.zip';
         self::assertSame($consoleKey, $mocks->params[15]['Key']);
         self::assertSame('runtime/1.13.0-r1/frankenphp', $mocks->params[17]['Key']);
@@ -212,6 +214,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['state' => 'Active', 'stateReason' => 'ok']),
             new Result(['VersionId' => 'cv1']),               // HeadObject (console zip already uploaded)
             new Result(['ContentLength' => 3, 'VersionId' => 'bv1']), // HeadObject (same binary already there)
+            new Result([]),                                   // CopyObject (restarts its grace period)
             new Result(['FunctionVersion' => '6']),           // GetAlias
             $ready(), $ready(),                               // exists, idle
             new Result([]),                                   // UpdateFunctionCode
@@ -233,12 +236,13 @@ final class AwsDeployerTest extends TestCase
         self::assertSame('6', $result->previousConsoleVersion);
         self::assertSame([
             'GetCallerIdentity', 'HeadBucket', 'PutPublicAccessBlock', 'PutBucketPolicy', 'PutBucketVersioning', 'PutBucketLifecycleConfiguration', 'HeadObject', 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint',
-            'CreateWebFunctionRevision', 'GetWebFunctionRevision', 'HeadObject', 'HeadObject',
+            'CreateWebFunctionRevision', 'GetWebFunctionRevision', 'HeadObject', 'HeadObject', 'CopyObject',
             'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion',
             'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
         ], $mocks->calls, 'release neither moves live nor prunes');
         self::assertNotContains('PutObject', $mocks->calls, 'web zip, console zip and binary are uploaded once');
-        self::assertSame('', $mocks->params[20]['KMSKeyArn'], 'no kmsKey in the config clears a key set by an earlier deploy');
+        self::assertSame('runtime/1.13.0-r1/frankenphp', $mocks->params[15]['Key']);
+        self::assertSame('', $mocks->params[21]['KMSKeyArn'], 'no kmsKey in the config clears a key set by an earlier deploy');
     }
 
     public function test_prune_keeps_the_live_version_read_now_the_previous_one_and_the_four_newest(): void
@@ -255,6 +259,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['ResourceTagMappingList' => []]), new Result(['Contents' => []]),
         );
         $prepared = new PreparedDeploy('rev-2', 'rev-1', 'b', 'shop/production/a.zip', '11', '3', 'shop/production/console-c.zip');
+        self::assertNull($prepared->binaryKey);
         $steps = [];
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->config(), $prepared, function (string $key) use (&$steps): void { $steps[] = $key; });

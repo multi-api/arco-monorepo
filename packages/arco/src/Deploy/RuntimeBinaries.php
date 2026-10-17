@@ -27,11 +27,14 @@ final class RuntimeBinaries
     ) {
     }
 
-    /** @return int objects deleted */
-    public function prune(string $bucket, \DateTimeImmutable $now): int
+    /**
+     * @param list<string> $keep keys never deleted (the binary of the deploy running this prune)
+     * @return int objects deleted
+     */
+    public function prune(string $bucket, \DateTimeImmutable $now, array $keep = []): int
     {
         // Read before the bucket listing: a binary listed afterwards is either referenced here or too new.
-        $referenced = $this->referencedKeys($bucket);
+        $referenced = $this->referencedKeys($bucket) + array_fill_keys($keep, true);
         $cutoff = $now->getTimestamp() - self::MIN_AGE_SECONDS;
 
         $delete = [];

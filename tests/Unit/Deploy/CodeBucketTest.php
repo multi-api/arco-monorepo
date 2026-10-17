@@ -104,7 +104,8 @@ final class CodeBucketTest extends TestCase
         file_put_contents($file, 'ELF');
         $mocks = new AwsMocks();
         $mocks->handler->append(
-            new Result(['ContentLength' => 3, 'VersionId' => 'bv1']),                       // same size: kept
+            new Result(['ContentLength' => 3, 'VersionId' => 'bv1', 'ContentType' => 'binary/octet-stream', 'Metadata' => ['origin' => 'arco']]), // same size: kept
+            new Result([]),                                                                 // CopyObject onto itself
             new Result(['ContentLength' => 2, 'VersionId' => 'bv0']),                       // other size: replaced
             new Result(['VersionId' => 'bv2']),
             AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404),             // missing: uploaded
@@ -116,8 +117,16 @@ final class CodeBucketTest extends TestCase
         $bucket->uploadBinary('b', 'runtime/1.13.0-r1/frankenphp', $file, 3);
         $bucket->uploadBinary('b', 'runtime/custom/abc/frankenphp', $file, 3);
 
-        self::assertSame(['HeadObject', 'HeadObject', 'PutObject', 'HeadObject', 'PutObject'], $mocks->calls);
-        self::assertSame('runtime/custom/abc/frankenphp', $mocks->params[4]['Key']);
+        self::assertSame(['HeadObject', 'CopyObject', 'HeadObject', 'PutObject', 'HeadObject', 'PutObject'], $mocks->calls);
+        self::assertSame([
+            'Bucket' => 'b',
+            'Key' => 'runtime/1.13.0-r1/frankenphp',
+            'CopySource' => 'b/runtime/1.13.0-r1/frankenphp',
+            'MetadataDirective' => 'REPLACE',
+            'ContentType' => 'binary/octet-stream',
+            'Metadata' => ['origin' => 'arco'],
+        ], array_diff_key($mocks->params[1], ['@http' => 1, '@context' => 1]), 'a reused binary restarts its 24 h grace period');
+        self::assertSame('runtime/custom/abc/frankenphp', $mocks->params[5]['Key']);
         unlink($file);
     }
 }
