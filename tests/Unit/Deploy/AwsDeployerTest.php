@@ -626,7 +626,7 @@ final class AwsDeployerTest extends TestCase
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncScheduler($config, function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
 
         self::assertSame('DISABLED', $mocks->params[2]['State']);
-        self::assertSame([['deploy.scheduler_set', ['every' => 5]], ['deploy.scheduler_paused', []]], $steps);
+        self::assertSame([['deploy.scheduler_set', ['every' => 5]], ['deploy.scheduler_paused', ['environment' => 'production']]], $steps);
         self::assertNotContains('deploy.scheduler_paused', \Multiapi\Arco\Cli\StepPrinter::WARNINGS, 'a note, not a warning');
     }
 

@@ -417,7 +417,9 @@ final class ConsoleSchedulerCommandsTest extends TestCase
 
         $tester->assertCommandIsSuccessful();
         self::assertSame('DISABLED', $mocks->params[3]['State']);
-        self::assertStringContainsString('scheduler is paused', self::display($tester));
+        self::assertStringContainsString('scheduler:resume --env=production', self::display($tester));
+        self::assertStringContainsString('Applied in AWS: the scheduler of production is set to every 5 min and is still paused.', self::display($tester));
+        self::assertStringNotContainsString('runs every 5 min', self::display($tester));
     }
 
     public function test_scheduler_set_apply_without_the_console_alias_asks_for_a_deploy(): void
@@ -540,9 +542,11 @@ final class ConsoleSchedulerCommandsTest extends TestCase
 
         $tester = $this->run_(new SchedulerRemoveCommand(awsFactory: fn () => $mocks->clients()), ['--env' => 'production', '--profile' => 'p', '--apply' => true]);
 
-        $tester->assertCommandIsSuccessful();
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
         self::assertSame(['GetCallerIdentity', 'DescribeRule'], $mocks->calls);
         self::assertStringContainsString('could not be checked', self::display($tester));
+        self::assertStringNotContainsString('Applied in AWS', self::display($tester));
+        self::assertStringContainsString('Nothing was applied in AWS: the scheduler rule arco-shop-production-scheduler may still run.', self::display($tester));
     }
 
     public function test_scheduler_remove_asks_and_no_touches_nothing_in_aws(): void
@@ -573,5 +577,24 @@ final class ConsoleSchedulerCommandsTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('already has this value', self::display($tester));
         self::assertSame(['GetCallerIdentity', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission'], $mocks->calls);
+    }
+
+    public function test_an_aws_error_while_applying_fails_and_still_names_the_deploy(): void
+    {
+        $this->consoleProject();
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '3']),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400, 'not authorized'),
+        );
+
+        $tester = $this->run_(new SchedulerSetCommand(awsFactory: fn () => $mocks->clients()), ['minutes' => '5', '--env' => 'production', '--profile' => 'p', '--apply' => true]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('->scheduler(5)', $this->source());
+        self::assertStringContainsString('not authorized', self::display($tester));
+        self::assertStringNotContainsString('Applied in AWS', self::display($tester));
+        self::assertStringContainsString('Run `arco deploy --env=production` to apply.', self::display($tester));
     }
 }

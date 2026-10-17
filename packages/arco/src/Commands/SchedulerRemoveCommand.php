@@ -50,7 +50,7 @@ final class SchedulerRemoveCommand extends ArcoCommand
                 $io->note($this->t('settings.unchanged', ['where' => $this->where($environment)]));
                 // arco.php already has the scheduler off: --apply still deletes a rule left in AWS.
                 if ($environment !== null && $input->getOption('apply')) {
-                    $this->applyScheduler($input, $io);
+                    return $this->applyScheduler($input, $io) ? self::SUCCESS : self::FAILURE;
                 }
                 return self::SUCCESS;
             }
@@ -72,7 +72,7 @@ final class SchedulerRemoveCommand extends ArcoCommand
             }
             $io->writeln('    ' . ArcoFileEditor::settingLine('scheduler', false));
             if ($this->wantsApply($input, $io, $environment)) {
-                $this->applyScheduler($input, $io);
+                return $this->applyScheduler($input, $io) ? self::SUCCESS : self::FAILURE;
             } else {
                 $this->printDeployNext($io, $raw, $environment);
             }

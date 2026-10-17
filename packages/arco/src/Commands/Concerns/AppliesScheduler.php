@@ -8,9 +8,11 @@ use Multiapi\Arco\Cli\StepPrinter;
 use Multiapi\Arco\Deploy\AwsDeployer;
 use Multiapi\Arco\Deploy\Deployer;
 use Multiapi\Arco\Deploy\DeployException;
+use Multiapi\Arco\Deploy\SchedulerRule;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Throwable;
 
 /**
  * Shared by `arco scheduler:set` and `arco scheduler:remove`: after arco.php is edited, puts the
@@ -56,30 +58,51 @@ trait AppliesScheduler
     /**
      * Applies the environment's scheduler setting as arco.php now reads it: the rule on the console's
      * live alias (a paused rule stays paused), or no rule. Without a deployed console alias nothing in
-     * AWS changes and the user is told to deploy.
+     * AWS changes and the user is told to deploy. Success is only reported for a change that was made.
+     *
+     * @return bool false when the apply failed or could not be confirmed (the command then fails)
      */
-    private function applyScheduler(InputInterface $input, SymfonyStyle $io): void
+    private function applyScheduler(InputInterface $input, SymfonyStyle $io): bool
     {
         $io->newLine();
         $config = $this->loadTarget($input, $io);
-        $deployer = ($this->deployerFactory)($this->awsClients($config, $input, $io));
-        $steps = new StepPrinter($io, $this->t(...), false);
-        $onStep = $steps(...);
-        if ($config->scheduler === null) {
-            $deployer->removeScheduler($config, $onStep);
-            $io->success($this->t('scheduler.applied_off', ['environment' => $config->environment]));
-            return;
-        }
+        $environment = $config->environment;
         try {
-            $deployer->syncScheduler($config, $onStep);
-        } catch (DeployException $e) {
-            // syncScheduler() looks the live alias up before any EventBridge call.
-            if ($e->key !== 'deploy.console_missing') {
-                throw $e;
+            $deployer = ($this->deployerFactory)($this->awsClients($config, $input, $io));
+            $steps = new StepPrinter($io, $this->t(...), false);
+            $seen = [];
+            $onStep = function (string $key, array $params = []) use ($steps, &$seen): void {
+                $seen[] = $key;
+                /** @var array<string, string|int> $params */
+                $steps($key, $params);
+            };
+            if ($config->scheduler === null) {
+                $deployer->removeScheduler($config, $onStep);
+                if (in_array('deploy.scheduler_unreadable', $seen, true)) {
+                    $io->error($this->t('scheduler.apply_unconfirmed', ['environment' => $environment, 'rule' => SchedulerRule::name($config)]));
+                    return false;
+                }
+                $io->success($this->t('scheduler.applied_off', ['environment' => $environment]));
+                return true;
             }
-            $io->warning($this->t('scheduler.apply_needs_deploy', ['environment' => $config->environment, 'function' => $config->consoleFunctionName()]));
-            return;
+            try {
+                $deployer->syncScheduler($config, $onStep);
+            } catch (DeployException $e) {
+                // syncScheduler() looks the live alias up before any EventBridge call.
+                if ($e->key !== 'deploy.console_missing') {
+                    throw $e;
+                }
+                $io->warning($this->t('scheduler.apply_needs_deploy', ['environment' => $environment, 'function' => $config->consoleFunctionName()]));
+                return true;
+            }
+        } catch (Throwable $e) {
+            // arco.php was edited already: a deploy still applies it.
+            $io->error($this->describeError($e) ?? throw $e);
+            $io->writeln($this->t('domain.deploy_next', ['environment' => $environment]));
+            return false;
         }
-        $io->success($this->t('scheduler.applied_set', ['environment' => $config->environment, 'minutes' => $config->scheduler]));
+        $paused = in_array('deploy.scheduler_paused', $seen, true);
+        $io->success($this->t($paused ? 'scheduler.applied_set_paused' : 'scheduler.applied_set', ['environment' => $environment, 'minutes' => $config->scheduler]));
+        return true;
     }
 }

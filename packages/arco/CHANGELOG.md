@@ -16,6 +16,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `settings.schedulerPaused` (`true`, `false` or `null`).
 - **Added:** deploy-profile permissions `events:DisableRule` and `events:EnableRule` on
   `rule/arco-*-scheduler` for pause and resume (already covered by an `events:*` grant on the rule).
+- **Changed:** with a scheduler, a deploy now reads the rule (`events:DescribeRule`, already in the documented
+  permissions) before updating it, to keep a paused rule paused; without that permission the scheduler update
+  fails with the existing `deploy.scheduler_failed` warning.
 
 ## 0.4.0
 

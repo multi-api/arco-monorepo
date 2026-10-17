@@ -280,7 +280,7 @@ final class AwsDeployer implements Deployer
         $paused = $this->schedulerRule()->put($config, $alias, self::tags($config));
         $onStep('deploy.scheduler_set', ['every' => $config->scheduler]);
         if ($paused) {
-            $onStep('deploy.scheduler_paused', []);
+            $onStep('deploy.scheduler_paused', ['environment' => $config->environment]);
         }
     }
 
