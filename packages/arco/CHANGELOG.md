@@ -25,6 +25,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   (every queue's URL) on all functions, and `multiapi/arco-laravel` maps queue names to their URLs, so
   `->onQueue('emails')` and `Queue::route(...)` work without app changes (Laravel 11 to 13). Your own
   `variables()` win, with a note in the deploy output.
+- **Added:** FIFO queues (`fifo: true`) work on Laravel 11 to 13: messages without a group get the queue
+  name as their group and the job's UUID as their deduplication id, and a delay is dropped. In a batch,
+  the messages after one that comes back are not run (they come back too), so a message group keeps its order.
 - **Added:** `existing:` attaches a worker to a queue Arco does not manage (name, URL or ARN); Arco never
   changes its attributes and warns when it already has other consumers.
 - **Added:** queues are never deleted. A queue removed from `arco.php` (or by `arco remove`) is kept in AWS

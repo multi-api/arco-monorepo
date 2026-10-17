@@ -395,10 +395,11 @@ map without a note).
 
 `->queue('orders', fifo: true)` creates `<app>-<env>-orders.fifo` (and a FIFO dead-letter queue). Jobs of one
 message group run in order: in a batch, once a job is released or fails, the messages after it come back
-without running (status `held`), so no later message overtakes it. Laravel's SQS driver sets the message group and deduplication id when it sends
-to a FIFO queue (Laravel 13 does, with the job's `messageGroup` or the queue name as the group); Arco adds
-none. FIFO queues take no per-message delay, so a job's `delay()` does not apply, and `batchSize` is at most
-10. A queue cannot switch `fifo` once Arco created it (see below).
+without running (status `held`), so no later message overtakes it. Every message sent to a FIFO queue gets a message group and a
+deduplication id: Laravel's own when it sets them (Laravel 12 and 13, with the job's `messageGroup` and
+`deduplicationId`), else `multiapi/arco-laravel` uses the queue name as the group and the job's UUID as the
+deduplication id (Laravel 11, `queue:retry`). FIFO queues take no per-message delay, so a job's `delay()`
+does not apply (the job is sent at once), and `batchSize` is at most 10. A queue cannot switch `fifo` once Arco created it (see below).
 
 ### Existing queues
 
