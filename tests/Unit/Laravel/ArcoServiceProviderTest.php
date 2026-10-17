@@ -16,7 +16,157 @@ final class ArcoServiceProviderTest extends TestCase
     protected function tearDown(): void
     {
         TrustProxies::flushState();
-        unset($_SERVER['ARCO'], $_SERVER['AWS_ACCESS_KEY_ID'], $_SERVER['AWS_SESSION_TOKEN']);
+        ArcoServiceProvider::$log = null;
+        unset(
+            $_SERVER['ARCO'], $_SERVER['AWS_ACCESS_KEY_ID'], $_SERVER['AWS_SECRET_ACCESS_KEY'], $_SERVER['AWS_SESSION_TOKEN'],
+            $_SERVER['AWS_REGION'], $_SERVER['AWS_DEFAULT_REGION'], $_SERVER['ARCO_STORAGE'], $_SERVER['ARCO_CACHE_TABLE'],
+            $_SERVER['ARCO_FAILED_JOBS_TABLE'],
+        );
+    }
+
+    private static function lambdaCredentials(): void
+    {
+        $_SERVER['ARCO'] = '1';
+        $_SERVER['AWS_ACCESS_KEY_ID'] = 'ASIA1';
+        $_SERVER['AWS_SECRET_ACCESS_KEY'] = 'secret';
+        $_SERVER['AWS_SESSION_TOKEN'] = 'session';
+        $_SERVER['AWS_REGION'] = 'sa-east-1';
+    }
+
+    /** @param array<string, mixed> $config */
+    private static function registered(array $config): Repository
+    {
+        $app = new Application(sys_get_temp_dir());
+        $app->instance('config', new Repository($config));
+        (new ArcoServiceProvider($app))->register();
+        $repository = $app->make('config');
+        self::assertInstanceOf(Repository::class, $repository);
+        return $repository;
+    }
+
+    public function test_every_storage_becomes_a_named_s3_disk_carrying_the_session_token(): void
+    {
+        self::lambdaCredentials();
+        $_SERVER['ARCO_STORAGE'] = '{"uploads":{"bucket":"shop-prod-uploads","url":"https://shop-prod-uploads.s3.sa-east-1.amazonaws.com"},'
+            . '"media":{"bucket":"shop-prod-media","url":"https://shop-prod-media.s3.sa-east-1.amazonaws.com"}}';
+
+        $config = self::registered(['filesystems' => ['disks' => ['local' => ['driver' => 'local']]]]);
+
+        self::assertSame([
+            'driver' => 's3',
+            'bucket' => 'shop-prod-uploads',
+            'region' => 'sa-east-1',
+            'url' => 'https://shop-prod-uploads.s3.sa-east-1.amazonaws.com',
+            'key' => 'ASIA1',
+            'secret' => 'secret',
+            'token' => 'session',
+        ], $config->get('filesystems.disks.uploads'));
+        self::assertSame('shop-prod-media', $config->get('filesystems.disks.media.bucket'));
+        self::assertSame('session', $config->get('filesystems.disks.media.token'));
+        self::assertSame(['driver' => 'local'], $config->get('filesystems.disks.local'));
+    }
+
+    public function test_the_region_falls_back_to_aws_default_region(): void
+    {
+        self::lambdaCredentials();
+        unset($_SERVER['AWS_REGION']);
+        $_SERVER['AWS_DEFAULT_REGION'] = 'us-east-2';
+        $_SERVER['ARCO_STORAGE'] = '{"uploads":{"bucket":"b","url":"https://b"}}';
+
+        self::assertSame('us-east-2', self::registered([])->get('filesystems.disks.uploads.region'));
+    }
+
+    public function test_an_app_disk_with_the_same_name_is_left_untouched_and_logged(): void
+    {
+        self::lambdaCredentials();
+        $lines = [];
+        ArcoServiceProvider::$log = static function (array $line) use (&$lines): void { $lines[] = $line; };
+        $_SERVER['ARCO_STORAGE'] = '{"uploads":{"bucket":"shop-prod-uploads","url":"https://u"},"media":{"bucket":"shop-prod-media","url":"https://m"}}';
+        $mine = ['driver' => 'local', 'root' => '/tmp/uploads'];
+
+        $config = self::registered(['filesystems' => ['disks' => ['uploads' => $mine]]]);
+
+        self::assertSame($mine, $config->get('filesystems.disks.uploads'));
+        self::assertSame('shop-prod-media', $config->get('filesystems.disks.media.bucket'));
+        self::assertSame([['arco' => 'disk_skipped', 'disk' => 'uploads', 'bucket' => 'shop-prod-uploads', 'reason' => 'the app defines this disk']], $lines);
+    }
+
+    public function test_an_arco_cache_table_gets_its_key_value_and_expires_at_attributes(): void
+    {
+        self::lambdaCredentials();
+        $_SERVER['ARCO_CACHE_TABLE'] = 'shop-prod-cache';
+
+        $config = self::registered(['cache' => ['stores' => ['dynamodb' => [
+            'driver' => 'dynamodb', 'key' => 'ASIA1', 'secret' => 'secret', 'region' => 'sa-east-1',
+            'table' => 'cache', 'attributes' => ['key' => 'id', 'value' => 'value', 'expiration' => 'ttl'],
+        ]]]]);
+
+        self::assertSame('shop-prod-cache', $config->get('cache.stores.dynamodb.table'));
+        self::assertSame(['key' => 'key', 'value' => 'value', 'expiration' => 'expires_at'], $config->get('cache.stores.dynamodb.attributes'));
+        self::assertSame('session', $config->get('cache.stores.dynamodb.token'));
+        self::assertSame('dynamodb', $config->get('cache.stores.dynamodb.driver'));
+    }
+
+    public function test_an_arco_cache_table_gets_a_store_when_the_app_has_none(): void
+    {
+        self::lambdaCredentials();
+        $_SERVER['ARCO_CACHE_TABLE'] = 'shop-prod-cache';
+
+        self::assertSame([
+            'driver' => 'dynamodb', 'region' => 'sa-east-1', 'key' => 'ASIA1', 'secret' => 'secret', 'token' => 'session',
+            'table' => 'shop-prod-cache', 'attributes' => ['key' => 'key', 'value' => 'value', 'expiration' => 'expires_at'],
+        ], self::registered(['cache' => ['default' => 'file']])->get('cache.stores.dynamodb'));
+    }
+
+    public function test_a_cache_table_arco_did_not_create_keeps_the_apps_attributes(): void
+    {
+        self::lambdaCredentials();
+        $store = ['driver' => 'dynamodb', 'table' => 'their-cache', 'attributes' => ['key' => 'id', 'value' => 'value', 'expiration' => 'ttl']];
+
+        self::assertSame($store, self::registered(['cache' => ['stores' => ['dynamodb' => $store]]])->get('cache.stores.dynamodb'));
+    }
+
+    public function test_the_failed_jobs_table_wires_the_dynamodb_failed_job_provider(): void
+    {
+        self::lambdaCredentials();
+        $_SERVER['ARCO_FAILED_JOBS_TABLE'] = 'shop-prod-failed-jobs';
+
+        $config = self::registered(['queue' => ['failed' => ['driver' => 'database-uuids', 'database' => 'sqlite', 'table' => 'failed_jobs']]]);
+
+        self::assertSame([
+            'driver' => 'dynamodb',
+            'database' => 'sqlite',
+            'table' => 'shop-prod-failed-jobs',
+            'region' => 'sa-east-1',
+            'key' => 'ASIA1',
+            'secret' => 'secret',
+            'token' => 'session',
+        ], $config->get('queue.failed'));
+    }
+
+    public function test_nothing_changes_without_the_variables_or_outside_arco(): void
+    {
+        $app = [
+            'filesystems' => ['disks' => ['local' => ['driver' => 'local']]],
+            'cache' => ['stores' => ['dynamodb' => ['driver' => 'dynamodb', 'table' => 'cache', 'attributes' => ['key' => 'id']]]],
+            'queue' => ['failed' => ['driver' => 'database-uuids', 'table' => 'failed_jobs']],
+        ];
+        self::lambdaCredentials();
+        self::assertSame($app, self::registered($app)->all());
+
+        unset($_SERVER['ARCO']);
+        $_SERVER['ARCO_STORAGE'] = '{"uploads":{"bucket":"b","url":"https://b"}}';
+        $_SERVER['ARCO_CACHE_TABLE'] = 'shop-prod-cache';
+        $_SERVER['ARCO_FAILED_JOBS_TABLE'] = 'shop-prod-failed-jobs';
+        self::assertSame($app, self::registered($app)->all());
+    }
+
+    public function test_malformed_storage_json_is_ignored(): void
+    {
+        self::lambdaCredentials();
+        $_SERVER['ARCO_STORAGE'] = '{not json';
+
+        self::assertNull(self::registered([])->get('filesystems.disks'));
     }
 
     private static function trusted(): mixed

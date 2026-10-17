@@ -14,10 +14,23 @@ use Multiapi\Arco\Laravel\Console\WorkCommand;
 use Multiapi\Arco\Laravel\Http\ShareRequestId;
 use Multiapi\Arco\Laravel\Queue\ArcoSqsConnector;
 use Multiapi\Arco\Laravel\Queue\ArcoSqsQueue;
+use Multiapi\Arco\Laravel\Queue\LambdaWorker;
 
 final class ArcoServiceProvider extends ServiceProvider
 {
     private const JSON_FORMATTER = 'Monolog\\Formatter\\JsonFormatter';
+    /**
+     * The attributes of a cache table Arco creates. Its TTL names EXPIRES_AT (ResourcesStack::TTL_ATTRIBUTE),
+     * which is also what Laravel's DynamoDB failed-job provider writes.
+     */
+    public const CACHE_ATTRIBUTES = ['key' => 'key', 'value' => 'value', 'expiration' => self::EXPIRES_AT];
+    public const EXPIRES_AT = 'expires_at';
+
+    /**
+     * @internal Where log lines go (one JSON object per line on stderr by default); tests replace it.
+     * @var (\Closure(array<string, mixed>): void)|null
+     */
+    public static ?\Closure $log = null;
 
     public function register(): void
     {
@@ -33,6 +46,10 @@ final class ArcoServiceProvider extends ServiceProvider
             | Request::HEADER_X_FORWARDED_PROTO,
         );
 
+        // Before addSessionToken(), which would also add the token to these entries.
+        $this->registerStorageDisks();
+        $this->configureCacheTable();
+        $this->configureFailedJobsTable();
         $this->addSessionToken();
         $this->fixDefaultConfiguration();
         $this->registerQueueConnector();
@@ -74,6 +91,107 @@ final class ArcoServiceProvider extends ServiceProvider
             $add($this->app->make('queue'));
         }
         $this->app->afterResolving('queue', $add);
+    }
+
+    /**
+     * Every storage of arco.php becomes a named s3 disk (`Storage::disk('uploads')`), from ARCO_STORAGE
+     * (name => bucket and url), with the function's credentials and session token. A disk the app
+     * defines under the same name is the app's choice: it stays, and a log line says so.
+     */
+    private function registerStorageDisks(): void
+    {
+        $storage = json_decode(Env::get('ARCO_STORAGE') ?? '', true);
+        $config = $this->config();
+        if (! is_array($storage) || $config === null) {
+            return;
+        }
+        foreach ($storage as $name => $entry) {
+            if (! is_string($name) || $name === '' || str_contains($name, '.') || ! is_array($entry) || ! is_string($entry['bucket'] ?? null)) {
+                continue;
+            }
+            if ($config->has("filesystems.disks.$name")) {
+                self::log(['arco' => 'disk_skipped', 'disk' => $name, 'bucket' => $entry['bucket'], 'reason' => 'the app defines this disk']);
+                continue;
+            }
+            $config->set("filesystems.disks.$name", [
+                'driver' => 's3',
+                'bucket' => $entry['bucket'],
+                'region' => self::region(),
+                'url' => is_string($entry['url'] ?? null) ? $entry['url'] : null,
+                ...self::credentials(),
+            ]);
+        }
+    }
+
+    /**
+     * A cache table Arco creates (ARCO_CACHE_TABLE) has the key `key` and TTL on `expires_at`: the
+     * dynamodb store is pointed at it with those attributes, whatever the app's config/cache.php says
+     * (Bref's, for one, uses id/ttl). A table the app brings (`existing:`) keeps the app's attributes.
+     */
+    private function configureCacheTable(): void
+    {
+        $table = Env::get('ARCO_CACHE_TABLE');
+        $config = $this->config();
+        if ($table === null || $config === null) {
+            return;
+        }
+        if (! is_array($config->get('cache.stores.dynamodb'))) {
+            // An app that removed the stock store: CACHE_STORE=dynamodb still needs one.
+            $config->set('cache.stores.dynamodb', ['driver' => 'dynamodb', 'region' => self::region(), ...self::credentials()]);
+        }
+        $config->set('cache.stores.dynamodb.table', $table);
+        $config->set('cache.stores.dynamodb.attributes', self::CACHE_ATTRIBUTES);
+    }
+
+    /**
+     * Failed jobs go to the DynamoDB table Arco created (ARCO_FAILED_JOBS_TABLE): stock config/queue.php
+     * does not read that table's name from the environment. Other entries of queue.failed stay.
+     */
+    private function configureFailedJobsTable(): void
+    {
+        $table = Env::get('ARCO_FAILED_JOBS_TABLE');
+        $config = $this->config();
+        if ($table === null || $config === null) {
+            return;
+        }
+        $failed = $config->get('queue.failed');
+        $config->set('queue.failed', [
+            ...(is_array($failed) ? $failed : []),
+            'driver' => 'dynamodb',
+            'table' => $table,
+            'region' => self::region(),
+            ...self::credentials(),
+        ]);
+    }
+
+    private static function region(): ?string
+    {
+        return Env::get('AWS_REGION') ?? Env::get('AWS_DEFAULT_REGION');
+    }
+
+    /** @return array{key: ?string, secret: ?string, token: ?string} the function's temporary credentials */
+    private static function credentials(): array
+    {
+        return [
+            'key' => Env::get('AWS_ACCESS_KEY_ID'),
+            'secret' => Env::get('AWS_SECRET_ACCESS_KEY'),
+            'token' => Env::get('AWS_SESSION_TOKEN'),
+        ];
+    }
+
+    private function config(): ?Repository
+    {
+        if (! $this->app->bound('config')) {
+            return null;
+        }
+        $config = $this->app->make('config');
+        return $config instanceof Repository ? $config : null;
+    }
+
+    /** @param array<string, mixed> $line */
+    private static function log(array $line): void
+    {
+        (self::$log ?? LambdaWorker::stderr(...))($line);
     }
 
     /**
