@@ -120,15 +120,29 @@ final class RecordingFailer implements FailedJobProviderInterface
     /** @var list<array{connection: string, queue: string, payload: string, exception: string}> */
     public array $logged = [];
 
+    public ?\Throwable $throws = null;
+
     public function log($connection, $queue, $payload, $exception)
     {
+        if ($this->throws !== null) {
+            throw $this->throws;
+        }
         $this->logged[] = ['connection' => (string) $connection, 'queue' => (string) $queue, 'payload' => (string) $payload, 'exception' => $exception->getMessage()];
         return count($this->logged);
     }
 
     public function ids($queue = null) { return []; }
     public function all() { return []; }
-    public function find($id) { return null; }
+    public function find($id)
+    {
+        foreach ($this->logged as $entry) {
+            $payload = json_decode($entry['payload'], true);
+            if (is_array($payload) && ($payload['uuid'] ?? null) === $id) {
+                return (object) $entry;
+            }
+        }
+        return null;
+    }
     public function forget($id) { return false; }
     public function flush($hours = null) {}
 }

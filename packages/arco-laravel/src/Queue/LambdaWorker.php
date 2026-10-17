@@ -75,8 +75,21 @@ final class LambdaWorker
                 return;
             }
             $failer = $this->app->make('queue.failer');
-            if ($failer instanceof FailedJobProviderInterface) {
+            if (! $failer instanceof FailedJobProviderInterface) {
+                return;
+            }
+            try {
+                // Another JobFailed listener (bref/laravel-bridge's, still installed while migrating) may have
+                // logged this job already: logging it again would hit the failed_jobs uuid unique key.
+                $payload = json_decode($event->job->getRawBody(), true);
+                $uuid = is_array($payload) ? ($payload['uuid'] ?? null) : null;
+                if (is_string($uuid) && $failer->find($uuid) !== null) {
+                    return;
+                }
                 $failer->log($event->connectionName, $event->job->getQueue(), $event->job->getRawBody(), $event->exception);
+            } catch (Throwable $e) {
+                // A failer error must never replace the job's own exception.
+                $this->exceptions->report($e);
             }
         });
     }

@@ -106,6 +106,29 @@ final class LambdaWorkerTest extends TestCase
         self::assertSame('failed', $this->logs[0]['status']);
     }
 
+    public function test_a_job_another_listener_already_logged_is_not_logged_again(): void
+    {
+        // Like bref/laravel-bridge's provider, which registers the same JobFailed listener at boot.
+        $this->test->app->make('events')->listen(\Illuminate\Queue\Events\JobFailed::class, function (\Illuminate\Queue\Events\JobFailed $event): void {
+            $this->test->failer->log($event->connectionName, $event->job->getQueue(), $event->job->getRawBody(), $event->exception);
+        });
+
+        self::assertSame([], $this->handle([QueueTestJob::record('throw', attempts: 3)]));
+
+        self::assertCount(1, $this->test->failer->logged);
+        self::assertSame([], array_filter($this->test->exceptions->reported, fn (\Throwable $e) => $e->getMessage() !== 'boom'));
+    }
+
+    public function test_a_failer_error_is_reported_and_does_not_escape(): void
+    {
+        $this->test->failer->throws = new \RuntimeException('unique violation');
+
+        self::assertSame([], $this->handle([QueueTestJob::record('throw', attempts: 3)]));
+
+        self::assertContains('unique violation', array_map(fn (\Throwable $e) => $e->getMessage(), $this->test->exceptions->reported));
+        self::assertSame('failed', $this->logs[0]['status']);
+    }
+
     public function test_a_job_past_its_time_limit_times_out_and_the_rest_of_the_batch_still_runs(): void
     {
         $started = microtime(true);
