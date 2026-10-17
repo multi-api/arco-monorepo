@@ -65,8 +65,11 @@ final class InfoCommand extends ArcoCommand
                 'revision' => $status?->activeRevisionId,
                 'domains' => $config->domains,
                 'distribution' => $status?->distributionDomain !== null ? ['domain' => $status->distributionDomain, 'status' => $status->distributionStatus] : null,
-                'console' => ['function' => $config->consoleFunctionName(), 'version' => $status?->consoleVersion]
-                    + ($status?->consoleVersionError !== null ? ['error' => $status->consoleVersionError] : []),
+                'console' => $config->consoleEnabled()
+                    ? ['function' => $config->consoleFunctionName(), 'version' => $status?->consoleVersion]
+                        + ($status?->consoleVersionError !== null ? ['error' => $status->consoleVersionError] : [])
+                        + ['enabled' => true]
+                    : ['enabled' => false, 'function' => $config->consoleFunctionName()],
                 'deployCommands' => $config->deployCommands,
                 'settings' => array_map(fn (array $row) => $row[0], $settings),
             ] + ($remoteError !== null ? ['error' => $remoteError] : []), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
@@ -97,7 +100,7 @@ final class InfoCommand extends ArcoCommand
                 ['URL' => $status->domainName !== null ? 'https://' . $status->domainName : '-'],
                 [$this->t('info.state') => $status->state],
                 [$this->t('info.revision') => $status->activeRevisionId ?? '-'],
-                [$this->t('info.console') => $this->consoleStatus($status)],
+                [$this->t('info.console') => $config->consoleEnabled() ? $this->consoleStatus($status) : $this->t('info.console_off')],
                 ...($status->distributionDomain !== null ? [[$this->t('info.distribution') => "{$status->distributionDomain} ({$status->distributionStatus})"]] : []),
             );
         }
@@ -172,6 +175,17 @@ final class InfoCommand extends ArcoCommand
             'rateLimit' => [$config->rateLimit, $s['rateLimit']],
             'auth' => [$config->auth, $s['auth']],
             'logLevel' => [$config->logLevel, $s['logLevel']],
+            'console' => [match (true) {
+                $config->consoleEnabled() => 'on',
+                $config->console === false => 'off',
+                default => 'not set',
+            }, $s['console']],
+            'scheduler' => [$config->scheduler === null ? 'off' : "every {$config->scheduler} min", $s['scheduler']],
+            'logRetention' => [match (true) {
+                $config->logRetention === null => 'not managed',
+                $config->logRetention === false => 'never',
+                default => "{$config->logRetention} days",
+            }, $s['logRetention']],
             'consoleTimeout' => [$config->consoleTimeout, $s['consoleTimeout']],
             'protected' => [$config->isProtected(), $s['protected']],
             'deployCommands' => [$config->deployCommands === [] ? null : implode('; ', $config->deployCommands), $s['deployCommands']],

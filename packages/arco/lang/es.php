@@ -195,6 +195,7 @@ return [
     'info.distribution' => 'CloudFront',
     'info.console' => 'Función de consola',
     'info.console_version' => '{function} (versión {version})',
+    'info.console_off' => 'desactivada (no desplegada)',
     'info.console_missing' => 'aún no desplegada (ejecuta arco deploy)',
     'info.console_denied' => 'desconocida (permiso denegado: lambda:GetAlias)',
     'info.console_unknown' => 'desconocida ({error})',

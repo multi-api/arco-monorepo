@@ -195,6 +195,7 @@ return [
     'info.distribution' => 'CloudFront',
     'info.console' => 'Console function',
     'info.console_version' => '{function} (version {version})',
+    'info.console_off' => 'off (not deployed)',
     'info.console_missing' => 'not deployed yet (run arco deploy)',
     'info.console_denied' => 'unknown (permission denied: lambda:GetAlias)',
     'info.console_unknown' => 'unknown ({error})',

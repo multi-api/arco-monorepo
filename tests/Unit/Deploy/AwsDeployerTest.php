@@ -435,7 +435,7 @@ final class AwsDeployerTest extends TestCase
 
     public function test_describe_includes_the_console_version_and_the_distribution(): void
     {
-        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->domain('a.example.com'))->toArray(), 'production');
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->console()->environment('production', fn (Environment $e) => $e->domain('a.example.com'))->toArray(), 'production');
         $mocks = new AwsMocks();
         $mocks->handler->append(
             new Result(['functionName' => 'shop-production', 'state' => 'Active']),
@@ -461,6 +461,20 @@ final class AwsDeployerTest extends TestCase
         self::assertNull($status?->consoleVersion);
         self::assertSame('AccessDeniedException', $status?->consoleVersionError, 'unknown, not "not deployed yet"');
         self::assertNull($status?->distributionDomain);
+    }
+
+    public function test_describe_does_not_look_up_the_console_when_it_is_off(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => []]),
+        );
+
+        $status = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->describe($this->config());
+
+        self::assertNull($status?->consoleFunction);
+        self::assertNotContains('GetAlias', $mocks->calls);
     }
 
     public function test_remove_after_domain_was_dropped_cleans_aliases_in_the_dns_account(): void

@@ -297,7 +297,10 @@ final class AwsDeployer implements Deployer
         $consoleVersion = null;
         $consoleVersionError = null;
         try {
-            $consoleVersion = $this->consoleFunction()->liveVersion($config->consoleFunctionName());
+            // No lookup while the console is off: the function is not expected to exist.
+            if ($config->consoleEnabled()) {
+                $consoleVersion = $this->consoleFunction()->liveVersion($config->consoleFunctionName());
+            }
         } catch (AwsException $e) {
             // Shown as unknown (e.g. without lambda:GetAlias), never as "not deployed yet".
             $consoleVersionError = $e->getAwsErrorCode() ?? 'UnknownError';
@@ -317,7 +320,7 @@ final class AwsDeployer implements Deployer
             $endpoint === null ? null : WebFunctions::activeRevision($endpoint),
             $distribution['domain'] ?? null,
             $distribution['status'] ?? null,
-            $config->consoleFunctionName(),
+            $config->consoleEnabled() ? $config->consoleFunctionName() : null,
             $consoleVersion,
             $consoleVersionError,
         );

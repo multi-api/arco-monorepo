@@ -67,7 +67,7 @@ final class InfoCommandTest extends TestCase
 
     public function test_shows_console_settings_deploy_commands_and_the_live_version(): void
     {
-        $config = str_replace("->timeout(60)", "->timeout(60)->consoleTimeout(300)->deployCommands(['migrate --force'])", ProjectFixture::standardConfig());
+        $config = str_replace("->timeout(60)", "->timeout(60)->consoleTimeout(300)->deployCommands(['migrate --force'])", ProjectFixture::consoleConfig());
         $project = new ProjectFixture($config);
         putenv('AWS_PROFILE=p');
         $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', null, null, 'shop-production-console', '7');
@@ -82,16 +82,71 @@ final class InfoCommandTest extends TestCase
 
         $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true);
-        self::assertSame(['function' => 'shop-production-console', 'version' => '7'], $json['console']);
+        self::assertSame(['function' => 'shop-production-console', 'version' => '7', 'enabled' => true], $json['console']);
         self::assertSame(['migrate --force'], $json['deployCommands']);
         self::assertTrue($json['settings']['protected']);
         putenv('AWS_PROFILE');
         $project->restore();
     }
 
-    public function test_a_console_version_that_cannot_be_read_is_unknown_not_missing(): void
+    public function test_shows_console_scheduler_and_log_retention_rows(): void
+    {
+        $config = str_replace("->timeout(60)", "->timeout(60)->console()->scheduler(5)->logRetention(30)", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        $display = $tester->getDisplay();
+        self::assertMatchesRegularExpression('/\bconsole\s+on\s+environment/', $display);
+        self::assertMatchesRegularExpression('/scheduler\s+every 5 min\s+environment/', $display);
+        self::assertMatchesRegularExpression('/logRetention\s+30 days\s+environment/', $display);
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame('on', $json['settings']['console']);
+        self::assertSame('every 5 min', $json['settings']['scheduler']);
+        self::assertSame('30 days', $json['settings']['logRetention']);
+
+        $tester->execute(['--env' => 'staging'], ['interactive' => false]);
+        $display = $tester->getDisplay();
+        self::assertMatchesRegularExpression('/\bconsole\s+not set\s+default/', $display);
+        self::assertMatchesRegularExpression('/scheduler\s+off\s+default/', $display);
+        self::assertMatchesRegularExpression('/logRetention\s+not managed\s+default/', $display);
+        $project->restore();
+    }
+
+    public function test_log_retention_never_and_console_off(): void
+    {
+        $config = str_replace("->timeout(60)", "->timeout(60)->console(false)->logRetention(false)", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame('off', $json['settings']['console']);
+        self::assertSame('never', $json['settings']['logRetention']);
+        $project->restore();
+    }
+
+    public function test_a_console_that_is_off_is_not_looked_up(): void
     {
         $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE=p');
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1');
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $status)));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertStringContainsString('off (not deployed)', $tester->getDisplay());
+        self::assertStringNotContainsString('not deployed yet', $tester->getDisplay());
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        self::assertSame(['enabled' => false, 'function' => 'shop-production-console'], json_decode($tester->getDisplay(), true)['console']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_a_console_version_that_cannot_be_read_is_unknown_not_missing(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::consoleConfig());
         putenv('AWS_PROFILE=p');
         $denied = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', null, null, 'shop-production-console', null, 'AccessDeniedException');
         $throttled = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', null, null, 'shop-production-console', null, 'TooManyRequestsException');
@@ -101,7 +156,7 @@ final class InfoCommandTest extends TestCase
         self::assertStringContainsString('unknown (permission denied: lambda:GetAlias)', $tester->getDisplay());
         self::assertStringNotContainsString('not deployed yet', $tester->getDisplay());
         $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
-        self::assertSame(['function' => 'shop-production-console', 'version' => null, 'error' => 'AccessDeniedException'], json_decode($tester->getDisplay(), true)['console']);
+        self::assertSame(['function' => 'shop-production-console', 'version' => null, 'error' => 'AccessDeniedException', 'enabled' => true], json_decode($tester->getDisplay(), true)['console']);
 
         $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $throttled)));
         $tester->execute(['--env' => 'production'], ['interactive' => false]);
