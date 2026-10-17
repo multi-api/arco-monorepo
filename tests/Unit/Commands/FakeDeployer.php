@@ -172,9 +172,8 @@ final class FakeDeployer implements Deployer
     }
     public function deployResources(AppConfig $config, \Closure $onStep): void
     {
-        // Like AwsDeployer: nothing happens without created queues or a stack left from earlier ones.
-        $created = array_filter($config->queues, fn ($queue) => $queue->existing === null);
-        if ($created === [] && ! $this->resourcesStack) {
+        // Like AwsDeployer: nothing happens without created resources or a stack left from earlier ones.
+        if (\Multiapi\Arco\Deploy\ResourcesStack::template($config)['Resources'] === [] && ! $this->resourcesStack) {
             return;
         }
         $this->calls[] = 'resources';
@@ -185,6 +184,12 @@ final class FakeDeployer implements Deployer
             if ($queue->existing === null) {
                 $onStep('deploy.queue_created', ['queue' => $queue->name, 'name' => $queue->physicalName($config)]);
             }
+        }
+        foreach (\Multiapi\Arco\Deploy\ResourcesStack::createdStorage($config) as $storage) {
+            $onStep('deploy.storage_created', ['storage' => $storage->name, 'bucket' => $storage->bucketName($config)]);
+        }
+        foreach (\Multiapi\Arco\Deploy\ResourcesStack::createdTables($config) as $table) {
+            $onStep('deploy.table_created', ['kind' => $table->kind, 'name' => $table->tableName($config)]);
         }
     }
     public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->describeError !== null ? throw $this->describeError : $this->status; }

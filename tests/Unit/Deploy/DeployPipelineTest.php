@@ -1083,6 +1083,23 @@ final class DeployPipelineTest extends TestCase
         self::assertSame(['resources', 'prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
     }
 
+    public function test_storage_and_tables_are_deployed_with_the_resources_before_prepare(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $steps = [];
+        $config = ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))->storage('uploads')->cache()->environment('production', fn ($e) => $e->account('111111111111'))->toArray(),
+            'production',
+        );
+
+        $this->pipeline()->deploy($config, new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame('resources', $deployer->calls[0]);
+        self::assertContains('prepare', $deployer->calls);
+        self::assertContains('deploy.storage_created', $steps);
+        self::assertContains('deploy.table_created', $steps);
+    }
+
     public function test_only_existing_queues_and_no_stack_need_no_resources_deploy(): void
     {
         $deployer = new FakeDeployer('rev-1');

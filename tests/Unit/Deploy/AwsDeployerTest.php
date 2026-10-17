@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\Deploy;
 
 use Aws\CloudFormation\Exception\CloudFormationException;
+use Aws\DynamoDb\Exception\DynamoDbException;
 use Aws\EventBridge\Exception\EventBridgeException;
 use Aws\Iam\Exception\IamException;
 use Aws\Lambda\Exception\LambdaException;
@@ -1113,6 +1114,346 @@ final class AwsDeployerTest extends TestCase
 
         self::assertSame(['DescribeStacks'], $calls);
         self::assertSame([], $steps);
+    }
+
+    private function resourcesConfig(callable $build): AppConfig
+    {
+        $app = $build(App::make('shop')->region('us-east-1'));
+        return ConfigResolver::resolve($app->environment('production', fn (Environment $e) => $e->account('111111111111'))->toArray(), 'production');
+    }
+
+    /** @param array<string, array{0: string, 1: string}> $resources type and physical id by logical id */
+    private static function ownedResources(array $resources): Result
+    {
+        return new Result(['StackResources' => array_map(fn (string $id, array $resource) => [
+            'LogicalResourceId' => $id,
+            'PhysicalResourceId' => $resource[1],
+            'ResourceType' => $resource[0],
+            'ResourceStatus' => 'CREATE_COMPLETE',
+        ], array_keys($resources), $resources)]);
+    }
+
+    private static function noBucket(): S3Exception
+    {
+        return AwsMocks::error(S3Exception::class, 'HeadBucket', 'NotFound', 404);
+    }
+
+    private static function noTable(): DynamoDbException
+    {
+        return AwsMocks::error(DynamoDbException::class, 'DescribeTable', 'ResourceNotFoundException', 400);
+    }
+
+    public function test_deploy_resources_creates_buckets_and_tables(): void
+    {
+        $config = $this->resourcesConfig(fn (App $app) => $app->storage('uploads', public: ['public/', 'avatars/'])->cache()->failedJobsTable());
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackMissing(),
+            self::noBucket(),                                    // the bucket name is free
+            self::noTable(), self::noTable(),                    // both table names are free
+            self::stackMissing(),                                // Stacks::deploy
+            new Result([]),                                      // CreateStack
+            self::resourcesStack('CREATE_COMPLETE'),
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $config);
+
+        self::assertSame(['DescribeStacks', 'HeadBucket', 'DescribeTable', 'DescribeTable', 'DescribeStacks', 'CreateStack', 'DescribeStacks'], $calls);
+        self::assertSame('shop-production-uploads-111111111111', $mocks->params[1]['Bucket']);
+        self::assertSame('shop-production-cache', $mocks->params[2]['TableName']);
+        self::assertSame('shop-production-failed-jobs', $mocks->params[3]['TableName']);
+        $template = json_decode((string) $mocks->params[5]['TemplateBody'], true);
+        self::assertIsArray($template);
+        self::assertSame(['StorageUploads', 'StorageUploadsPolicy', 'TableCache', 'TableFailedXjobs'], array_keys($template['Resources']));
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.storage_created', ['storage' => 'uploads', 'bucket' => 'shop-production-uploads-111111111111']],
+            ['deploy.storage_public', ['storage' => 'uploads', 'prefixes' => 'public/, avatars/', 'url' => 'https://shop-production-uploads-111111111111.s3.us-east-1.amazonaws.com']],
+            ['deploy.table_created', ['kind' => 'cache', 'name' => 'shop-production-cache']],
+            ['deploy.table_created', ['kind' => 'failed-jobs', 'name' => 'shop-production-failed-jobs']],
+        ], $steps);
+    }
+
+    public function test_deploy_resources_stops_before_any_change_when_a_bucket_name_is_retained(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::stackMissing(), new Result([]));    // HeadBucket 200: a bucket of this account
+
+        try {
+            $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->storage('uploads')));
+            self::fail('expected deploy.storage_retained');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.storage_retained', $e->key);
+            self::assertSame(['storage' => 'uploads', 'existing' => "storage('uploads', existing: 'shop-production-uploads-111111111111')"], $e->params);
+        }
+        self::assertSame(['DescribeStacks', 'HeadBucket'], $mocks->calls, 'no CreateStack or UpdateStack');
+    }
+
+    public function test_deploy_resources_stops_before_any_change_when_another_account_has_the_bucket_name(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::stackMissing(), AwsMocks::error(S3Exception::class, 'HeadBucket', 'Forbidden', 403));
+
+        try {
+            $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->storage('uploads')));
+            self::fail('expected deploy.bucket_taken');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.bucket_taken', $e->key);
+            self::assertSame(['bucket' => 'shop-production-uploads-111111111111'], $e->params);
+        }
+        self::assertSame(['DescribeStacks', 'HeadBucket'], $mocks->calls, 'stopped before CloudFormation');
+    }
+
+    public function test_deploy_resources_stops_before_any_change_when_a_table_name_is_retained(): void
+    {
+        foreach ([
+            [fn (App $app) => $app->cache(), 'cache', "cache(existing: 'shop-production-cache')"],
+            [fn (App $app) => $app->failedJobsTable(), 'failed-jobs', "failedJobsTable(existing: 'shop-production-failed-jobs')"],
+        ] as [$build, $kind, $existing]) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(self::stackMissing(), new Result(['Table' => ['TableName' => 'x']]));
+
+            try {
+                $this->deployResources($mocks, $this->resourcesConfig($build));
+                self::fail('expected deploy.table_retained');
+            } catch (DeployException $e) {
+                self::assertSame('deploy.table_retained', $e->key);
+                self::assertSame(['kind' => $kind, 'existing' => $existing], $e->params);
+            }
+            self::assertSame(['DescribeStacks', 'DescribeTable'], $mocks->calls, 'no CreateStack or UpdateStack');
+        }
+    }
+
+    public function test_deploy_resources_keeps_a_removed_bucket_and_updates_the_stack(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::ownedResources([
+                'StorageUploads' => ['AWS::S3::Bucket', 'shop-production-uploads-111111111111'],
+                'StorageOld' => ['AWS::S3::Bucket', 'shop-production-old-111111111111'],
+                'StorageOldPolicy' => ['AWS::S3::BucketPolicy', 'shop-production-old-111111111111'],
+            ]),
+            self::resourcesStack(),                              // Stacks::deploy
+            new Result([]),                                      // UpdateStack
+            self::resourcesStack(),
+            new Result(['KeyCount' => 1]),                       // ListObjectsV2: files left
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->storage('uploads')));
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'UpdateStack', 'DescribeStacks', 'ListObjectsV2'], $calls, 'buckets the stack owns need no name check');
+        self::assertSame('shop-production-old-111111111111', $mocks->params[5]['Bucket']);
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.storage_updated', ['storage' => 'uploads', 'bucket' => 'shop-production-uploads-111111111111']],
+            ['deploy.storage_kept', ['bucket' => 'shop-production-old-111111111111', 'objects' => 'some']],
+        ], $steps);
+        self::assertContains('deploy.storage_kept', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
+    public function test_deploy_resources_deletes_the_stack_when_the_last_resource_is_removed_and_keeps_every_one(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            new Result(['StackResources' => [
+                ['LogicalResourceId' => 'QueueEmails', 'PhysicalResourceId' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', 'ResourceType' => 'AWS::SQS::Queue', 'ResourceStatus' => 'CREATE_COMPLETE'],
+                ['LogicalResourceId' => 'StorageUploads', 'PhysicalResourceId' => 'shop-production-uploads-111111111111', 'ResourceType' => 'AWS::S3::Bucket', 'ResourceStatus' => 'UPDATE_COMPLETE'],
+                ['LogicalResourceId' => 'TableCache', 'PhysicalResourceId' => 'shop-production-cache', 'ResourceType' => 'AWS::DynamoDB::Table', 'ResourceStatus' => 'CREATE_COMPLETE'],
+                ['LogicalResourceId' => 'TableFailedXjobs', 'PhysicalResourceId' => 'shop-production-failed-jobs', 'ResourceType' => 'AWS::DynamoDB::Table', 'ResourceStatus' => 'CREATE_COMPLETE'],
+            ]]),
+            self::resourcesStack(),                              // Stacks::delete
+            new Result([]),                                      // DeleteStack
+            self::stackMissing(),
+            new Result(['Attributes' => ['ApproximateNumberOfMessages' => '3']]),
+            new Result(['KeyCount' => 0]),
+            new Result(['Table' => ['ItemCount' => 120]]),
+            self::noTable(),                                     // deleted by hand meanwhile: count unknown
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->queueConfig(false));
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'GetQueueAttributes', 'ListObjectsV2', 'DescribeTable', 'DescribeTable'], $calls);
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.queue_kept', ['queue' => 'shop-production-emails', 'url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', 'messages' => 3]],
+            ['deploy.storage_kept', ['bucket' => 'shop-production-uploads-111111111111', 'objects' => 'none']],
+            ['deploy.table_kept', ['table' => 'shop-production-cache', 'items' => 120]],
+            ['deploy.table_kept', ['table' => 'shop-production-failed-jobs', 'items' => '?']],
+        ], $steps);
+        self::assertContains('deploy.table_kept', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
+    public function test_a_created_bucket_or_table_switched_to_existing_itself_is_not_offered_for_deletion(): void
+    {
+        $config = $this->resourcesConfig(fn (App $app) => $app->storage('uploads', existing: 'shop-production-uploads-111111111111')->cache(existing: 'shop-production-cache'));
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::ownedResources([
+                'StorageUploads' => ['AWS::S3::Bucket', 'shop-production-uploads-111111111111'],
+                'TableCache' => ['AWS::DynamoDB::Table', 'shop-production-cache'],
+            ]),
+            self::resourcesStack(),                              // Stacks::delete
+            new Result([]),                                      // DeleteStack
+            self::stackMissing(),
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $config);
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks'], $calls);
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.storage_now_existing', ['bucket' => 'shop-production-uploads-111111111111', 'as' => 'uploads']],
+            ['deploy.table_now_existing', ['table' => 'shop-production-cache', 'as' => 'cache']],
+        ], $steps);
+    }
+
+    public function test_deploy_resources_stops_before_any_change_when_a_bucket_or_table_would_be_replaced(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::ownedResources(['TableCache' => ['AWS::DynamoDB::Table', 'shop-staging-cache']]),
+        );
+
+        try {
+            $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->cache()));
+            self::fail('expected deploy.resource_replaced');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.resource_replaced', $e->key);
+            self::assertSame(['resource' => 'cache', 'from' => 'shop-staging-cache', 'to' => 'shop-production-cache'], $e->params);
+        }
+        self::assertSame(['DescribeStacks', 'DescribeStackResources'], $mocks->calls);
+    }
+
+    public function test_an_account_that_blocks_public_bucket_policies_is_a_clear_error(): void
+    {
+        $config = $this->resourcesConfig(fn (App $app) => $app->storage('media', public: ['public/']));
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackMissing(),
+            self::noBucket(),
+            self::stackMissing(),                                // Stacks::deploy
+            new Result([]),                                      // CreateStack
+            self::resourcesStack('ROLLBACK_COMPLETE'),
+            new Result(['StackEvents' => [
+                ['LogicalResourceId' => 'arco-shop-production-resources', 'ResourceStatus' => 'ROLLBACK_COMPLETE'],
+                ['LogicalResourceId' => 'StorageMediaPolicy', 'ResourceStatus' => 'CREATE_FAILED', 'ResourceStatusReason' => 'Resource handler returned message: "User: arn:aws:iam::111111111111:user/deployer is not authorized to perform: s3:PutBucketPolicy on resource: "arn:aws:s3:::shop-production-media-111111111111" because public policies are blocked by the BlockPublicPolicy block public access setting. (Service: S3, Status Code: 403)"'],
+                ['LogicalResourceId' => 'arco-shop-production-resources', 'ResourceStatus' => 'CREATE_IN_PROGRESS'],
+            ]]),
+        );
+
+        try {
+            $this->deployResources($mocks, $config);
+            self::fail('expected deploy.public_blocked');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.public_blocked', $e->key);
+            self::assertSame(['bucket' => 'shop-production-media-111111111111'], $e->params);
+        }
+    }
+
+    public function test_a_plain_access_denial_on_the_public_policy_names_both_causes(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackMissing(),
+            self::noBucket(),
+            self::stackMissing(),
+            new Result([]),
+            self::resourcesStack('ROLLBACK_COMPLETE'),
+            new Result(['StackEvents' => [
+                ['LogicalResourceId' => 'StorageMediaPolicy', 'ResourceStatus' => 'CREATE_FAILED', 'ResourceStatusReason' => 'API: s3:PutBucketPolicy Access Denied'],
+                ['LogicalResourceId' => 'arco-shop-production-resources', 'ResourceStatus' => 'CREATE_IN_PROGRESS'],
+            ]]),
+        );
+
+        try {
+            $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->storage('media', public: ['public/'])));
+            self::fail('expected deploy.public_policy_denied');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.public_policy_denied', $e->key);
+            self::assertSame(['bucket' => 'shop-production-media-111111111111', 'reason' => 'StorageMediaPolicy: API: s3:PutBucketPolicy Access Denied'], $e->params);
+        }
+    }
+
+    public function test_other_stack_failures_are_reported_as_they_are(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackMissing(),
+            self::noBucket(),
+            self::stackMissing(),
+            new Result([]),
+            self::resourcesStack('ROLLBACK_COMPLETE'),
+            new Result(['StackEvents' => [
+                ['LogicalResourceId' => 'StorageMedia', 'ResourceStatus' => 'CREATE_FAILED', 'ResourceStatusReason' => 'Rate exceeded'],
+                ['LogicalResourceId' => 'arco-shop-production-resources', 'ResourceStatus' => 'CREATE_IN_PROGRESS'],
+            ]]),
+        );
+
+        try {
+            $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->storage('media', public: ['public/'])));
+            self::fail('expected stack.failed');
+        } catch (DeployException $e) {
+            self::assertSame('stack.failed', $e->key);
+            self::assertSame('StorageMedia: Rate exceeded', $e->params['reason']);
+        }
+    }
+
+    public function test_a_foreign_stack_with_the_name_does_not_fail_an_app_without_resources(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::resourcesStack('CREATE_COMPLETE', 'other'));
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->queueConfig(false));
+
+        self::assertSame(['DescribeStacks'], $calls, 'not ours and nothing to deploy: left alone');
+        self::assertSame([], $steps);
+    }
+
+    public function test_remove_lists_the_kept_buckets_and_tables(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // domains stack
+            self::noRule(),
+            new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
+            self::resourcesStack(),
+            self::ownedResources([
+                'StorageUploads' => ['AWS::S3::Bucket', 'shop-production-uploads-111111111111'],
+                'StorageUploadsPolicy' => ['AWS::S3::BucketPolicy', 'shop-production-uploads-111111111111'],
+                'TableFailedXjobs' => ['AWS::DynamoDB::Table', 'shop-production-failed-jobs'],
+            ]),
+            self::resourcesStack(),                                                             // Stacks::delete
+            new Result([]),                                                                     // DeleteStack
+            self::stackMissing(),
+            AwsMocks::error(S3Exception::class, 'ListObjectsV2', 'AccessDenied', 403),           // unknown
+            new Result(['Table' => ['ItemCount' => 0]]),
+            self::lambdaMissing('DeleteFunction'),                                              // console never deployed
+            new Result([]),                                                                     // DeleteWebFunction
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
+            new Result([]), new Result([]),                                                     // DeleteRolePolicy, DeleteRole
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame([
+            'DescribeStacks', 'DescribeRule', 'GetResources',
+            'DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListObjectsV2', 'DescribeTable',
+            'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole',
+        ], $mocks->calls);
+        self::assertSame([
+            ['remove.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['remove.storage_kept', ['bucket' => 'shop-production-uploads-111111111111', 'objects' => 'unknown']],
+            ['remove.table_kept', ['table' => 'shop-production-failed-jobs', 'items' => 0]],
+            ['remove.step_console', ['function' => 'shop-production-console']],
+            ['remove.step_function', ['function' => 'shop-production']],
+        ], $steps);
+        self::assertContains('remove.storage_kept', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertContains('remove.table_kept', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
 
     private function queuesConfig(bool $second = true): AppConfig

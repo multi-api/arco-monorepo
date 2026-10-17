@@ -150,6 +150,20 @@ final class StepPrinterTest extends TestCase
         self::assertNotContains('deploy.console_removed', StepPrinter::WARNINGS);
     }
 
+    public function test_a_kept_bucket_is_a_warning_that_says_whether_files_are_left(): void
+    {
+        $translator = new \Multiapi\Arco\Cli\Translator('en', dirname(__DIR__, 3) . '/packages/arco/lang');
+        $output = new BufferedOutput();
+        $printer = new StepPrinter(new SymfonyStyle(new ArrayInput([]), $output), $translator->trans(...), false);
+
+        $printer('deploy.storage_kept', ['bucket' => 'shop-production-old-111111111111', 'objects' => 'some']);
+        $printer('remove.storage_kept', ['bucket' => 'shop-production-old-111111111111', 'objects' => 'unknown']);
+
+        $text = (string) preg_replace('/\s+/', ' ', $output->fetch());
+        self::assertStringContainsString('[WARNING] The bucket shop-production-old-111111111111 is no longer in arco.php. Arco kept it in AWS with its files (it still has files).', $text);
+        self::assertStringContainsString('with its files (its files could not be listed)', $text);
+    }
+
     public function test_the_log_retention_lines_read_as_spanish(): void
     {
         $translator = new \Multiapi\Arco\Cli\Translator('es', dirname(__DIR__, 3) . '/packages/arco/lang');
