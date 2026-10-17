@@ -229,6 +229,39 @@ final class BootstrapTest extends TestCase
         self::assertCount(0, $this->s3->requests());
     }
 
+    public function test_a_worker_function_runs_the_worker_runtime_with_bin_php(): void
+    {
+        $path = $this->packagedPhp();
+
+        $run = $this->bootstrap(env: ['PATH' => $path, 'ARCO_WORKER_QUEUE' => 'emails']);
+
+        self::assertSame(0, $run->getExitCode(), $run->getOutput() . $run->getErrorOutput());
+        self::assertStringContainsString("fake-php $this->root/runtime/worker.php\n", $run->getOutput());
+        self::assertStringNotContainsString('console.php', $run->getOutput());
+        self::assertStringContainsString("cwd $this->root/app", $run->getOutput());
+        self::assertFileDoesNotExist("$this->root/curl-calls");
+    }
+
+    public function test_a_worker_function_runs_the_worker_runtime_with_the_downloaded_binary(): void
+    {
+        $run = $this->bootstrap(env: ['ARCO_WORKER_QUEUE' => 'emails']);
+
+        self::assertSame(0, $run->getExitCode(), $run->getOutput() . $run->getErrorOutput());
+        self::assertStringContainsString("fake-frankenphp php-cli $this->root/runtime/worker.php\n", $run->getOutput());
+        self::assertStringContainsString("php-binary $this->tmp/bin/frankenphp", $run->getOutput());
+        self::assertStringNotContainsString('console.php', $run->getOutput());
+    }
+
+    public function test_an_empty_worker_queue_runs_the_console(): void
+    {
+        $path = $this->packagedPhp();
+
+        $run = $this->bootstrap(env: ['PATH' => $path, 'ARCO_WORKER_QUEUE' => '']);
+
+        self::assertSame(0, $run->getExitCode(), $run->getOutput() . $run->getErrorOutput());
+        self::assertStringContainsString("fake-php $this->root/runtime/console.php\n", $run->getOutput());
+    }
+
     public function test_bin_php_wins_over_binary_variables(): void
     {
         $path = $this->packagedPhp();
