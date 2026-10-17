@@ -301,6 +301,12 @@ final class AwsDeployerTest extends TestCase
             new Result(['Contents' => []]), new Result(['Contents' => []]),
             AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'AccessDeniedException', 400, 'not authorized to perform: tag:GetResources'),
         ], ['deploy.prune_runtime_failed']];
+        yield 'unreadable KMS-encrypted variables' => [[
+            new Result(['FunctionVersion' => '2']), new Result(['Versions' => [['Version' => '1'], ['Version' => '2']]]),
+            new Result(['Contents' => []]), new Result(['Contents' => []]),
+            new Result(['ResourceTagMappingList' => [['ResourceARN' => 'arn:other-console']]]),
+            new Result(['Versions' => [['Version' => '4', 'Environment' => ['Error' => ['ErrorCode' => 'AccessDeniedException', 'Message' => 'KMS access was denied']]]]]),
+        ], ['deploy.prune_runtime_failed']];
     }
 
     /**

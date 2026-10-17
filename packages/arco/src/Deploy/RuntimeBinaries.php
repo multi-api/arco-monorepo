@@ -65,12 +65,17 @@ final class RuntimeBinaries
                 $params['PaginationToken'] = $token;
             }
             $page = $this->tagging->getResources($params);
-            $resources = $page['ResourceTagMappingList'] ?? [];
-            foreach (is_array($resources) ? $resources : [] as $resource) {
+            // Fail closed: a page that cannot be read could hide a function that still references a binary.
+            $resources = $page['ResourceTagMappingList'] ?? null;
+            if (! is_array($resources)) {
+                throw new \RuntimeException('GetResources returned a page without ResourceTagMappingList; no runtime binary was deleted.');
+            }
+            foreach ($resources as $resource) {
                 $arn = is_array($resource) ? ($resource['ResourceARN'] ?? null) : null;
-                if (is_string($arn) && $arn !== '') {
-                    $keys += $this->keysOf($arn, $bucket);
+                if (! is_string($arn) || $arn === '') {
+                    throw new \RuntimeException('GetResources returned a function without a ResourceARN; no runtime binary was deleted.');
                 }
+                $keys += $this->keysOf($arn, $bucket);
             }
             $token = is_string($page['PaginationToken'] ?? null) && $page['PaginationToken'] !== '' ? $page['PaginationToken'] : null;
         } while ($token !== null);
@@ -96,17 +101,48 @@ final class RuntimeBinaries
                 }
                 throw $e;
             }
-            $versions = $page['Versions'] ?? [];
-            foreach (is_array($versions) ? $versions : [] as $version) {
-                $environment = is_array($version) ? ($version['Environment'] ?? null) : null;
-                $variables = is_array($environment) ? ($environment['Variables'] ?? null) : null;
-                if (is_array($variables) && ($variables['ARCO_BINARY_BUCKET'] ?? null) === $bucket && is_string($variables['ARCO_BINARY_KEY'] ?? null)) {
+            $versions = $page['Versions'] ?? null;
+            if (! is_array($versions)) {
+                throw new \RuntimeException("ListVersionsByFunction returned a page without Versions for $function; no runtime binary was deleted.");
+            }
+            foreach ($versions as $version) {
+                $variables = self::variablesOf($function, $version);
+                if (($variables['ARCO_BINARY_BUCKET'] ?? null) === $bucket && is_string($variables['ARCO_BINARY_KEY'] ?? null)) {
                     $keys[$variables['ARCO_BINARY_KEY']] = true;
                 }
             }
             $marker = is_string($page['NextMarker'] ?? null) && $page['NextMarker'] !== '' ? $page['NextMarker'] : null;
         } while ($marker !== null);
         return $keys;
+    }
+
+    /**
+     * The version's environment variables. A version with no Environment has none. One whose variables
+     * cannot be read (Environment.Error: e.g. KMS-encrypted with a key this caller cannot decrypt, or a
+     * disabled key) may reference any binary, so it stops the prune.
+     *
+     * @return array<mixed>
+     */
+    private static function variablesOf(string $function, mixed $version): array
+    {
+        if (! is_array($version)) {
+            throw new \RuntimeException("ListVersionsByFunction returned an unreadable version of $function; no runtime binary was deleted.");
+        }
+        $name = $function . ':' . (is_string($version['Version'] ?? null) ? $version['Version'] : '?');
+        if (! array_key_exists('Environment', $version) || $version['Environment'] === null) {
+            return [];
+        }
+        $environment = $version['Environment'];
+        $error = is_array($environment) ? ($environment['Error'] ?? null) : null;
+        if ($error !== null) {
+            $detail = is_array($error) ? implode(': ', array_filter([$error['ErrorCode'] ?? null, $error['Message'] ?? null], 'is_string')) : '';
+            throw new \RuntimeException("Cannot read the environment variables of $name" . ($detail === '' ? '' : " ($detail)") . '; no runtime binary was deleted.');
+        }
+        $variables = is_array($environment) ? ($environment['Variables'] ?? null) : null;
+        if (! is_array($variables)) {
+            throw new \RuntimeException("Cannot read the environment variables of $name; no runtime binary was deleted.");
+        }
+        return $variables;
     }
 
     /** @return list<array<mixed>> */
@@ -120,14 +156,22 @@ final class RuntimeBinaries
                 $params['ContinuationToken'] = $token;
             }
             $page = $this->s3->listObjectsV2($params);
+            // No Contents is an empty prefix; anything else malformed stops the prune.
             $contents = $page['Contents'] ?? [];
-            foreach (is_array($contents) ? $contents : [] as $object) {
+            if (! is_array($contents)) {
+                throw new \RuntimeException('ListObjectsV2 returned a malformed page; no runtime binary was deleted.');
+            }
+            foreach ($contents as $object) {
                 if (is_array($object)) {
                     $objects[] = $object;
                 }
             }
             $next = $page['NextContinuationToken'] ?? null;
-            $token = ($page['IsTruncated'] ?? false) === true && is_string($next) && $next !== '' ? $next : null;
+            $truncated = ($page['IsTruncated'] ?? false) === true;
+            if ($truncated && (! is_string($next) || $next === '')) {
+                throw new \RuntimeException('ListObjectsV2 returned a truncated page without a continuation token; no runtime binary was deleted.');
+            }
+            $token = $truncated ? $next : null;
         } while ($token !== null);
         return $objects;
     }

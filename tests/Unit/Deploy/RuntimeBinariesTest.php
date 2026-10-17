@@ -190,4 +190,89 @@ final class RuntimeBinariesTest extends TestCase
         }
         self::assertNotContains('DeleteObjects', $mocks->calls);
     }
+
+    /** @param list<Result> $listing the responses up to the point where the prune must stop */
+    private static function assertStopsBeforeDeleting(array $listing, string $message): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...$listing);
+        // Were it not to stop, the listing would offer an old, unreferenced binary to delete.
+        $mocks->handler->append(new Result(['Contents' => [self::object('runtime/1.12.0-r1/frankenphp', '90 days')]]), new Result([]));
+
+        try {
+            self::prune($mocks);
+            self::fail('expected the prune to stop');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString($message, $e->getMessage());
+        }
+        self::assertNotContains('ListObjectsV2', $mocks->calls);
+        self::assertNotContains('DeleteObjects', $mocks->calls);
+    }
+
+    public function test_a_version_whose_variables_cannot_be_decrypted_stops_before_deleting(): void
+    {
+        // Lambda's answer when the caller has no kms:Decrypt on the function's customer key.
+        self::assertStopsBeforeDeleting([
+            new Result(['ResourceTagMappingList' => [['ResourceARN' => 'arn:b']]]),
+            new Result(['Versions' => [['Version' => '3', 'Environment' => ['Error' => [
+                'ErrorCode' => 'AccessDeniedException',
+                'Message' => 'Lambda was unable to decrypt the environment variables because KMS access was denied.',
+            ]]]]]),
+        ], 'arn:b:3');
+    }
+
+    public function test_a_version_with_environment_but_no_variables_stops_before_deleting(): void
+    {
+        self::assertStopsBeforeDeleting([
+            new Result(['ResourceTagMappingList' => [['ResourceARN' => 'arn:b']]]),
+            new Result(['Versions' => [['Version' => '3', 'Environment' => []]]]),
+        ], 'arn:b:3');
+    }
+
+    public function test_a_malformed_tag_page_stops_before_deleting(): void
+    {
+        self::assertStopsBeforeDeleting([new Result([])], 'GetResources');
+    }
+
+    public function test_a_tag_entry_without_an_arn_stops_before_deleting(): void
+    {
+        self::assertStopsBeforeDeleting([new Result(['ResourceTagMappingList' => [['Tags' => []]]])], 'GetResources');
+    }
+
+    public function test_a_malformed_versions_page_stops_before_deleting(): void
+    {
+        self::assertStopsBeforeDeleting([
+            new Result(['ResourceTagMappingList' => [['ResourceARN' => 'arn:b']]]),
+            new Result(['NextMarker' => '']),
+        ], 'arn:b');
+    }
+
+    public function test_a_version_without_environment_references_nothing(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['ResourceTagMappingList' => [['ResourceARN' => 'arn:web']]]),
+            new Result(['Versions' => [['Version' => '1']]]),
+            new Result(['Contents' => [self::object('runtime/1.12.0-r1/frankenphp', '90 days')]]),
+            new Result([]),
+        );
+
+        self::assertSame(1, self::prune($mocks));
+    }
+
+    public function test_a_malformed_object_page_stops_before_deleting(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['ResourceTagMappingList' => []]),
+            new Result(['Contents' => [self::object('runtime/a/frankenphp', '9 days')], 'IsTruncated' => true]),
+        );
+
+        $this->expectExceptionMessage('ListObjectsV2');
+        try {
+            self::prune($mocks);
+        } finally {
+            self::assertNotContains('DeleteObjects', $mocks->calls);
+        }
+    }
 }
