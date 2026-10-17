@@ -234,7 +234,8 @@ function, through an EventBridge rule named `arco-<function>-scheduler` (for exa
 one of 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 or 60. The rule is clock-aligned cron in UTC (every 5 minutes
 fires at :00, :05, :10 and so on, whenever the rule was created), so `->everyFiveMinutes()` tasks line up
 with it. The scheduler needs the console, so `scheduler()` turns it on and `console(false)` with a scheduler
-is a config error; `scheduler:remove` turns the scheduler off and keeps the console, and `console:remove`
+is a config error. `scheduler:set` and `scheduler:remove` also write `->console()` where the console is not
+set, so `scheduler:remove` turns the scheduler off and keeps the console; `console:remove`
 refuses while a scheduler runs.
 
 `arco scheduler:set` without N suggests an interval from your tasks: it runs
