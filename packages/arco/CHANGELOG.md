@@ -54,7 +54,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   its name); every other one is still kept. CloudFormation then needs `sqs:DeleteQueue` for that rollback.
   Existing resources stacks switch on their next deploy.
 - **Changed:** the note for a variable of your own that overrides Arco's now covers every variable Arco sets
-  (queues, storage, tables), not only the queue ones; `ARCO_*` variables never get it.
+  (queues, storage, tables), not only the queue ones; `ARCO_*` variables never get it. A user value for
+  `CACHE_STORE` or `DYNAMODB_CACHE_TABLE` (or `QUEUE_FAILED_DRIVER`) also leaves out `ARCO_CACHE_TABLE` (or
+  `ARCO_FAILED_JOBS_TABLE`), so `multiapi/arco-laravel` does not put Arco's table back.
 - **Changed:** `queue:remove --app` (and `storage:remove --app`) warns about environments that keep their own
   call for that name.
 - **Changed:** a stack named `arco-<app>-<env>-resources` that Arco did not create no longer fails deploys of

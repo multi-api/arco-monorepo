@@ -215,11 +215,34 @@ final class DeployPipelineTest extends TestCase
         foreach ($user as $key => $value) {
             self::assertSame($value, $deployer->variables[$key]);
         }
-        self::assertSame('shop-production-cache', $deployer->variables['ARCO_CACHE_TABLE']);
+        // arco-laravel would otherwise force the store's table and the failed driver back to Arco's.
+        self::assertArrayNotHasKey('ARCO_CACHE_TABLE', $deployer->variables);
+        self::assertArrayNotHasKey('ARCO_FAILED_JOBS_TABLE', $deployer->variables);
         self::assertSame(
             array_map(fn (string $key) => ['deploy.variable_overridden', ['key' => $key]], ['FILESYSTEM_DISK', 'AWS_BUCKET', 'AWS_URL', 'CACHE_STORE', 'DYNAMODB_CACHE_TABLE', 'QUEUE_FAILED_DRIVER']),
             array_values(array_filter($steps, fn (array $step) => $step[0] === 'deploy.variable_overridden')),
         );
+    }
+
+    public function test_each_user_override_of_a_table_drops_arcos_wiring_of_that_table(): void
+    {
+        $variables = fn (array $user): array => DeployPipeline::variables($this->resourcesConfig(fn (App $app) => $app->cache()->failedJobsTable(), $user), new PlainPhpPreset());
+
+        $own = $variables(['DYNAMODB_CACHE_TABLE' => 'mine']);
+        self::assertSame('mine', $own['DYNAMODB_CACHE_TABLE']);
+        self::assertArrayNotHasKey('ARCO_CACHE_TABLE', $own);
+        self::assertSame('shop-production-failed-jobs', $own['ARCO_FAILED_JOBS_TABLE']);
+
+        $file = $variables(['CACHE_STORE' => 'file']);
+        self::assertArrayNotHasKey('ARCO_CACHE_TABLE', $file);
+
+        self::assertSame('shop-production-cache', $variables(['CACHE_STORE' => 'dynamodb'])['ARCO_CACHE_TABLE'], 'the same value is no override');
+
+        $database = $variables(['QUEUE_FAILED_DRIVER' => 'database-uuids']);
+        self::assertArrayNotHasKey('ARCO_FAILED_JOBS_TABLE', $database);
+        self::assertSame('shop-production-cache', $database['ARCO_CACHE_TABLE']);
+
+        self::assertSame('shop-production-failed-jobs', $variables(['QUEUE_FAILED_DRIVER' => 'dynamodb'])['ARCO_FAILED_JOBS_TABLE']);
     }
 
     public function test_without_queues_or_resources_no_variables_are_added(): void

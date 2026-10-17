@@ -98,23 +98,31 @@ final class DeployPipeline
     /**
      * The variables the cache and failed-jobs tables add. ARCO_CACHE_TABLE only for a table Arco
      * created: arco-laravel then matches the store's attributes to it (key, value, expires_at).
+     * arco-laravel applies ARCO_CACHE_TABLE and ARCO_FAILED_JOBS_TABLE over the app's config, so they are
+     * left out when the user's own variables choose another cache table or store (DYNAMODB_CACHE_TABLE,
+     * CACHE_STORE) or another failed-jobs driver (QUEUE_FAILED_DRIVER): the user's value must win.
      *
      * @return array<string, string>
      */
     public static function tableVariables(AppConfig $config): array
     {
         $variables = [];
+        $user = $config->variables;
         if ($config->cacheTable !== null) {
             $table = $config->cacheTable->tableName($config);
             $variables['CACHE_STORE'] = 'dynamodb';
             $variables['DYNAMODB_CACHE_TABLE'] = $table;
-            if ($config->cacheTable->existing === null) {
+            $overridden = (array_key_exists('DYNAMODB_CACHE_TABLE', $user) && $user['DYNAMODB_CACHE_TABLE'] !== $table)
+                || (array_key_exists('CACHE_STORE', $user) && $user['CACHE_STORE'] !== 'dynamodb');
+            if ($config->cacheTable->existing === null && ! $overridden) {
                 $variables['ARCO_CACHE_TABLE'] = $table;
             }
         }
         if ($config->failedJobsTable !== null) {
             $variables['QUEUE_FAILED_DRIVER'] = 'dynamodb';
-            $variables['ARCO_FAILED_JOBS_TABLE'] = $config->failedJobsTable->tableName($config);
+            if (! array_key_exists('QUEUE_FAILED_DRIVER', $user) || $user['QUEUE_FAILED_DRIVER'] === 'dynamodb') {
+                $variables['ARCO_FAILED_JOBS_TABLE'] = $config->failedJobsTable->tableName($config);
+            }
         }
         return $variables;
     }

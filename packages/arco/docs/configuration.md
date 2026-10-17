@@ -738,7 +738,8 @@ failed-jobs table and a cache table Arco creates. Without queues the deploy does
 - Laravel's DynamoDB store cannot be flushed: `cache:clear` on it fails ("DynamoDb does not support flushing
   an entire table").
 - Your own `variables()` win: setting `CACHE_STORE` or `DYNAMODB_CACHE_TABLE` there overrides Arco's value,
-  with a note in the deploy output.
+  with a note in the deploy output. Arco then leaves out `ARCO_CACHE_TABLE` (unless your value is the same as
+  Arco's), so `multiapi/arco-laravel` does not change the `dynamodb` store.
 
 ### Failed jobs
 
@@ -758,7 +759,9 @@ after that: **failed jobs in DynamoDB disappear after about a week**. Retry or c
 `existing` table must have Laravel's layout (`application` + `uuid`), and TTL on `expires_at` for them to
 expire.
 
-Setting `QUEUE_FAILED_DRIVER` in your own `variables()` overrides Arco's, with a note.
+Setting `QUEUE_FAILED_DRIVER` in your own `variables()` overrides Arco's, with a note; unless your value is
+`dynamodb`, Arco then leaves out `ARCO_FAILED_JOBS_TABLE`, so `multiapi/arco-laravel` does not change
+`queue.failed`.
 
 ### Commands
 
