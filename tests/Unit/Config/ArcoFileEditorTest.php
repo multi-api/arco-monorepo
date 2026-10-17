@@ -509,4 +509,116 @@ final class ArcoFileEditorTest extends TestCase
         self::assertSame('->console()', ArcoFileEditor::settingLine('console', true));
         self::assertSame('->console(false)', ArcoFileEditor::settingLine('console', false));
     }
+    private static function queueFile(string $calls): string
+    {
+        return self::head() . "\$t = 30;\nreturn App::make('shop')\n    ->region('us-east-1')\n"
+            . "    ->environment('production', fn (Environment \$env) => \$env\n        ->timeout(60)" . $calls . ");\n";
+    }
+
+    /** @return list<string> */
+    private static function queueNames(string $path, string $environment = 'production'): array
+    {
+        return array_map(fn (\Multiapi\Arco\Config\QueueConfig $q) => $q->name, self::resolve($path, $environment)->queues);
+    }
+
+    /** @return array<string, mixed> */
+    private static function rawQueues(string $path, ?string $environment = 'production'): array
+    {
+        $raw = (new ConfigLoader())->load($path);
+        if ($environment === null) {
+            /** @var array<string, mixed> $queues */
+            $queues = $raw['queues'];
+            return $queues;
+        }
+        /** @var array<string, array<string, mixed>> $environments */
+        $environments = $raw['environments'];
+        /** @var array<string, mixed> $queues */
+        $queues = $environments[$environment]['queues'];
+        return $queues;
+    }
+
+    public function test_inserts_a_queue_after_the_existing_one(): void
+    {
+        $path = $this->file(self::queueFile("\n        ->queue('jobs', timeout: 30)"));
+
+        self::assertTrue(ArcoFileEditor::setQueue($path, 'production', 'emails', []));
+        self::assertSame(self::queueFile("\n        ->queue('jobs', timeout: 30)\n        ->queue('emails')"), file_get_contents($path));
+        self::assertSame(['jobs', 'emails'], self::queueNames($path));
+        self::assertSame(['jobs' => ['timeout' => 30], 'emails' => []], self::rawQueues($path));
+    }
+
+    public function test_replaces_the_options_of_one_queue_only(): void
+    {
+        $path = $this->file(self::queueFile("\n        ->queue('jobs', timeout: 30)\n        ->queue('emails', tries: 2)"));
+
+        self::assertTrue(ArcoFileEditor::setQueue($path, 'production', 'jobs', ['tries' => 5, 'timeout' => 120, 'dlq' => false, 'default' => true, 'existing' => 'legacy-jobs']));
+        self::assertSame(
+            self::queueFile("\n        ->queue('jobs', existing: 'legacy-jobs', default: true, timeout: 120, tries: 5, dlq: false)\n        ->queue('emails', tries: 2)"),
+            file_get_contents($path),
+        );
+        self::assertSame(['jobs', 'emails'], self::queueNames($path));
+        self::assertSame(['tries' => 2], self::rawQueues($path)['emails']);
+        self::assertSame(120, self::resolve($path)->queues[0]->timeout);
+    }
+
+    public function test_removes_one_queue(): void
+    {
+        $path = $this->file(self::queueFile("\n        ->queue('jobs', timeout: 30)\n        ->queue('emails', tries: 2)"));
+
+        self::assertTrue(ArcoFileEditor::setQueue($path, 'production', 'jobs', null));
+        self::assertSame(self::queueFile("\n        ->queue('emails', tries: 2)"), file_get_contents($path));
+        self::assertTrue(ArcoFileEditor::setQueue($path, 'production', 'jobs', null));
+        self::assertSame(['emails'], self::queueNames($path));
+    }
+
+    public function test_writes_a_queue_dropped_with_false(): void
+    {
+        $path = $this->file(str_replace("    ->region('us-east-1')\n", "    ->region('us-east-1')\n    ->queue('jobs')\n", self::queueFile('')));
+
+        self::assertTrue(ArcoFileEditor::setQueue($path, 'production', 'jobs', false));
+        self::assertStringContainsString("=> \$env\n        ->queue('jobs', false)\n        ->timeout(60));", (string) file_get_contents($path));
+        self::assertSame(['jobs' => false], self::rawQueues($path));
+        self::assertSame([], self::queueNames($path));
+    }
+
+    public function test_refuses_queue_calls_it_cannot_edit(): void
+    {
+        $cases = [
+            // non-literal option
+            "\n        ->queue('jobs', timeout: \$t)",
+            // the same queue twice
+            "\n        ->queue('jobs', timeout: 30)\n        ->queue('jobs', tries: 2)",
+            // a queue whose name is not a literal
+            "\n        ->queue(\$stage)",
+        ];
+        foreach ($cases as $calls) {
+            $php = self::queueFile($calls);
+            $path = $this->file($php);
+            self::assertFalse(ArcoFileEditor::setQueue($path, 'production', 'jobs', ['tries' => 4]), $calls);
+            self::assertFalse(ArcoFileEditor::setQueue($path, 'production', 'jobs', null), $calls);
+            self::assertSame($php, file_get_contents($path));
+        }
+    }
+
+    public function test_inserts_app_level_queues_in_order(): void
+    {
+        $path = $this->file(self::settingsFile());
+
+        self::assertTrue(ArcoFileEditor::setQueue($path, null, 'jobs', ['memory' => 2048]));
+        self::assertTrue(ArcoFileEditor::setQueue($path, null, 'emails', ['fifo' => true, 'batchSize' => 10, 'concurrency' => 4]));
+        self::assertStringContainsString(
+            "    ->region('us-east-1')\n    ->queue('jobs', memory: 2048)\n    ->queue('emails', concurrency: 4, batchSize: 10, fifo: true)\n    ->concurrency(48)\n",
+            (string) file_get_contents($path),
+        );
+        self::assertSame(['jobs' => ['memory' => 2048], 'emails' => ['concurrency' => 4, 'batchSize' => 10, 'fifo' => true]], self::rawQueues($path, null));
+        self::assertSame(['jobs', 'emails'], self::queueNames($path, 'staging'));
+        self::assertSame([], self::rawQueues($path));
+    }
+
+    public function test_renders_queue_lines(): void
+    {
+        self::assertSame("->queue('jobs')", ArcoFileEditor::queueLine('jobs', []));
+        self::assertSame("->queue('jobs', false)", ArcoFileEditor::queueLine('jobs', false));
+        self::assertSame("->queue('jobs', memory: 512, dlq: true)", ArcoFileEditor::queueLine('jobs', ['dlq' => true, 'memory' => 512]));
+    }
 }
