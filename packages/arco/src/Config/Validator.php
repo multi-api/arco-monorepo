@@ -28,6 +28,8 @@ final class Validator
     private const HOSTNAME = '/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/';
     private const CERTIFICATE = '/^arn:aws[a-z-]*:acm:us-east-1:\d{12}:certificate\/[A-Za-z0-9-]+$/';
     public const MAX_DOMAINS = 10;
+    /** The worker keeps 3 s to answer for its batch and skips a job with less than 4 s left: below 10 s jobs barely run. */
+    public const MIN_QUEUE_TIMEOUT = 10;
     /** Minutes between schedule:run invocations: the divisors of an hour that an EventBridge rate or cron expresses. */
     public const SCHEDULER_INTERVALS = SchedulerInterval::ALLOWED;
     /** Retention periods (days) CloudWatch Logs accepts. */
@@ -275,7 +277,7 @@ final class Validator
             if (strlen($config->workerFunctionName($name)) > 64) {
                 $result->error('validation.worker_name_length', ['name' => $config->workerFunctionName($name)]);
             }
-            if ($queue->timeout < 1 || $queue->timeout > 900) {
+            if ($queue->timeout < self::MIN_QUEUE_TIMEOUT || $queue->timeout > 900) {
                 $result->error('validation.queue_timeout', ['queue' => $name, 'value' => $queue->timeout]);
             }
             if ($queue->memory < 128 || $queue->memory > 10240) {

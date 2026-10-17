@@ -387,7 +387,7 @@ return [
     'validation.queue_name' => 'El nombre de cola "{name}" debe empezar por una letra minúscula y contener solo letras minúsculas, dígitos y guiones.',
     'validation.queue_name_length' => 'El nombre de la cola SQS "{name}" (cola "{queue}") supera los 80 caracteres. Usa un nombre de app, entorno o cola más corto.',
     'validation.worker_name_length' => 'El nombre de la función worker "{name}" supera los 64 caracteres. Usa un nombre de app, entorno o cola más corto.',
-    'validation.queue_timeout' => 'Cola "{queue}": timeout debe estar entre 1 y 900 segundos, recibido {value}.',
+    'validation.queue_timeout' => 'Cola "{queue}": timeout debe estar entre 10 y 900 segundos (el worker se reserva 3 segundos para responder por el lote), recibido {value}.',
     'validation.queue_memory' => 'Cola "{queue}": memory debe estar entre 128 y 10240 MB, recibido {value}.',
     'validation.queue_concurrency' => 'Cola "{queue}": concurrency debe ser al menos 2, recibido {value}.',
     'validation.queue_batch_size' => 'Cola "{queue}": batchSize debe estar entre 1 y {max}, recibido {value}.',

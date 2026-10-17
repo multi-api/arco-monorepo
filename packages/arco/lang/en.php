@@ -387,7 +387,7 @@ return [
     'validation.queue_name' => 'Queue name "{name}" must start with a lowercase letter and contain only lowercase letters, digits and hyphens.',
     'validation.queue_name_length' => 'The SQS queue name "{name}" (queue "{queue}") is longer than 80 characters. Use a shorter app, environment or queue name.',
     'validation.worker_name_length' => 'Worker function name "{name}" is longer than 64 characters. Use a shorter app, environment or queue name.',
-    'validation.queue_timeout' => 'Queue "{queue}": timeout must be between 1 and 900 seconds, got {value}.',
+    'validation.queue_timeout' => 'Queue "{queue}": timeout must be between 10 and 900 seconds (the worker keeps 3 seconds to answer for the batch), got {value}.',
     'validation.queue_memory' => 'Queue "{queue}": memory must be between 128 and 10240 MB, got {value}.',
     'validation.queue_concurrency' => 'Queue "{queue}": concurrency must be at least 2, got {value}.',
     'validation.queue_batch_size' => 'Queue "{queue}": batchSize must be between 1 and {max}, got {value}.',

@@ -347,7 +347,7 @@ name add to each other.
 
 | Argument | Default | What it does |
 |---|---|---|
-| `timeout` | 60 | Worker function timeout in seconds (1 to 900): the longest a batch may run. The queue's visibility timeout is 6 times this |
+| `timeout` | 60 | Worker function timeout in seconds (10 to 900; the worker keeps 3 of them to answer for the batch): the longest a batch may run. The queue's visibility timeout is 6 times this |
 | `memory` | 1024 | Worker memory in MB (128 to 10240) |
 | `concurrency` | unset | Maximum concurrent worker invocations (event source mapping `MaximumConcurrency`, at least 2); unset means no limit beyond the account's |
 | `batchSize` | 1 | Messages per invocation: 1 to 10000 on a standard queue, 1 to 10 on FIFO. Above 10 the event source mapping waits up to 1 second to gather a batch (AWS requires a batching window there) |

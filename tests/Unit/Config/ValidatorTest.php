@@ -480,7 +480,7 @@ final class ValidatorTest extends TestCase
     public function test_queue_option_ranges(): void
     {
         $cases = [
-            'validation.queue_timeout' => [['timeout' => 0], ['timeout' => 901]],
+            'validation.queue_timeout' => [['timeout' => 0], ['timeout' => 9], ['timeout' => 901]],
             'validation.queue_memory' => [['memory' => 127], ['memory' => 10241]],
             'validation.queue_concurrency' => [['concurrency' => 1]],
             'validation.queue_batch_size' => [['batchSize' => 0], ['batchSize' => 10001], ['batchSize' => 11, 'fifo' => true]],
@@ -491,6 +491,11 @@ final class ValidatorTest extends TestCase
                 self::assertContains($key, $this->queueErrors(App::make('shop')->queue('q', ...$options)), $key . json_encode($options));
             }
         }
+    }
+
+    public function test_a_queue_timeout_of_ten_seconds_is_the_minimum(): void
+    {
+        self::assertNotContains('validation.queue_timeout', $this->queueErrors(App::make('shop')->queue('q', timeout: 10)));
     }
 
     public function test_two_default_queues(): void
