@@ -246,13 +246,18 @@ final class AwsDeployer implements Deployer
     public function removeConsole(AppConfig $config, Closure $onStep): void
     {
         // The scheduler rule goes before the function it invokes.
+        $this->removeScheduler($config, $onStep);
+        $this->consoleFunction()->delete($config->consoleFunctionName());
+        $onStep('deploy.console_removed', ['function' => $config->consoleFunctionName()]);
+    }
+
+    public function removeScheduler(AppConfig $config, Closure $onStep): void
+    {
         $unreadable = fn (string $error) => $onStep('deploy.scheduler_unreadable', ['rule' => SchedulerRule::name($config), 'function' => $config->consoleFunctionName(), 'error' => $error]);
         if ($this->schedulerRuleExists($config, $unreadable)) {
             $this->schedulerRule()->delete($config);
             $onStep('deploy.scheduler_removed', []);
         }
-        $this->consoleFunction()->delete($config->consoleFunctionName());
-        $onStep('deploy.console_removed', ['function' => $config->consoleFunctionName()]);
     }
 
     public function syncScheduler(AppConfig $config, Closure $onStep): void

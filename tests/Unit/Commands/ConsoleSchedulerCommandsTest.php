@@ -9,6 +9,10 @@ use Multiapi\Arco\Commands\ConsoleRemoveCommand;
 use Multiapi\Arco\Commands\LogsRetentionCommand;
 use Multiapi\Arco\Commands\SchedulerRemoveCommand;
 use Multiapi\Arco\Commands\SchedulerSetCommand;
+use Aws\EventBridge\Exception\EventBridgeException;
+use Aws\Lambda\Exception\LambdaException;
+use Aws\Result;
+use Multiapi\Arco\Tests\Unit\Deploy\AwsMocks;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -122,7 +126,7 @@ final class ConsoleSchedulerCommandsTest extends TestCase
     {
         $this->project();
 
-        $tester = $this->run_(new SchedulerSetCommand(), ['--env' => 'production'], ['15']);
+        $tester = $this->run_(new SchedulerSetCommand(), ['--env' => 'production'], ['15', 'no']);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('->scheduler(15)', $this->source());
@@ -317,7 +321,7 @@ final class ConsoleSchedulerCommandsTest extends TestCase
             return [['task' => 'reports:send', 'minutes' => range(0, 55, 5)], ['task' => 'backup:run', 'minutes' => [0]]];
         };
 
-        $tester = $this->run_(new SchedulerSetCommand($inspector), ['--env' => 'production'], ['']);
+        $tester = $this->run_(new SchedulerSetCommand($inspector), ['--env' => 'production'], ['', 'no']);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('->scheduler(5)', $this->source());
@@ -331,7 +335,7 @@ final class ConsoleSchedulerCommandsTest extends TestCase
     {
         $this->project();
 
-        $tester = $this->run_(new SchedulerSetCommand(fn (string $dir) => null), ['--env' => 'production'], ['']);
+        $tester = $this->run_(new SchedulerSetCommand(fn (string $dir) => null), ['--env' => 'production'], ['', 'no']);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('->scheduler(1)', $this->source());
@@ -342,7 +346,7 @@ final class ConsoleSchedulerCommandsTest extends TestCase
         $this->project();
         $inspector = fn (string $dir): array => [['task' => 'half-hourly', 'minutes' => [0, 30]], ['task' => 'every-twenty', 'minutes' => [0, 20, 40]]];
 
-        $tester = $this->run_(new SchedulerSetCommand($inspector), ['--env' => 'production'], ['']);
+        $tester = $this->run_(new SchedulerSetCommand($inspector), ['--env' => 'production'], ['', 'no']);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('->scheduler(10)', $this->source());
@@ -355,10 +359,219 @@ final class ConsoleSchedulerCommandsTest extends TestCase
         $this->project();
         $inspector = fn (string $dir): array => [['task' => 'backup:run', 'minutes' => [0]], ['task' => 'report', 'minutes' => []]];
 
-        $tester = $this->run_(new SchedulerSetCommand($inspector), ['--env' => 'production'], ['']);
+        $tester = $this->run_(new SchedulerSetCommand($inspector), ['--env' => 'production'], ['', 'no']);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('->scheduler(60)', $this->source());
         self::assertStringContainsString('backup:run, report', self::display($tester));
+    }
+
+    private static function noAws(): \Closure
+    {
+        return fn () => throw new \LogicException('No AWS expected.');
+    }
+
+    private function consoleProject(string $production = '->scheduler(1)'): ProjectFixture
+    {
+        return $this->project = new ProjectFixture(str_replace('->timeout(60)', '->timeout(60)' . $production, ProjectFixture::consoleConfig()));
+    }
+
+    public function test_scheduler_set_apply_puts_the_rule_on_the_live_alias(): void
+    {
+        $this->consoleProject();
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            new Result(['AliasArn' => 'arn:aws:lambda:us-east-1:123456789012:function:shop-production-console:live', 'FunctionVersion' => '3']),
+            new Result(['State' => 'ENABLED']),
+            new Result(['RuleArn' => 'arn:rule']),
+            new Result(['FailedEntryCount' => 0]),
+            new Result([]),
+        );
+
+        $tester = $this->run_(new SchedulerSetCommand(awsFactory: fn () => $mocks->clients()), ['minutes' => '5', '--env' => 'production', '--profile' => 'p', '--apply' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->scheduler(5)', $this->source());
+        self::assertSame(['GetCallerIdentity', 'GetAlias', 'DescribeRule', 'PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
+        self::assertSame('cron(0/5 * * * ? *)', $mocks->params[3]['ScheduleExpression']);
+        self::assertSame('ENABLED', $mocks->params[3]['State']);
+        self::assertStringContainsString('Applied in AWS: the scheduler of production runs every 5 min.', self::display($tester));
+        self::assertStringNotContainsString('arco deploy --env=production', self::display($tester));
+    }
+
+    public function test_scheduler_set_apply_keeps_a_paused_rule_paused(): void
+    {
+        $this->consoleProject();
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '3']),
+            new Result(['State' => 'DISABLED']),
+            new Result(['RuleArn' => 'arn:rule']),
+            new Result(['FailedEntryCount' => 0]),
+            new Result([]),
+        );
+
+        $tester = $this->run_(new SchedulerSetCommand(awsFactory: fn () => $mocks->clients()), ['minutes' => '5', '--env' => 'production', '--profile' => 'p', '--apply' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame('DISABLED', $mocks->params[3]['State']);
+        self::assertStringContainsString('scheduler is paused', self::display($tester));
+    }
+
+    public function test_scheduler_set_apply_without_the_console_alias_asks_for_a_deploy(): void
+    {
+        $this->consoleProject();
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            AwsMocks::error(LambdaException::class, 'GetAlias', 'ResourceNotFoundException', 404),
+        );
+
+        $tester = $this->run_(new SchedulerSetCommand(awsFactory: fn () => $mocks->clients()), ['minutes' => '5', '--env' => 'production', '--profile' => 'p', '--apply' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->scheduler(5)', $this->source());
+        self::assertSame(['GetCallerIdentity', 'GetAlias'], $mocks->calls, 'no EventBridge call');
+        self::assertStringContainsString('not deployed yet', self::display($tester));
+        self::assertStringContainsString('arco deploy --env=production', self::display($tester));
+    }
+
+    public function test_scheduler_set_asks_before_applying_and_no_touches_nothing_in_aws(): void
+    {
+        $this->consoleProject();
+
+        $tester = $this->run_(new SchedulerSetCommand(awsFactory: self::noAws()), ['minutes' => '5', '--env' => 'production'], ['no']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('Apply now in AWS without a deploy?', self::display($tester));
+        self::assertStringContainsString('Run `arco deploy --env=production` to apply.', self::display($tester));
+    }
+
+    public function test_scheduler_set_asked_yes_applies(): void
+    {
+        $this->consoleProject();
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '3']),
+            new Result(['State' => 'ENABLED']),
+            new Result(['RuleArn' => 'arn:rule']),
+            new Result(['FailedEntryCount' => 0]),
+            new Result([]),
+        );
+
+        $tester = $this->run_(new SchedulerSetCommand(awsFactory: fn () => $mocks->clients()), ['minutes' => '5', '--env' => 'production', '--profile' => 'p'], ['yes']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertContains('PutRule', $mocks->calls);
+    }
+
+    public function test_scheduler_set_not_interactive_without_apply_touches_nothing_in_aws(): void
+    {
+        $this->consoleProject();
+
+        $tester = $this->run_(new SchedulerSetCommand(awsFactory: self::noAws()), ['minutes' => '5', '--env' => 'production']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('Apply now', self::display($tester));
+        self::assertStringContainsString('Run `arco deploy --env=production` to apply.', self::display($tester));
+    }
+
+    public function test_scheduler_set_apply_at_app_level_needs_an_environment(): void
+    {
+        $this->consoleProject();
+
+        $tester = $this->run_(new SchedulerSetCommand(awsFactory: self::noAws()), ['minutes' => '5', '--app' => true, '--apply' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('--apply needs --env', self::display($tester));
+    }
+
+    public function test_scheduler_set_apply_with_an_unchanged_interval_still_applies(): void
+    {
+        $this->consoleProject('->scheduler(5)');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '3']),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'ResourceNotFoundException', 400),
+            new Result(['RuleArn' => 'arn:rule']),
+            new Result(['FailedEntryCount' => 0]),
+            new Result([]),
+        );
+
+        $tester = $this->run_(new SchedulerSetCommand(awsFactory: fn () => $mocks->clients()), ['minutes' => '5', '--env' => 'production', '--profile' => 'p', '--apply' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('already has this value', self::display($tester));
+        self::assertContains('PutRule', $mocks->calls);
+    }
+
+    public function test_scheduler_remove_apply_deletes_the_rule_and_the_permission(): void
+    {
+        $this->consoleProject('->scheduler(5)');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            new Result(['Name' => 'arco-shop-production-scheduler', 'State' => 'ENABLED']),
+            new Result(['FailedEntryCount' => 0]),
+            new Result([]),
+            new Result([]),
+        );
+
+        $tester = $this->run_(new SchedulerRemoveCommand(awsFactory: fn () => $mocks->clients()), ['--env' => 'production', '--profile' => 'p', '--apply' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->scheduler(false)', $this->source());
+        self::assertSame(['GetCallerIdentity', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission'], $mocks->calls);
+        self::assertStringContainsString('Applied in AWS: the scheduler of production is off.', self::display($tester));
+    }
+
+    public function test_scheduler_remove_apply_warns_when_eventbridge_cannot_be_read(): void
+    {
+        $this->consoleProject('->scheduler(5)');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400, 'not authorized to perform: events:DescribeRule'),
+        );
+
+        $tester = $this->run_(new SchedulerRemoveCommand(awsFactory: fn () => $mocks->clients()), ['--env' => 'production', '--profile' => 'p', '--apply' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['GetCallerIdentity', 'DescribeRule'], $mocks->calls);
+        self::assertStringContainsString('could not be checked', self::display($tester));
+    }
+
+    public function test_scheduler_remove_asks_and_no_touches_nothing_in_aws(): void
+    {
+        $this->consoleProject('->scheduler(5)');
+
+        $tester = $this->run_(new SchedulerRemoveCommand(awsFactory: self::noAws()), ['--env' => 'production'], ['no']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('Apply now in AWS without a deploy?', self::display($tester));
+        self::assertStringContainsString('Run `arco deploy --env=production` to apply.', self::display($tester));
+    }
+
+    public function test_scheduler_remove_apply_when_already_off_still_deletes_a_left_rule(): void
+    {
+        $this->consoleProject('->scheduler(false)');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            new Result(['Name' => 'arco-shop-production-scheduler', 'State' => 'ENABLED']),
+            new Result(['FailedEntryCount' => 0]),
+            new Result([]),
+            new Result([]),
+        );
+
+        $tester = $this->run_(new SchedulerRemoveCommand(awsFactory: fn () => $mocks->clients()), ['--env' => 'production', '--profile' => 'p', '--apply' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('already has this value', self::display($tester));
+        self::assertSame(['GetCallerIdentity', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission'], $mocks->calls);
     }
 }

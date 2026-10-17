@@ -113,6 +113,13 @@ final class FakeDeployer implements Deployer
     }
     public function consoleExists(AppConfig $config): bool { $this->consoleLookups++; return $this->consoleExists; }
     public function removeConsole(AppConfig $config, \Closure $onStep): void { $this->calls[] = 'removeConsole'; if ($this->removeConsoleError !== null) { throw $this->removeConsoleError; } }
+    public function removeScheduler(AppConfig $config, \Closure $onStep): void
+    {
+        $this->calls[] = 'scheduler:remove';
+        if ($this->schedulerRuleExists) {
+            $onStep('deploy.scheduler_removed', []);
+        }
+    }
     public function syncScheduler(AppConfig $config, \Closure $onStep): void
     {
         $this->calls[] = 'scheduler:' . ($config->scheduler ?? 'off');
