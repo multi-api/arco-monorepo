@@ -203,6 +203,28 @@ final class LambdaWorkerTest extends TestCase
         $_SERVER['ARCO_QUEUES'] = (string) json_encode(['emails' => QueueTestApp::EMAILS_URL . '.fifo'], JSON_UNESCAPED_SLASHES);
     }
 
+    public function test_on_a_fifo_queue_the_records_after_a_reported_one_are_held_unrun(): void
+    {
+        $this->fifo();
+
+        $reported = $this->handle([
+            QueueTestJob::record('ok', id: 'm-first'),
+            QueueTestJob::record('release', id: 'm-a'),
+            QueueTestJob::record('ok', id: 'm-b'),
+            QueueTestJob::record('ok', id: 'm-c'),
+        ]);
+
+        self::assertSame(['m-a', 'm-b', 'm-c'], $reported, 'the group order is kept: nothing after A runs before A');
+        self::assertSame(['ok', 'release'], QueueTestJob::$handled);
+        self::assertSame(['ok', 'released', 'held', 'held'], array_column($this->logs, 'status'));
+    }
+
+    public function test_on_a_standard_queue_the_records_after_a_reported_one_still_run(): void
+    {
+        self::assertSame(['m-a'], $this->handle([QueueTestJob::record('release', id: 'm-a'), QueueTestJob::record('ok', id: 'm-b')]));
+        self::assertSame(['release', 'ok'], QueueTestJob::$handled);
+    }
+
     public function test_in_maintenance_mode_every_delivery_is_sent_again_a_minute_later_as_a_fresh_message(): void
     {
         $this->maintenance();

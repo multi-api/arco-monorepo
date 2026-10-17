@@ -394,7 +394,8 @@ map without a note).
 ### FIFO queues
 
 `->queue('orders', fifo: true)` creates `<app>-<env>-orders.fifo` (and a FIFO dead-letter queue). Jobs of one
-message group run in order. Laravel's SQS driver sets the message group and deduplication id when it sends
+message group run in order: in a batch, once a job is released or fails, the messages after it come back
+without running (status `held`), so no later message overtakes it. Laravel's SQS driver sets the message group and deduplication id when it sends
 to a FIFO queue (Laravel 13 does, with the job's `messageGroup` or the queue name as the group); Arco adds
 none. FIFO queues take no per-message delay, so a job's `delay()` does not apply, and `batchSize` is at most
 10. A queue cannot switch `fifo` once Arco created it (see below).
@@ -471,7 +472,7 @@ vendor/bin/arco queue:dlq emails --env=production --redrive
 - `arco logs --queue=emails` shows one worker's logs, `--source=queues` every worker's, `--console` the
   console's (same as `--source=console`); the default `--source=all` includes the workers. Each job writes
   one JSON line with its queue, job class, message id, duration and status (`ok`, `failed`, `released`,
-  `skipped`, `maintenance`, `maintenance_requeued`). CloudWatch Live Tail follows at most 10 log groups:
+  `skipped`, `held`, `maintenance`, `maintenance_requeued`). CloudWatch Live Tail follows at most 10 log groups:
   with more, `--follow` polls and says so; narrow it with `--source`, `--console` or `--queue`.
 - `arco info` lists each queue with its URL and the worker's live version; `--json` adds `queues`: a list of
   `{name, url, existing, dlq, worker: {function, version}}`, where `existing` is `true` or `false`, `dlq` the

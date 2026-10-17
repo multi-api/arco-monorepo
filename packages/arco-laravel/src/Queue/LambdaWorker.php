@@ -124,18 +124,25 @@ final class LambdaWorker
                 array_values(array_filter($ids, static fn (string $id) => $outcome[$id] ?? true)),
             )]);
         });
+        // On a FIFO queue, once a record comes back, the ones after it must come back unrun too:
+        // running them would put later messages of its group ahead of it (AWS's guidance for FIFO
+        // with ReportBatchItemFailures).
+        $hold = false;
         try {
             foreach ($records as $record) {
                 if (! is_array($record)) {
                     continue;
                 }
                 $leftMs = $remainingMs - intdiv(hrtime(true) - $started, 1_000_000);
-                $reported = $leftMs < (self::MARGIN_SECONDS + 1) * 1000
-                    ? $this->skip($record)
-                    : $this->processRecord($record, $connection, $queue, max(1, (int) floor($leftMs / 1000) - self::MARGIN_SECONDS));
+                $reported = match (true) {
+                    $hold => $this->skip($record, 'held'),
+                    $leftMs < (self::MARGIN_SECONDS + 1) * 1000 => $this->skip($record),
+                    default => $this->processRecord($record, $connection, $queue, max(1, (int) floor($leftMs / 1000) - self::MARGIN_SECONDS)),
+                };
                 if (is_string($record['messageId'] ?? null)) {
                     $outcome[$record['messageId']] = $reported;
                 }
+                $hold = $hold || ($reported && str_ends_with($this->queueUrl($record, $queue), '.fifo'));
             }
         } finally {
             $this->worker->endInvocation();
@@ -150,13 +157,14 @@ final class LambdaWorker
     }
 
     /**
-     * Too little time is left to run the job safely: it comes back untouched.
+     * The job comes back untouched: too little time is left to run it safely (skipped), or an earlier
+     * record of the FIFO batch came back (held).
      *
      * @param array<mixed> $record
      */
-    private function skip(array $record): bool
+    private function skip(array $record, string $status = 'skipped'): bool
     {
-        $this->logJob($record, null, 0, 'skipped');
+        $this->logJob($record, null, 0, $status);
         return true;
     }
 
