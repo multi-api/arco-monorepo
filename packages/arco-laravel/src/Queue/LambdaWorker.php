@@ -236,36 +236,55 @@ final class LambdaWorker
     }
 
     /**
-     * The app is down: the job does not run. It comes back a minute later; on the last delivery before
-     * the DLQ a fresh copy of the message is sent instead, so maintenance never burns its attempts.
+     * The app is down: the job does not run, and its delivery must not count as an attempt.
+     *
+     * - Standard queue: every delivery is replaced by a fresh copy delayed by a minute (the receive
+     *   count starts over) and the original is not reported, so Lambda deletes it.
+     * - FIFO queue (no per-message delay): the job comes back a minute later (visibility); once the
+     *   delivery count reaches the job's tries, or the last delivery before the DLQ, a fresh copy in the
+     *   same message group replaces it.
+     *
+     * If the copy cannot be sent, the job comes back a minute later as it is.
      *
      * @param array<mixed> $record
      * @return array{0: string, 1: bool} status, reported
      */
     private function whileDown(ArcoSqsJob $job, array $record): array
     {
-        if (! $this->lastDelivery($job)) {
+        $fifo = str_ends_with($job->getQueue(), '.fifo');
+        if ($fifo && ! $this->outOfTries($job) && ! $this->lastDelivery($job)) {
             $job->release(self::MAINTENANCE_DELAY);
             return ['maintenance', true];
         }
-        /** @var array{QueueUrl: string, MessageBody: string, MessageAttributes?: array<string, array{DataType: string, StringValue?: string, BinaryValue?: string}>, MessageGroupId?: string, MessageDeduplicationId?: string} $message */
+        /** @var array{QueueUrl: string, MessageBody: string, DelaySeconds?: int, MessageAttributes?: array<string, array{DataType: string, StringValue?: string, BinaryValue?: string}>, MessageGroupId?: string, MessageDeduplicationId?: string} $message */
         $message = ['QueueUrl' => $job->getQueue(), 'MessageBody' => $job->getRawBody()];
         $messageAttributes = self::messageAttributes($record['messageAttributes'] ?? null);
         if ($messageAttributes !== []) {
             $message['MessageAttributes'] = $messageAttributes;
         }
-        if (str_ends_with($job->getQueue(), '.fifo')) {
+        if ($fifo) {
             $attributes = is_array($record['attributes'] ?? null) ? $record['attributes'] : [];
             $message['MessageGroupId'] = is_string($attributes['MessageGroupId'] ?? null) ? $attributes['MessageGroupId'] : 'arco';
             $message['MessageDeduplicationId'] = bin2hex(random_bytes(16));
+        } else {
+            $message['DelaySeconds'] = self::MAINTENANCE_DELAY;
         }
         try {
             $job->getSqs()->sendMessage($message);
         } catch (Throwable $e) {
             ($this->log)(['arco' => 'job_requeue_failed', 'messageId' => $job->getJobId(), 'error' => $e->getMessage()]);
+            $job->release(self::MAINTENANCE_DELAY);
             return ['maintenance', true];
         }
         return ['maintenance_requeued', false];
+    }
+
+    /** Whether Laravel would fail this job, unrun, at its next delivery (its own tries, else the queue's). */
+    private function outOfTries(ArcoSqsJob $job): bool
+    {
+        $own = $job->maxTries();
+        $tries = is_numeric($own) ? (int) $own : $this->tries;
+        return $tries > 0 && $job->attempts() >= $tries;
     }
 
     /**

@@ -25,6 +25,7 @@ final class TimedWorker extends Worker
 {
     private ?Job $timing = null;
     private ?WorkerOptions $timingOptions = null;
+    private int $timingSeconds = 0;
     private float $jobDeadline = INF;
     private float $hardDeadline = INF;
     /** @var (\Closure(): void)|null */
@@ -98,6 +99,7 @@ final class TimedWorker extends Worker
         }
         $this->timing = $job;
         $this->timingOptions = $options;
+        $this->timingSeconds = $seconds;
         $this->jobDeadline = microtime(true) + $seconds;
         $this->arm();
         try {
@@ -147,7 +149,7 @@ final class TimedWorker extends Worker
         $this->markJobAsFailedIfWillExceedMaxAttempts($job->getConnectionName(), $job, (int) $options->maxTries, $e);
         $this->markJobAsFailedIfWillExceedMaxExceptions($job->getConnectionName(), $job, $e);
         $this->markJobAsFailedIfItShouldFailOnTimeout($job->getConnectionName(), $job, $e);
-        $this->events->dispatch(new JobTimedOut($job->getConnectionName(), $job, $options->timeout));
+        $this->events->dispatch(new JobTimedOut($job->getConnectionName(), $job, $this->timingSeconds));
         throw $e;
     }
 }

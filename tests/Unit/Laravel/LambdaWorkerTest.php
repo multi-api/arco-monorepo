@@ -120,6 +120,18 @@ final class LambdaWorkerTest extends TestCase
         self::assertTrue($this->worker?->timedOut(), 'the process restarts after an invocation with a timeout');
     }
 
+    public function test_the_timed_out_event_carries_the_limit_the_job_had(): void
+    {
+        $timeouts = [];
+        $this->test->app->make('events')->listen(\Illuminate\Queue\Events\JobTimedOut::class, function (\Illuminate\Queue\Events\JobTimedOut $event) use (&$timeouts): void {
+            $timeouts[] = $event->timeout;
+        });
+
+        $this->handle([QueueTestJob::record('slow', timeout: 1)]);
+
+        self::assertSame([1], $timeouts);
+    }
+
     public function test_the_time_limit_is_the_time_left_minus_the_margin(): void
     {
         $started = microtime(true);
@@ -186,59 +198,95 @@ final class LambdaWorkerTest extends TestCase
         });
     }
 
-    public function test_in_maintenance_mode_jobs_come_back_a_minute_later_without_running(): void
+    private function fifo(): void
     {
-        $this->maintenance();
-        $_SERVER['ARCO_QUEUE_MAX_RECEIVES'] = '5';
-
-        self::assertSame(['m-ok'], $this->handle([QueueTestJob::record('ok', attempts: 3)]));
-
-        self::assertSame([], QueueTestJob::$handled);
-        self::assertSame(60, $this->test->callsTo('ChangeMessageVisibility')[0]['VisibilityTimeout'] ?? null);
-        self::assertSame([], $this->test->callsTo('SendMessage'));
-        self::assertSame('maintenance', $this->logs[0]['status']);
+        $_SERVER['ARCO_QUEUES'] = (string) json_encode(['emails' => QueueTestApp::EMAILS_URL . '.fifo'], JSON_UNESCAPED_SLASHES);
     }
 
-    public function test_in_maintenance_mode_the_last_delivery_is_sent_again_as_a_fresh_message(): void
+    public function test_in_maintenance_mode_every_delivery_is_sent_again_a_minute_later_as_a_fresh_message(): void
     {
         $this->maintenance();
-        $_SERVER['ARCO_QUEUE_MAX_RECEIVES'] = '5';
         $attributes = ['tenant' => ['stringValue' => 'acme', 'stringListValues' => [], 'binaryListValues' => [], 'dataType' => 'String']];
 
-        self::assertSame([], $this->handle([QueueTestJob::record('ok', attempts: 4, messageAttributes: $attributes)]), 'the original is deleted by Lambda');
+        self::assertSame([], $this->handle([QueueTestJob::record('ok', attempts: 1, messageAttributes: $attributes)]), 'the original is deleted by Lambda');
 
         self::assertSame([], QueueTestJob::$handled);
         $sent = $this->test->callsTo('SendMessage');
         self::assertCount(1, $sent);
         self::assertSame(QueueTestApp::EMAILS_URL, $sent[0]['QueueUrl']);
         self::assertSame(QueueTestJob::body('ok'), $sent[0]['MessageBody']);
+        self::assertSame(60, $sent[0]['DelaySeconds']);
         self::assertSame(['tenant' => ['DataType' => 'String', 'StringValue' => 'acme']], $sent[0]['MessageAttributes']);
         self::assertArrayNotHasKey('MessageGroupId', $sent[0]);
+        self::assertSame([], $this->test->callsTo('ChangeMessageVisibility'));
         self::assertSame('maintenance_requeued', $this->logs[0]['status']);
     }
 
-    public function test_in_maintenance_mode_a_fifo_copy_keeps_its_group_with_a_new_deduplication_id(): void
+    public function test_in_maintenance_mode_a_failed_copy_comes_back_a_minute_later_and_is_logged(): void
     {
         $this->maintenance();
-        $_SERVER['ARCO_QUEUE_MAX_RECEIVES'] = '5';
-        $_SERVER['ARCO_QUEUES'] = (string) json_encode(['emails' => QueueTestApp::EMAILS_URL . '.fifo'], JSON_UNESCAPED_SLASHES);
-
-        $this->handle([QueueTestJob::record('ok', attempts: 4, attributes: ['MessageGroupId' => 'g1', 'MessageDeduplicationId' => 'd1'])]);
-
-        $sent = $this->test->callsTo('SendMessage')[0];
-        self::assertSame(QueueTestApp::EMAILS_URL . '.fifo', $sent['QueueUrl']);
-        self::assertSame('g1', $sent['MessageGroupId']);
-        self::assertIsString($sent['MessageDeduplicationId']);
-        self::assertNotSame('d1', $sent['MessageDeduplicationId']);
-    }
-
-    public function test_in_maintenance_mode_a_failed_copy_is_reported_and_logged(): void
-    {
-        $this->maintenance();
-        $_SERVER['ARCO_QUEUE_MAX_RECEIVES'] = '5';
         $this->test->sqsFails = true;
 
-        self::assertSame(['m-ok'], $this->handle([QueueTestJob::record('ok', attempts: 4)]));
+        self::assertSame(['m-ok'], $this->handle([QueueTestJob::record('ok')]));
+
+        self::assertCount(1, $this->test->callsTo('SendMessage'));
+        self::assertSame(60, $this->test->callsTo('ChangeMessageVisibility')[0]['VisibilityTimeout'] ?? null);
+        self::assertContains('job_requeue_failed', array_column($this->logs, 'arco'));
+        self::assertSame('maintenance', array_values(array_filter($this->logs, fn (array $l) => $l['arco'] === 'job'))[0]['status']);
+    }
+
+    public function test_in_maintenance_mode_a_fifo_job_with_tries_left_comes_back_a_minute_later(): void
+    {
+        $this->maintenance();
+        $this->fifo();
+
+        self::assertSame(['m-ok'], $this->handle([QueueTestJob::record('ok', attempts: 1, attributes: ['MessageGroupId' => 'g1'])]));
+
+        self::assertSame([], QueueTestJob::$handled);
+        self::assertSame([], $this->test->callsTo('SendMessage'));
+        self::assertSame(60, $this->test->callsTo('ChangeMessageVisibility')[0]['VisibilityTimeout'] ?? null);
+        self::assertSame('maintenance', $this->logs[0]['status']);
+    }
+
+    public function test_in_maintenance_mode_a_fifo_job_at_its_tries_is_sent_again_with_its_group(): void
+    {
+        $this->maintenance();
+        $this->fifo();
+
+        self::assertSame([], $this->handle([QueueTestJob::record('ok', attempts: 3, attributes: ['MessageGroupId' => 'g1', 'MessageDeduplicationId' => 'd1'])]));
+
+        $sent = $this->test->callsTo('SendMessage');
+        self::assertCount(1, $sent);
+        self::assertSame(QueueTestApp::EMAILS_URL . '.fifo', $sent[0]['QueueUrl']);
+        self::assertSame('g1', $sent[0]['MessageGroupId']);
+        self::assertIsString($sent[0]['MessageDeduplicationId']);
+        self::assertNotSame('d1', $sent[0]['MessageDeduplicationId']);
+        self::assertArrayNotHasKey('DelaySeconds', $sent[0], 'FIFO queues refuse a per-message delay');
+        self::assertSame('maintenance_requeued', $this->logs[0]['status']);
+    }
+
+    public function test_in_maintenance_mode_a_fifo_job_uses_its_own_tries_or_the_dlq_limit_whichever_comes_first(): void
+    {
+        $this->maintenance();
+        $this->fifo();
+
+        // The job allows 10 tries; with no DLQ limit, receive 3 still comes back.
+        self::assertSame(['m-ok'], $this->handle([QueueTestJob::record('ok', attempts: 3, maxTries: 10, attributes: ['MessageGroupId' => 'g1'])]));
+        self::assertSame([], $this->test->callsTo('SendMessage'));
+
+        // With a DLQ limit of 5, receive 4 is the last one: the copy is sent.
+        $_SERVER['ARCO_QUEUE_MAX_RECEIVES'] = '5';
+        self::assertSame([], $this->handle([QueueTestJob::record('ok', attempts: 4, maxTries: 10, attributes: ['MessageGroupId' => 'g1'])]));
+        self::assertCount(1, $this->test->callsTo('SendMessage'));
+    }
+
+    public function test_in_maintenance_mode_a_failed_fifo_copy_is_reported_and_logged(): void
+    {
+        $this->maintenance();
+        $this->fifo();
+        $this->test->sqsFails = true;
+
+        self::assertSame(['m-ok'], $this->handle([QueueTestJob::record('ok', attempts: 3, attributes: ['MessageGroupId' => 'g1'])]));
 
         self::assertContains('job_requeue_failed', array_column($this->logs, 'arco'));
     }
