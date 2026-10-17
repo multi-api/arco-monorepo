@@ -89,6 +89,52 @@ final class InfoCommandTest extends TestCase
         $project->restore();
     }
 
+    public function test_shows_a_paused_scheduler(): void
+    {
+        $config = str_replace("->timeout(60)", "->timeout(60)->scheduler(5)", ProjectFixture::consoleConfig());
+        $project = new ProjectFixture($config);
+        putenv('AWS_PROFILE=p');
+        $status = fn (?bool $paused) => new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', null, null, 'shop-production-console', '7', schedulerPaused: $paused);
+        $deployer = new FakeDeployer(status: $status(true));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/scheduler\s+every 5 min \(paused\)\s+environment/', $tester->getDisplay());
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame(5, $json['settings']['scheduler']);
+        self::assertTrue($json['settings']['schedulerPaused']);
+
+        $deployer->status = $status(false);
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertStringNotContainsString('(paused)', $tester->getDisplay());
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        self::assertFalse(json_decode($tester->getDisplay(), true)['settings']['schedulerPaused']);
+
+        $deployer->status = $status(null);
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertArrayHasKey('schedulerPaused', $json['settings']);
+        self::assertNull($json['settings']['schedulerPaused']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_a_paused_scheduler_reads_as_spanish(): void
+    {
+        $project = new ProjectFixture(str_replace("->timeout(60)", "->timeout(60)->scheduler(5)", ProjectFixture::consoleConfig()));
+        putenv('AWS_PROFILE=p');
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', null, null, 'shop-production-console', '7', schedulerPaused: true);
+        $app = \Multiapi\Arco\Cli\Application::create();
+        $app->addCommands([new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $status))]);
+        $app->setAutoExit(false);
+        $tester = new \Symfony\Component\Console\Tester\ApplicationTester($app);
+        $tester->run(['command' => 'info', '--env' => 'production', '--lang' => 'es'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/scheduler\s+cada 5 min \(en pausa\)\s+environment/', $tester->getDisplay());
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
     public function test_shows_console_scheduler_and_log_retention_rows(): void
     {
         $config = str_replace("->timeout(60)", "->timeout(60)->console()->scheduler(5)->logRetention(30)", ProjectFixture::standardConfig());

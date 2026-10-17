@@ -329,6 +329,7 @@ return [
     'console.scheduler_needs_console' => 'El entorno {environment} ejecuta el scheduler, que necesita la función de consola. Ejecuta primero "arco scheduler:remove" y luego "arco console:remove". No se cambió nada.',
     'scheduler.changed' => 'Scheduler ({environment}): {from} → {to}',
     'scheduler.every' => 'cada {minutes} min',
+    'scheduler.every_paused' => 'cada {minutes} min (en pausa)',
     'scheduler.off' => 'desactivado',
     'scheduler.ask' => '¿Cada cuántos minutos ejecutar el scheduler?',
     'scheduler.suggested' => 'La programación de la app necesita schedule:run cada {minutes} minutos o más seguido, por: {tasks}.',

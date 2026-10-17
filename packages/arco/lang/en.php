@@ -329,6 +329,7 @@ return [
     'console.scheduler_needs_console' => 'Environment {environment} runs the scheduler, which needs the console function. Run "arco scheduler:remove" first, then "arco console:remove". Nothing was changed.',
     'scheduler.changed' => 'Scheduler ({environment}): {from} → {to}',
     'scheduler.every' => 'every {minutes} min',
+    'scheduler.every_paused' => 'every {minutes} min (paused)',
     'scheduler.off' => 'off',
     'scheduler.ask' => 'Run the scheduler every how many minutes?',
     'scheduler.suggested' => 'The app\'s schedule needs schedule:run every {minutes} minutes or more often, for: {tasks}.',
