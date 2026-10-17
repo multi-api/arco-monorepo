@@ -34,6 +34,12 @@ final class SchedulerRemoveCommand extends ArcoCommand
                 $io->note($this->t('settings.unchanged', ['where' => $this->where($environment)]));
                 return self::SUCCESS;
             }
+            // Spec §5: the scheduler goes off, the console stays. Make it explicit where it is unset, or
+            // the next deploy would find a console with no setting (deploy.console_setting_missing).
+            $writeConsole = self::consoleUnset($raw, $environment);
+            if ($writeConsole) {
+                $this->writeSetting($environment, 'console', true);
+            }
             $this->writeSetting($environment, 'scheduler', false);
             $io->success($this->t('scheduler.changed', [
                 'environment' => $this->levelLabel($environment),
@@ -41,6 +47,9 @@ final class SchedulerRemoveCommand extends ArcoCommand
                 'to' => $this->t('scheduler.off'),
             ]));
             $io->writeln($this->t('settings.result', ['where' => $this->where($environment)]));
+            if ($writeConsole) {
+                $io->writeln('    ' . ArcoFileEditor::settingLine('console', true));
+            }
             $io->writeln('    ' . ArcoFileEditor::settingLine('scheduler', false));
             $this->printDeployNext($io, $raw, $environment);
             return self::SUCCESS;

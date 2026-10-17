@@ -60,23 +60,29 @@ final class SchedulerSetCommand extends ArcoCommand
                 $consoleOff = $consoleOff || ConfigResolver::resolve($raw, $env)->console === false;
             }
             $from = $environment === null ? self::levelValue($raw, null, 'scheduler') : ConfigResolver::resolve($raw, $environment)->scheduler;
-            if ($from === $minutes) {
+            // The scheduler needs the console function: replace console(false), here or inherited, at this
+            // level, and write console() where it is unset so scheduler:remove later keeps the console.
+            $writeConsole = $consoleOff || self::consoleUnset($raw, $environment);
+            if ($from === $minutes && ! $writeConsole) {
                 $io->note($this->t('settings.unchanged', ['where' => $this->where($environment)]));
                 return self::SUCCESS;
             }
-            if ($consoleOff) {
-                // The scheduler needs the console function: replace console(false), here or inherited, at this level.
+            if ($writeConsole) {
                 $this->writeSetting($environment, 'console', true);
-                $io->success($this->t('console.changed', ['environment' => $this->levelLabel($environment), 'from' => $this->t('console.off'), 'to' => $this->t('console.on')]));
+                if ($consoleOff) {
+                    $io->success($this->t('console.changed', ['environment' => $this->levelLabel($environment), 'from' => $this->t('console.off'), 'to' => $this->t('console.on')]));
+                }
             }
-            $this->writeSetting($environment, 'scheduler', $minutes);
-            $io->success($this->t('scheduler.changed', [
-                'environment' => $this->levelLabel($environment),
-                'from' => is_int($from) ? $this->t('scheduler.every', ['minutes' => $from]) : $this->t('scheduler.off'),
-                'to' => $this->t('scheduler.every', ['minutes' => $minutes]),
-            ]));
+            if ($from !== $minutes) {
+                $this->writeSetting($environment, 'scheduler', $minutes);
+                $io->success($this->t('scheduler.changed', [
+                    'environment' => $this->levelLabel($environment),
+                    'from' => is_int($from) ? $this->t('scheduler.every', ['minutes' => $from]) : $this->t('scheduler.off'),
+                    'to' => $this->t('scheduler.every', ['minutes' => $minutes]),
+                ]));
+            }
             $io->writeln($this->t('settings.result', ['where' => $this->where($environment)]));
-            if ($consoleOff) {
+            if ($writeConsole) {
                 $io->writeln('    ' . ArcoFileEditor::settingLine('console', true));
             }
             $io->writeln('    ' . ArcoFileEditor::settingLine('scheduler', $minutes));

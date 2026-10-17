@@ -176,6 +176,70 @@ final class ConsoleSchedulerCommandsTest extends TestCase
         self::assertStringContainsString('->console()', $this->source());
     }
 
+    public function test_scheduler_set_then_remove_without_console_line_keeps_console_on(): void
+    {
+        $this->project();
+
+        $this->run_(new SchedulerSetCommand(), ['minutes' => '5', '--env' => 'production'])->assertCommandIsSuccessful();
+        self::assertStringContainsString('->console()', $this->source());
+
+        $tester = $this->run_(new SchedulerRemoveCommand(), ['--env' => 'production']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->scheduler(false)', $this->source());
+        self::assertStringContainsString('->console()', $this->source());
+        $config = ConfigResolver::resolve((new ConfigLoader())->load($this->project?->dir . '/arco.php'), 'production');
+        // An explicit console setting: the deploy's upgrade guard (console exists, setting missing) cannot fire.
+        self::assertTrue($config->console);
+        self::assertTrue($config->consoleEnabled());
+    }
+
+    public function test_scheduler_set_writes_console_when_unset(): void
+    {
+        $this->project();
+
+        $tester = $this->run_(new SchedulerSetCommand(), ['minutes' => '5', '--env' => 'production']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->console()', $this->source());
+        self::assertStringContainsString('->scheduler(5)', $this->source());
+        self::assertTrue(ConfigResolver::resolve((new ConfigLoader())->load($this->project?->dir . '/arco.php'), 'production')->console);
+    }
+
+    public function test_scheduler_set_same_interval_still_writes_unset_console(): void
+    {
+        $this->project('->timeout(60)', '->timeout(60)->scheduler(5)');
+
+        $this->run_(new SchedulerSetCommand(), ['minutes' => '5', '--env' => 'production'])->assertCommandIsSuccessful();
+
+        self::assertStringContainsString('->console()', $this->source());
+    }
+
+    public function test_scheduler_remove_writes_console_when_unset(): void
+    {
+        $this->project('->timeout(60)', '->timeout(60)->scheduler(5)');
+
+        $tester = $this->run_(new SchedulerRemoveCommand(), ['--env' => 'production']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->scheduler(false)', $this->source());
+        self::assertStringContainsString('->console()', $this->source());
+        self::assertTrue(ConfigResolver::resolve((new ConfigLoader())->load($this->project?->dir . '/arco.php'), 'production')->console);
+    }
+
+    public function test_scheduler_remove_at_app_level_writes_console_when_unset(): void
+    {
+        $this->project('->concurrency(48)', '->concurrency(48)->scheduler(5)');
+
+        $this->run_(new SchedulerRemoveCommand(), ['--app' => true])->assertCommandIsSuccessful();
+
+        $raw = (new ConfigLoader())->load($this->project?->dir . '/arco.php');
+        foreach (['staging', 'production'] as $env) {
+            self::assertTrue(ConfigResolver::resolve($raw, $env)->console);
+            self::assertNull(ConfigResolver::resolve($raw, $env)->scheduler);
+        }
+    }
+
     public function test_logs_retention_sets_days(): void
     {
         $this->project();

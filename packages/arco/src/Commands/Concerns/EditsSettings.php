@@ -91,6 +91,23 @@ trait EditsSettings
         return is_array($settings) ? $settings[$method] ?? null : null;
     }
 
+    /**
+     * Whether an environment the change applies to leaves the console setting unset. The scheduler commands
+     * then write `->console()` too, so turning the scheduler off later keeps the console (spec §5) and the
+     * deploy never meets an existing console with no setting.
+     *
+     * @param array<string, mixed> $raw
+     */
+    private static function consoleUnset(array $raw, ?string $environment): bool
+    {
+        foreach ($environment === null ? ConfigResolver::environments($raw) : [$environment] as $env) {
+            if (ConfigResolver::resolve($raw, $env)->console === null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private function where(?string $environment): string
     {
         return $environment === null ? $this->t('settings.where_app') : $this->t('settings.where_environment', ['environment' => $environment]);
