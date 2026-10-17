@@ -41,16 +41,16 @@ final class DeployPipelineTest extends TestCase
         file_put_contents("$this->project/composer.json", '{}');
     }
 
-    /** Stands in for `composer install`: writes what a queue worker needs (DeployPipeline::QUEUE_PACKAGES), minus $this->withoutVendor. */
+    /** Stands in for `composer install`: writes the files DeployPipeline checks for (queues, storage, tables), minus $this->withoutVendor. */
     private function composerInstall(): \Closure
     {
         return function (array $command, string $cwd): void {
             if (($command[1] ?? '') !== 'install') {
                 return;
             }
-            foreach (array_diff(self::QUEUE_FILES, $this->withoutVendor) as $file) {
+            foreach (array_diff(self::VENDOR_FILES, $this->withoutVendor) as $file) {
                 @mkdir(dirname("$cwd/$file"), 0777, true);
-                file_put_contents("$cwd/$file", '<?php');
+                file_put_contents("$cwd/$file", $file === self::PROVIDER ? self::PROVIDER_06 : '<?php');
             }
         };
     }
@@ -59,6 +59,17 @@ final class DeployPipelineTest extends TestCase
     private array $withoutVendor = [];
 
     private const QUEUE_FILES = ['vendor/multiapi/arco-laravel/src/Console/WorkCommand.php', 'vendor/aws/aws-sdk-php/src/Sdk.php'];
+
+    private const FLYSYSTEM_S3 = 'vendor/league/flysystem-aws-s3-v3/AwsS3V3Adapter.php';
+
+    private const PROVIDER = 'vendor/multiapi/arco-laravel/src/ArcoServiceProvider.php';
+
+    private const VENDOR_FILES = [...self::QUEUE_FILES, self::FLYSYSTEM_S3, self::PROVIDER];
+
+    /** What arco-laravel 0.6's provider reads, and 0.5's does not. */
+    private const PROVIDER_06 = "<?php Env::get('ARCO_STORAGE'); Env::get('ARCO_CACHE_TABLE'); Env::get('ARCO_FAILED_JOBS_TABLE');";
+
+    private const PROVIDER_05 = "<?php Env::get('ARCO_QUEUES');";
 
     /** $console null: never set, as in an arco.php written before the console was opt-in. */
     private function config(bool $domains = false, ?bool $console = true): AppConfig
@@ -474,15 +485,15 @@ final class DeployPipelineTest extends TestCase
      *
      * @param list<string> $without
      */
-    private static function webPackage(?string $runtimeBuild, int $bytes = 8, array $without = []): \Multiapi\Arco\Package\Package
+    private static function webPackage(?string $runtimeBuild, int $bytes = 8, array $without = [], string $provider = self::PROVIDER_06): \Multiapi\Arco\Package\Package
     {
         $path = TempPaths::path('arco-web-', '.zip');
         $zip = new \ZipArchive();
         $zip->open($path, \ZipArchive::CREATE);
         $zip->addFromString('bin/frankenphp', 'ELF');
         $zip->addFromString('app/index.php', '<?php');
-        foreach (array_diff(self::QUEUE_FILES, $without) as $file) {
-            $zip->addFromString("app/$file", '<?php');
+        foreach (array_diff(self::VENDOR_FILES, $without) as $file) {
+            $zip->addFromString("app/$file", $file === self::PROVIDER ? $provider : '<?php');
         }
         $zip->close();
         $hash = str_repeat('e', 64);
@@ -1260,9 +1271,9 @@ final class DeployPipelineTest extends TestCase
             $deployer = new FakeDeployer('rev-1');
             try {
                 $this->pipeline()->deployPackage($this->workersOnlyConfig(), new PlainPhpPreset(), self::webPackage(null, without: $without), $deployer, new FakeVerifier(true), fn () => null);
-                self::fail('expected deploy.queues_need_packages');
+                self::fail('expected deploy.needs_packages');
             } catch (DeployException $e) {
-                self::assertSame('deploy.queues_need_packages', $e->key);
+                self::assertSame('deploy.needs_packages', $e->key);
                 self::assertSame($packages, $e->params['packages'] ?? null);
             }
             self::assertSame([], $deployer->calls, 'nothing in AWS changed');
@@ -1275,15 +1286,58 @@ final class DeployPipelineTest extends TestCase
         $deployer = new FakeDeployer('rev-1');
         try {
             $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
-            self::fail('expected deploy.queues_need_packages');
+            self::fail('expected deploy.needs_packages');
         } catch (DeployException $e) {
-            self::assertSame('deploy.queues_need_packages', $e->key);
+            self::assertSame('deploy.needs_packages', $e->key);
         }
         self::assertSame([], $deployer->calls);
 
         $deployer = new FakeDeployer('rev-1');
         $this->pipeline()->deployPackage($this->config(), new PlainPhpPreset(), self::webPackage(null, without: self::QUEUE_FILES), $deployer, new FakeVerifier(true), fn () => null);
         self::assertContains('release', $deployer->calls, 'apps without queues need neither package');
+    }
+
+    public function test_storage_and_tables_need_their_packages_before_any_change(): void
+    {
+        $storage = fn (App $app) => $app->storage('uploads');
+        $cache = fn (App $app) => $app->cache();
+        $failed = fn (App $app) => $app->failedJobsTable();
+        $all = fn (App $app) => $app->storage('uploads')->cache()->failedJobsTable();
+        foreach ([
+            [$storage, [self::FLYSYSTEM_S3], self::PROVIDER_06, 'league/flysystem-aws-s3-v3:^3.0', '- league/flysystem-aws-s3-v3:^3.0 (storage())'],
+            [$storage, [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (storage())'],
+            [$storage, [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (storage())'],
+            [$cache, [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (cache())'],
+            [fn (App $app) => $app->cache(existing: 'Legacy'), [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (cache())'],
+            [$failed, [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (failedJobsTable())'],
+            [$failed, [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (failedJobsTable())'],
+            [$failed, [self::PROVIDER], self::PROVIDER_06, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (failedJobsTable())'],
+            [$all, self::VENDOR_FILES, self::PROVIDER_06, 'league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.6',
+                "- league/flysystem-aws-s3-v3:^3.0 (storage())\n- aws/aws-sdk-php (storage(), cache(), failedJobsTable())\n- multiapi/arco-laravel:^0.6 (storage(), failedJobsTable())"],
+            // arco-laravel 0.6 covers the queues too: one requirement, not ^0.5 and ^0.6.
+            [fn (App $app) => $app->queue('emails')->storage('uploads'), [self::QUEUE_FILES[0], self::PROVIDER], self::PROVIDER_06, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (queue(), storage())'],
+            [fn (App $app) => $app->queue('emails')->storage('uploads'), [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (storage())'],
+        ] as $i => [$build, $without, $provider, $packages, $list]) {
+            $deployer = new FakeDeployer('rev-1');
+            try {
+                $this->pipeline()->deployPackage($this->resourcesConfig($build), new PlainPhpPreset(), self::webPackage(null, without: $without, provider: $provider), $deployer, new FakeVerifier(true), fn () => null);
+                self::fail("case $i: expected deploy.needs_packages");
+            } catch (DeployException $e) {
+                self::assertSame('deploy.needs_packages', $e->key, "case $i");
+                self::assertSame($packages, $e->params['packages'] ?? null, "case $i");
+                self::assertSame($list, $e->params['list'] ?? null, "case $i");
+            }
+            self::assertSame([], $deployer->calls, "case $i: nothing in AWS changed");
+        }
+    }
+
+    public function test_the_cache_needs_only_the_aws_sdk(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+
+        $this->pipeline()->deployPackage($this->resourcesConfig(fn (App $app) => $app->cache()), new PlainPhpPreset(), self::webPackage(null, without: [self::QUEUE_FILES[0], self::FLYSYSTEM_S3, self::PROVIDER]), $deployer, new FakeVerifier(true), fn () => null);
+
+        self::assertContains('release', $deployer->calls);
     }
 
     public function test_a_worker_failure_after_release_is_a_warning_and_the_deploy_goes_on(): void

@@ -585,9 +585,10 @@ Arco sets these variables on the web, console and worker functions:
   through `AWS_BUCKET`, whatever its name.
 - Your own `variables()` win over Arco's: setting `FILESYSTEM_DISK`, `AWS_BUCKET` or `AWS_URL` there overrides
   them, and the deploy prints a note (an `ARCO_STORAGE` of your own overrides the map without a note).
-- Laravel's S3 driver needs `league/flysystem-aws-s3-v3` in `require`
+- Laravel's S3 driver needs `league/flysystem-aws-s3-v3` and `aws/aws-sdk-php` in `require`
   (`composer require league/flysystem-aws-s3-v3 "^3.0"`), and the named disks need `multiapi/arco-laravel`
-  0.6 or later. The deploy does not check for them.
+  0.6 or later. With storage in `arco.php`, the deploy checks the package for all three before any change
+  and stops with the `composer require` line to run when one is missing.
 
 ### Public prefixes
 
@@ -717,7 +718,11 @@ are kept when they leave `arco.php` (see [What stays](#what-stays)):
 | Failed jobs | `<app>-<env>-failed-jobs` | partition key `application`, sort key `uuid` (strings): the layout of Laravel's DynamoDB failed-job provider |
 
 Both need `aws/aws-sdk-php` in `require` (as queues do), and `multiapi/arco-laravel` 0.6 or later wires the
-failed-jobs table and a cache table Arco creates. Without queues the deploy does not check for them.
+failed-jobs table and a cache table Arco creates. Before any change, the deploy checks the package for
+`aws/aws-sdk-php` (cache and failed-jobs table) and `multiapi/arco-laravel` 0.6+ (failed-jobs table: without
+it Laravel's failer has no region and no failed job is recorded), and stops with the `composer require` line
+to run when one is missing. A cache table works with an older `multiapi/arco-laravel` as long as
+`config/cache.php` keeps Laravel's default attributes.
 
 ### Cache
 

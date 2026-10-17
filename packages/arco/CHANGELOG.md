@@ -49,6 +49,12 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `DeleteBucketPolicy`, `GetBucket*`, `ListBucket`, `DeleteBucket` (rollback only), `dynamodb:CreateTable`,
   `DescribeTable`, `UpdateTable`, `UpdateTimeToLive`, `DescribeTimeToLive`, `TagResource`, `DeleteTable`
   (rollback only), and `tag:GetResources`.
+- **Added:** before any change, the deploy checks the package for what `arco.php` needs: storage needs
+  `league/flysystem-aws-s3-v3`, `aws/aws-sdk-php` and `multiapi/arco-laravel` 0.6+; the cache table
+  `aws/aws-sdk-php`; the failed-jobs table `aws/aws-sdk-php` and `multiapi/arco-laravel` 0.6+ (queues as in
+  0.5). A missing one stops the deploy with the `composer require` line to run. The error key
+  `deploy.queues_need_packages` is now `deploy.needs_packages` and lists each package with the `arco.php`
+  calls that need it.
 - **Changed:** queues, buckets and tables use `DeletionPolicy: RetainExceptOnCreate`: one created by a deploy
   that fails and rolls back is deleted (it is new and unused, and keeping it would block the next deploy on
   its name); every other one is still kept. CloudFormation then needs `sqs:DeleteQueue` for that rollback.

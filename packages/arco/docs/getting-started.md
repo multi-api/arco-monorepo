@@ -292,14 +292,16 @@ vendor/bin/arco storage:list --env=production
 Each `->storage('<name>')` gets a private S3 bucket, `<app>-<env>-<name>-<account>`. The first storage is
 Laravel's default disk (Arco sets `FILESYSTEM_DISK=s3`, `AWS_BUCKET` and `AWS_URL`), and every storage is also
 a disk of its own name, `Storage::disk('uploads')`, registered by `multiapi/arco-laravel` 0.6+. Laravel's S3
-driver needs `league/flysystem-aws-s3-v3` (`composer require league/flysystem-aws-s3-v3 "^3.0"`). Public
+driver needs `league/flysystem-aws-s3-v3` (`composer require league/flysystem-aws-s3-v3 "^3.0"`) and
+`aws/aws-sdk-php`. Public
 prefixes, expiry rules and CORS are options of the storage (`storage:public`, `storage:expire`,
 `storage:cors`).
 
 `->cache()` creates a DynamoDB table `<app>-<env>-cache` and sets `CACHE_STORE=dynamodb`; `->failedJobsTable()`
 creates `<app>-<env>-failed-jobs` and sends failed jobs there (they expire after about a week). Both need
-`aws/aws-sdk-php` and `multiapi/arco-laravel` 0.6+. Every one of them can point at a bucket or table you
-already have with `existing:`. Removed buckets and tables stay in AWS with their data. Details:
+`aws/aws-sdk-php`, and the failed-jobs table `multiapi/arco-laravel` 0.6+. The deploy checks the package for
+what each of them needs and stops before any change, naming the `composer require` to run, when a package is
+missing. Every one of them can point at a bucket or table you already have with `existing:`. Removed buckets and tables stay in AWS with their data. Details:
 [Storage](configuration.md#storage) and [Cache and failed-jobs tables](configuration.md#cache-and-failed-jobs-tables).
 
 ### Commands

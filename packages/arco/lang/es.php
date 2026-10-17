@@ -142,7 +142,7 @@ return [
     'deploy.queue_other_consumer' => 'La cola {queue} ya tiene otros consumidores ({functions}). Arco agregó su worker igualmente: los trabajos se repartirán entre todos. Elimina el otro mapeo de origen de eventos si solo el worker de Arco debe leerla.',
     'deploy.worker_missing' => 'La función worker {function} desapareció durante el despliegue.',
     'deploy.worker_update_failed' => 'Falló la actualización de la función worker {function}: {reason}',
-    'deploy.queues_need_packages' => 'Las colas necesitan estos paquetes en la app, y el paquete que se despliega no los tiene: {packages}. No se cambió nada. Ejecuta `composer require {packages}` y vuelve a desplegar.',
+    'deploy.needs_packages' => "Al paquete que se despliega le faltan paquetes que arco.php necesita:\n{list}\nNo se cambió nada. Ejecuta `composer require {packages}` y vuelve a desplegar.",
     'deploy.workers_package_too_large' => 'Los workers de las colas ejecutan el paquete de consola, que supera el límite de {max} MB de Lambda para funciones clásicas, así que las colas nunca se leerían. No se cambió nada. Reduce el tamaño del paquete y vuelve a desplegar.',
     'remove.step_worker' => 'Eliminando la función worker {function} (cola {queue}) y sus mapeos de origen de eventos',
     'remove.step_resources' => 'Eliminando el stack de recursos {stack} (sus colas, buckets y tablas se conservan)',
