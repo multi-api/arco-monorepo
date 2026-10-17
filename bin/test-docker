@@ -1,13 +1,21 @@
 #!/bin/sh
-# Runs the unit tests, the runtime (node) tests and PHPStan inside a throwaway container, so a test
-# that deletes the wrong path can only damage the container. The container sees the repository at
-# /app and nothing else from the host: no HOME, no /tmp, no Docker socket, no network. PHPStan keeps
-# its result cache on a Docker-managed volume (arco-test-cache), which is not a host directory.
+# Runs the tests and PHPStan inside a throwaway container, so a test that deletes the wrong path can
+# only damage the container. For unit, runtime and analyse the container sees the repository at /app
+# and nothing else from the host: no HOME, no /tmp, no Docker socket, no network. PHPStan keeps its
+# result cache on a Docker-managed volume (arco-test-cache), which is not a host directory.
 #
-#   bin/test-docker [all]                 unit tests, runtime tests, PHPStan (composer test:docker)
-#   bin/test-docker unit [phpunit args]   unit tests only, e.g. --filter BootstrapTest
-#   bin/test-docker runtime               node --test runtime tests only
-#   bin/test-docker analyse               PHPStan only
+# The integration suite starts Lambda containers, so its container also gets the host's Docker socket
+# (which is root on the host: see the README) and a network. It sees the repository at the same
+# absolute path as the host, so the bind mounts the tests ask the host's daemon for resolve to the
+# files they wrote (under build/tmp/integration); its /tmp is its own. It runs on the user-defined
+# network arco-test-integration under a known name, and the Lambda containers join that network and
+# reach the emulators running next to PHPUnit by that name (ARCO_TEST_NETWORK, ARCO_TEST_HOST).
+#
+#   bin/test-docker [all]                        unit tests, runtime tests, PHPStan (composer test:docker)
+#   bin/test-docker unit [phpunit args]          unit tests only, e.g. --filter BootstrapTest
+#   bin/test-docker runtime                      node --test runtime tests only
+#   bin/test-docker analyse                      PHPStan only
+#   bin/test-docker integration [phpunit args]   the integration suite (composer test:integration)
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -39,16 +47,38 @@ run() {
     "$IMAGE" "$@"
 }
 
+integration() {
+  sock=/var/run/docker.sock
+  network=arco-test-integration
+  name="arco-test-phpunit-$$"
+  docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+  # The socket's group as a container sees it (root on Docker Desktop), so the host uid may use it.
+  gid=$(docker run --rm --network none --mount "type=bind,source=$sock,target=$sock" "$IMAGE" stat -c %g "$sock")
+  # HOME and the Composer cache on the arco-test-cache volume: downloaded runtime binaries and
+  # packages survive between runs without touching a host directory.
+  # shellcheck disable=SC2086
+  docker run --rm --init $tty --network "$network" --name "$name" \
+    --user "$(id -u):$(id -g)" --group-add "$gid" \
+    --mount "type=bind,source=$ROOT,target=$ROOT" \
+    --mount "type=bind,source=$sock,target=$sock" \
+    --mount "type=volume,source=arco-test-cache,target=/cache" \
+    --env ARCO_TEST_NETWORK="$network" --env ARCO_TEST_HOST="$name" \
+    --env HOME=/cache/home --env COMPOSER_CACHE_DIR=/cache/composer \
+    --workdir "$ROOT" \
+    "$IMAGE" vendor/bin/phpunit --testsuite integration "$@"
+}
+
 suite=${1:-all}
 [ $# -gt 0 ] && shift
 case "$suite" in
   unit)    run vendor/bin/phpunit --testsuite unit "$@" ;;
   runtime) run node --test 'packages/arco/runtime/test/*.test.js' ;;
+  integration) integration "$@" ;;
   analyse) run vendor/bin/phpstan analyse -c docker/test/phpstan.neon --memory-limit=4G --no-progress "$@" ;;
   all)
     run vendor/bin/phpunit --testsuite unit
     run node --test 'packages/arco/runtime/test/*.test.js'
     run vendor/bin/phpstan analyse -c docker/test/phpstan.neon --memory-limit=4G --no-progress
     ;;
-  *) echo "usage: bin/test-docker [all|unit|runtime|analyse] [args]" >&2; exit 2 ;;
+  *) echo "usage: bin/test-docker [all|unit|runtime|analyse|integration] [args]" >&2; exit 2 ;;
 esac

@@ -7,6 +7,8 @@ use Multiapi\Arco\Binary\RuntimeManifest;
 use Multiapi\Arco\Package\ConsolePackager;
 use Multiapi\Arco\Package\PackageReader;
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
+use Multiapi\Arco\Tests\Support\SiblingContainers;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Filesystem\Filesystem;
@@ -114,7 +116,8 @@ final class WorkerRuntimeTest extends TestCase
         $build = RuntimeManifest::load()->resolve(null, null);
         $phpCli = BinaryProvider::default()->phpCli($build);
         self::assertNotNull($phpCli, "The default build {$build->id} has no PHP CLI.");
-        $work = sys_get_temp_dir() . '/arco-worker-it-' . bin2hex(random_bytes(4));
+        // A shared temp directory: the Lambda container bind-mounts the task unzipped there.
+        $work = TempPaths::shared('arco-worker-it-');
         mkdir($work, 0777, true);
         $package = new Process([PHP_BINARY, __DIR__ . '/../../packages/arco/bin/arco', 'package', '--env=ci', "--output=$work/package.zip", '--no-interaction'], (string) realpath(self::EXAMPLE), null, null, 900);
         $package->run();
@@ -138,10 +141,10 @@ final class WorkerRuntimeTest extends TestCase
 
     private function start(string $task): void
     {
-        $this->api = new RuntimeApiEmulator('0.0.0.0');
+        $this->api = new RuntimeApiEmulator(SiblingContainers::BIND);
         $this->container = 'arco-worker-it-' . bin2hex(random_bytes(3));
         $env = [
-            'AWS_LAMBDA_RUNTIME_API' => "host.docker.internal:{$this->api->port}", 'LAMBDA_TASK_ROOT' => '/var/task', 'AWS_REGION' => 'us-east-1',
+            'AWS_LAMBDA_RUNTIME_API' => SiblingContainers::testHost() . ":{$this->api->port}", 'LAMBDA_TASK_ROOT' => '/var/task', 'AWS_REGION' => 'us-east-1',
             'AWS_DEFAULT_REGION' => 'us-east-1', 'AWS_ACCESS_KEY_ID' => 'AKIDTEST', 'AWS_SECRET_ACCESS_KEY' => 'secret', 'AWS_SESSION_TOKEN' => 'token',
             'ARCO' => '1', 'ARCO_WORKER_QUEUE' => 'emails', 'ARCO_QUEUE_TRIES' => '3',
             'ARCO_QUEUES' => json_encode(['emails' => self::QUEUE_URL], JSON_UNESCAPED_SLASHES),
@@ -150,7 +153,7 @@ final class WorkerRuntimeTest extends TestCase
         ];
         $command = ['docker', 'run', '-d', '--name', $this->container, '--platform', 'linux/arm64',
             '--read-only', '--tmpfs', '/tmp:size=1024m,exec', '--cpus', '2', '--memory', '2g',
-            '--add-host', 'host.docker.internal:host-gateway',
+            ...SiblingContainers::runOptions(),
             // No real AWS: the SQS host is the container itself, which refuses the connection.
             '--add-host', 'sqs.us-east-1.amazonaws.com:127.0.0.1',
             '-v', "$task:/var/task:ro", '-w', '/var/task'];

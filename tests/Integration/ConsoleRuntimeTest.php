@@ -14,6 +14,8 @@ use Multiapi\Arco\Package\ConsolePackager;
 use Multiapi\Arco\Package\PackageReader;
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
 use Multiapi\Arco\Tests\Support\S3Emulator;
+use Multiapi\Arco\Tests\Support\SiblingContainers;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tinker\TinkerReply;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -85,10 +87,10 @@ final class ConsoleRuntimeTest extends TestCase
         self::assertFileDoesNotExist("$task/bin/php");
 
         // Local S3 with the binary the bootstrap downloads.
-        $this->s3 = new S3Emulator('0.0.0.0');
+        $this->s3 = new S3Emulator(SiblingContainers::BIND);
         $this->s3->put('arco-111111111111-us-east-1', $download->key, $download->path);
         $this->start($task, [
-            "ARCO_S3_ENDPOINT=http://host.docker.internal:{$this->s3->port}",
+            'ARCO_S3_ENDPOINT=http://' . SiblingContainers::testHost() . ":{$this->s3->port}",
             'ARCO_BINARY_BUCKET=arco-111111111111-us-east-1',
             "ARCO_BINARY_KEY={$download->key}",
             "ARCO_BINARY_SHA256={$download->sha256}",
@@ -122,7 +124,8 @@ final class ConsoleRuntimeTest extends TestCase
         self::assertTrue($tools->isSuccessful(), $tools->getErrorOutput());
         self::assertSame('', trim($tools->getOutput()));
 
-        $path = self::workDir() . '/package.zip';
+        // Kept for the whole run: both tests repackage nothing.
+        $path = self::workDir(untilRunEnds: true) . '/package.zip';
         $package = new Process([PHP_BINARY, __DIR__ . '/../../packages/arco/bin/arco', 'package', '--env=ci', "--output=$path", '--no-interaction'], (string) realpath(self::EXAMPLE), null, null, 900);
         $package->run();
         self::assertTrue($package->isSuccessful(), $package->getOutput() . $package->getErrorOutput());
@@ -130,9 +133,10 @@ final class ConsoleRuntimeTest extends TestCase
         return self::$webPackage = $path;
     }
 
-    private static function workDir(): string
+    /** A shared temp directory: the Lambda container bind-mounts what the test unzips there. */
+    private static function workDir(bool $untilRunEnds = false): string
     {
-        $work = sys_get_temp_dir() . '/arco-console-it-' . bin2hex(random_bytes(4));
+        $work = TempPaths::shared('arco-console-it-', $untilRunEnds);
         mkdir($work, 0777, true);
         return $work;
     }
@@ -172,16 +176,16 @@ final class ConsoleRuntimeTest extends TestCase
      */
     private function start(string $task, array $env): void
     {
-        $this->api = new RuntimeApiEmulator('0.0.0.0');
+        $this->api = new RuntimeApiEmulator(SiblingContainers::BIND);
         $example = (string) realpath(self::EXAMPLE);
         $config = ConfigResolver::resolve((new ConfigLoader())->load("$example/arco.php"), 'ci');
         $variables = DeployPipeline::variables($config, PresetRegistry::default()->detect($example));
         $this->container = 'arco-console-it-' . bin2hex(random_bytes(3));
         $command = ['docker', 'run', '-d', '--name', $this->container, '--platform', 'linux/arm64',
             '--read-only', '--tmpfs', '/tmp:size=1024m,exec', '--cpus', '2', '--memory', '2g',
-            '--add-host', 'host.docker.internal:host-gateway',
+            ...SiblingContainers::runOptions(),
             '-v', "$task:/var/task:ro", '-w', '/var/task',
-            '-e', "AWS_LAMBDA_RUNTIME_API=host.docker.internal:{$this->api->port}",
+            '-e', 'AWS_LAMBDA_RUNTIME_API=' . SiblingContainers::testHost() . ":{$this->api->port}",
             '-e', 'LAMBDA_TASK_ROOT=/var/task', '-e', 'AWS_REGION=us-east-1',
             '-e', 'AWS_ACCESS_KEY_ID=AKIDTEST', '-e', 'AWS_SECRET_ACCESS_KEY=secret', '-e', 'AWS_SESSION_TOKEN=token'];
         foreach ($env as $variable) {

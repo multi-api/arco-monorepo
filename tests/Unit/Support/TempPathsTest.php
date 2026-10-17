@@ -19,11 +19,31 @@ final class TempPathsTest extends TestCase
         self::assertSame($resolved, TempPaths::track($resolved), 'the resolved form of the temp directory is accepted too');
     }
 
+    public function test_shared_paths_live_in_the_repository_build_directory(): void
+    {
+        $root = TempPaths::sharedRoot();
+        self::assertSame(dirname(__DIR__, 3) . '/build/tmp/integration', $root);
+
+        $path = TempPaths::shared('arco-temppaths-');
+        self::assertStringStartsWith("$root/arco-temppaths-", $path);
+        self::assertFileDoesNotExist($path);
+        self::assertSame($path, TempPaths::track($path));
+        self::assertStringStartsWith("$root/arco-run-", TempPaths::shared('arco-run-', untilRunEnds: true));
+    }
+
     /** @return array<string, array{string}> */
     public static function outsidePaths(): array
     {
         $temp = rtrim(sys_get_temp_dir(), '/');
+        $shared = TempPaths::sharedRoot();
         return [
+            'the shared root itself' => [$shared],
+            'the shared root with a slash' => [$shared . '/'],
+            'the repository root' => [dirname($shared, 3)],
+            'a file of the repository' => [dirname($shared, 3) . '/composer.json'],
+            'the parent of the shared root' => [dirname($shared) . '/other'],
+            'a sibling of the shared root sharing the prefix' => [$shared . '-other/file'],
+            'climbing out of the shared root' => [$shared . '/../../../composer.json'],
             'another directory' => ['/Users/someone/project'],
             'the root' => ['/'],
             'the temp directory itself' => [$temp],

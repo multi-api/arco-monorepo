@@ -6,6 +6,7 @@
 .DS_Store
 /.superpowers/
 .phpunit.result.cache
+/build/
 
 # Internal working docs (specs, plans) live in the private multi-api/arco-monorepo-archive repo
 /docs/superpowers/
