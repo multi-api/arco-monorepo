@@ -353,11 +353,30 @@ final class InfoCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true);
         self::assertSame([
-            ['name' => 'uploads', 'bucket' => 'shop-production-uploads-111111111111', 'url' => 'https://shop-production-uploads-111111111111.s3.us-east-1.amazonaws.com', 'existing' => false, 'default' => true, 'public' => ['public/']],
-            ['name' => 'legacy', 'bucket' => 'old-bucket', 'url' => 'https://old-bucket.s3.us-east-1.amazonaws.com', 'existing' => true, 'default' => false, 'public' => []],
+            ['name' => 'uploads', 'bucket' => 'shop-production-uploads-111111111111', 'url' => 'https://shop-production-uploads-111111111111.s3.us-east-1.amazonaws.com', 'existing' => false, 'default' => true, 'defaultOverridden' => false, 'public' => ['public/']],
+            ['name' => 'legacy', 'bucket' => 'old-bucket', 'url' => 'https://old-bucket.s3.us-east-1.amazonaws.com', 'existing' => true, 'default' => false, 'defaultOverridden' => false, 'public' => []],
         ], $json['storage']);
         self::assertSame(['table' => 'shop-production-cache', 'existing' => false], $json['cache']);
         self::assertSame(['table' => 'shared-failed', 'existing' => true], $json['failedJobsTable']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_storage_default_overridden_by_variables(): void
+    {
+        $config = str_replace('->concurrency(48)', "->concurrency(48)->storage('uploads')->variables(['AWS_BUCKET' => 'other'])", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        putenv('AWS_PROFILE=p');
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', account: '111111111111');
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $status)));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertStringContainsString('default disk (overridden by variables(): AWS_BUCKET)', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertTrue($json['storage'][0]['default']);
+        self::assertTrue($json['storage'][0]['defaultOverridden']);
         putenv('AWS_PROFILE');
         $project->restore();
     }
@@ -369,7 +388,7 @@ final class InfoCommandTest extends TestCase
 
         $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true);
-        self::assertSame([['name' => 'uploads', 'bucket' => null, 'url' => null, 'existing' => false, 'default' => true, 'public' => []]], $json['storage']);
+        self::assertSame([['name' => 'uploads', 'bucket' => null, 'url' => null, 'existing' => false, 'default' => true, 'defaultOverridden' => false, 'public' => []]], $json['storage']);
         self::assertNull($json['cache']);
         self::assertNull($json['failedJobsTable']);
         $project->restore();

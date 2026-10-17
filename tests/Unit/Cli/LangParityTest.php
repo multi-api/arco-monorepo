@@ -25,4 +25,21 @@ final class LangParityTest extends TestCase
             self::assertSame($enParams[1], $esParams[1], "Placeholders differ for $key");
         }
     }
+
+    public function test_every_days_count_message_has_a_singular_one_day_sibling(): void
+    {
+        foreach (['en', 'es'] as $locale) {
+            /** @var array<string, string> $messages */
+            $messages = require Arco::packageRoot() . '/lang/' . $locale . '.php';
+            foreach ($messages as $key => $text) {
+                if (preg_match('/\{days\}\s+(days|días)\b/u', $text) !== 1) {
+                    continue;
+                }
+                $singular = preg_replace('/_days$/', '', $key) . '_one_day';
+                self::assertArrayHasKey($singular, $messages, "$locale: $key needs a singular $singular");
+                self::assertStringNotContainsString('{days}', $messages[$singular]);
+                self::assertMatchesRegularExpression('/\b1 (day|día)\b/u', $messages[$singular], "$locale: $singular must say 1 day");
+            }
+        }
+    }
 }

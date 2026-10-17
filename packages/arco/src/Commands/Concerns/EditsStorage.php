@@ -121,7 +121,7 @@ trait EditsStorage
         }
         $rules = [];
         foreach ($value as $prefix => $days) {
-            $rules[] = $this->t('storage.expire_rule', ['prefix' => (string) $prefix, 'days' => $days]);
+            $rules[] = $this->expireRule((string) $prefix, (int) $days);
         }
         return implode(', ', $rules);
     }

@@ -9,6 +9,7 @@ use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\StorageConfig;
+use Multiapi\Arco\Deploy\DeployPipeline;
 use Multiapi\Arco\Deploy\Domains\Aws;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
@@ -48,7 +49,7 @@ final class StorageListCommand extends ArcoCommand
             }
             foreach ($config->storage as $storage) {
                 $io->section($storage->name);
-                $io->definitionList(...$this->rows($located, $storage));
+                $io->definitionList(...$this->rows($config, $located, $storage));
             }
             $this->retained($aws, $located, $io);
             return self::SUCCESS;
@@ -59,18 +60,30 @@ final class StorageListCommand extends ArcoCommand
     }
 
     /** @return list<array<string, string>> */
-    private function rows(AppConfig $located, StorageConfig $storage): array
+    private function rows(AppConfig $config, AppConfig $located, StorageConfig $storage): array
     {
         $none = $this->t('storage.none');
         $expire = [];
         foreach ($storage->expire as $prefix => $days) {
-            $expire[] = $this->t('storage.expire_rule', ['prefix' => $prefix, 'days' => $days]);
+            $expire[] = $this->expireRule($prefix, $days);
         }
+        $overrides = $storage->default ? DeployPipeline::storageOverrides($config, $located) : [];
+        $default = match (true) {
+            $overrides !== [] => $this->t('storage.list_default_overridden', [
+                'keys' => implode(', ', array_keys($overrides)),
+                'uses' => implode(', ', array_map(
+                    fn (string $key, string $value) => $this->t($key === 'AWS_BUCKET' ? 'storage.uses_bucket' : 'storage.uses_disk', ['value' => $value]),
+                    array_keys($overrides),
+                    array_values($overrides),
+                )),
+            ]),
+            default => $this->t($storage->default ? 'common.yes' : 'common.no'),
+        };
         return [
             [$this->t('storage.list_bucket') => $storage->bucketName($located)],
             [$this->t('storage.list_url') => $storage->url($located)],
             [$this->t('storage.list_kind') => $this->t($storage->existing === null ? 'storage.kind_created' : 'storage.kind_existing')],
-            [$this->t('storage.list_default') => $this->t($storage->default ? 'common.yes' : 'common.no')],
+            [$this->t('storage.list_default') => $default],
             [$this->t('storage.list_public') => $storage->public === [] ? $none : $this->t('storage.public_prefixes', ['prefixes' => implode(', ', $storage->public)])],
             [$this->t('storage.list_expire') => $expire === [] ? $none : implode(', ', $expire)],
             [$this->t('storage.list_cors') => $storage->cors === [] ? $none : implode(', ', $storage->cors)],

@@ -92,6 +92,34 @@ final class StorageListCommandTest extends TestCase
         self::assertSame(1, substr_count($display, 'shop-production-uploads-111111111111 '), 'a bucket in arco.php is not listed as retained');
     }
 
+    public function test_one_day_expire_rule_is_singular(): void
+    {
+        $this->mocks->handler->append(new Result(['Account' => '111111111111']), new Result(['ResourceTagMappingList' => []]));
+
+        $tester = $this->run_("->storage('uploads', expire: ['tmp/' => 1, 'logs/' => 2])");
+
+        self::assertStringContainsString('Expire tmp/ after 1 day, logs/ after 2 days', self::display($tester));
+    }
+
+    public function test_default_disk_overridden_by_variables_is_flagged(): void
+    {
+        $this->mocks->handler->append(new Result(['Account' => '111111111111']), new Result(['ResourceTagMappingList' => []]));
+
+        $tester = $this->run_("->storage('uploads')->variables(['FILESYSTEM_DISK' => 'local', 'AWS_BUCKET' => 'other-bucket'])");
+
+        $display = self::display($tester);
+        self::assertStringContainsString('Default disk yes, but variables() set FILESYSTEM_DISK, AWS_BUCKET, so the app uses disk local, bucket other-bucket', $display);
+    }
+
+    public function test_variables_equal_to_what_arco_sets_do_not_override(): void
+    {
+        $this->mocks->handler->append(new Result(['Account' => '111111111111']), new Result(['ResourceTagMappingList' => []]));
+
+        $tester = $this->run_("->storage('uploads')->variables(['FILESYSTEM_DISK' => 's3', 'AWS_BUCKET' => 'shop-production-uploads-111111111111'])");
+
+        self::assertStringContainsString('Default disk yes Public', self::display($tester));
+    }
+
     public function test_without_storage_says_so_and_unreadable_retained_buckets_are_unknown(): void
     {
         $this->mocks->handler->append(

@@ -16,6 +16,7 @@ use Multiapi\Arco\Config\TableConfig;
 use Multiapi\Arco\Deploy\AppStatus;
 use Multiapi\Arco\Deploy\AwsDeployer;
 use Multiapi\Arco\Deploy\Deployer;
+use Multiapi\Arco\Deploy\DeployPipeline;
 use Multiapi\Arco\Secrets\SecretReference;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
@@ -164,7 +165,7 @@ final class InfoCommand extends ArcoCommand
      * The storages in arco.php; a created bucket's name and URL need the account, so they are null
      * without it (not deployed, or not readable).
      *
-     * @return list<array{name: string, bucket: ?string, url: ?string, existing: bool, default: bool, public: list<string>}>
+     * @return list<array{name: string, bucket: ?string, url: ?string, existing: bool, default: bool, defaultOverridden: bool, public: list<string>}>
      */
     private function jsonStorage(AppConfig $config, ?AppStatus $status): array
     {
@@ -175,6 +176,7 @@ final class InfoCommand extends ArcoCommand
             'url' => $storage->existing !== null || $located !== null ? $storage->url($located ?? $config) : null,
             'existing' => $storage->existing !== null,
             'default' => $storage->default,
+            'defaultOverridden' => $storage->default && DeployPipeline::storageOverrides($config, $located) !== [],
             'public' => $storage->public,
         ], $config->storage);
     }
@@ -194,7 +196,10 @@ final class InfoCommand extends ArcoCommand
             $text = $located === null ? '-' : $storage->bucketName($located);
         }
         if ($storage->default) {
-            $text .= ' · ' . $this->t('info.storage_default');
+            $overrides = DeployPipeline::storageOverrides($config, $located);
+            $text .= ' · ' . ($overrides === []
+                ? $this->t('info.storage_default')
+                : $this->t('info.storage_default_overridden', ['keys' => implode(', ', array_keys($overrides))]));
         }
         if ($storage->public !== []) {
             $text .= ' · ' . $this->t('info.storage_public', ['prefixes' => implode(', ', $storage->public)]);

@@ -96,6 +96,30 @@ final class DeployPipeline
     }
 
     /**
+     * The user variables() that replace what storageVariables() would set for the default disk
+     * (FILESYSTEM_DISK, AWS_BUCKET), as key => the user's value. A created bucket's name needs the
+     * account: without it ($located null) any user AWS_BUCKET counts as an override.
+     *
+     * @return array<string, string>
+     */
+    public static function storageOverrides(AppConfig $config, ?AppConfig $located): array
+    {
+        $default = $config->defaultStorage();
+        if ($default === null) {
+            return [];
+        }
+        $expected = $default->existing !== null || $located !== null ? $default->bucketName($located ?? $config) : null;
+        $overrides = [];
+        if (isset($config->variables['FILESYSTEM_DISK']) && $config->variables['FILESYSTEM_DISK'] !== 's3') {
+            $overrides['FILESYSTEM_DISK'] = $config->variables['FILESYSTEM_DISK'];
+        }
+        if (isset($config->variables['AWS_BUCKET']) && $config->variables['AWS_BUCKET'] !== $expected) {
+            $overrides['AWS_BUCKET'] = $config->variables['AWS_BUCKET'];
+        }
+        return $overrides;
+    }
+
+    /**
      * The variables the cache and failed-jobs tables add. ARCO_CACHE_TABLE only for a table Arco
      * created: arco-laravel then matches the store's attributes to it (key, value, expires_at).
      * arco-laravel applies ARCO_CACHE_TABLE and ARCO_FAILED_JOBS_TABLE over the app's config, so they are
