@@ -350,7 +350,7 @@ name add to each other.
 | `timeout` | 60 | Worker function timeout in seconds (1 to 900): the longest a batch may run. The queue's visibility timeout is 6 times this |
 | `memory` | 1024 | Worker memory in MB (128 to 10240) |
 | `concurrency` | unset | Maximum concurrent worker invocations (event source mapping `MaximumConcurrency`, at least 2); unset means no limit beyond the account's |
-| `batchSize` | 1 | Messages per invocation: 1 to 10000 on a standard queue, 1 to 10 on FIFO |
+| `batchSize` | 1 | Messages per invocation: 1 to 10000 on a standard queue, 1 to 10 on FIFO. Above 10 the event source mapping waits up to 1 second to gather a batch (AWS requires a batching window there) |
 | `tries` | 3 | Attempts of a job without its own `$tries`; the dead-letter queue's `maxReceiveCount` is `tries` + 2 |
 | `dlq` | `true` | Create a dead-letter queue (never for an `existing` queue) |
 | `fifo` | `false` | Create a FIFO queue (its name ends in `.fifo`) |
@@ -432,7 +432,9 @@ The queues Arco creates live in a CloudFormation stack per environment, `arco-<a
 deploy updates it **before** any code, so a new queue exists before code that sends to it; a failure there
 stops the deploy before traffic moves. Workers are created or updated with the rest and switched to the new
 version (alias and event source mapping) only **after** the web revision is live and verified; a worker
-that cannot be set up is a warning, and the queue keeps its previous worker or none. The workers run the
+that cannot be set up is a warning, and the queue keeps its previous worker or none. When a queue's
+reference changes (another `existing:` queue, region or account), the worker's mapping on the old queue is
+deleted once the new one exists, so a worker reads only the queue `arco.php` names. The workers run the
 console package (a copy without the FrankenPHP binary), which is built whenever queues exist, even with the
 console off: it must fit Lambda's 250 MB, or the deploy stops before any change. Each worker keeps its live
 version plus the 4 newest, like the console.

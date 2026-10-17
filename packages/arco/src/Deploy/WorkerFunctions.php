@@ -98,6 +98,9 @@ final class WorkerFunctions
     /**
      * Points the worker's live alias at $version, then creates or updates its event source mapping.
      * Before a mapping is created on a queue Arco does not own, another consumer is looked for.
+     * The alias's mappings are listed whatever their queue: a mapping on another queue (the queue
+     * reference changed: another `existing`, region or account) is deleted, so the worker never
+     * keeps reading a queue arco.php no longer names.
      *
      * @param Closure(string, array<string, string|int>): void $onStep
      */
@@ -113,11 +116,25 @@ final class WorkerFunctions
             'FunctionResponseTypes' => ['ReportBatchItemFailures'],
             'Enabled' => true,
         ];
-        $existing = $this->mappings(['FunctionName' => $alias, 'EventSourceArn' => $queue->arn($config)]);
-        if ($existing !== []) {
+        if (! $queue->fifo) {
+            // AWS requires a batching window of at least 1 s above 10 messages a batch on a standard
+            // queue (FIFO takes none). Sent on update too, so a batch size lowered to 10 clears it.
+            $settings['MaximumBatchingWindowInSeconds'] = $queue->batchSize > 10 ? 1 : 0;
+        }
+        $arn = $queue->arn($config);
+        $current = null;
+        $stale = [];
+        foreach ($this->mappings(['FunctionName' => $alias]) as $uuid => $source) {
+            if ($source === $arn && $current === null) {
+                $current = $uuid;
+            } elseif ($source !== null && $source !== $arn) {
+                $stale[$uuid] = $source;
+            }
+        }
+        if ($current !== null) {
             // An empty ScalingConfig lifts a maximum concurrency removed from arco.php.
             $this->lambda->updateEventSourceMapping([
-                'UUID' => $existing[0],
+                'UUID' => $current,
                 ...$settings,
                 'ScalingConfig' => $queue->concurrency === null ? [] : ['MaximumConcurrency' => $queue->concurrency],
             ]);
@@ -130,12 +147,28 @@ final class WorkerFunctions
             }
             $this->lambda->createEventSourceMapping([
                 'FunctionName' => $alias,
-                'EventSourceArn' => $queue->arn($config),
+                'EventSourceArn' => $arn,
                 ...$settings,
                 ...($queue->concurrency === null ? [] : ['ScalingConfig' => ['MaximumConcurrency' => $queue->concurrency]]),
             ]);
         }
         $onStep('deploy.worker_mapping', ['queue' => $queue->name, 'function' => $name, 'batch' => $queue->batchSize]);
+        // After the new mapping exists, so the worker is never without one.
+        foreach ($stale as $uuid => $source) {
+            $this->deleteMapping($uuid);
+            $onStep('deploy.worker_mapping_removed', ['queue' => $queue->name, 'arn' => $source]);
+        }
+    }
+
+    private function deleteMapping(string $uuid): void
+    {
+        try {
+            $this->lambda->deleteEventSourceMapping(['UUID' => $uuid]);
+        } catch (LambdaException $e) {
+            if ($e->getAwsErrorCode() !== 'ResourceNotFoundException') {
+                throw $e;
+            }
+        }
     }
 
     /** @return list<string> names of the other functions consuming the queue */
@@ -153,7 +186,7 @@ final class WorkerFunctions
 
     /**
      * @param array<string, mixed> $filter
-     * @return list<string> UUIDs of the event source mappings matching the filter
+     * @return array<string, string|null> the event source mappings matching the filter: UUID => queue ARN
      */
     private function mappings(array $filter): array
     {
@@ -164,7 +197,7 @@ final class WorkerFunctions
             foreach (Aws::maps($page['EventSourceMappings'] ?? []) as $mapping) {
                 $uuid = Aws::string($mapping['UUID'] ?? null);
                 if ($uuid !== null) {
-                    $uuids[] = $uuid;
+                    $uuids[$uuid] = Aws::string($mapping['EventSourceArn'] ?? null);
                 }
             }
             $marker = Aws::string($page['NextMarker'] ?? null);
@@ -185,14 +218,8 @@ final class WorkerFunctions
             }
             $uuids = [];
         }
-        foreach ($uuids as $uuid) {
-            try {
-                $this->lambda->deleteEventSourceMapping(['UUID' => $uuid]);
-            } catch (LambdaException $e) {
-                if ($e->getAwsErrorCode() !== 'ResourceNotFoundException') {
-                    throw $e;
-                }
-            }
+        foreach (array_keys($uuids) as $uuid) {
+            $this->deleteMapping($uuid);
         }
         $this->function->delete($name);
     }

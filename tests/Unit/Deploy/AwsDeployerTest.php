@@ -1245,13 +1245,14 @@ final class AwsDeployerTest extends TestCase
         self::assertNotContains('PutFunctionEventInvokeConfig', $mocks->calls, 'workers keep Lambda\'s retries: SQS redelivery brings a failed job back');
         self::assertSame(['FunctionName' => 'shop-production-queue-emails', 'Name' => 'live', 'FunctionVersion' => '1'], self::p($mocks->params[0]));
         $alias = self::arn('shop-production-queue-emails') . ':live';
-        self::assertSame(['FunctionName' => $alias, 'EventSourceArn' => $config->queues[0]->arn($config)], array_intersect_key($mocks->params[3], ['FunctionName' => 1, 'EventSourceArn' => 1]));
+        self::assertSame(['FunctionName' => $alias], array_intersect_key($mocks->params[3], ['FunctionName' => 1, 'EventSourceArn' => 1]), 'every mapping of the alias');
         self::assertSame([
             'FunctionName' => $alias,
             'EventSourceArn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails',
             'BatchSize' => 10,
             'FunctionResponseTypes' => ['ReportBatchItemFailures'],
             'Enabled' => true,
+            'MaximumBatchingWindowInSeconds' => 0,
             'ScalingConfig' => ['MaximumConcurrency' => 5],
         ], self::p($mocks->params[4]));
         // reports: no concurrency, so no ScalingConfig; the queue is another account's: its ARN comes from `existing`
@@ -1291,7 +1292,7 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(
             new Result([]),                                                                     // UpdateAlias
             new Result(['AliasArn' => self::arn('shop-production-queue-emails') . ':live']),
-            new Result(['EventSourceMappings' => [['UUID' => 'u-existing', 'FunctionArn' => self::arn('shop-production-queue-emails') . ':live']]]),
+            new Result(['EventSourceMappings' => [['UUID' => 'u-existing', 'FunctionArn' => self::arn('shop-production-queue-emails') . ':live', 'EventSourceArn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails']]]),
             new Result([]),                                                                     // UpdateEventSourceMapping
             self::workers('emails'),
         );
@@ -1304,6 +1305,7 @@ final class AwsDeployerTest extends TestCase
             'BatchSize' => 20,
             'FunctionResponseTypes' => ['ReportBatchItemFailures'],
             'Enabled' => true,
+            'MaximumBatchingWindowInSeconds' => 1,
             'ScalingConfig' => [],
         ], self::p($mocks->params[3]));
     }

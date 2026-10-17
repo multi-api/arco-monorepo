@@ -10,6 +10,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   queue, and a worker function `<app>-<env>-queue-emails` fed by an SQS event source mapping. Named options:
   `timeout` (60, up to 900), `memory` (1024), `concurrency` (unset; at least 2), `batchSize` (1), `tries` (3),
   `dlq` (on), `fifo` (off), `existing` and `default` (the first queue unless one says `default: true`).
+  Above 10 messages a batch on a standard queue, the event source mapping gets a 1-second batching window
+  (AWS requires one).
 - **Added:** the worker runs jobs with Laravel's own queue `Worker`, booted once per instance
   (`multiapi/arco-laravel`'s internal `arco:work`): retries, `$backoff`, `$timeout`, `failed()` and the
   app's failed-jobs store work as with `queue:work`, with partial batch responses. The dead-letter queue

@@ -132,6 +132,7 @@ return [
     'deploy.step_worker' => 'Cola {queue}: desplegando la función worker {function}',
     'deploy.worker_ready' => 'Cola {queue}: el worker {function} está activo (versión {version})',
     'deploy.worker_mapping' => 'Cola {queue}: {function} la lee (tamaño de lote {batch})',
+    'deploy.worker_mapping_removed' => 'Cola {queue}: su worker ya no lee {arn} (una cola que arco.php ya no nombra)',
     'deploy.worker_removed' => 'Cola {queue}: worker {function} eliminado (la cola ya no está en arco.php)',
     'deploy.worker_failed' => 'El despliegue está activo y verificado, pero no se pudo configurar el worker {function} de la cola {queue} ({error}). El worker de este despliegue no está leyendo la cola. Permite lambda:CreateAlias, lambda:UpdateAlias, lambda:GetAlias, lambda:DeleteFunction y las acciones lambda:*EventSourceMapping en el perfil, y vuelve a desplegar.',
     'deploy.worker_scan_failed' => 'El despliegue está activo y verificado, pero no se pudieron buscar los workers que quedaron de colas eliminadas de arco.php ({error}), así que no se limpió ninguno. Permite tag:GetResources en el perfil y vuelve a desplegar.',
