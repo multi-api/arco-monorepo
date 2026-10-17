@@ -7,9 +7,13 @@ use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Http\Request;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Queue\QueueManager;
 use Multiapi\Arco\Laravel\Console\ScheduleIntervalsCommand;
 use Multiapi\Arco\Laravel\Console\TinkerCommand;
+use Multiapi\Arco\Laravel\Console\WorkCommand;
 use Multiapi\Arco\Laravel\Http\ShareRequestId;
+use Multiapi\Arco\Laravel\Queue\ArcoSqsConnector;
+use Multiapi\Arco\Laravel\Queue\ArcoSqsQueue;
 
 final class ArcoServiceProvider extends ServiceProvider
 {
@@ -31,6 +35,7 @@ final class ArcoServiceProvider extends ServiceProvider
 
         $this->addSessionToken();
         $this->fixDefaultConfiguration();
+        $this->registerQueueConnector();
     }
 
     public function boot(): void
@@ -40,13 +45,35 @@ final class ArcoServiceProvider extends ServiceProvider
         }
         if ($this->app->runningInConsole()) {
             // Hidden: arco:tinker for `arco tinker` through the console function; arco:schedule-intervals
-            // for `arco scheduler:set` and `arco deploy`, which run it locally with ARCO=1.
-            $this->commands([TinkerCommand::class, ScheduleIntervalsCommand::class]);
+            // for `arco scheduler:set` and `arco deploy`, which run it locally with ARCO=1; arco:work for
+            // the queue worker functions.
+            $this->commands([TinkerCommand::class, ScheduleIntervalsCommand::class, WorkCommand::class]);
         }
         $kernel = $this->app->bound(Kernel::class) ? $this->app->make(Kernel::class) : null;
         if (is_object($kernel) && method_exists($kernel, 'prependMiddleware')) {
             $kernel->prependMiddleware(ShareRequestId::class);
         }
+    }
+
+    /**
+     * Arco deploys each queue under a physical name (<app>-<env>-emails) and lists them in ARCO_QUEUES:
+     * the `sqs` connector maps the logical names, so `->onQueue('emails')` reaches the right queue.
+     */
+    private function registerQueueConnector(): void
+    {
+        $queues = ArcoSqsQueue::queuesFromEnv(Env::get('ARCO_QUEUES'));
+        if ($queues === []) {
+            return;
+        }
+        $add = static function (mixed $manager) use ($queues): void {
+            if ($manager instanceof QueueManager) {
+                $manager->addConnector('sqs', static fn () => new ArcoSqsConnector($queues));
+            }
+        };
+        if ($this->app->resolved('queue')) {
+            $add($this->app->make('queue'));
+        }
+        $this->app->afterResolving('queue', $add);
     }
 
     /**
@@ -89,8 +116,8 @@ final class ArcoServiceProvider extends ServiceProvider
      */
     private function addSessionToken(): void
     {
-        $key = self::env('AWS_ACCESS_KEY_ID');
-        $token = self::env('AWS_SESSION_TOKEN');
+        $key = Env::get('AWS_ACCESS_KEY_ID');
+        $token = Env::get('AWS_SESSION_TOKEN');
         if ($key === null || $token === null || ! $this->app->bound('config')) {
             return;
         }
@@ -119,11 +146,5 @@ final class ArcoServiceProvider extends ServiceProvider
                 $this->patch($config, "$path.$name", $value, $key, $token, $depth + 1);
             }
         }
-    }
-
-    private static function env(string $name): ?string
-    {
-        $value = $_SERVER[$name] ?? $_ENV[$name] ?? getenv($name);
-        return is_string($value) && $value !== '' ? $value : null;
     }
 }
