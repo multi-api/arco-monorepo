@@ -37,6 +37,14 @@ final class TempPathsTest extends TestCase
         $temp = rtrim(sys_get_temp_dir(), '/');
         $shared = TempPaths::sharedRoot();
         return [
+            'the temp directory with a double slash' => [$temp . '//'],
+            'the temp directory with /.' => [$temp . '/.'],
+            'the temp directory with /./' => [$temp . '/./'],
+            'an empty segment inside the temp directory' => [$temp . '/a//b'],
+            'a . segment inside the temp directory' => [$temp . '/a/./b'],
+            'the shared root with a double slash' => [$shared . '//'],
+            'the shared root with /.' => [$shared . '/.'],
+            'the shared root with /./x/..' => [$shared . '/./x/..'],
             'the shared root itself' => [$shared],
             'the shared root with a slash' => [$shared . '/'],
             'the repository root' => [dirname($shared, 3)],
@@ -52,6 +60,30 @@ final class TempPathsTest extends TestCase
             'a path climbing out with ..' => [$temp . '/../etc'],
             'a relative path' => ['arco-relative'],
         ];
+    }
+
+    /** @return array<string, array{string}> */
+    public static function linkedSharedRootParts(): array
+    {
+        return ['build' => ['build'], 'build/tmp' => ['build/tmp'], 'build/tmp/integration' => ['build/tmp/integration']];
+    }
+
+    /** Only the guard runs here: nothing is deleted but the sandbox, which RemoveTempPaths removes. */
+    #[DataProvider('linkedSharedRootParts')]
+    public function test_a_symlink_in_the_shared_root_is_refused(string $linked): void
+    {
+        $sandbox = TempPaths::path('arco-temppaths-link-');
+        $repo = "$sandbox/repo";
+        mkdir("$sandbox/elsewhere", 0777, true);
+        $parent = dirname("$repo/$linked");
+        mkdir($parent, 0777, true);
+        self::assertTrue(symlink("$sandbox/elsewhere", "$repo/$linked"));
+        self::assertSame("$sandbox/plain/build/tmp/integration", TempPaths::sharedRootOf("$sandbox/plain"), 'a plain root is accepted');
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('is a symlink');
+
+        TempPaths::sharedRootOf($repo);
     }
 
     #[DataProvider('outsidePaths')]

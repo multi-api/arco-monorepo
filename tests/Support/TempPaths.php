@@ -43,10 +43,33 @@ final class TempPaths
         return $path;
     }
 
-    /** build/tmp/integration in the repository. */
+    /** build/tmp/integration in the repository; see sharedRootOf(). */
     public static function sharedRoot(): string
     {
-        return dirname(__DIR__, 2) . '/build/tmp/integration';
+        return self::sharedRootOf(dirname(__DIR__, 2));
+    }
+
+    /**
+     * $repo/build/tmp/integration, after checking that none of build, build/tmp and build/tmp/integration
+     * is a symlink and that, once it exists, it resolves inside $repo: a link there could point the
+     * deleter anywhere. Throws \RuntimeException otherwise. Public for the tests of this check.
+     */
+    public static function sharedRootOf(string $repo): string
+    {
+        $repo = rtrim($repo, '/');
+        $root = "$repo/build/tmp/integration";
+        foreach (["$repo/build", "$repo/build/tmp", $root] as $dir) {
+            if (is_link($dir)) {
+                throw new \RuntimeException("TempPaths refuses the shared root: $dir is a symlink.");
+            }
+        }
+        if (file_exists($root)) {
+            $realRepo = realpath($repo);
+            if ($realRepo === false || realpath($root) !== $realRepo . '/build/tmp/integration') {
+                throw new \RuntimeException("TempPaths refuses the shared root: $root does not resolve inside $repo.");
+            }
+        }
+        return $root;
     }
 
     /** A new empty file from tempnam(). */
@@ -79,19 +102,24 @@ final class TempPaths
 
     private static function insideAllowedRoot(string $path): bool
     {
-        if (str_contains($path, '..')) {
-            return false;
-        }
-        $bases = [];
-        foreach ([sys_get_temp_dir(), self::sharedRoot()] as $root) {
-            $root = rtrim($root, '/');
-            $real = realpath($root);
-            array_push($bases, $root, $real === false ? $root : rtrim($real, '/'));
-        }
+        // The system temp root may be reached through a link (macOS: /var -> /private/var), so its
+        // resolved form is accepted too; the shared root only literally (sharedRoot() refuses links).
+        $temp = rtrim(sys_get_temp_dir(), '/');
+        $realTemp = realpath($temp);
+        $bases = [$temp, $realTemp === false ? $temp : rtrim($realTemp, '/'), self::sharedRoot()];
         foreach (array_unique($bases) as $base) {
-            if ($base !== '' && str_starts_with($path, $base . '/') && strlen($path) > strlen($base) + 1) {
-                return true;
+            if ($base === '' || ! str_starts_with($path, $base . '/')) {
+                continue;
             }
+            // Every segment below the base must name an entry: no "", "." or ".." ("$base//" or
+            // "$base/." would make the deleter remove the base itself or everything in it).
+            $rest = substr($path, strlen($base) + 1);
+            foreach (explode('/', $rest) as $segment) {
+                if ($segment === '' || $segment === '.' || $segment === '..') {
+                    return false;
+                }
+            }
+            return true;
         }
         return false;
     }
