@@ -137,6 +137,7 @@ return [
     'deploy.worker_mapping_removed' => 'Cola {queue}: su worker ya no lee {arn} (una cola que arco.php ya no nombra)',
     'deploy.worker_removed' => 'Cola {queue}: worker {function} eliminado (la cola ya no está en arco.php)',
     'deploy.worker_failed' => 'El despliegue está activo y verificado, pero no se pudo configurar el worker {function} de la cola {queue} ({error}). El worker de este despliegue no está leyendo la cola. Permite lambda:CreateAlias, lambda:UpdateAlias, lambda:GetAlias, lambda:DeleteFunction y las acciones lambda:*EventSourceMapping en el perfil, y vuelve a desplegar.',
+    'deploy.workers_sync_failed' => 'El despliegue está activo y verificado, pero no se pudieron ajustar los workers de colas a arco.php ({error}): los workers de colas quitadas de arco.php pueden seguir leyéndolas. Permite lambda:ListEventSourceMappings, lambda:DeleteEventSourceMapping y lambda:DeleteFunction en el perfil y vuelve a desplegar.',
     'deploy.worker_scan_failed' => 'El despliegue está activo y verificado, pero no se pudieron buscar los workers que quedaron de colas eliminadas de arco.php ({error}), así que no se limpió ninguno. Permite tag:GetResources en el perfil y vuelve a desplegar.',
     'deploy.queue_other_consumer' => 'La cola {queue} ya tiene otros consumidores ({functions}). Arco agregó su worker igualmente: los trabajos se repartirán entre todos. Elimina el otro mapeo de origen de eventos si solo el worker de Arco debe leerla.',
     'deploy.worker_missing' => 'La función worker {function} desapareció durante el despliegue.',

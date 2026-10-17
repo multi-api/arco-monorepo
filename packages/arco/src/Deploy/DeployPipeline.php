@@ -320,7 +320,9 @@ final class DeployPipeline
                 try {
                     $deployer->syncWorkers($config, $result->workerVersions, $onStep(...));
                 } catch (Throwable $e) {
-                    $onStep('deploy.worker_failed', ['queue' => '*', 'function' => $config->functionName() . '-queue-*', 'error' => self::errorMessage($e)]);
+                    // Per-queue failures are deploy.worker_failed inside syncWorkers(); this is anything else
+                    // (most often removing the workers of queues taken out of arco.php).
+                    $onStep('deploy.workers_sync_failed', ['error' => self::errorMessage($e)]);
                 }
             }
             // console(false): the old console goes only once the new revision serves and is verified.

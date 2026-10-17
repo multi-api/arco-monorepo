@@ -1184,9 +1184,10 @@ final class DeployPipelineTest extends TestCase
         $outcome = $this->pipeline()->deployPackage($this->workersOnlyConfig(), new PlainPhpPreset(), self::webPackage(null), $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
 
         self::assertTrue($outcome->verification->ok);
-        self::assertSame('no lambda:CreateEventSourceMapping', $steps['deploy.worker_failed']['error'] ?? null);
+        self::assertSame(['error' => 'no lambda:CreateEventSourceMapping'], $steps['deploy.workers_sync_failed'] ?? null, 'its own warning: no queue `*` in the per-queue text');
+        self::assertArrayNotHasKey('deploy.worker_failed', $steps);
         self::assertContains('prune', $deployer->calls, 'the rest of the deploy still runs');
-        self::assertContains('deploy.worker_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertContains('deploy.workers_sync_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
 
     public function test_workers_follow_a_verified_revision_only(): void

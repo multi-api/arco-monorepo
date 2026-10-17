@@ -137,6 +137,7 @@ return [
     'deploy.worker_mapping_removed' => 'Queue {queue}: its worker no longer reads {arn} (a queue arco.php no longer names)',
     'deploy.worker_removed' => 'Queue {queue}: worker {function} deleted (the queue is no longer in arco.php)',
     'deploy.worker_failed' => 'The deploy is live and verified, but the worker {function} of queue {queue} could not be set up ({error}). The queue is not being read by this deploy\'s worker. Allow lambda:CreateAlias, lambda:UpdateAlias, lambda:GetAlias, lambda:DeleteFunction and the lambda:*EventSourceMapping actions in the profile, then deploy again.',
+    'deploy.workers_sync_failed' => 'The deploy is live and verified, but the queue workers could not be brought in line with arco.php ({error}): workers of queues removed from arco.php may still be reading them. Allow lambda:ListEventSourceMappings, lambda:DeleteEventSourceMapping and lambda:DeleteFunction in the profile, then deploy again.',
     'deploy.worker_scan_failed' => 'The deploy is live and verified, but the workers left from queues removed from arco.php could not be looked up ({error}), so none were cleaned up. Allow tag:GetResources in the profile and deploy again.',
     'deploy.queue_other_consumer' => 'The queue {queue} already has other consumers ({functions}). Arco added its worker anyway: jobs will be split between all of them. Remove the other event source mapping if only Arco\'s worker should read it.',
     'deploy.worker_missing' => 'The worker function {function} disappeared during the deploy.',
