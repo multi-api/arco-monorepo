@@ -621,4 +621,154 @@ final class ArcoFileEditorTest extends TestCase
         self::assertSame("->queue('jobs', false)", ArcoFileEditor::queueLine('jobs', false));
         self::assertSame("->queue('jobs', memory: 512, dlq: true)", ArcoFileEditor::queueLine('jobs', ['dlq' => true, 'memory' => 512]));
     }
+
+    /** @return array<string, mixed> */
+    private static function rawKey(string $path, string $key, ?string $environment = 'production'): array
+    {
+        $raw = (new ConfigLoader())->load($path);
+        if ($environment !== null) {
+            /** @var array<string, array<string, mixed>> $environments */
+            $environments = $raw['environments'];
+            $raw = $environments[$environment];
+        }
+        /** @var array<string, mixed> $value */
+        $value = $raw[$key];
+        return $value;
+    }
+
+    public function test_storage_and_a_queue_of_the_same_name_do_not_interfere(): void
+    {
+        $path = $this->file(self::queueFile("\n        ->queue('media', timeout: 30)"));
+
+        $with = fn (string $storage, string $queue = "timeout: 30") => str_replace("=> \$env\n", "=> \$env\n        $storage\n", self::queueFile("\n        ->queue('media', $queue)"));
+        self::assertTrue(ArcoFileEditor::setNamed($path, 'production', 'storage', 'media', ['public' => ['avatars/']]));
+        self::assertSame($with("->storage('media', public: ['avatars/'])"), file_get_contents($path));
+        self::assertTrue(ArcoFileEditor::setNamed($path, 'production', 'storage', 'media', ['default' => true]));
+        self::assertSame($with("->storage('media', default: true)"), file_get_contents($path));
+        self::assertTrue(ArcoFileEditor::setQueue($path, 'production', 'media', ['tries' => 2]));
+        self::assertSame(['media' => ['tries' => 2]], self::rawQueues($path));
+        self::assertSame(['media' => ['default' => true]], self::rawKey($path, 'storage'));
+
+        self::assertTrue(ArcoFileEditor::setNamed($path, 'production', 'storage', 'media', null));
+        self::assertSame(self::queueFile("\n        ->queue('media', tries: 2)"), file_get_contents($path));
+        self::assertSame(['media' => ['tries' => 2]], self::rawQueues($path));
+    }
+
+    public function test_storage_array_options_round_trip(): void
+    {
+        $path = $this->file(self::queueFile(''));
+        $options = ['cors' => ['https://example.com', '*'], 'expire' => ['tmp/' => 1, 'exports/' => 30], 'public' => ['a/', 'b/'], 'existing' => 'legacy'];
+
+        self::assertTrue(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', $options));
+        self::assertStringContainsString(
+            "->storage('files', existing: 'legacy', public: ['a/', 'b/'], expire: ['tmp/' => 1, 'exports/' => 30], cors: ['https://example.com', '*'])",
+            (string) file_get_contents($path),
+        );
+        self::assertEquals(['files' => $options], self::rawKey($path, 'storage'));
+
+        // An array option written by hand can be replaced, too.
+        self::assertTrue(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', ['expire' => ['tmp/' => 2]]));
+        self::assertSame(['files' => ['expire' => ['tmp/' => 2]]], self::rawKey($path, 'storage'));
+    }
+
+    public function test_renders_named_and_singleton_lines(): void
+    {
+        self::assertSame("->storage('files')", ArcoFileEditor::namedLine('storage', 'files', []));
+        self::assertSame("->storage('files', false)", ArcoFileEditor::namedLine('storage', 'files', false));
+        self::assertSame("->storage('files', default: true, public: ['a/', 'b/'], expire: ['tmp/' => 1])", ArcoFileEditor::namedLine('storage', 'files', ['expire' => ['tmp/' => 1], 'public' => ['a/', 'b/'], 'default' => true]));
+        self::assertSame("->queue('jobs', memory: 512)", ArcoFileEditor::namedLine('queue', 'jobs', ['memory' => 512]));
+        self::assertSame('->cache()', ArcoFileEditor::singletonLine('cache', true));
+        self::assertSame('->cache(false)', ArcoFileEditor::singletonLine('cache', false));
+        self::assertSame("->failedJobsTable(existing: 'x')", ArcoFileEditor::singletonLine('failedJobsTable', ['existing' => 'x']));
+    }
+
+    public function test_cache_existing_replaces_cache(): void
+    {
+        $file = fn (string $call) => str_replace('->timeout(60)', "$call\n        ->timeout(60)", self::consoleFile(''));
+        $path = $this->file($file('->cache()'));
+
+        self::assertTrue(ArcoFileEditor::setSingleton($path, 'production', 'cache', ['existing' => 'x']));
+        self::assertSame($file("->cache(existing: 'x')"), file_get_contents($path));
+        self::assertSame(['existing' => 'x'], self::productionSettings($path)['cache']);
+
+        self::assertTrue(ArcoFileEditor::setSingleton($path, 'production', 'cache', false));
+        self::assertSame($file('->cache(false)'), file_get_contents($path));
+        self::assertFalse(self::productionSettings($path)['cache']);
+
+        self::assertTrue(ArcoFileEditor::setSingleton($path, 'production', 'cache', true));
+        self::assertSame($file('->cache()'), file_get_contents($path));
+
+        self::assertTrue(ArcoFileEditor::setSingleton($path, 'production', 'cache', null));
+        self::assertSame(self::consoleFile(''), file_get_contents($path));
+        self::assertArrayNotHasKey('cache', self::productionSettings($path));
+    }
+
+    public function test_failed_jobs_table_at_app_level(): void
+    {
+        $path = $this->file(self::settingsFile());
+
+        self::assertTrue(ArcoFileEditor::setSingleton($path, null, 'failedJobsTable', ['existing' => 'jobs-failed']));
+        self::assertStringContainsString("    ->region('us-east-1')\n    ->failedJobsTable(existing: 'jobs-failed')\n", (string) file_get_contents($path));
+        self::assertSame(['existing' => 'jobs-failed'], self::rawKey($path, 'settings', null)['failedJobsTable']);
+        self::assertTrue(ArcoFileEditor::setSingleton($path, null, 'failedJobsTable', null));
+        self::assertSame(self::settingsFile(), file_get_contents($path));
+    }
+
+    public function test_refuses_non_literal_array_elements(): void
+    {
+        $cases = [
+            ['storage', "\n        ->storage('files', public: [\$stage])"],
+            ['storage', "\n        ->storage('files', public: ['a/', \$stage])"],
+            ['storage', "\n        ->storage('files', public: [['a/']])"],
+            ['storage', "\n        ->storage('files', expire: ['tmp/' => \$t])"],
+            ['storage', "\n        ->storage('files', expire: ['tmp/' => [1]])"],
+            ['storage', "\n        ->storage('files', public: array('a/'))"],
+            ['storage', "\n        ->storage('files', public: \$stage)"],
+            ['cache', "\n        ->cache(existing: \$stage)"],
+            ['cache', "\n        ->cache(existing: 'x')\n        ->cache()"],
+        ];
+        foreach ($cases as [$method, $calls]) {
+            $php = self::queueFile($calls);
+            $path = $this->file($php);
+            if ($method === 'storage') {
+                self::assertFalse(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', ['public' => ['b/']]), $calls);
+                self::assertFalse(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', null), $calls);
+            } else {
+                self::assertFalse(ArcoFileEditor::setSingleton($path, 'production', 'cache', true), $calls);
+                self::assertFalse(ArcoFileEditor::setSingleton($path, 'production', 'cache', null), $calls);
+            }
+            self::assertSame($php, file_get_contents($path));
+        }
+    }
+
+    public function test_first_named_call_in_an_environment_without_that_method(): void
+    {
+        $path = $this->file(str_replace("    ->region('us-east-1')\n", "    ->region('us-east-1')\n    ->storage('files')\n", self::queueFile('')));
+
+        self::assertTrue(ArcoFileEditor::setNamed($path, 'production', 'storage', 'uploads', ['public' => ['a/']]));
+        self::assertStringContainsString("=> \$env\n        ->storage('uploads', public: ['a/'])\n        ->timeout(60));", (string) file_get_contents($path));
+        self::assertSame(['uploads' => ['public' => ['a/']]], self::rawKey($path, 'storage'));
+        self::assertTrue(ArcoFileEditor::setQueue($path, 'production', 'jobs', []));
+        self::assertStringContainsString("=> \$env\n        ->queue('jobs')\n        ->storage('uploads', public: ['a/'])\n", (string) file_get_contents($path));
+    }
+
+    public function test_app_level_named_call_replace_false_and_remove(): void
+    {
+        $path = $this->file(str_replace("    ->region('us-east-1')\n", "    ->region('us-east-1')\n    ->storage('files', public: ['a/'])\n    ->queue('jobs')\n", self::settingsFile()));
+
+        self::assertTrue(ArcoFileEditor::setNamed($path, null, 'storage', 'files', ['cors' => ['*']]));
+        self::assertStringContainsString("    ->storage('files', cors: ['*'])\n    ->queue('jobs')\n", (string) file_get_contents($path));
+        self::assertSame(['files' => ['cors' => ['*']]], self::rawKey($path, 'storage', null));
+
+        self::assertTrue(ArcoFileEditor::setNamed($path, null, 'storage', 'files', false));
+        self::assertStringContainsString("    ->storage('files', false)\n", (string) file_get_contents($path));
+        self::assertSame(['files' => false], self::rawKey($path, 'storage', null));
+
+        self::assertTrue(ArcoFileEditor::setQueue($path, null, 'jobs', ['tries' => 1]));
+        self::assertSame(['jobs' => ['tries' => 1]], self::rawQueues($path, null));
+
+        self::assertTrue(ArcoFileEditor::setNamed($path, null, 'storage', 'files', null));
+        self::assertTrue(ArcoFileEditor::setQueue($path, null, 'jobs', null));
+        self::assertSame(self::settingsFile(), file_get_contents($path));
+    }
 }
