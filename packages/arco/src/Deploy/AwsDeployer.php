@@ -493,6 +493,7 @@ final class AwsDeployer implements Deployer
                 // Unknown without EventBridge read access; the rest of the status still shows.
             }
         }
+        $located = $this->located($config);
         return new AppStatus(
             $config->functionName(),
             WebFunctions::text($function['state'] ?? null),
@@ -504,8 +505,29 @@ final class AwsDeployer implements Deployer
             $consoleVersion,
             $consoleVersionError,
             $schedulerPaused,
-            $this->queueStatus($config),
+            $this->queueStatus($config, $located),
+            $located?->account,
         );
+    }
+
+    /**
+     * The config with its account, read from AWS only when arco.php has none and a queue or a created
+     * storage needs it (URL, bucket name); null when it could not be read. Apps without these make no call.
+     */
+    private function located(AppConfig $config): ?AppConfig
+    {
+        if ($config->account !== null) {
+            return $config;
+        }
+        $created = array_filter($config->storage, fn ($storage) => $storage->existing === null);
+        if ($config->queues === [] && $created === []) {
+            return null;
+        }
+        try {
+            return $config->withAccount($this->aws->accountId());
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**
@@ -514,18 +536,10 @@ final class AwsDeployer implements Deployer
      *
      * @return array<string, array{url: ?string, version: ?string, error: ?string}>
      */
-    private function queueStatus(AppConfig $config): array
+    private function queueStatus(AppConfig $config, ?AppConfig $located): array
     {
         if ($config->queues === []) {
             return [];
-        }
-        $located = $config;
-        if ($config->account === null) {
-            try {
-                $located = $config->withAccount($this->aws->accountId());
-            } catch (\Throwable) {
-                $located = null;
-            }
         }
         $workers = $this->workerFunctions()->function();
         $status = [];

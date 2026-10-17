@@ -48,6 +48,7 @@ final class Application extends SymfonyApplication
             new \Multiapi\Arco\Commands\StorageExpireCommand(),
             new \Multiapi\Arco\Commands\StoragePublicCommand(),
             new \Multiapi\Arco\Commands\StorageCorsCommand(),
+            new \Multiapi\Arco\Commands\StorageListCommand(),
             new \Multiapi\Arco\Commands\CacheAddCommand(),
             new \Multiapi\Arco\Commands\CacheRemoveCommand(),
             new \Multiapi\Arco\Commands\LogsRetentionCommand(),

@@ -334,4 +334,44 @@ final class InfoCommandTest extends TestCase
         self::assertSame([], json_decode($tester->getDisplay(), true)['queues']);
         $project->restore();
     }
+
+    public function test_shows_storage_cache_and_failed_jobs_table(): void
+    {
+        $config = str_replace('->concurrency(48)', "->concurrency(48)->storage('uploads', public: ['public/'])->storage('legacy', existing: 'old-bucket')->cache()->failedJobsTable(existing: 'shared-failed')", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        putenv('AWS_PROFILE=p');
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', account: '111111111111');
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $status)));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('Storage uploads shop-production-uploads-111111111111 · default disk · public: public/', $display);
+        self::assertStringContainsString('Storage legacy old-bucket (existing, not managed by Arco)', $display);
+        self::assertStringContainsString('Cache table shop-production-cache', $display);
+        self::assertStringContainsString('Failed jobs table shared-failed (existing, not managed by Arco)', $display);
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame([
+            ['name' => 'uploads', 'bucket' => 'shop-production-uploads-111111111111', 'url' => 'https://shop-production-uploads-111111111111.s3.us-east-1.amazonaws.com', 'existing' => false, 'default' => true, 'public' => ['public/']],
+            ['name' => 'legacy', 'bucket' => 'old-bucket', 'url' => 'https://old-bucket.s3.us-east-1.amazonaws.com', 'existing' => true, 'default' => false, 'public' => []],
+        ], $json['storage']);
+        self::assertSame(['table' => 'shop-production-cache', 'existing' => false], $json['cache']);
+        self::assertSame(['table' => 'shared-failed', 'existing' => true], $json['failedJobsTable']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_storage_without_remote_status_has_no_generated_bucket_and_no_tables_are_null(): void
+    {
+        $project = new ProjectFixture(str_replace('->concurrency(48)', "->concurrency(48)->storage('uploads')", ProjectFixture::standardConfig()));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame([['name' => 'uploads', 'bucket' => null, 'url' => null, 'existing' => false, 'default' => true, 'public' => []]], $json['storage']);
+        self::assertNull($json['cache']);
+        self::assertNull($json['failedJobsTable']);
+        $project->restore();
+    }
 }

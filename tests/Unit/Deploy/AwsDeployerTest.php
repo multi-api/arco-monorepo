@@ -764,6 +764,25 @@ final class AwsDeployerTest extends TestCase
         self::assertSame('shop-production-queue-emails', $mocks->params[3]['FunctionName']);
     }
 
+    public function test_describe_reads_the_account_for_a_created_storage_only(): void
+    {
+        $resolve = fn (App $app) => ConfigResolver::resolve($app->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => []]),
+            new Result(['Account' => '111111111111']),
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => []]),
+        );
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        self::assertSame('111111111111', $deployer->describe($resolve(App::make('shop')->region('us-east-1')->storage('uploads')))?->account);
+        self::assertNull($deployer->describe($resolve(App::make('shop')->region('us-east-1')->storage('legacy', existing: 'old-bucket')->cache()))?->account);
+        self::assertSame(['GetCallerIdentity'], array_values(array_filter($mocks->calls, fn (string $c) => $c === 'GetCallerIdentity')), 'no account lookup for existing buckets and tables');
+        self::assertSame(5, count($mocks->calls));
+    }
+
     public function test_sync_scheduler_off_deletes_a_left_rule_only(): void
     {
         $mocks = new AwsMocks();

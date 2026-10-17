@@ -1,0 +1,119 @@
+<?php declare(strict_types=1);
+
+namespace Multiapi\Arco\Tests\Unit\Commands;
+
+use Aws\ResourceGroupsTaggingAPI\Exception\ResourceGroupsTaggingAPIException;
+use Aws\Result;
+use Multiapi\Arco\Commands\StorageListCommand;
+use Multiapi\Arco\Tests\Unit\Deploy\AwsMocks;
+use PHPUnit\Framework\TestCase;
+use Symfony\Component\Console\Tester\CommandTester;
+
+final class StorageListCommandTest extends TestCase
+{
+    private ?ProjectFixture $project = null;
+    private AwsMocks $mocks;
+
+    protected function setUp(): void
+    {
+        $this->mocks = new AwsMocks();
+    }
+
+    protected function tearDown(): void
+    {
+        $this->project?->restore();
+    }
+
+    private function run_(string $storage): CommandTester
+    {
+        $this->project = new ProjectFixture(str_replace('->concurrency(48)', '->concurrency(48)' . $storage, ProjectFixture::standardConfig()));
+        $tester = $this->project->tester(new StorageListCommand(fn (?string $profile, string $region) => $this->mocks->clients($region)));
+        $tester->execute(['--env' => 'production', '--profile' => 'p'], ['interactive' => false]);
+        return $tester;
+    }
+
+    private static function display(CommandTester $tester): string
+    {
+        return (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+    }
+
+    /** @param array<string, string> $tags */
+    private static function bucket(string $name, array $tags): array
+    {
+        $list = [];
+        foreach ($tags as $key => $value) {
+            $list[] = ['Key' => $key, 'Value' => $value];
+        }
+        return ['ResourceARN' => 'arn:aws:s3:::' . $name, 'Tags' => $list];
+    }
+
+    public function test_lists_the_storages_in_arco_php_and_the_retained_buckets(): void
+    {
+        $tags = fn (string $resource) => ['arco:app' => 'shop', 'arco:environment' => 'production', 'arco:resource' => $resource];
+        $this->mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result([
+                'ResourceTagMappingList' => [self::bucket('shop-production-uploads-111111111111', $tags('storage:uploads'))],
+                'PaginationToken' => 'next',
+            ]),
+            new Result(['ResourceTagMappingList' => [
+                self::bucket('shop-production-avatars-111111111111', $tags('storage:avatars')),
+                self::bucket('shop-production-other-111111111111', $tags('queue:other')),
+            ]]),
+        );
+
+        $tester = $this->run_("->storage('uploads', public: ['public/', 'avatars/'], expire: ['tmp/' => 7], cors: ['https://shop.test'])->storage('legacy', existing: 'old-bucket')");
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['GetCallerIdentity', 'GetResources', 'GetResources'], $this->mocks->calls);
+        self::assertSame(['s3'], $this->mocks->params[1]['ResourceTypeFilters']);
+        self::assertSame([
+            ['Key' => 'arco:app', 'Values' => ['shop']],
+            ['Key' => 'arco:environment', 'Values' => ['production']],
+            ['Key' => 'arco:resource'],
+        ], $this->mocks->params[1]['TagFilters']);
+        self::assertSame('next', $this->mocks->params[2]['PaginationToken']);
+
+        $display = self::display($tester);
+        self::assertStringContainsString('Bucket shop-production-uploads-111111111111', $display);
+        self::assertStringContainsString('URL https://shop-production-uploads-111111111111.s3.us-east-1.amazonaws.com', $display);
+        self::assertStringContainsString('Managed created by Arco', $display);
+        self::assertStringContainsString('Default disk yes', $display);
+        self::assertStringContainsString('Public prefixes public/, avatars/ (anyone can read)', $display);
+        self::assertStringContainsString('Expire tmp/ after 7 days', $display);
+        self::assertStringContainsString('CORS origins https://shop.test', $display);
+        self::assertStringContainsString('Bucket old-bucket', $display);
+        self::assertStringContainsString('Managed existing (not managed by Arco)', $display);
+        self::assertStringContainsString('Default disk no', $display);
+        self::assertStringContainsString('Public prefixes none', $display);
+        self::assertStringContainsString('Retained buckets (not in arco.php)', $display);
+        self::assertStringContainsString('avatars shop-production-avatars-111111111111', $display);
+        self::assertStringNotContainsString('shop-production-other', $display);
+        self::assertSame(1, substr_count($display, 'shop-production-uploads-111111111111 '), 'a bucket in arco.php is not listed as retained');
+    }
+
+    public function test_without_storage_says_so_and_unreadable_retained_buckets_are_unknown(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'AccessDeniedException', 400),
+        );
+
+        $tester = $this->run_('');
+
+        $tester->assertCommandIsSuccessful();
+        $display = self::display($tester);
+        self::assertStringContainsString('No storage in arco.php for production', $display);
+        self::assertStringContainsString('Retained buckets unknown: AccessDeniedException (needs tag:GetResources)', $display);
+    }
+
+    public function test_no_retained_buckets_is_said_so(): void
+    {
+        $this->mocks->handler->append(new Result(['Account' => '111111111111']), new Result(['ResourceTagMappingList' => []]));
+
+        $tester = $this->run_("->storage('uploads')");
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('No retained buckets for production.', self::display($tester));
+    }
+}
