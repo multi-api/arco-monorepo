@@ -24,7 +24,12 @@ final class StepPrinter
      * Params holding a code that is translated with the given key prefix before the step is printed;
      * the code's text gets the step's other params (e.g. {url} and {message}).
      */
-    private const TRANSLATED_PARAMS = ['deploy.console_downloads_binary' => ['reason' => 'deploy.console_reason.']];
+    private const TRANSLATED_PARAMS = [
+        'deploy.console_downloads_binary' => ['reason' => 'deploy.console_reason.'],
+        'deploy.log_retention' => ['groups' => 'deploy.log_groups.'],
+        'deploy.log_retention_one_day' => ['groups' => 'deploy.log_groups.'],
+        'deploy.log_retention_never' => ['groups' => 'deploy.log_groups.'],
+    ];
 
     private ?ProgressBar $bar = null;
     private int $printed = 0;

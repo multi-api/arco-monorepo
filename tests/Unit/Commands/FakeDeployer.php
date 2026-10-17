@@ -134,7 +134,7 @@ final class FakeDeployer implements Deployer
         if ($this->logRetentionError !== null) {
             throw $this->logRetentionError;
         }
-        $onStep('deploy.log_retention', ['days' => $config->logRetention === false ? 'never' : $config->logRetention]);
+        $onStep(...\Multiapi\Arco\Deploy\AwsDeployer::logRetentionStep($config->logRetention, $config->consoleEnabled() ? 'all' : 'web'));
     }
     public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->describeError !== null ? throw $this->describeError : $this->status; }
 }

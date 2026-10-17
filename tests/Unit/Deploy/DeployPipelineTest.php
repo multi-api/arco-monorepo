@@ -870,7 +870,7 @@ final class DeployPipelineTest extends TestCase
         $steps = [];
         $this->pipeline()->deploy($this->retentionConfig(30), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
         self::assertSame(['prepare', 'release', 'retention:30', 'prune'], $deployer->calls);
-        self::assertSame(['days' => 30], $steps['deploy.log_retention'] ?? null);
+        self::assertSame(['days' => 30, 'groups' => 'web'], $steps['deploy.log_retention'] ?? null);
 
         // Not managed: no call.
         $none = new FakeDeployer('rev-1');

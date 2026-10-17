@@ -281,9 +281,24 @@ final class AwsDeployer implements Deployer
         if ($config->logRetention === null) {
             return;
         }
-        $groups = LogGroups::for($config, $config->consoleEnabled() ? 'all' : 'web');
-        (new LogRetention($this->aws->logs()))->apply($groups, $config->logRetention);
-        $onStep('deploy.log_retention', ['days' => $config->logRetention === false ? 'never' : $config->logRetention]);
+        $scope = $config->consoleEnabled() ? 'all' : 'web';
+        (new LogRetention($this->aws->logs()))->apply(LogGroups::for($config, $scope), $config->logRetention);
+        // {groups} is a code (web, all) the step printer translates: only the groups touched are named.
+        $onStep(...self::logRetentionStep($config->logRetention, $scope));
+    }
+
+    /**
+     * The step reporting an applied retention: its key (days, one day or never) and params.
+     *
+     * @return array{0: string, 1: array<string, string|int>}
+     */
+    public static function logRetentionStep(int|false $days, string $scope): array
+    {
+        return match (true) {
+            $days === false => ['deploy.log_retention_never', ['groups' => $scope]],
+            $days === 1 => ['deploy.log_retention_one_day', ['groups' => $scope]],
+            default => ['deploy.log_retention', ['days' => $days, 'groups' => $scope]],
+        };
     }
 
     public function describe(AppConfig $config): ?AppStatus

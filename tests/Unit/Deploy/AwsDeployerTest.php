@@ -624,7 +624,7 @@ final class AwsDeployerTest extends TestCase
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(30, true), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
         self::assertSame(['CreateLogGroup', 'PutRetentionPolicy', 'CreateLogGroup', 'PutRetentionPolicy', 'CreateLogGroup', 'PutRetentionPolicy'], $mocks->calls);
         self::assertSame('/aws/lambda/shop-production-console', $mocks->params[4]['logGroupName']);
-        self::assertSame([['deploy.log_retention', ['days' => 30]]], $steps);
+        self::assertSame([['deploy.log_retention', ['days' => 30, 'groups' => 'all']]], $steps);
 
         // Console off: only the web groups. false: policies are removed.
         $mocks = new AwsMocks();
@@ -632,7 +632,14 @@ final class AwsDeployerTest extends TestCase
         $steps = [];
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(false, false), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
         self::assertSame(['CreateLogGroup', 'DeleteRetentionPolicy', 'CreateLogGroup', 'DeleteRetentionPolicy'], $mocks->calls);
-        self::assertSame([['deploy.log_retention', ['days' => 'never']]], $steps);
+        self::assertSame([['deploy.log_retention_never', ['groups' => 'web']]], $steps);
+
+        // One day: its own key, so the line is not "1 days".
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...array_fill(0, 4, new Result()));
+        $steps = [];
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(1, false), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+        self::assertSame([['deploy.log_retention_one_day', ['groups' => 'web']]], $steps);
 
         // Not managed: no AWS call at all.
         $mocks = new AwsMocks();

@@ -79,7 +79,7 @@ interface Deployer
 
     /**
      * Sets the retention of the web and (when the console is on) console log groups, creating them
-     * when missing. Nothing happens, no AWS call, when logRetention() is not set. Steps: deploy.log_retention.
+     * when missing. Nothing happens, no AWS call, when logRetention() is not set. Steps: deploy.log_retention, deploy.log_retention_one_day or deploy.log_retention_never (AwsDeployer::logRetentionStep()).
      *
      * @param Closure(string, array<string, string|int>): void $onStep
      */

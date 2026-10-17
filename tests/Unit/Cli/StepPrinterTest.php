@@ -149,4 +149,38 @@ final class StepPrinterTest extends TestCase
         self::assertContains('deploy.console_remove_failed', StepPrinter::WARNINGS);
         self::assertNotContains('deploy.console_removed', StepPrinter::WARNINGS);
     }
+
+    public function test_the_log_retention_lines_read_as_spanish(): void
+    {
+        $translator = new \Multiapi\Arco\Cli\Translator('es', dirname(__DIR__, 3) . '/packages/arco/lang');
+        $output = new BufferedOutput();
+        $printer = new StepPrinter(new SymfonyStyle(new ArrayInput([]), $output), $translator->trans(...), false);
+
+        $printer('deploy.log_retention', ['days' => 30, 'groups' => 'web']);
+        $printer('deploy.log_retention_never', ['groups' => 'all']);
+        $printer('deploy.log_retention_one_day', ['groups' => 'web']);
+
+        self::assertSame(
+            "  • Retención de logs: 30 días en los grupos de logs de web\n"
+            . "  • Retención de logs: no expiran, en los grupos de logs de web y consola\n"
+            . "  • Retención de logs: 1 día en los grupos de logs de web\n",
+            $output->fetch(),
+        );
+    }
+
+    public function test_the_log_retention_lines_in_english_name_only_the_groups_touched(): void
+    {
+        $translator = new \Multiapi\Arco\Cli\Translator('en', dirname(__DIR__, 3) . '/packages/arco/lang');
+        $output = new BufferedOutput();
+        $printer = new StepPrinter(new SymfonyStyle(new ArrayInput([]), $output), $translator->trans(...), false);
+
+        $printer('deploy.log_retention', ['days' => 30, 'groups' => 'all']);
+        $printer('deploy.log_retention_never', ['groups' => 'web']);
+
+        self::assertSame(
+            "  • Log retention: 30 days on the web and console log groups\n"
+            . "  • Log retention: never expire, on the web log groups\n",
+            $output->fetch(),
+        );
+    }
 }
