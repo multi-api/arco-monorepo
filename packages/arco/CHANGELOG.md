@@ -30,7 +30,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   name as their group and the job's UUID as their deduplication id, and a delay is dropped. In a batch,
   the messages after one that comes back are not run (they come back too), so a message group keeps its order.
 - **Added:** `existing:` attaches a worker to a queue Arco does not manage (name, URL or ARN); Arco never
-  changes its attributes and warns when it already has other consumers.
+  changes its attributes and warns when it already has other consumers. When a queue's reference changes,
+  the worker's event source mapping on the old queue is deleted once the new one exists.
 - **Added:** queues are never deleted. A queue removed from `arco.php` (or by `arco remove`) is kept in AWS
   with its messages and the deploy names it with its message count; adding the name back, or switching
   `fifo` on a queue Arco created, stops the deploy before any change. The queues live in a CloudFormation
