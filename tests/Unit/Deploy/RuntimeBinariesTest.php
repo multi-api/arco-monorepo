@@ -221,11 +221,25 @@ final class RuntimeBinariesTest extends TestCase
         ], 'arn:b:3');
     }
 
-    public function test_a_version_with_environment_but_no_variables_stops_before_deleting(): void
+    public function test_an_empty_environment_block_does_not_stop_the_prune(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['ResourceTagMappingList' => [['ResourceARN' => 'arn:b']]]),
+            new Result(['Versions' => [['Version' => '3', 'Environment' => []]]]),
+            new Result(['Contents' => [self::object('runtime/1.11.0-r1/frankenphp', '30 days')]]),
+            new Result([]),
+        );
+
+        self::assertSame(1, self::prune($mocks));
+        self::assertSame(['runtime/1.11.0-r1/frankenphp'], self::deletedKeys($mocks));
+    }
+
+    public function test_a_version_whose_variables_are_not_an_array_stops_before_deleting(): void
     {
         self::assertStopsBeforeDeleting([
             new Result(['ResourceTagMappingList' => [['ResourceARN' => 'arn:b']]]),
-            new Result(['Versions' => [['Version' => '3', 'Environment' => []]]]),
+            new Result(['Versions' => [['Version' => '3', 'Environment' => ['Variables' => 'oops']]]]),
         ], 'arn:b:3');
     }
 

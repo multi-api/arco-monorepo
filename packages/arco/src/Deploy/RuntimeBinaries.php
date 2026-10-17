@@ -117,7 +117,7 @@ final class RuntimeBinaries
     }
 
     /**
-     * The version's environment variables. A version with no Environment has none. One whose variables
+     * The version's environment variables. A version with no Environment, or an Environment without Variables, has none. One whose variables
      * cannot be read (Environment.Error: e.g. KMS-encrypted with a key this caller cannot decrypt, or a
      * disabled key) may reference any binary, so it stops the prune.
      *
@@ -133,12 +133,18 @@ final class RuntimeBinaries
             return [];
         }
         $environment = $version['Environment'];
-        $error = is_array($environment) ? ($environment['Error'] ?? null) : null;
-        if ($error !== null) {
+        if (! is_array($environment)) {
+            throw new \RuntimeException("Cannot read the environment variables of $name; no runtime binary was deleted.");
+        }
+        if (array_key_exists('Error', $environment)) {
+            $error = $environment['Error'];
             $detail = is_array($error) ? implode(': ', array_filter([$error['ErrorCode'] ?? null, $error['Message'] ?? null], 'is_string')) : '';
             throw new \RuntimeException("Cannot read the environment variables of $name" . ($detail === '' ? '' : " ($detail)") . '; no runtime binary was deleted.');
         }
-        $variables = is_array($environment) ? ($environment['Variables'] ?? null) : null;
+        if (! array_key_exists('Variables', $environment)) {
+            return [];
+        }
+        $variables = $environment['Variables'];
         if (! is_array($variables)) {
             throw new \RuntimeException("Cannot read the environment variables of $name; no runtime binary was deleted.");
         }
