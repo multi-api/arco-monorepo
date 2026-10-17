@@ -153,4 +153,24 @@ final class SchedulerRuleTest extends TestCase
         self::assertSame(['DescribeRule', 'DescribeRule'], $mocks->calls);
         self::assertSame('arco-shop-production-scheduler', $mocks->params[0]['Name']);
     }
+
+    public function test_has_invoke_permission_reads_the_alias_policy(): void
+    {
+        $policy = fn (string ...$sids) => new Result(['Policy' => json_encode(['Statement' => array_map(fn (string $sid) => ['Sid' => $sid], $sids)])]);
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            $policy('other', 'arco-scheduler'),
+            $policy('other'),
+            AwsMocks::error(LambdaException::class, 'GetPolicy', 'ResourceNotFoundException', 404),
+            AwsMocks::error(LambdaException::class, 'GetPolicy', 'AccessDeniedException', 403),
+        );
+        $rule = self::rule($mocks);
+
+        self::assertTrue($rule->hasInvokePermission($this->config()));
+        self::assertFalse($rule->hasInvokePermission($this->config()));
+        self::assertFalse($rule->hasInvokePermission($this->config()));
+        self::assertFalse($rule->hasInvokePermission($this->config()));
+        self::assertSame('shop-production-console', $mocks->params[0]['FunctionName']);
+        self::assertSame('live', $mocks->params[0]['Qualifier']);
+    }
 }

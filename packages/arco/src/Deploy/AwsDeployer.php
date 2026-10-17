@@ -214,7 +214,7 @@ final class AwsDeployer implements Deployer
             $this->customDomains($config)->remove($config, $step);
         }
         // The rule goes first: it would otherwise keep invoking a function that no longer exists.
-        if ($this->schedulerRuleExists($config)) {
+        if ($this->schedulerRuleExists($config, fn (string $error) => $step('remove.scheduler_unreadable', ['rule' => SchedulerRule::name($config), 'error' => $error]))) {
             $step('remove.step_scheduler', ['rule' => SchedulerRule::name($config)]);
             $this->schedulerRule()->delete($config);
         }
@@ -235,7 +235,8 @@ final class AwsDeployer implements Deployer
     public function removeConsole(AppConfig $config, Closure $onStep): void
     {
         // The scheduler rule goes before the function it invokes.
-        if ($this->schedulerRuleExists($config)) {
+        $unreadable = fn (string $error) => $onStep('deploy.scheduler_unreadable', ['rule' => SchedulerRule::name($config), 'function' => $config->consoleFunctionName(), 'error' => $error]);
+        if ($this->schedulerRuleExists($config, $unreadable)) {
             $this->schedulerRule()->delete($config);
             $onStep('deploy.scheduler_removed', []);
         }
@@ -246,7 +247,13 @@ final class AwsDeployer implements Deployer
     public function syncScheduler(AppConfig $config, Closure $onStep): void
     {
         if ($config->scheduler === null) {
-            if ($this->schedulerRuleExists($config)) {
+            // Without EventBridge read access, only a rule this console's alias still lets in is worth a warning.
+            $unreadable = function (string $error) use ($config, $onStep): void {
+                if ($this->schedulerRule()->hasInvokePermission($config)) {
+                    $onStep('deploy.scheduler_unreadable', ['rule' => SchedulerRule::name($config), 'function' => $config->consoleFunctionName(), 'error' => $error]);
+                }
+            };
+            if ($this->schedulerRuleExists($config, $unreadable)) {
                 $this->schedulerRule()->delete($config);
                 $onStep('deploy.scheduler_removed', []);
             }
@@ -325,10 +332,23 @@ final class AwsDeployer implements Deployer
         return new SchedulerRule($this->aws->eventBridge(), $this->aws->lambda());
     }
 
-    /** A profile without EventBridge access never created a rule: AccessDenied means "no rule". */
-    private function schedulerRuleExists(AppConfig $config): bool
+    /**
+     * Whether the scheduler rule exists. When EventBridge refuses the lookup, $onDenied gets the AWS
+     * message (the caller warns: the rule may still be there) and the answer is "no rule".
+     *
+     * @param Closure(string): void $onDenied
+     */
+    private function schedulerRuleExists(AppConfig $config, Closure $onDenied): bool
     {
-        return $this->tolerateAccessDenied(fn () => $this->schedulerRule()->exists($config));
+        try {
+            return $this->schedulerRule()->exists($config);
+        } catch (AwsException $e) {
+            if (! in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
+                throw $e;
+            }
+            $onDenied(self::awsError($e));
+            return false;
+        }
     }
 
     private function customDomains(AppConfig $config): CustomDomains

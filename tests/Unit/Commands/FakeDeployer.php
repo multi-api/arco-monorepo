@@ -38,6 +38,8 @@ final class FakeDeployer implements Deployer
     public bool $schedulerRuleExists = false;
     /** thrown by syncScheduler(), e.g. AWS refusing events:PutRule */
     public ?\Throwable $syncSchedulerError = null;
+    /** @var list<array{0: string, 1: array<string, string|int>}> steps reported by remove() */
+    public array $removeSteps = [];
 
     public function __construct(
         public ?string $previousRevision = null,
@@ -100,7 +102,13 @@ final class FakeDeployer implements Deployer
     }
 
     public function hasDomainResources(AppConfig $config): bool { return $this->domainResources; }
-    public function remove(AppConfig $config, ?callable $onStep = null): void { $this->calls[] = 'remove'; }
+    public function remove(AppConfig $config, ?callable $onStep = null): void
+    {
+        $this->calls[] = 'remove';
+        foreach ($this->removeSteps as [$key, $params]) {
+            $onStep !== null && $onStep($key, $params);
+        }
+    }
     public function consoleExists(AppConfig $config): bool { $this->consoleLookups++; return $this->consoleExists; }
     public function removeConsole(AppConfig $config, \Closure $onStep): void { $this->calls[] = 'removeConsole'; if ($this->removeConsoleError !== null) { throw $this->removeConsoleError; } }
     public function syncScheduler(AppConfig $config, \Closure $onStep): void

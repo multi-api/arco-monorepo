@@ -102,6 +102,31 @@ final class SchedulerRule
         }
     }
 
+    /**
+     * Whether the console's live alias still has the statement letting EventBridge invoke it: the trace
+     * put() leaves, readable with Lambda permissions alone. A missing function, alias or policy, or a
+     * refused lambda:GetPolicy, all mean "no trace".
+     */
+    public function hasInvokePermission(AppConfig $config): bool
+    {
+        try {
+            $policy = $this->lambda->getPolicy(['FunctionName' => $config->consoleFunctionName(), 'Qualifier' => ConsoleFunction::ALIAS])['Policy'] ?? null;
+        } catch (LambdaException $e) {
+            if (in_array($e->getAwsErrorCode(), ['ResourceNotFoundException', 'AccessDeniedException'], true)) {
+                return false;
+            }
+            throw $e;
+        }
+        $document = is_string($policy) ? json_decode($policy, true) : null;
+        $statements = is_array($document) ? ($document['Statement'] ?? []) : [];
+        foreach (is_array($statements) ? $statements : [] as $statement) {
+            if (is_array($statement) && ($statement['Sid'] ?? null) === self::STATEMENT_ID) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Removes the target, the rule and the invoke permission; pieces already gone are fine. */
     public function delete(AppConfig $config): void
     {

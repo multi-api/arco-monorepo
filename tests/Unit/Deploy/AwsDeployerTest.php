@@ -386,7 +386,8 @@ final class AwsDeployerTest extends TestCase
 
         self::assertSame(['DescribeStacks', 'DescribeRule', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
         self::assertSame('shop-production-console', $mocks->params[2]['FunctionName']);
-        self::assertSame(['remove.step_console', 'remove.step_function'], $steps);
+        self::assertSame(['remove.scheduler_unreadable', 'remove.step_console', 'remove.step_function'], $steps, 'an unreadable rule is a warning, and the remove goes on');
+        self::assertContains('remove.scheduler_unreadable', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
 
     public function test_remove_with_domains_removes_the_distribution_before_the_function(): void
@@ -577,6 +578,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['FailedEntryCount' => 0]), new Result([]), new Result([]),
             self::noRule(),
             AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400),
+            self::lambdaMissing('GetPolicy'),
         );
         $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
         $steps = [];
@@ -584,10 +586,51 @@ final class AwsDeployerTest extends TestCase
 
         $deployer->syncScheduler($this->config(), $onStep);
         $deployer->syncScheduler($this->config(), $onStep); // no rule: nothing to say
-        $deployer->syncScheduler($this->config(), $onStep); // no events: access: no rule either
+        $deployer->syncScheduler($this->config(), $onStep); // no events: access and no invoke statement on the alias: nothing either
 
-        self::assertSame(['DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'DescribeRule', 'DescribeRule'], $mocks->calls);
+        self::assertSame(['DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'DescribeRule', 'DescribeRule', 'GetPolicy'], $mocks->calls);
+        self::assertSame(['FunctionName' => 'shop-production-console', 'Qualifier' => 'live'], array_intersect_key($mocks->params[6], ['FunctionName' => 1, 'Qualifier' => 1]));
         self::assertSame(['deploy.scheduler_removed'], $steps);
+    }
+
+    public function test_sync_scheduler_off_warns_when_the_rule_cannot_be_read_but_left_its_statement(): void
+    {
+        $denied = fn () => AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400, 'not authorized to perform: events:DescribeRule');
+        $policy = fn (string $sid) => new Result(['Policy' => json_encode(['Version' => '2012-10-17', 'Statement' => [['Sid' => $sid, 'Effect' => 'Allow', 'Principal' => ['Service' => 'events.amazonaws.com'], 'Action' => 'lambda:InvokeFunction']]])]);
+        $mocks = new AwsMocks();
+        $mocks->handler->append($denied(), $policy('arco-scheduler'), $denied(), $policy('someone-else'));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $steps = [];
+        $onStep = function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; };
+
+        $deployer->syncScheduler($this->config(), $onStep);
+        $deployer->syncScheduler($this->config(), $onStep); // another statement only: no evidence of an Arco rule
+
+        self::assertSame(['DescribeRule', 'GetPolicy', 'DescribeRule', 'GetPolicy'], $mocks->calls);
+        self::assertSame([['deploy.scheduler_unreadable', [
+            'rule' => 'arco-shop-production-scheduler',
+            'function' => 'shop-production-console',
+            'error' => 'not authorized to perform: events:DescribeRule',
+        ]]], $steps);
+        self::assertContains('deploy.scheduler_unreadable', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
+    public function test_remove_console_warns_when_the_rule_cannot_be_read_and_still_deletes_the_function(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400, 'not authorized to perform: events:DescribeRule'),
+            new Result([]),                                                                     // DeleteFunction
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->removeConsole($this->config(), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['DescribeRule', 'DeleteFunction'], $mocks->calls);
+        self::assertSame([
+            ['deploy.scheduler_unreadable', ['rule' => 'arco-shop-production-scheduler', 'function' => 'shop-production-console', 'error' => 'not authorized to perform: events:DescribeRule']],
+            ['deploy.console_removed', ['function' => 'shop-production-console']],
+        ], $steps);
     }
 
     public function test_console_exists(): void

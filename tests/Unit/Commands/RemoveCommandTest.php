@@ -103,4 +103,25 @@ final class RemoveCommandTest extends TestCase
         self::assertSame(['describe'], $deployer->calls);
         $project->restore();
     }
+
+    public function test_an_unreadable_scheduler_rule_is_a_warning_and_the_remove_goes_on(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->removeSteps = [
+            ['remove.scheduler_unreadable', ['rule' => 'arco-shop-production-scheduler', 'error' => 'not authorized to perform: events:DescribeRule']],
+            ['remove.step_console', ['function' => 'shop-production-console']],
+        ];
+        $tester = $project->tester($this->command($deployer));
+        $tester->setInputs(['production']);
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p']);
+
+        $tester->assertCommandIsSuccessful();
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('[WARNING] The scheduler rule arco-shop-production-scheduler', $display);
+        self::assertStringContainsString('events:DescribeRule', $display);
+        self::assertStringContainsString('• Deleting console function shop-production-console', $display);
+        $project->restore();
+    }
 }
