@@ -109,8 +109,15 @@ final class QueueDlqCommand extends ArcoCommand
         }
     }
 
+    /**
+     * The body cut to BODY_CHARS, without C0/C1 control characters other than newline and tab: a
+     * payload carries user input, and escape sequences must not reach the developer's terminal.
+     */
     private static function truncate(string $body): string
     {
+        $body = preg_replace('/[\x{0}-\x{8}\x{B}-\x{1F}\x{7F}-\x{9F}]/u', '', $body)
+            // Not valid UTF-8: strip the bytes instead.
+            ?? (string) preg_replace('/[\x00-\x08\x0B-\x1F\x7F-\x9F]/', '', $body);
         return mb_strlen($body) > self::BODY_CHARS ? mb_substr($body, 0, self::BODY_CHARS) . '…' : $body;
     }
 }

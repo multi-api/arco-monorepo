@@ -72,6 +72,26 @@ final class QueueDlqCommandTest extends TestCase
         self::assertStringContainsString('arco queue:dlq emails --redrive', self::display($tester));
     }
 
+    public function test_control_characters_in_a_body_never_reach_the_terminal(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result(['Attributes' => ['ApproximateNumberOfMessages' => '1']]),
+            new Result(['Messages' => [
+                ['MessageId' => 'm-1', 'Body' => "{\"a\":\"\e]0;pwned\x07\e[2Jx\u{9b}31m\"}\n\tnext", 'Attributes' => []],
+                ['MessageId' => 'm-2', 'Body' => "bin\xff\e[31mary", 'Attributes' => []],
+            ]]),
+        );
+
+        $display = $this->run_('emails')->getDisplay();
+
+        self::assertStringNotContainsString("\e", $display);
+        self::assertStringNotContainsString("\x07", $display);
+        self::assertStringNotContainsString("\u{9b}", $display, 'C1 controls (CSI) too');
+        self::assertStringContainsString('{"a":"]0;pwned[2Jx31m"}' . "\n\tnext", $display, 'newlines and tabs stay');
+        self::assertStringContainsString('[31mary', $display, 'a body that is not UTF-8 is stripped too');
+    }
+
     public function test_an_empty_dlq_is_said_so(): void
     {
         $this->mocks->handler->append(
