@@ -1,6 +1,6 @@
 <?php declare(strict_types=1);
 
-// Arco worker runtime: entrypoint of a queue's worker function (<app>-<env>-<queue>-worker), started by
+// Arco worker runtime: entrypoint of a queue's worker function (<app>-<env>-queue-<name>), started by
 // /var/task/bootstrap when ARCO_WORKER_QUEUE is set. Prepares the environment exactly like
 // runtime/console.php (secrets, storage, phpIni), then becomes `php artisan arco:work`, which boots
 // Laravel once and serves every invocation through the Runtime API.
