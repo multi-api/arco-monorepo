@@ -11,6 +11,7 @@ use Multiapi\Arco\Deploy\Domains\Certificates;
 use Multiapi\Arco\Deploy\Domains\CustomDomains;
 use Multiapi\Arco\Deploy\Domains\DomainStack;
 use Multiapi\Arco\Deploy\Domains\Stacks;
+use Multiapi\Arco\Logs\LogGroups;
 use Multiapi\Arco\Package\ConsoleArtifacts;
 use Multiapi\Arco\Package\Package;
 use Multiapi\Arco\Secrets\SecretResolver;
@@ -263,6 +264,16 @@ final class AwsDeployer implements Deployer
         $alias = $this->consoleFunction()->aliasArn($function) ?? throw DeployException::make('deploy.console_missing', ['function' => $function]);
         $this->schedulerRule()->put($config, $alias, self::tags($config));
         $onStep('deploy.scheduler_set', ['every' => $config->scheduler]);
+    }
+
+    public function applyLogRetention(AppConfig $config, Closure $onStep): void
+    {
+        if ($config->logRetention === null) {
+            return;
+        }
+        $groups = LogGroups::for($config, $config->consoleEnabled() ? 'all' : 'web');
+        (new LogRetention($this->aws->logs()))->apply($groups, $config->logRetention);
+        $onStep('deploy.log_retention', ['days' => $config->logRetention === false ? 'never' : $config->logRetention]);
     }
 
     public function describe(AppConfig $config): ?AppStatus

@@ -76,4 +76,12 @@ interface Deployer
      * @param Closure(string, array<string, string|int>): void $onStep
      */
     public function syncScheduler(AppConfig $config, Closure $onStep): void;
+
+    /**
+     * Sets the retention of the web and (when the console is on) console log groups, creating them
+     * when missing. Nothing happens, no AWS call, when logRetention() is not set. Steps: deploy.log_retention.
+     *
+     * @param Closure(string, array<string, string|int>): void $onStep
+     */
+    public function applyLogRetention(AppConfig $config, Closure $onStep): void;
 }

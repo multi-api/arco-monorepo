@@ -570,6 +570,38 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([['deploy.scheduler_set', ['every' => 5]]], $steps);
     }
 
+    public function test_apply_log_retention(): void
+    {
+        $with = function (int|false|null $days, bool $console): AppConfig {
+            $app = App::make('shop')->console($console)->region('us-east-1');
+            if ($days !== null) {
+                $app->logRetention($days);
+            }
+            return ConfigResolver::resolve($app->environment('production')->toArray(), 'production');
+        };
+
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...array_fill(0, 6, new Result()));
+        $steps = [];
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(30, true), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+        self::assertSame(['CreateLogGroup', 'PutRetentionPolicy', 'CreateLogGroup', 'PutRetentionPolicy', 'CreateLogGroup', 'PutRetentionPolicy'], $mocks->calls);
+        self::assertSame('/aws/lambda/shop-production-console', $mocks->params[4]['logGroupName']);
+        self::assertSame([['deploy.log_retention', ['days' => 30]]], $steps);
+
+        // Console off: only the web groups. false: policies are removed.
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...array_fill(0, 4, new Result()));
+        $steps = [];
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(false, false), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+        self::assertSame(['CreateLogGroup', 'DeleteRetentionPolicy', 'CreateLogGroup', 'DeleteRetentionPolicy'], $mocks->calls);
+        self::assertSame([['deploy.log_retention', ['days' => 'never']]], $steps);
+
+        // Not managed: no AWS call at all.
+        $mocks = new AwsMocks();
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(null, true), fn () => null);
+        self::assertSame([], $mocks->calls);
+    }
+
     public function test_sync_scheduler_off_deletes_a_left_rule_only(): void
     {
         $mocks = new AwsMocks();

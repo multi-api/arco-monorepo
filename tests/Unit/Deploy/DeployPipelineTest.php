@@ -855,6 +855,39 @@ final class DeployPipelineTest extends TestCase
         self::assertNotContains('deploy.scheduler_skipped', $keys);
     }
 
+    private function retentionConfig(int|false|null $days): AppConfig
+    {
+        $app = App::make('shop')->region('us-east-1')->console(false)->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)));
+        if ($days !== null) {
+            $app->logRetention($days);
+        }
+        return ConfigResolver::resolve($app->environment('production')->toArray(), 'production');
+    }
+
+    public function test_log_retention_applied_after_release_and_failure_is_a_warning(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $steps = [];
+        $this->pipeline()->deploy($this->retentionConfig(30), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+        self::assertSame(['prepare', 'release', 'retention:30', 'prune'], $deployer->calls);
+        self::assertSame(['days' => 30], $steps['deploy.log_retention'] ?? null);
+
+        // Not managed: no call.
+        $none = new FakeDeployer('rev-1');
+        $this->pipeline()->deploy($this->retentionConfig(null), new PlainPhpPreset(), $this->project, $none, new FakeVerifier(true), fn () => null);
+        self::assertSame(['prepare', 'release', 'prune'], $none->calls);
+
+        // AccessDenied: warning, the deploy still succeeds.
+        $denied = new FakeDeployer('rev-1');
+        $denied->logRetentionError = AwsMocks::error(\Aws\CloudWatchLogs\Exception\CloudWatchLogsException::class, 'PutRetentionPolicy', 'AccessDeniedException', 400, 'denied');
+        $steps = [];
+        $outcome = $this->pipeline()->deploy($this->retentionConfig(false), new PlainPhpPreset(), $this->project, $denied, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+        self::assertTrue($outcome->verification->ok);
+        self::assertSame(['error' => 'denied'], $steps['deploy.log_retention_failed'] ?? null);
+        self::assertContains('deploy.log_retention_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertContains('prune', $denied->calls);
+    }
+
     public function test_scheduler_removed_when_turned_off(): void
     {
         $deployer = new FakeDeployer('rev-1', consoleVersion: '7');

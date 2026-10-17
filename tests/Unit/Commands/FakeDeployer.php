@@ -38,6 +38,8 @@ final class FakeDeployer implements Deployer
     public bool $schedulerRuleExists = false;
     /** thrown by syncScheduler(), e.g. AWS refusing events:PutRule */
     public ?\Throwable $syncSchedulerError = null;
+    /** thrown by applyLogRetention(), e.g. AWS refusing logs:PutRetentionPolicy */
+    public ?\Throwable $logRetentionError = null;
     /** @var list<array{0: string, 1: array<string, string|int>}> steps reported by remove() */
     public array $removeSteps = [];
 
@@ -122,6 +124,17 @@ final class FakeDeployer implements Deployer
         } elseif ($this->schedulerRuleExists) {
             $onStep('deploy.scheduler_removed', []);
         }
+    }
+    public function applyLogRetention(AppConfig $config, \Closure $onStep): void
+    {
+        if ($config->logRetention === null) {
+            return;
+        }
+        $this->calls[] = 'retention:' . ($config->logRetention === false ? 'never' : $config->logRetention);
+        if ($this->logRetentionError !== null) {
+            throw $this->logRetentionError;
+        }
+        $onStep('deploy.log_retention', ['days' => $config->logRetention === false ? 'never' : $config->logRetention]);
     }
     public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->describeError !== null ? throw $this->describeError : $this->status; }
 }

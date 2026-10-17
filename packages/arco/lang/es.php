@@ -115,6 +115,8 @@ return [
     'deploy.scheduler_removed' => 'Se eliminó la regla del scheduler (el scheduler está desactivado)',
     'deploy.scheduler_skipped' => 'El scheduler (cada {every} min) no se actualizó: este despliegue no movió el alias live de {function} (ver el aviso anterior). El despliegue está activo y verificado; corrígelo y vuelve a desplegar.',
     'deploy.scheduler_failed' => 'El despliegue está activo y verificado, pero no se pudo actualizar la regla del scheduler {rule} ({error}). Permite las acciones events: de la regla y lambda:AddPermission y lambda:RemovePermission en la función de consola en el perfil, y vuelve a desplegar.',
+    'deploy.log_retention' => 'Retención de logs: {days} (días que se conservan; "never" significa que no expiran) en los grupos de logs de web y consola',
+    'deploy.log_retention_failed' => 'El despliegue está activo y verificado, pero no se pudo aplicar la retención de logs ({error}). Permite logs:CreateLogGroup, logs:PutRetentionPolicy y logs:DeleteRetentionPolicy en los grupos de logs de la app en el perfil, y vuelve a desplegar.',
     'deploy.scheduler_unreadable' => 'No se pudo comprobar la regla del scheduler {rule} ({error}): si existe, sigue ejecutando schedule:run en {function}. Permite events:DescribeRule, events:RemoveTargets y events:DeleteRule en el perfil y vuelve a desplegar, o elimina la regla en la consola de EventBridge.',
     'init.ask_migrate' => 'Esta app usa una base de datos {connection}. ¿Ejecutar "migrate --force" en cada despliegue, antes de mover el tráfico?',
     'deploy.php_cli_downloading' => 'Descargando el PHP CLI del build de runtime {build} para la función de consola ({size} MB; se descarga una vez y queda en caché)',

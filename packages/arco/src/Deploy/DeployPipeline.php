@@ -250,6 +250,14 @@ final class DeployPipeline
                     ]);
                 }
             }
+            if ($verification->ok) {
+                try {
+                    $deployer->applyLogRetention($config, $onStep(...));
+                } catch (Throwable $e) {
+                    // The verified revision is already live: a refused log group call is a warning.
+                    $onStep('deploy.log_retention_failed', ['error' => self::errorMessage($e)]);
+                }
+            }
             // Custom domains only once the endpoint is known to work; the origin is the endpoint domain.
             if ($verification->ok && $config->domains !== []) {
                 $result = $deployer->attachDomains($config, $result, $preset instanceof CachesPaths ? $preset->cachedPaths() : [], $onStep);
