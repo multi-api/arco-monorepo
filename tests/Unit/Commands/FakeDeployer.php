@@ -34,6 +34,10 @@ final class FakeDeployer implements Deployer
     public int $consoleLookups = 0;
     /** thrown by removeConsole(), e.g. AWS refusing lambda:DeleteFunction */
     public ?\Throwable $removeConsoleError = null;
+    /** whether the scheduler rule exists, for syncScheduler() with the scheduler off */
+    public bool $schedulerRuleExists = false;
+    /** thrown by syncScheduler(), e.g. AWS refusing events:PutRule */
+    public ?\Throwable $syncSchedulerError = null;
 
     public function __construct(
         public ?string $previousRevision = null,
@@ -99,5 +103,17 @@ final class FakeDeployer implements Deployer
     public function remove(AppConfig $config, ?callable $onStep = null): void { $this->calls[] = 'remove'; }
     public function consoleExists(AppConfig $config): bool { $this->consoleLookups++; return $this->consoleExists; }
     public function removeConsole(AppConfig $config, \Closure $onStep): void { $this->calls[] = 'removeConsole'; if ($this->removeConsoleError !== null) { throw $this->removeConsoleError; } }
+    public function syncScheduler(AppConfig $config, \Closure $onStep): void
+    {
+        $this->calls[] = 'scheduler:' . ($config->scheduler ?? 'off');
+        if ($this->syncSchedulerError !== null) {
+            throw $this->syncSchedulerError;
+        }
+        if ($config->scheduler !== null) {
+            $onStep('deploy.scheduler_set', ['every' => $config->scheduler]);
+        } elseif ($this->schedulerRuleExists) {
+            $onStep('deploy.scheduler_removed', []);
+        }
+    }
     public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->describeError !== null ? throw $this->describeError : $this->status; }
 }

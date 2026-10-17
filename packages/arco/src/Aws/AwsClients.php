@@ -5,6 +5,7 @@ namespace Multiapi\Arco\Aws;
 use Aws\Acm\AcmClient;
 use Aws\CloudFormation\CloudFormationClient;
 use Aws\CloudWatchLogs\CloudWatchLogsClient;
+use Aws\EventBridge\EventBridgeClient;
 use Aws\Credentials\CredentialProvider;
 use Aws\Credentials\Credentials;
 use Aws\Credentials\CredentialSources;
@@ -203,6 +204,7 @@ final class AwsClients
     public function secretsManager(): SecretsManagerClient { return $this->sdk->createSecretsManager(); }
     /** @param array<string, mixed> $overrides extra client config (Live Tail passes an http_handler) */
     public function logs(array $overrides = []): CloudWatchLogsClient { return $this->sdk->createCloudWatchLogs($overrides); }
+    public function eventBridge(): EventBridgeClient { return $this->sdk->createEventBridge(); }
     /** CloudFront only uses certificates from us-east-1, whatever the app region. */
     public function acm(): AcmClient { return $this->sdk->createAcm(['region' => 'us-east-1']); }
     public function cloudFormation(): CloudFormationClient { return $this->sdk->createCloudFormation(); }

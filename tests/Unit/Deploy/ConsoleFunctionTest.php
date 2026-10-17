@@ -155,4 +155,15 @@ final class ConsoleFunctionTest extends TestCase
 
         self::assertSame(['GetAlias', 'GetAlias', 'DeleteFunction'], $mocks->calls);
     }
+
+    public function test_alias_arn(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['AliasArn' => 'arn:aws:lambda:us-east-1:1:function:shop-production-console:live']), self::missing('GetAlias'));
+        $console = $this->console($mocks);
+
+        self::assertSame('arn:aws:lambda:us-east-1:1:function:shop-production-console:live', $console->aliasArn('shop-production-console'));
+        self::assertNull($console->aliasArn('shop-production-console'));
+        self::assertSame('live', $mocks->params[0]['Name']);
+    }
 }

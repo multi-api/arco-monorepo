@@ -67,4 +67,13 @@ interface Deployer
      * @param Closure(string, array<string, string|int>): void $onStep
      */
     public function removeConsole(AppConfig $config, Closure $onStep): void;
+
+    /**
+     * Once the console's live alias points at this deploy's version: with a scheduler, creates or
+     * updates the EventBridge rule invoking that alias (step deploy.scheduler_set); without one,
+     * deletes a rule left from before (step deploy.scheduler_removed, nothing when there was none).
+     *
+     * @param Closure(string, array<string, string|int>): void $onStep
+     */
+    public function syncScheduler(AppConfig $config, Closure $onStep): void;
 }

@@ -213,6 +213,11 @@ final class AwsDeployer implements Deployer
         if ($config->domains !== [] || $this->stackExists($config)) {
             $this->customDomains($config)->remove($config, $step);
         }
+        // The rule goes first: it would otherwise keep invoking a function that no longer exists.
+        if ($this->schedulerRuleExists($config)) {
+            $step('remove.step_scheduler', ['rule' => SchedulerRule::name($config)]);
+            $this->schedulerRule()->delete($config);
+        }
         $step('remove.step_console', ['function' => $config->consoleFunctionName()]);
         $this->consoleFunction()->delete($config->consoleFunctionName());
         $step('remove.step_function', ['function' => $config->functionName()]);
@@ -229,9 +234,28 @@ final class AwsDeployer implements Deployer
 
     public function removeConsole(AppConfig $config, Closure $onStep): void
     {
-        // Only the function for now; the scheduler's EventBridge rule is removed before it once it exists.
+        // The scheduler rule goes before the function it invokes.
+        if ($this->schedulerRuleExists($config)) {
+            $this->schedulerRule()->delete($config);
+            $onStep('deploy.scheduler_removed', []);
+        }
         $this->consoleFunction()->delete($config->consoleFunctionName());
         $onStep('deploy.console_removed', ['function' => $config->consoleFunctionName()]);
+    }
+
+    public function syncScheduler(AppConfig $config, Closure $onStep): void
+    {
+        if ($config->scheduler === null) {
+            if ($this->schedulerRuleExists($config)) {
+                $this->schedulerRule()->delete($config);
+                $onStep('deploy.scheduler_removed', []);
+            }
+            return;
+        }
+        $function = $config->consoleFunctionName();
+        $alias = $this->consoleFunction()->aliasArn($function) ?? throw DeployException::make('deploy.console_missing', ['function' => $function]);
+        $this->schedulerRule()->put($config, $alias, self::tags($config));
+        $onStep('deploy.scheduler_set', ['every' => $config->scheduler]);
     }
 
     public function describe(AppConfig $config): ?AppStatus
@@ -294,6 +318,17 @@ final class AwsDeployer implements Deployer
     private function consoleFunction(): ConsoleFunction
     {
         return new ConsoleFunction($this->aws->lambda(), $this->sleeper);
+    }
+
+    private function schedulerRule(): SchedulerRule
+    {
+        return new SchedulerRule($this->aws->eventBridge(), $this->aws->lambda());
+    }
+
+    /** A profile without EventBridge access never created a rule: AccessDenied means "no rule". */
+    private function schedulerRuleExists(AppConfig $config): bool
+    {
+        return $this->tolerateAccessDenied(fn () => $this->schedulerRule()->exists($config));
     }
 
     private function customDomains(AppConfig $config): CustomDomains

@@ -75,7 +75,7 @@ final class DeployPipelineTest extends TestCase
 
         self::assertTrue($outcome->verification->ok);
         self::assertFalse($outcome->rolledBack);
-        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
         self::assertSame([
             'LOG_CHANNEL' => 'syslog',
             'SESSION_DRIVER' => 'cookie',
@@ -141,7 +141,7 @@ final class DeployPipelineTest extends TestCase
 
         $outcome = $this->pipeline()->deploy($this->config(domains: true), $preset, $this->project, $deployer, new FakeVerifier(true), fn () => null);
 
-        self::assertSame(['prepare', 'release', 'domains:/build/*', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'domains:/build/*', 'prune'], $deployer->calls);
         self::assertSame(['shop.example.com'], $outcome->result->domains);
     }
 
@@ -168,7 +168,7 @@ final class DeployPipelineTest extends TestCase
         $outcome = $this->pipeline()->deployPackage($this->config(domains: true), new PlainPhpPreset(), $package, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
 
         self::assertTrue($outcome->verification->ok);
-        self::assertSame(['prepare', 'release', 'domains:', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'domains:', 'prune'], $deployer->calls);
         self::assertSame($zip, $deployer->package?->path);
         self::assertSame($built->hash, $deployer->package->hash);
         self::assertSame('production', $deployer->variables['ARCO_ENV']);
@@ -186,7 +186,7 @@ final class DeployPipelineTest extends TestCase
 
         $outcome = $this->pipeline()->deploy($this->config(domains: true), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
 
-        self::assertSame(['prepare', 'release', 'domains:', 'coldStart', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'domains:', 'coldStart', 'prune'], $deployer->calls);
         self::assertSame(950, $outcome->verification->initDurationMs);
         self::assertTrue($outcome->verification->ok);
     }
@@ -200,7 +200,7 @@ final class DeployPipelineTest extends TestCase
 
         self::assertTrue($outcome->verification->ok);
         self::assertNull($outcome->verification->initDurationMs);
-        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
     }
 
     public function test_a_failed_verification_skips_the_cold_start_lookup(): void
@@ -219,7 +219,7 @@ final class DeployPipelineTest extends TestCase
 
         $this->pipeline()->deploy($this->config(domains: true), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
 
-        self::assertSame(['prepare', 'release', 'live:7', 'domains:', 'coldStart', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'live:7', 'scheduler:off', 'domains:', 'coldStart', 'prune'], $deployer->calls);
     }
 
     public function test_a_rollback_leaves_the_console_live_alias_where_it_was(): void
@@ -431,7 +431,7 @@ final class DeployPipelineTest extends TestCase
             ['reason' => 'php_cli_unavailable', 'url' => $url, 'message' => 'cURL error 6: Could not resolve host'],
             $steps['deploy.console_downloads_binary'] ?? null,
         );
-        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls, 'the deploy goes on');
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls, 'the deploy goes on');
     }
 
     public function test_a_php_cli_that_fails_its_checksum_stops_the_deploy_before_any_aws_change(): void
@@ -470,14 +470,14 @@ final class DeployPipelineTest extends TestCase
         self::assertNull($deployer->console);
         self::assertContains('deploy.console_skipped_size', $steps);
         self::assertNotContains('deploy.console_downloads_binary', $steps, 'no console is deployed, so it downloads nothing');
-        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
     }
 
     public function test_pruning_runs_last_and_only_after_a_verified_deploy(): void
     {
         $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
         $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
-        self::assertSame(['prepare', 'release', 'live:7', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'live:7', 'scheduler:off', 'prune'], $deployer->calls);
 
         $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');
         $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(false), fn () => null);
@@ -495,7 +495,7 @@ final class DeployPipelineTest extends TestCase
 
         self::assertTrue($outcome->verification->ok);
         self::assertFalse($outcome->rolledBack);
-        self::assertSame(['prepare', 'release', 'live:7', 'domains:', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'live:7', 'scheduler:off', 'domains:', 'prune'], $deployer->calls);
         self::assertSame(['coldStart'], $verifier->calls);
         self::assertSame([
             'revision' => 'rev-2',
@@ -520,7 +520,7 @@ final class DeployPipelineTest extends TestCase
             'version' => '7',
             'error' => 'not authorized to perform: lambda:PutFunctionEventInvokeConfig',
         ], $steps['deploy.console_retries_not_disabled'] ?? null);
-        self::assertSame(['prepare', 'release', 'live:7', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'live:7', 'scheduler:off', 'prune'], $deployer->calls);
     }
 
     public function test_a_refused_prune_is_a_warning_on_a_successful_deploy(): void
@@ -552,7 +552,7 @@ final class DeployPipelineTest extends TestCase
 
         $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null, $this->plan($deployer, [new CommandResult(0, ''), new CommandResult(0, '')]));
 
-        self::assertSame(['prepare', 'console:migrate --force@7', 'console:config:cache@7', 'release', 'live:7', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'console:migrate --force@7', 'console:config:cache@7', 'release', 'live:7', 'scheduler:off', 'prune'], $deployer->calls);
         self::assertSame(['migrate --force', 'config:cache'], $outcome->commandsRan);
     }
 
@@ -564,7 +564,7 @@ final class DeployPipelineTest extends TestCase
 
         $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null, $plan);
 
-        self::assertSame(['prepare', 'console:a@7', 'result:a:one', 'console:b@7', 'result:b:two', 'release', 'live:7', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'console:a@7', 'result:a:one', 'console:b@7', 'result:b:two', 'release', 'live:7', 'scheduler:off', 'prune'], $deployer->calls);
     }
 
     public function test_a_failing_command_stops_the_deploy_before_traffic(): void
@@ -752,7 +752,7 @@ final class DeployPipelineTest extends TestCase
         $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
 
         self::assertSame(0, $deployer->consoleLookups);
-        self::assertSame(['prepare', 'release', 'live:7', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'live:7', 'scheduler:off', 'prune'], $deployer->calls);
     }
 
     public function test_deploy_commands_need_console(): void
@@ -793,6 +793,99 @@ final class DeployPipelineTest extends TestCase
         self::assertFalse($outcome->rolledBack);
         self::assertSame(['prepare', 'release', 'removeConsole', 'domains:', 'prune'], $deployer->calls, 'domains and prune still run');
         self::assertSame(['function' => 'shop-production-console', 'error' => 'AccessDenied on lambda:DeleteFunction'], $steps['deploy.console_remove_failed'] ?? null);
+    }
+
+    private function schedulerConfig(?int $every, ?bool $console = null): AppConfig
+    {
+        $app = App::make('shop')->region('us-east-1')->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)));
+        if ($every !== null) {
+            $app->scheduler($every);
+        }
+        if ($console !== null) {
+            $app->console($console);
+        }
+        return ConfigResolver::resolve($app->environment('production')->toArray(), 'production');
+    }
+
+    public function test_scheduler_synced_after_console_activation(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+        $steps = [];
+
+        $outcome = $this->pipeline()->deploy($this->schedulerConfig(5), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertSame(['prepare', 'release', 'live:7', 'scheduler:5', 'prune'], $deployer->calls);
+        self::assertSame(['every' => 5], $steps['deploy.scheduler_set'] ?? null);
+
+        // Lambda's retries could not be turned off, but the alias did move: the scheduler still follows it.
+        $retries = new FakeDeployer('rev-1', consoleVersion: '7');
+        $retries->activateError = new ConsoleRetriesNotDisabled('denied');
+        $this->pipeline()->deploy($this->schedulerConfig(5), new PlainPhpPreset(), $this->project, $retries, new FakeVerifier(true), fn () => null);
+        self::assertSame(['prepare', 'release', 'live:7', 'scheduler:5', 'prune'], $retries->calls);
+    }
+
+    public function test_scheduler_skipped_when_console_not_activated(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+        $deployer->activateError = new \RuntimeException('not authorized to perform: lambda:UpdateAlias');
+        $steps = [];
+
+        $outcome = $this->pipeline()->deploy($this->schedulerConfig(5), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertFalse($outcome->rolledBack);
+        self::assertSame(['prepare', 'release', 'live:7', 'prune'], $deployer->calls, 'the rule is not touched');
+        self::assertArrayHasKey('deploy.console_not_activated', $steps);
+        self::assertSame(['function' => 'shop-production-console', 'every' => 5], $steps['deploy.scheduler_skipped'] ?? null);
+        self::assertContains('deploy.scheduler_skipped', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+
+        // No console version in this deploy (e.g. skipped for size): nothing was activated either.
+        $noVersion = new FakeDeployer('rev-1');
+        $keys = [];
+        $this->pipeline()->deploy($this->schedulerConfig(5), new PlainPhpPreset(), $this->project, $noVersion, new FakeVerifier(true), function (string $key) use (&$keys): void { $keys[] = $key; });
+        self::assertSame(['prepare', 'release', 'prune'], $noVersion->calls);
+        self::assertContains('deploy.scheduler_skipped', $keys);
+
+        // A failed verification rolls back: no scheduler change, no warning about it.
+        $failed = new FakeDeployer('rev-1', consoleVersion: '7');
+        $keys = [];
+        $this->pipeline()->deploy($this->schedulerConfig(5), new PlainPhpPreset(), $this->project, $failed, new FakeVerifier(false), function (string $key) use (&$keys): void { $keys[] = $key; });
+        self::assertSame(['prepare', 'release', 'rollback:rev-1'], $failed->calls);
+        self::assertNotContains('deploy.scheduler_skipped', $keys);
+    }
+
+    public function test_scheduler_removed_when_turned_off(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+        $deployer->schedulerRuleExists = true;
+        $steps = [];
+
+        $outcome = $this->pipeline()->deploy($this->schedulerConfig(null, console: true), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertSame(['prepare', 'release', 'live:7', 'scheduler:off', 'prune'], $deployer->calls);
+        self::assertContains('deploy.scheduler_removed', $steps);
+
+        // console(false): removeConsole() takes the rule with it, so the scheduler is not synced apart.
+        $off = new FakeDeployer('rev-1');
+        $off->consoleExists = true;
+        $this->pipeline()->deploy($this->schedulerConfig(null, console: false), new PlainPhpPreset(), $this->project, $off, new FakeVerifier(true), fn () => null);
+        self::assertSame(['prepare', 'release', 'removeConsole', 'prune'], $off->calls);
+    }
+
+    public function test_a_failed_scheduler_sync_is_a_warning_and_the_deploy_goes_on(): void
+    {
+        $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
+        $deployer->syncSchedulerError = new \RuntimeException('not authorized to perform: events:PutRule');
+        $steps = [];
+
+        $outcome = $this->pipeline()->deploy($this->schedulerConfig(5), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertSame(['prepare', 'release', 'live:7', 'scheduler:5', 'prune'], $deployer->calls);
+        self::assertSame(['rule' => 'arco-shop-production-scheduler', 'error' => 'not authorized to perform: events:PutRule'], $steps['deploy.scheduler_failed'] ?? null);
+        self::assertContains('deploy.scheduler_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
 
     public function test_warns_when_scheduler_slower_than_tasks(): void

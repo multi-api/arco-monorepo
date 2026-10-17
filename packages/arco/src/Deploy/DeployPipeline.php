@@ -210,10 +210,13 @@ final class DeployPipeline
                 $rolledBack = true;
             }
             // `arco command` and tinker follow the live alias: it moves only to a version whose web revision works.
+            $consoleActivated = false;
             if ($verification->ok && $result->consoleVersion !== null) {
                 try {
                     $deployer->activateConsole($config, $result->consoleVersion);
+                    $consoleActivated = true;
                 } catch (ConsoleRetriesNotDisabled $e) {
+                    $consoleActivated = true;
                     // The alias did move; only Lambda's async retries stay on.
                     $onStep('deploy.console_retries_not_disabled', [
                         'function' => $config->consoleFunctionName(),
@@ -230,6 +233,9 @@ final class DeployPipeline
                         'error' => self::errorMessage($e),
                     ]);
                 }
+            }
+            if ($verification->ok && $config->consoleEnabled()) {
+                $this->syncScheduler($config, $deployer, $consoleActivated, $onStep);
             }
             // console(false): the old console goes only once the new revision serves and is verified.
             if ($verification->ok && $removeConsole) {
@@ -262,6 +268,27 @@ final class DeployPipeline
             return new DeployOutcome($result, $verification, $rolledBack, $package->bytes, $ran);
         } finally {
             (new Filesystem())->remove($work);
+        }
+    }
+
+    /**
+     * Points the scheduler rule at the live alias (or deletes it when the scheduler is off), once the
+     * deploy is verified. With a scheduler but no alias moved by this deploy (refused, or no console
+     * version), the rule is left alone: the alias may not match the live revision, or not exist yet.
+     * A failure is a warning: the verified revision is already live.
+     *
+     * @param callable(string, array<string, string|int>): void $onStep
+     */
+    private function syncScheduler(AppConfig $config, Deployer $deployer, bool $consoleActivated, callable $onStep): void
+    {
+        if ($config->scheduler !== null && ! $consoleActivated) {
+            $onStep('deploy.scheduler_skipped', ['function' => $config->consoleFunctionName(), 'every' => $config->scheduler]);
+            return;
+        }
+        try {
+            $deployer->syncScheduler($config, $onStep(...));
+        } catch (Throwable $e) {
+            $onStep('deploy.scheduler_failed', ['rule' => SchedulerRule::name($config), 'error' => self::errorMessage($e)]);
         }
     }
 

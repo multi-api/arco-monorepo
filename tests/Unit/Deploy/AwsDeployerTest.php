@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\Deploy;
 
 use Aws\CloudFormation\Exception\CloudFormationException;
+use Aws\EventBridge\Exception\EventBridgeException;
 use Aws\Iam\Exception\IamException;
 use Aws\Lambda\Exception\LambdaException;
 use Aws\LambdaWeb\Exception\LambdaWebException;
@@ -13,6 +14,7 @@ use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Deploy\AwsDeployer;
+use Multiapi\Arco\Deploy\SchedulerRule;
 use Multiapi\Arco\Deploy\DeployResult;
 use Multiapi\Arco\Deploy\PreparedDeploy;
 use Multiapi\Arco\Package\ConsoleArtifacts;
@@ -38,6 +40,11 @@ final class AwsDeployerTest extends TestCase
     private static function lambdaMissing(string $operation): LambdaException
     {
         return AwsMocks::error(LambdaException::class, $operation, 'ResourceNotFoundException', 404);
+    }
+
+    private static function noRule(): EventBridgeException
+    {
+        return AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'ResourceNotFoundException', 400);
     }
 
     private function console(): ConsoleArtifacts
@@ -367,6 +374,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400), // no events: access, no rule
             self::lambdaMissing('DeleteFunction'),                                              // console never deployed
             new Result([]),                                                                     // DeleteWebFunction
             AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
@@ -376,8 +384,8 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
-        self::assertSame('shop-production-console', $mocks->params[1]['FunctionName']);
+        self::assertSame(['DescribeStacks', 'DescribeRule', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
+        self::assertSame('shop-production-console', $mocks->params[2]['FunctionName']);
         self::assertSame(['remove.step_console', 'remove.step_function'], $steps);
     }
 
@@ -392,6 +400,7 @@ final class AwsDeployerTest extends TestCase
             new Result([]),                                                                     // DeleteStack
             $missing(),
             new Result(['CertificateSummaryList' => []]),
+            self::noRule(),
             new Result([]),                                                                     // DeleteFunction (console)
             new Result([]),
             AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
@@ -401,7 +410,7 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($config, function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListCertificates', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
+        self::assertSame(['DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListCertificates', 'DescribeRule', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
         self::assertSame(['remove.step_distribution', 'remove.step_console', 'remove.step_function'], $steps);
     }
 
@@ -450,6 +459,7 @@ final class AwsDeployerTest extends TestCase
             $stack('CREATE_COMPLETE'), new Result([]),                                          // Stacks::delete
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production does not exist'),
             new Result(['CertificateSummaryList' => []]),
+            self::noRule(),
             new Result([]),                                                                     // DeleteFunction (console)
             new Result([]),
             AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
@@ -492,7 +502,13 @@ final class AwsDeployerTest extends TestCase
     public function test_remove_console(): void
     {
         $mocks = new AwsMocks();
-        $mocks->handler->append(new Result([]), self::lambdaMissing('DeleteFunction'));
+        $mocks->handler->append(
+            new Result(['Name' => 'arco-shop-production-scheduler']),                          // DescribeRule: a rule is left
+            new Result(['FailedEntryCount' => 0]), new Result([]), new Result([]),              // RemoveTargets, DeleteRule, RemovePermission
+            new Result([]),                                                                     // DeleteFunction
+            self::noRule(),
+            self::lambdaMissing('DeleteFunction'),
+        );
         $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
         $steps = [];
         $onStep = function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; };
@@ -500,9 +516,78 @@ final class AwsDeployerTest extends TestCase
         $deployer->removeConsole($this->config(), $onStep);
         $deployer->removeConsole($this->config(), $onStep); // already gone: ResourceNotFoundException is swallowed
 
-        self::assertSame(['DeleteFunction', 'DeleteFunction'], $mocks->calls);
-        self::assertSame('shop-production-console', $mocks->params[0]['FunctionName']);
-        self::assertSame([['deploy.console_removed', ['function' => 'shop-production-console']], ['deploy.console_removed', ['function' => 'shop-production-console']]], $steps);
+        self::assertSame(['DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'DeleteFunction', 'DescribeRule', 'DeleteFunction'], $mocks->calls, 'the rule goes before the function it invokes');
+        self::assertSame('shop-production-console', $mocks->params[4]['FunctionName']);
+        self::assertSame([
+            ['deploy.scheduler_removed', []],
+            ['deploy.console_removed', ['function' => 'shop-production-console']],
+            ['deploy.console_removed', ['function' => 'shop-production-console']],
+        ], $steps);
+    }
+
+    public function test_remove_deletes_scheduler_rule_before_console(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+            new Result(['Name' => 'arco-shop-production-scheduler']),                          // DescribeRule
+            new Result(['FailedEntryCount' => 0]), new Result([]), new Result([]),              // RemoveTargets, DeleteRule, RemovePermission
+            new Result([]),                                                                     // DeleteFunction (console)
+            new Result([]),                                                                     // DeleteWebFunction
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
+            new Result([]), new Result([]),                                                     // DeleteRolePolicy, DeleteRole
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame(['DescribeStacks', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
+        self::assertSame('arco-shop-production-scheduler', $mocks->params[3]['Name']);
+        self::assertSame('shop-production-console', $mocks->params[5]['FunctionName']);
+        self::assertSame(['remove.step_scheduler', 'remove.step_console', 'remove.step_function'], $steps);
+    }
+
+    public function test_sync_scheduler_points_the_rule_at_the_live_alias(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->scheduler(5)->environment('production')->toArray(), 'production');
+        $alias = 'arn:aws:lambda:us-east-1:123456789012:function:shop-production-console:live';
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['AliasArn' => $alias, 'FunctionVersion' => '7']),
+            new Result(['RuleArn' => 'arn:aws:events:us-east-1:123456789012:rule/arco-shop-production-scheduler']),
+            new Result(['FailedEntryCount' => 0]),
+            new Result(['Statement' => '{}']),
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncScheduler($config, function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['GetAlias', 'PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
+        self::assertSame(['FunctionName' => 'shop-production-console', 'Name' => 'live'], array_intersect_key($mocks->params[0], ['FunctionName' => 1, 'Name' => 1]));
+        self::assertSame([['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']], $mocks->params[1]['Tags']);
+        self::assertSame($alias, $mocks->params[2]['Targets'][0]['Arn']);
+        self::assertSame([['deploy.scheduler_set', ['every' => 5]]], $steps);
+    }
+
+    public function test_sync_scheduler_off_deletes_a_left_rule_only(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Name' => SchedulerRule::name($this->config())]),
+            new Result(['FailedEntryCount' => 0]), new Result([]), new Result([]),
+            self::noRule(),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400),
+        );
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $steps = [];
+        $onStep = function (string $key) use (&$steps): void { $steps[] = $key; };
+
+        $deployer->syncScheduler($this->config(), $onStep);
+        $deployer->syncScheduler($this->config(), $onStep); // no rule: nothing to say
+        $deployer->syncScheduler($this->config(), $onStep); // no events: access: no rule either
+
+        self::assertSame(['DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'DescribeRule', 'DescribeRule'], $mocks->calls);
+        self::assertSame(['deploy.scheduler_removed'], $steps);
     }
 
     public function test_console_exists(): void
