@@ -225,7 +225,8 @@ vendor/bin/arco remove --env=production        # asks you to type the environmen
 
 `remove` deletes the function, the console function, the queue workers and the endpoint and the execution role, and with custom domains the
 CloudFront stack, its DNS aliases and a certificate Arco requested. The shared code bucket,
-your SSM parameters and the SQS queues (with their messages; `remove` lists them) are kept.
+your SSM parameters, the SQS queues (with their messages), the storage buckets (with their files) and the
+cache and failed-jobs tables (with their items) are kept; `remove` lists each one it kept.
 
 ## Operating the app
 
@@ -276,6 +277,30 @@ Laravel's own queue worker, booted once per instance, so retries, `$backoff`, `f
 and stops before any change when one is missing.
 `arco queue:set` and `arco queue:remove` change a queue in `arco.php`; removed queues stay in AWS with their
 messages. Options, FIFO, existing queues and permissions: [Queues](configuration.md#queues).
+
+### Storage, cache and failed jobs
+
+```bash
+vendor/bin/arco storage:add uploads --env=production      # writes ->storage('uploads') in arco.php
+vendor/bin/arco storage:public uploads avatars/ --env=production
+vendor/bin/arco cache:add --env=production                # writes ->cache()
+vendor/bin/arco queue:failed-table --env=production       # writes ->failedJobsTable()
+vendor/bin/arco deploy --env=production
+vendor/bin/arco storage:list --env=production
+```
+
+Each `->storage('<name>')` gets a private S3 bucket, `<app>-<env>-<name>-<account>`. The first storage is
+Laravel's default disk (Arco sets `FILESYSTEM_DISK=s3`, `AWS_BUCKET` and `AWS_URL`), and every storage is also
+a disk of its own name, `Storage::disk('uploads')`, registered by `multiapi/arco-laravel` 0.6+. Laravel's S3
+driver needs `league/flysystem-aws-s3-v3` (`composer require league/flysystem-aws-s3-v3 "^3.0"`). Public
+prefixes, expiry rules and CORS are options of the storage (`storage:public`, `storage:expire`,
+`storage:cors`).
+
+`->cache()` creates a DynamoDB table `<app>-<env>-cache` and sets `CACHE_STORE=dynamodb`; `->failedJobsTable()`
+creates `<app>-<env>-failed-jobs` and sends failed jobs there (they expire after about a week). Both need
+`aws/aws-sdk-php` and `multiapi/arco-laravel` 0.6+. Every one of them can point at a bucket or table you
+already have with `existing:`. Removed buckets and tables stay in AWS with their data. Details:
+[Storage](configuration.md#storage) and [Cache and failed-jobs tables](configuration.md#cache-and-failed-jobs-tables).
 
 ### Commands
 
@@ -450,6 +475,8 @@ The role used by the E2E workflow lives in a dedicated test account and needs:
 - for the runtime clean-up: `s3:ListBucket` on the code bucket and `s3:GetObject`, `s3:PutObject`,
   `s3:DeleteObject` on `runtime/*`
 - for queues (only when `arco.php` has `queue()`; see [Permissions for queues](#permissions-for-queues))
+- for storage and tables (only when `arco.php` has `storage()`, `cache()` or `failedJobsTable()`; see
+  [Permissions for storage and tables](#permissions-for-storage-and-tables))
 
 For your own apps, scope the SSM resource to your parameters and add Secrets Manager read access
 if you use `arco-secret:` references. If a permission is missing, Arco reports which operation
@@ -459,7 +486,8 @@ basis: without `lambda:ListVersionsByFunction` or `lambda:DeleteFunction` that s
 People who only run `arco command`, `arco tinker` or `arco logs` need `lambda:InvokeFunction` on the console
 function (`arco logs` needs the `logs:` actions above). The function's execution role is separate: for the managed role Arco
 adds `logs:CreateLogGroup`, `logs:CreateLogStream` and `logs:PutLogEvents` on the web, console and queue
-worker log groups, the SQS actions the app and workers need on the queues in `arco.php` (`ArcoQueues`), `s3:GetObject` on `runtime/*` of the code bucket (the console function only reads it when it
+worker log groups, the SQS actions the app and workers need on the queues in `arco.php` (`ArcoQueues`), read
+and write access to the buckets and tables in `arco.php` (`ArcoStorage`, `ArcoStorageList`, `ArcoTables`), `s3:GetObject` on `runtime/*` of the code bucket (the console function only reads it when it
 downloads the binary, but the role keeps it: a console version that downloads can be live after a
 rollback), and read access to the
 secrets you reference.
@@ -476,6 +504,9 @@ With `queue()`, the deploy profile also needs:
   credentials), `sqs:ReceiveMessage` (the `queue:dlq` sample) and `sqs:StartMessageMoveTask` (`queue:dlq
   --redrive`, which also needs `sqs:DeleteMessage` on the dead-letter queue and `sqs:SendMessage` on the
   queue), on your queues and their dead-letter queues (`arn:aws:sqs:*:*:<app>-*`) and any `existing` queue
+- `sqs:DeleteQueue` on the same queues, used only by CloudFormation when the deploy that creates a queue
+  fails and rolls back (the new queue is deleted; queues that survived a deploy are always kept). Without it
+  that rollback cannot finish and the stack needs fixing by hand
 - `lambda:CreateEventSourceMapping`, `lambda:UpdateEventSourceMapping`, `lambda:DeleteEventSourceMapping`,
   `lambda:ListEventSourceMappings`, `lambda:GetEventSourceMapping` (resource `*`; `CreateEventSourceMapping`
   can be limited with the `lambda:FunctionArn` condition)
@@ -490,6 +521,32 @@ With `queue()`, the deploy profile also needs:
 Without queues in `arco.php` a deploy reads the queue stack only to clean up after removed queues, and a
 profile without CloudFormation access is not asked for any of this. The execution role's statements (and
 what to add to your own `role()`) are in [Queue permissions](configuration.md#queue-permissions).
+
+### Permissions for storage and tables
+
+With `storage()`, `cache()` or `failedJobsTable()`, the deploy profile also needs:
+
+- the CloudFormation actions of [Permissions for queues](#permissions-for-queues) on
+  `stack/arco-*-resources/*` (buckets and tables live in the same resources stack)
+- on the buckets Arco creates (`arn:aws:s3:::<app>-*`; CloudFormation creates and updates them with the
+  profile's credentials): `s3:CreateBucket`, `s3:PutBucketTagging`, `s3:PutEncryptionConfiguration`,
+  `s3:PutBucketPublicAccessBlock`, `s3:PutLifecycleConfiguration` (`expire`), `s3:PutBucketCORS` (`cors`),
+  `s3:PutBucketPolicy` and `s3:DeleteBucketPolicy` (`public`), `s3:GetBucket*`
+- `s3:ListBucket` on the same buckets: the deploy checks a bucket name before creating it (`HeadBucket`, which
+  answers 403 without it, read as "name taken") and whether a kept bucket still has files
+- `s3:DeleteBucket` on the same buckets, used only when the deploy that creates a bucket fails and rolls back
+- on the tables (`arn:aws:dynamodb:*:*:table/<app>-*`): `dynamodb:CreateTable`, `dynamodb:DescribeTable` (also
+  the check before creating a table and the item count of a kept one; without it the deploy stops and names
+  it), `dynamodb:UpdateTable`, `dynamodb:UpdateTimeToLive`, `dynamodb:DescribeTimeToLive`,
+  `dynamodb:TagResource`, and `dynamodb:DeleteTable` (only for the rollback of a deploy that created the table)
+- `tag:GetResources`, for the retained buckets in `arco storage:list`
+- `sts:GetCallerIdentity` (already in the minimal list): bucket names hold the account id
+
+`existing` buckets and tables need nothing from the deploy profile: only the execution role uses them. If
+CloudFormation reports an access denial for another action on a bucket or table, the failed stack event
+names it: add it to the profile. The execution role's statements (and what to add to your own `role()`) are
+in [Storage permissions](configuration.md#storage-permissions) and
+[Table permissions](configuration.md#table-permissions).
 
 ### Permissions for custom domains
 
