@@ -33,7 +33,7 @@ final class QueueFailedTableCommand extends ArcoCommand
             if (! $input->getOption('remove')) {
                 return $this->addTable($input, $io, 'failedJobsTable');
             }
-            if ($input->getOption('existing') !== null) {
+            if (! in_array($input->getOption('existing'), [null, ''], true)) {
                 throw new UserError($this->t('table.existing_with_remove'));
             }
             return $this->removeTable($input, $io, 'failedJobsTable');

@@ -34,7 +34,11 @@ final class StorageExpireCommand extends ArcoCommand
         $io = new SymfonyStyle($input, $output);
         try {
             $prefix = $this->argument($input, 'prefix');
+            $days = $this->argument($input, 'days');
             if ($input->getOption('remove')) {
+                if ($days !== '') {
+                    throw new UserError($this->t('storage.days_with_remove'));
+                }
                 return $this->changeStorageOption($input, $io, 'expire', $prefix, static function (array $expire) use ($prefix): ?array {
                     if (! array_key_exists($prefix, $expire)) {
                         return null;
@@ -43,7 +47,6 @@ final class StorageExpireCommand extends ArcoCommand
                     return $expire;
                 });
             }
-            $days = $this->argument($input, 'days');
             if ($days === '') {
                 throw new UserError($this->t('storage.days_required', ['storage' => $this->argument($input, 'name'), 'prefix' => $prefix]));
             }

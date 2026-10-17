@@ -5,11 +5,11 @@ namespace Multiapi\Arco\Commands\Concerns;
 use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ArcoFileEditor;
-use Multiapi\Arco\Config\ConfigException;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\QueueConfig;
 use Multiapi\Arco\Config\StorageConfig;
-use Multiapi\Arco\Config\Validator;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Style\SymfonyStyle;
 
 /**
  * Shared by the commands that edit calls keyed by a name, such as ->queue('<name>', ...) and
@@ -167,20 +167,7 @@ trait EditsNamedResources
      */
     private function assertValid(array $changed, ?string $environment): void
     {
-        $messages = [];
-        foreach (self::affectedEnvironments($changed, $environment) as $env) {
-            $result = (new Validator())->validate(ConfigResolver::resolve($changed, $env), $this->projectDir());
-            foreach ($result->errors as $error) {
-                foreach (self::resource()['errors'] as $prefix) {
-                    if (str_starts_with($error['key'], $prefix)) {
-                        $messages[$this->t($error['key'], $error['params'])] = true;
-                    }
-                }
-            }
-        }
-        if ($messages !== []) {
-            throw new UserError(implode("\n", array_map(static fn (string $m): string => '• ' . $m, array_keys($messages))));
-        }
+        $this->assertNoErrors($changed, $environment, self::resource()['errors']);
     }
 
     /**
@@ -191,16 +178,77 @@ trait EditsNamedResources
     private function writeNamed(?string $environment, string $name, array|false|null $options): void
     {
         $method = self::resource()['method'];
-        $byHand = $this->t('settings.edit_by_hand', ['where' => $this->where($environment)]) . "\n    "
-            . ($options === null ? $this->t('settings.remove_call', ['method' => $method]) : ArcoFileEditor::namedLine($method, $name, $options));
-        try {
-            $written = ArcoFileEditor::setNamed($this->arcoPhp(), $environment, $method, $name, $options);
-        } catch (ConfigException $e) {
-            throw new UserError($this->t($e->key, $e->params) . "\n" . $byHand);
+        $this->writeOrExplain(
+            $environment,
+            $options === null ? $this->t('settings.remove_call', ['method' => $method]) : self::namedLine($name, $options),
+            fn (): bool => ArcoFileEditor::setNamed($this->arcoPhp(), $environment, $method, $name, $options),
+        );
+    }
+
+    /**
+     * Adds the entry named by the `name` argument at the target level, unless it is already configured
+     * there (or, for the app level, in any environment). $options builds its options once that is known.
+     *
+     * @param callable(): array<string, Option> $options
+     */
+    private function addNamed(InputInterface $input, SymfonyStyle $io, callable $options): int
+    {
+        $method = self::resource()['method'];
+        $name = $this->argument($input, 'name');
+        [$raw, $environment] = $this->target($input, $io);
+        $found = self::existsAt($raw, $environment, $name);
+        if ($found !== false) {
+            throw new UserError($this->t("$method.exists", [$method => $name, 'where' => $this->where($found)]));
         }
-        if (! $written) {
-            throw new UserError($byHand);
+        $options = $options();
+        $this->assertValid(self::withNamed($raw, $environment, $name, $options), $environment);
+        $this->writeNamed($environment, $name, $options);
+        $io->success($this->t("$method.added", [$method => $name, 'environment' => $this->levelLabel($environment)]));
+        $io->writeln($this->t('settings.result', ['where' => $this->where($environment)]));
+        $io->writeln('    ' . self::namedLine($name, $options));
+        $this->printDeployNext($io, $raw, $environment);
+        return self::SUCCESS;
+    }
+
+    /**
+     * Removes the entry named by the `name` argument at the target level: the call at its own level, or
+     * ->method('<name>', false) in an environment that inherits it from the app. What it created in AWS
+     * stays there. An app-level removal names the environments whose own call still declares it.
+     */
+    private function removeNamed(InputInterface $input, SymfonyStyle $io): int
+    {
+        $method = self::resource()['method'];
+        $name = $this->argument($input, 'name');
+        [$raw, $environment] = $this->target($input, $io);
+        $level = self::levelNamed($raw, $environment);
+        $inherited = $environment !== null && is_array(self::levelNamed($raw, null)[$name] ?? null);
+        if ($inherited) {
+            // The app level defines it: only an environment-level false takes it out of this environment.
+            if (($level[$name] ?? null) === false) {
+                $io->note($this->t('settings.unchanged', ['where' => $this->where($environment)]));
+                return self::SUCCESS;
+            }
+            $change = false;
+        } elseif (is_array($level[$name] ?? null)) {
+            $change = null;
+        } else {
+            throw new UserError($this->t("$method.not_found", [$method => $name, 'where' => $this->where($environment)]));
         }
+        $this->assertValid(self::withNamed($raw, $environment, $name, $change), $environment);
+        $this->writeNamed($environment, $name, $change);
+        $io->success($this->t("$method.removed", [$method => $name, 'environment' => $this->levelLabel($environment)]));
+        $io->writeln($this->t('settings.result', ['where' => $this->where($environment)]));
+        $io->writeln('    ' . ($change === false ? self::namedLine($name, false) : $this->t('settings.remove_call', ['method' => $method])));
+        $io->writeln($this->t("$method.retained_note", [$method => $name]));
+        if ($environment === null) {
+            foreach (ConfigResolver::environments($raw) as $env) {
+                if (is_array(self::levelNamed($raw, $env)[$name] ?? null)) {
+                    $io->warning($this->t('settings.still_defined', ['environment' => $env, 'method' => $method, 'name' => $name]));
+                }
+            }
+        }
+        $this->printDeployNext($io, $raw, $environment);
+        return self::SUCCESS;
     }
 
     /** @param array<string, Option>|false $options */

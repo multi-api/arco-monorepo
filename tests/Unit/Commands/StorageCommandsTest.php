@@ -253,4 +253,69 @@ final class StorageCommandsTest extends TestCase
         self::assertSame(1, $tester->getStatusCode());
         self::assertStringContainsString('Storage "nope" is not configured in environment production.', self::display($tester));
     }
+
+    public function test_app_remove_warns_about_environment_overrides(): void
+    {
+        $this->project('->concurrency(48)', "->concurrency(48)->storage('uploads')");
+        $php = str_replace('->timeout(60)', "->timeout(60)->storage('uploads', expire: ['tmp/' => 7])", $this->source());
+        file_put_contents($this->project?->dir . '/arco.php', $php);
+
+        $tester = $this->run_(new StorageRemoveCommand(), ['name' => 'uploads', '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->storage('uploads', expire: ['tmp/' => 7])", $this->source());
+        self::assertStringContainsString('Environment production still has its own', self::display($tester));
+        self::assertStringContainsString('arco storage:remove uploads --env=production', self::display($tester));
+        self::assertStringNotContainsString('storage:remove uploads --env=staging', self::display($tester));
+    }
+
+    public function test_add_second_default_is_rejected(): void
+    {
+        $this->withStorage("->storage('files', default: true)");
+        $before = $this->source();
+
+        $tester = $this->run_(new StorageAddCommand(), ['name' => 'uploads', '--default' => true, '--app' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('Only one storage can be the default', self::display($tester));
+        self::assertSame($before, $this->source());
+    }
+
+    public function test_expire_days_with_remove_is_a_usage_error(): void
+    {
+        $this->withStorage("->storage('uploads', expire: ['tmp/' => 7])");
+        $before = $this->source();
+
+        $tester = $this->run_(new StorageExpireCommand(), ['name' => 'uploads', 'prefix' => 'tmp/', 'days' => '7', '--remove' => true, '--app' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('Do not give days with --remove', self::display($tester));
+        self::assertSame($before, $this->source());
+    }
+
+    public function test_env_override_back_to_app_value_drops_the_override(): void
+    {
+        $this->withStorage("->storage('uploads', public: ['a/'])");
+        $php = str_replace('->timeout(60)', "->timeout(60)->storage('uploads', public: ['a/', 'b/'])", $this->source());
+        file_put_contents($this->project?->dir . '/arco.php', $php);
+
+        $tester = $this->run_(new StoragePublicCommand(), ['name' => 'uploads', 'prefix' => 'b/', '--remove' => true, '--env' => 'production']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString("'b/'", $this->source());
+        self::assertSame(1, substr_count($this->source(), "->storage('uploads'"));
+        self::assertStringContainsString('public a/, b/ → a/', self::display($tester));
+    }
+
+    public function test_cors_remove_of_unknown_origin_changes_nothing(): void
+    {
+        $this->withStorage("->storage('uploads', cors: ['https://a.example'])");
+        $before = $this->source();
+
+        $tester = $this->run_(new StorageCorsCommand(), ['name' => 'uploads', 'origins' => ['https://z.example'], '--remove' => true, '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('has no cors entry "https://z.example"', self::display($tester));
+        self::assertSame($before, $this->source());
+    }
 }

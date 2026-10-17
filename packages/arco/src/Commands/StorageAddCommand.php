@@ -3,7 +3,6 @@
 namespace Multiapi\Arco\Commands;
 
 use Multiapi\Arco\Cli\ArcoCommand;
-use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\EditsStorage;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -32,27 +31,17 @@ final class StorageAddCommand extends ArcoCommand
     {
         $io = new SymfonyStyle($input, $output);
         try {
-            $name = $this->argument($input, 'name');
-            [$raw, $environment] = $this->target($input, $io);
-            $found = self::existsAt($raw, $environment, $name);
-            if ($found !== false) {
-                throw new UserError($this->t('storage.exists', ['storage' => $name, 'where' => $this->where($found)]));
-            }
-            $options = [];
-            $existing = $input->getOption('existing');
-            if (is_string($existing) && $existing !== '') {
-                $options['existing'] = $existing;
-            }
-            if ($input->getOption('default')) {
-                $options['default'] = true;
-            }
-            $this->assertValid(self::withNamed($raw, $environment, $name, $options), $environment);
-            $this->writeNamed($environment, $name, $options);
-            $io->success($this->t('storage.added', ['storage' => $name, 'environment' => $this->levelLabel($environment)]));
-            $io->writeln($this->t('settings.result', ['where' => $this->where($environment)]));
-            $io->writeln('    ' . self::namedLine($name, $options));
-            $this->printDeployNext($io, $raw, $environment);
-            return self::SUCCESS;
+            return $this->addNamed($input, $io, static function () use ($input): array {
+                $options = [];
+                $existing = $input->getOption('existing');
+                if (is_string($existing) && $existing !== '') {
+                    $options['existing'] = $existing;
+                }
+                if ($input->getOption('default')) {
+                    $options['default'] = true;
+                }
+                return $options;
+            });
         } catch (Throwable $e) {
             $io->error($this->describeError($e) ?? throw $e);
             return self::FAILURE;

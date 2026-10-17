@@ -3,7 +3,6 @@
 namespace Multiapi\Arco\Commands;
 
 use Multiapi\Arco\Cli\ArcoCommand;
-use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\EditsStorage;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -29,30 +28,7 @@ final class StorageRemoveCommand extends ArcoCommand
     {
         $io = new SymfonyStyle($input, $output);
         try {
-            $name = $this->argument($input, 'name');
-            [$raw, $environment] = $this->target($input, $io);
-            $level = self::levelNamed($raw, $environment);
-            $inherited = $environment !== null && is_array(self::levelNamed($raw, null)[$name] ?? null);
-            if ($inherited) {
-                // The app level defines it: only an environment-level false takes it out of this environment.
-                if (($level[$name] ?? null) === false) {
-                    $io->note($this->t('settings.unchanged', ['where' => $this->where($environment)]));
-                    return self::SUCCESS;
-                }
-                $change = false;
-            } elseif (is_array($level[$name] ?? null)) {
-                $change = null;
-            } else {
-                throw new UserError($this->t('storage.not_found', ['storage' => $name, 'where' => $this->where($environment)]));
-            }
-            $this->assertValid(self::withNamed($raw, $environment, $name, $change), $environment);
-            $this->writeNamed($environment, $name, $change);
-            $io->success($this->t('storage.removed', ['storage' => $name, 'environment' => $this->levelLabel($environment)]));
-            $io->writeln($this->t('settings.result', ['where' => $this->where($environment)]));
-            $io->writeln('    ' . ($change === false ? self::namedLine($name, false) : $this->t('settings.remove_call', ['method' => 'storage'])));
-            $io->writeln($this->t('storage.retained_note', ['storage' => $name]));
-            $this->printDeployNext($io, $raw, $environment);
-            return self::SUCCESS;
+            return $this->removeNamed($input, $io);
         } catch (Throwable $e) {
             $io->error($this->describeError($e) ?? throw $e);
             return self::FAILURE;

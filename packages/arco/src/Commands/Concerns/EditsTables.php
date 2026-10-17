@@ -2,11 +2,8 @@
 
 namespace Multiapi\Arco\Commands\Concerns;
 
-use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Config\ArcoFileEditor;
-use Multiapi\Arco\Config\ConfigException;
 use Multiapi\Arco\Config\ConfigResolver;
-use Multiapi\Arco\Config\Validator;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
@@ -35,7 +32,7 @@ trait EditsTables
             $io->note($this->t('settings.unchanged', ['where' => $this->where($environment)]));
             return self::SUCCESS;
         }
-        $this->assertTableValid(self::withTable($raw, $environment, $method, $value), $environment);
+        $this->assertNoErrors(self::withTable($raw, $environment, $method, $value), $environment, ['validation.table_existing']);
         $this->writeTable($environment, $method, $value);
         $this->printTableChange($io, $raw, $environment, $method, $before, $after, ArcoFileEditor::singletonLine($method, $value));
         return self::SUCCESS;
@@ -56,7 +53,7 @@ trait EditsTables
             return self::SUCCESS;
         }
         $change = $environment !== null && self::tableState($raw, null, $method) !== false ? false : null;
-        $this->assertTableValid(self::withTable($raw, $environment, $method, $change), $environment);
+        $this->assertNoErrors(self::withTable($raw, $environment, $method, $change), $environment, ['validation.table_existing']);
         $this->writeTable($environment, $method, $change);
         $this->printTableChange($io, $raw, $environment, $method, $before, false, $change === false
             ? ArcoFileEditor::singletonLine($method, false)
@@ -119,43 +116,17 @@ trait EditsTables
     }
 
     /**
-     * Stops with the table errors the change would cause, so arco.php stays as it is.
-     *
-     * @param array<string, mixed> $changed
-     */
-    private function assertTableValid(array $changed, ?string $environment): void
-    {
-        $messages = [];
-        foreach ($environment === null ? ConfigResolver::environments($changed) : [$environment] as $env) {
-            $result = (new Validator())->validate(ConfigResolver::resolve($changed, $env), $this->projectDir());
-            foreach ($result->errors as $error) {
-                if ($error['key'] === 'validation.table_existing') {
-                    $messages[$this->t($error['key'], $error['params'])] = true;
-                }
-            }
-        }
-        if ($messages !== []) {
-            throw new UserError(implode("\n", array_map(static fn (string $m): string => '• ' . $m, array_keys($messages))));
-        }
-    }
-
-    /**
      * Writes the call (or removes it when $value is null), or explains the line to change by hand.
      *
      * @param array{existing: string}|bool|null $value
      */
     private function writeTable(?string $environment, string $method, array|bool|null $value): void
     {
-        $byHand = $this->t('settings.edit_by_hand', ['where' => $this->where($environment)]) . "\n    "
-            . ($value === null ? $this->t('settings.remove_call', ['method' => $method]) : ArcoFileEditor::singletonLine($method, $value));
-        try {
-            $written = ArcoFileEditor::setSingleton($this->arcoPhp(), $environment, $method, $value);
-        } catch (ConfigException $e) {
-            throw new UserError($this->t($e->key, $e->params) . "\n" . $byHand);
-        }
-        if (! $written) {
-            throw new UserError($byHand);
-        }
+        $this->writeOrExplain(
+            $environment,
+            $value === null ? $this->t('settings.remove_call', ['method' => $method]) : ArcoFileEditor::singletonLine($method, $value),
+            fn (): bool => ArcoFileEditor::setSingleton($this->arcoPhp(), $environment, $method, $value),
+        );
     }
 
     /** @param array<string, mixed> $raw */

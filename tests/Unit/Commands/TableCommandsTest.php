@@ -149,4 +149,31 @@ final class TableCommandsTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString("->failedJobsTable(existing: 'shop-failed')", $this->source());
     }
+
+    public function test_failed_table_existing_with_remove_is_rejected(): void
+    {
+        $this->project('->concurrency(48)', '->concurrency(48)->failedJobsTable()');
+        $before = $this->source();
+
+        $tester = $this->run_(new QueueFailedTableCommand(), ['--existing' => 'shop-failed', '--remove' => true, '--app' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('Pass either --existing or --remove, not both.', self::display($tester));
+        self::assertSame($before, $this->source());
+    }
+
+    public function test_empty_existing_counts_as_not_given(): void
+    {
+        $this->project('->concurrency(48)', '->concurrency(48)->failedJobsTable()');
+
+        $tester = $this->run_(new QueueFailedTableCommand(), ['--existing' => '', '--remove' => true, '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('failedJobsTable', $this->source());
+
+        $tester = $this->run_(new CacheAddCommand(), ['--existing' => '', '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->cache()', $this->source());
+    }
 }

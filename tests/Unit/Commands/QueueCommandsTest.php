@@ -214,4 +214,18 @@ final class QueueCommandsTest extends TestCase
         self::assertSame(1, $tester->getStatusCode());
         self::assertStringContainsString('is not configured in environment production', self::display($tester));
     }
+
+    public function test_app_remove_warns_about_environment_overrides(): void
+    {
+        $this->project('->concurrency(48)', "->concurrency(48)->queue('emails')");
+        $php = str_replace('->timeout(60)', "->timeout(60)->queue('emails', timeout: 30)", $this->source());
+        file_put_contents($this->project?->dir . '/arco.php', $php);
+
+        $tester = $this->run_(new QueueRemoveCommand(), ['name' => 'emails', '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->queue('emails', timeout: 30)", $this->source());
+        self::assertStringContainsString('Environment production still has its own', self::display($tester));
+        self::assertStringContainsString('arco queue:remove emails --env=production', self::display($tester));
+    }
 }
