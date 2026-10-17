@@ -37,8 +37,9 @@ final class BuildersTest extends TestCase
             'domains' => null,
             'deployCommands' => null,
             'queues' => [],
+            'storage' => [],
             'environments' => [
-                'staging' => ['settings' => [], 'variables' => [], 'runtime' => [], 'permissions' => [], 'domains' => null, 'deployCommands' => null, 'queues' => []],
+                'staging' => ['settings' => [], 'variables' => [], 'runtime' => [], 'permissions' => [], 'domains' => null, 'deployCommands' => null, 'queues' => [], 'storage' => []],
                 'production' => [
                     'settings' => ['account' => '222222222222', 'profile' => 'acme-prod', 'timeout' => 60],
                     'variables' => ['APP_KEY' => 'arco-ssm:/shop/production/app-key'],
@@ -47,6 +48,7 @@ final class BuildersTest extends TestCase
                     'domains' => null,
                     'deployCommands' => null,
                     'queues' => [],
+                    'storage' => [],
                 ],
             ],
         ], $app->toArray());
@@ -127,5 +129,38 @@ final class BuildersTest extends TestCase
         $app = App::make('a')->environment('prod', fn (Environment $e) => $e->queue('emails', memory: 2048));
 
         self::assertSame(['emails' => ['memory' => 2048]], $app->toArray()['environments']['prod']['queues']);
+    }
+
+    public function test_storage_with_every_option(): void
+    {
+        $app = App::make('a')
+            ->storage('uploads', public: ['public/'], expire: ['tmp/' => 1], cors: ['https://example.com'], existing: 'b', default: true)
+            ->storage('files')
+            ->storage('old', false);
+
+        self::assertSame([
+            'uploads' => ['public' => ['public/'], 'expire' => ['tmp/' => 1], 'cors' => ['https://example.com'], 'existing' => 'b', 'default' => true],
+            'files' => [],
+            'old' => false,
+        ], $app->toArray()['storage']);
+    }
+
+    public function test_storage_options_accumulate_per_name_and_serialize_per_environment(): void
+    {
+        $app = App::make('a')->storage('files', public: ['p/'])->storage('files', cors: ['*'])
+            ->environment('prod', fn (Environment $e) => $e->storage('files', false));
+
+        self::assertSame(['files' => ['public' => ['p/'], 'cors' => ['*']]], $app->toArray()['storage']);
+        self::assertSame(['files' => false], $app->toArray()['environments']['prod']['storage']);
+    }
+
+    public function test_cache_and_failed_jobs_table_setters(): void
+    {
+        self::assertSame(['cache' => true, 'failedJobsTable' => true], App::make('a')->cache()->failedJobsTable()->toArray()['settings']);
+        self::assertSame(
+            ['cache' => ['existing' => 'x'], 'failedJobsTable' => ['existing' => 'y']],
+            App::make('a')->cache(existing: 'x')->failedJobsTable(existing: 'y')->toArray()['settings'],
+        );
+        self::assertSame(['cache' => false, 'failedJobsTable' => false], App::make('a')->cache(false)->failedJobsTable(false)->toArray()['settings']);
     }
 }

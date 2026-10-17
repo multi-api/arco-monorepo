@@ -296,4 +296,77 @@ final class ConfigResolverTest extends TestCase
 
         self::assertSame('shop-production-queue-emails', $config->workerFunctionName('emails'));
     }
+
+    public function test_environment_storage_merges_over_app_storage(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->storage('files', expire: ['tmp/' => 1])->storage('backups')
+            ->environment('production', fn (Environment $e) => $e->storage('files', public: ['public/'])->storage('backups', false)->storage('media'))
+            ->environment('staging')
+            ->toArray();
+        $config = ConfigResolver::resolve($raw, 'production');
+
+        self::assertSame(['files', 'media'], array_map(fn ($s) => $s->name, $config->storage));
+        self::assertSame(['public/'], $config->storage[0]->public);
+        self::assertSame(['tmp/' => 1], $config->storage[0]->expire);
+        self::assertSame([], $config->storage[1]->public);
+        self::assertSame('environment', $config->sources['storage']);
+        $staging = ConfigResolver::resolve($raw, 'staging');
+        self::assertSame(['files', 'backups'], array_map(fn ($s) => $s->name, $staging->storage));
+        self::assertSame('app', $staging->sources['storage']);
+        self::assertSame('default', ConfigResolver::resolve(App::make('shop')->environment('production')->toArray(), 'production')->sources['storage']);
+    }
+
+    public function test_default_storage_is_first_unless_marked(): void
+    {
+        $first = ConfigResolver::resolve(App::make('shop')->storage('files')->storage('media')->environment('production')->toArray(), 'production');
+        self::assertSame('files', $first->defaultStorage()?->name);
+        self::assertTrue($first->storage[0]->default);
+        self::assertFalse($first->storage[1]->default);
+
+        $marked = ConfigResolver::resolve(App::make('shop')->storage('files')->storage('media', default: true)->environment('production')->toArray(), 'production');
+        self::assertSame('media', $marked->defaultStorage()?->name);
+        self::assertFalse($marked->storage[0]->default);
+
+        self::assertNull(ConfigResolver::resolve(App::make('shop')->environment('production')->toArray(), 'production')->defaultStorage());
+    }
+
+    public function test_storage_existing_and_cors(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->storage('files', existing: 'legacy-bucket', cors: ['*'])->environment('production')->toArray(), 'production');
+
+        self::assertSame('legacy-bucket', $config->storage[0]->existing);
+        self::assertSame(['*'], $config->storage[0]->cors);
+    }
+
+    public function test_cache_and_failed_jobs_tables_resolve_environment_over_app(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->cache()->failedJobsTable(existing: 'jobs')
+            ->environment('production', fn (Environment $e) => $e->cache(false))
+            ->environment('staging', fn (Environment $e) => $e->cache(existing: 'legacy-cache'))
+            ->environment('qa')
+            ->toArray();
+
+        $production = ConfigResolver::resolve($raw, 'production');
+        self::assertNull($production->cacheTable);
+        self::assertSame('environment', $production->sources['cache']);
+        self::assertSame('failed-jobs', $production->failedJobsTable?->kind);
+        self::assertSame('jobs', $production->failedJobsTable->existing);
+        self::assertSame('app', $production->sources['failedJobsTable']);
+
+        $staging = ConfigResolver::resolve($raw, 'staging');
+        self::assertSame('cache', $staging->cacheTable?->kind);
+        self::assertSame('legacy-cache', $staging->cacheTable->existing);
+
+        $qa = ConfigResolver::resolve($raw, 'qa');
+        self::assertSame('cache', $qa->cacheTable?->kind);
+        self::assertNull($qa->cacheTable->existing);
+        self::assertSame('app', $qa->sources['cache']);
+
+        $none = ConfigResolver::resolve(App::make('shop')->environment('production')->toArray(), 'production');
+        self::assertNull($none->cacheTable);
+        self::assertNull($none->failedJobsTable);
+        self::assertSame('default', $none->sources['cache']);
+        self::assertSame('default', $none->sources['failedJobsTable']);
+    }
 }

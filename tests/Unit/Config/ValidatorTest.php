@@ -518,4 +518,42 @@ final class ValidatorTest extends TestCase
         self::assertContains('validation.queue_existing_fifo', $this->queueErrors(App::make('shop')->queue('a', existing: 'legacy', fifo: true)));
         self::assertSame([], $this->queueErrors(App::make('shop')->queue('a', existing: 'legacy.fifo', fifo: true)));
     }
+
+    public function test_valid_storage_and_tables(): void
+    {
+        $app = App::make('shop')->storage('files', public: ['public/'], expire: ['tmp/' => 1], cors: ['https://example.com', 'http://localhost:3000', '*'])
+            ->storage('legacy', existing: 'my.legacy-bucket')->cache(existing: 'Legacy_Cache')->failedJobsTable();
+        self::assertSame([], $this->queueErrors($app));
+    }
+
+    public function test_storage_name_and_bucket_length(): void
+    {
+        self::assertContains('validation.storage_name', $this->queueErrors(App::make('shop')->storage('Bad_Name')));
+        // shop-production-<name>-<12-digit account> must fit 63 characters, also before the account is known.
+        self::assertContains('validation.bucket_name_length', $this->queueErrors(App::make('shop')->storage(str_repeat('a', 35))));
+        self::assertNotContains('validation.bucket_name_length', $this->queueErrors(App::make('shop')->storage(str_repeat('a', 34))));
+        self::assertNotContains('validation.bucket_name_length', $this->queueErrors(App::make('shop')->storage(str_repeat('a', 35), existing: 'short')));
+    }
+
+    public function test_storage_options(): void
+    {
+        $cases = [
+            'validation.storage_expire' => [['expire' => ['tmp/' => 0]], ['expire' => ['tmp' => 1]], ['expire' => ['' => 3]]],
+            'validation.storage_public' => [['public' => ['']], ['public' => ['public']]],
+            'validation.storage_cors' => [['cors' => ['example.com']], ['cors' => ['ftp://example.com']], ['cors' => ['']]],
+            'validation.storage_existing' => [['existing' => 'Bad_Bucket'], ['existing' => 'ab']],
+        ];
+        foreach ($cases as $key => $variants) {
+            foreach ($variants as $options) {
+                self::assertContains($key, $this->queueErrors(App::make('shop')->storage('files', ...$options)), $key . ' ' . json_encode($options));
+            }
+        }
+        self::assertContains('validation.storage_default_twice', $this->queueErrors(App::make('shop')->storage('a', default: true)->storage('b', default: true)));
+    }
+
+    public function test_existing_table_names(): void
+    {
+        self::assertContains('validation.table_existing', $this->queueErrors(App::make('shop')->cache(existing: 'a b')));
+        self::assertContains('validation.table_existing', $this->queueErrors(App::make('shop')->failedJobsTable(existing: 'x')));
+    }
 }

@@ -141,6 +141,12 @@ final class Validator
 
         self::validateDomains($config, $result);
         self::validateQueues($config, $result);
+        self::validateStorage($config, $result);
+        foreach ([$config->cacheTable, $config->failedJobsTable] as $table) {
+            if ($table?->existing !== null && ! TableConfig::isTableName($table->existing)) {
+                $result->error('validation.table_existing', ['table' => $table->kind, 'value' => $table->existing]);
+            }
+        }
 
         // The script every command goes through (artisan), as the console runtime runs it: php <entry> <args>.
         $entry = null;
@@ -321,6 +327,48 @@ final class Validator
             if ($owner !== null) {
                 $result->error('validation.queue_name_clash', ['queue' => $queue->name, 'other' => $owner, 'name' => $queue->physicalName($config)]);
             }
+        }
+    }
+
+    private static function validateStorage(AppConfig $config, ValidationResult $result): void
+    {
+        $defaults = 0;
+        foreach ($config->storage as $storage) {
+            $name = $storage->name;
+            if (! preg_match(self::NAME, $name)) {
+                $result->error('validation.storage_name', ['name' => $name]);
+                continue;
+            }
+            if ($storage->existing === null) {
+                // Before the credentials resolve the account, count its 12 digits anyway.
+                $bucket = $storage->bucketName($config) . ($config->account === null ? '123456789012' : '');
+                if (strlen($bucket) > 63) {
+                    $result->error('validation.bucket_name_length', ['storage' => $name, 'name' => $bucket]);
+                }
+            } elseif (! StorageConfig::isBucketName($storage->existing)) {
+                $result->error('validation.storage_existing', ['storage' => $name, 'value' => $storage->existing]);
+            }
+            foreach ($storage->public as $prefix) {
+                if ($prefix === '' || ! str_ends_with($prefix, '/')) {
+                    $result->error('validation.storage_public', ['storage' => $name, 'prefix' => $prefix]);
+                }
+            }
+            foreach ($storage->expire as $prefix => $days) {
+                if ($days < 1 || ! str_ends_with($prefix, '/')) {
+                    $result->error('validation.storage_expire', ['storage' => $name, 'prefix' => $prefix, 'days' => $days]);
+                }
+            }
+            foreach ($storage->cors as $origin) {
+                if ($origin !== '*' && ! preg_match('#^https?://[^\s/]+$#', $origin)) {
+                    $result->error('validation.storage_cors', ['storage' => $name, 'origin' => $origin]);
+                }
+            }
+            if ($storage->default) {
+                $defaults++;
+            }
+        }
+        if ($defaults > 1) {
+            $result->error('validation.storage_default_twice');
         }
     }
 

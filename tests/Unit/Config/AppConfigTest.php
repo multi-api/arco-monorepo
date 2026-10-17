@@ -5,6 +5,8 @@ namespace Multiapi\Arco\Tests\Unit\Config;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\QueueConfig;
 use Multiapi\Arco\Config\RuntimeConfig;
+use Multiapi\Arco\Config\StorageConfig;
+use Multiapi\Arco\Config\TableConfig;
 use PHPUnit\Framework\TestCase;
 
 final class AppConfigTest extends TestCase
@@ -18,7 +20,12 @@ final class AppConfigTest extends TestCase
             : [$type instanceof \ReflectionNamedType ? $type->getName() : 'mixed'];
         return match (true) {
             in_array(RuntimeConfig::class, $names, true) => (new \ReflectionClass(RuntimeConfig::class))->newInstanceWithoutConstructor(),
-            in_array('array', $names, true) => $parameter->getName() === 'queues' ? [new QueueConfig('emails')] : ['sample-' . $parameter->getName() => 'x'],
+            in_array(TableConfig::class, $names, true) => new TableConfig('cache', existing: 'sample-' . $parameter->getName()),
+            in_array('array', $names, true) => match ($parameter->getName()) {
+                'queues' => [new QueueConfig('emails')],
+                'storage' => [new StorageConfig('files')],
+                default => ['sample-' . $parameter->getName() => 'x'],
+            },
             in_array('int', $names, true) => 7 + $parameter->getPosition(),
             in_array('bool', $names, true) => ! (bool) ($parameter->isDefaultValueAvailable() ? $parameter->getDefaultValue() : false),
             default => 'sample-' . $parameter->getName(),
