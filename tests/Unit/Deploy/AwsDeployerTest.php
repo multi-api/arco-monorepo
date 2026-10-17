@@ -981,6 +981,35 @@ final class AwsDeployerTest extends TestCase
         self::assertContains('deploy.queue_kept', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
 
+    public function test_a_created_queue_switched_to_existing_itself_is_not_offered_for_deletion(): void
+    {
+        $config = ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')
+                ->queue('emails', existing: 'shop-production-emails', dlq: false)
+                ->environment('production', fn (Environment $e) => $e->account('111111111111'))
+                ->toArray(),
+            'production',
+        );
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::stackResources(['QueueEmails' => 'shop-production-emails', 'QueueEmailsDlq' => 'shop-production-emails-dlq']),
+            self::resourcesStack(),                              // Stacks::delete
+            new Result([]),                                      // DeleteStack
+            self::stackMissing(),
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $config);
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks'], $calls);
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.queue_now_existing', ['queue' => 'shop-production-emails', 'as' => 'emails']],
+            ['deploy.queue_dlq_now_existing', ['queue' => 'shop-production-emails-dlq', 'as' => 'emails']],
+        ], $steps, 'no advice to delete a queue that is still read, nor its dead-letter queue');
+        self::assertNotContains('deploy.queue_now_existing', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
     public function test_deploy_resources_deletes_the_stack_when_the_last_queue_is_removed_and_keeps_the_queue(): void
     {
         $mocks = new AwsMocks();

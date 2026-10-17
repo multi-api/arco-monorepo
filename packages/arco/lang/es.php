@@ -128,6 +128,8 @@ return [
     'deploy.queue_created' => 'Cola {queue}: creada {name}',
     'deploy.queue_updated' => 'Cola {queue}: {name} al día',
     'deploy.queue_variable_overridden' => 'La variable {key} de arco.php reemplaza el valor que Arco define para las colas.',
+    'deploy.queue_now_existing' => 'Arco ya no administra la cola {queue}: sigue en AWS con sus mensajes y su worker la lee como la cola existente {as}.',
+    'deploy.queue_dlq_now_existing' => 'Arco ya no administra la cola de mensajes fallidos {queue}: sigue en AWS con sus mensajes. Consérvala mientras la política de reenvío de la cola existente {as} apunte a ella.',
     'deploy.queue_kept' => 'La cola {queue} ya no está en arco.php. Arco la conservó en AWS con sus mensajes (unos {messages}): {url}. Mueve o lee los mensajes que necesites y elimínala en la consola de SQS cuando ya no la necesites.',
     'deploy.step_worker' => 'Cola {queue}: desplegando la función worker {function}',
     'deploy.worker_ready' => 'Cola {queue}: el worker {function} está activo (versión {version})',

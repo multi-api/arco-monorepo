@@ -611,8 +611,47 @@ final class AwsDeployer implements Deployer
             }
         }
         foreach ($removed as $url) {
+            // A created queue switched to `existing:` itself (and its dead-letter queue, still its
+            // redrive target) is still in use: no advice to delete it.
+            $referenced = self::stillReferenced($config, $url);
+            if ($referenced !== null) {
+                $onStep($referenced[0], ['queue' => self::queueName($url), 'as' => $referenced[1]]);
+                continue;
+            }
             $onStep('deploy.queue_kept', ['queue' => self::queueName($url), 'url' => $url, 'messages' => $queues->messageCount($url) ?? '?']);
         }
+    }
+
+    /**
+     * Whether a queue that left the resources stack is an `existing` queue of arco.php, or the
+     * dead-letter queue Arco gave it (`<name>-dlq`, plus `.fifo`).
+     *
+     * @return array{0: string, 1: string}|null the step key and the arco.php queue name
+     */
+    private static function stillReferenced(AppConfig $config, string $url): ?array
+    {
+        $removed = QueueConfig::parseExisting($url);
+        if ($removed === null) {
+            return null;
+        }
+        foreach ($config->queues as $queue) {
+            if ($queue->existing === null) {
+                continue;
+            }
+            $referenced = QueueConfig::parseExisting($queue->url($config));
+            if ($referenced === null || $referenced['region'] !== $removed['region'] || $referenced['account'] !== $removed['account']) {
+                continue;
+            }
+            if ($referenced['name'] === $removed['name']) {
+                return ['deploy.queue_now_existing', $queue->name];
+            }
+            $fifo = str_ends_with($referenced['name'], '.fifo');
+            $dlq = ($fifo ? substr($referenced['name'], 0, -5) : $referenced['name']) . '-dlq' . ($fifo ? '.fifo' : '');
+            if ($dlq === $removed['name']) {
+                return ['deploy.queue_dlq_now_existing', $queue->name];
+            }
+        }
+        return null;
     }
 
     /** @return array<string, string> URL of each SQS queue the stack owns, by logical id */
