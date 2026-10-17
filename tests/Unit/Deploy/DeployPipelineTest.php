@@ -1029,7 +1029,7 @@ final class DeployPipelineTest extends TestCase
 
         $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['resources', 'prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
+        self::assertSame(['resources', 'prepare', 'release', 'scheduler:off', 'workers:emails', 'prune'], $deployer->calls);
         self::assertContains('deploy.queue_created', $steps);
         self::assertLessThan(array_search('deploy.queue_created', $steps, true), array_search('package.ready', $steps, true));
     }
@@ -1072,6 +1072,79 @@ final class DeployPipelineTest extends TestCase
 
         $this->pipeline()->deploy($config, new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
 
-        self::assertSame(['prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'workers:legacy', 'prune'], $deployer->calls);
+    }
+
+    /** Queues without the console: the console zip is still built, for the workers. */
+    private function workersOnlyConfig(): AppConfig
+    {
+        return ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')
+                ->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))
+                ->queue('emails')
+                ->environment('production')
+                ->toArray(),
+            'production',
+        );
+    }
+
+    public function test_queues_build_the_console_zip_even_when_the_console_is_off(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->workerVersions = ['emails' => ['version' => '3', 'previous' => '2']];
+        $steps = [];
+
+        $this->pipeline()->deployPackage($this->workersOnlyConfig(), new PlainPhpPreset(), self::webPackage(null), $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertNotNull($deployer->console, 'the workers run the console zip');
+        self::assertSame(['resources', 'prepare', 'release', 'workers:emails', 'prune'], $deployer->calls, 'no scheduler sync and no console activation without the console');
+        self::assertSame(['queue' => 'emails', 'function' => 'shop-production-queue-emails', 'version' => '3'], $steps['deploy.worker_ready'] ?? null);
+    }
+
+    public function test_queues_with_a_package_too_large_for_lambda_stop_before_any_change(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+
+        try {
+            $this->pipeline()->deployPackage($this->workersOnlyConfig(), new PlainPhpPreset(), self::webPackage(null, ConsoleFunction::MAX_UNZIPPED_BYTES + 4), $deployer, new FakeVerifier(true), fn () => null);
+            self::fail('expected deploy.workers_package_too_large');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.workers_package_too_large', $e->key);
+        }
+        self::assertSame([], $deployer->calls);
+    }
+
+    public function test_a_worker_failure_after_release_is_a_warning_and_the_deploy_goes_on(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->workersError = new \RuntimeException('no lambda:CreateEventSourceMapping');
+        $steps = [];
+
+        $outcome = $this->pipeline()->deployPackage($this->workersOnlyConfig(), new PlainPhpPreset(), self::webPackage(null), $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertSame('no lambda:CreateEventSourceMapping', $steps['deploy.worker_failed']['error'] ?? null);
+        self::assertContains('prune', $deployer->calls, 'the rest of the deploy still runs');
+        self::assertContains('deploy.worker_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
+    public function test_workers_follow_a_verified_revision_only(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+
+        $outcome = $this->pipeline()->deployPackage($this->workersOnlyConfig(), new PlainPhpPreset(), self::webPackage(null), $deployer, new FakeVerifier(false), fn () => null);
+
+        self::assertFalse($outcome->verification->ok);
+        self::assertSame(['resources', 'prepare', 'release', 'rollback:rev-1'], $deployer->calls, 'the worker aliases and mappings never moved');
+    }
+
+    public function test_workers_left_from_removed_queues_are_cleaned_up_without_queues(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->workersLeft = true;
+
+        $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'workers:', 'prune'], $deployer->calls);
     }
 }

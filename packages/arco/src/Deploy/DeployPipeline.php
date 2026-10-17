@@ -215,7 +215,12 @@ final class DeployPipeline
         // The console zip and the binary are derived from the web zip in a scratch directory.
         $work = sys_get_temp_dir() . '/arco-console-' . bin2hex(random_bytes(4));
         try {
-            $console = $config->consoleEnabled() ? $this->consoleArtifacts($package, $work, $plan, $onStep) : null;
+            // The queue workers run the console zip too: it is built when queues exist even if the console is off.
+            $console = $config->consoleEnabled() || $config->queues !== [] ? $this->consoleArtifacts($package, $work, $plan, $onStep) : null;
+            if ($console === null && $config->queues !== []) {
+                // Before any AWS change: without the zip there are no workers, and the queues would never be read.
+                throw DeployException::make('deploy.workers_package_too_large', ['max' => (int) round(ConsoleFunction::MAX_UNZIPPED_BYTES / 1048576)]);
+            }
 
             // Queues exist before any code that could use them; a failure stops the deploy before traffic moves.
             $deployer->deployResources($config, $onStep(...));
@@ -270,6 +275,14 @@ final class DeployPipeline
             }
             if ($verification->ok && $config->consoleEnabled()) {
                 $this->syncScheduler($config, $deployer, $consoleActivated, $onStep);
+            }
+            // Workers follow the same rule as the console: their aliases and mappings move only to a version whose web revision works.
+            if ($verification->ok) {
+                try {
+                    $deployer->syncWorkers($config, $result->workerVersions, $onStep(...));
+                } catch (Throwable $e) {
+                    $onStep('deploy.worker_failed', ['queue' => '*', 'function' => $config->functionName() . '-queue-*', 'error' => self::errorMessage($e)]);
+                }
             }
             // console(false): the old console goes only once the new revision serves and is verified.
             if ($verification->ok && $removeConsole) {

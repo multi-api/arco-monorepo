@@ -84,28 +84,36 @@ final class AwsDeployer implements Deployer
         $consoleVersion = null;
         $previousConsole = null;
         $consoleKey = null;
+        $workerVersions = [];
         if ($console !== null) {
-            $step('deploy.step_console', ['function' => $config->consoleFunctionName()]);
+            // The console zip also runs the queue workers: it is built (and uploaded) when queues exist even if the console is off.
+            if ($config->consoleEnabled()) {
+                $step('deploy.step_console', ['function' => $config->consoleFunctionName()]);
+            }
             $consoleKey = self::consolePrefix($config) . "{$console->package->hash}.zip";
             $consoleObject = $codeBucket->upload($bucket, $consoleKey, $console->package->path);
             if ($console->download !== null) {
                 $codeBucket->uploadBinary($bucket, $console->download->key, $console->download->path, $console->download->bytes);
             }
-            $functions = $this->consoleFunction();
-            $previousConsole = $functions->liveVersion($config->consoleFunctionName());
-            $consoleVersion = $functions->deploy(
-                $config,
-                $bucket,
-                $consoleKey,
-                $consoleObject,
-                $roleArn,
-                [...$variables, ...self::binaryVariables($bucket, $console)],
-                $tags,
-                $roleCreated,
-            );
+            $runtimeVariables = [...$variables, ...self::binaryVariables($bucket, $console)];
+            if ($config->consoleEnabled()) {
+                $functions = $this->consoleFunction();
+                $previousConsole = $functions->liveVersion($config->consoleFunctionName());
+                $consoleVersion = $functions->deploy($config, $bucket, $consoleKey, $consoleObject, $roleArn, $runtimeVariables, $tags, $roleCreated);
+            }
+            $workers = $this->workerFunctions();
+            foreach ($config->queues as $queue) {
+                $name = $config->workerFunctionName($queue->name);
+                $step('deploy.step_worker', ['function' => $name, 'queue' => $queue->name]);
+                $previousWorker = $workers->function()->liveVersion($name);
+                $workerVersions[$queue->name] = [
+                    'version' => $workers->deploy($config, $queue, $bucket, $consoleKey, $consoleObject, $roleArn, $runtimeVariables, $tags, $roleCreated),
+                    'previous' => $previousWorker,
+                ];
+            }
         }
 
-        return new PreparedDeploy($revisionId, $previous, $bucket, $key, $consoleVersion, $previousConsole, $consoleKey, $console?->download?->key);
+        return new PreparedDeploy($revisionId, $previous, $bucket, $key, $consoleVersion, $previousConsole, $consoleKey, $console?->download?->key, $workerVersions);
     }
 
     /**
@@ -142,6 +150,7 @@ final class AwsDeployer implements Deployer
             [],
             $prepared->consoleVersion,
             $prepared->previousConsoleVersion,
+            $prepared->workerVersions,
         );
     }
 
@@ -158,6 +167,18 @@ final class AwsDeployer implements Deployer
                 );
             } catch (AwsException $e) {
                 $step('deploy.prune_versions_failed', ['function' => $config->consoleFunctionName(), 'error' => self::awsError($e)]);
+            }
+        }
+        foreach ($prepared->workerVersions as $queue => $versions) {
+            $name = $config->workerFunctionName($queue);
+            try {
+                $this->workerFunctions()->function()->pruneVersions(
+                    $name,
+                    self::KEEP_CONSOLE_VERSIONS,
+                    array_values(array_filter([$versions['previous'], $versions['version']])),
+                );
+            } catch (AwsException $e) {
+                $step('deploy.prune_versions_failed', ['function' => $name, 'error' => self::awsError($e)]);
             }
         }
         try {
@@ -193,7 +214,7 @@ final class AwsDeployer implements Deployer
         $this->consoleFunction()->point($config->consoleFunctionName(), $version);
     }
 
-    public function rollback(AppConfig $config, string $revisionId, ?string $consoleVersion = null): void
+    public function rollback(AppConfig $config, string $revisionId, ?string $consoleVersion = null, array $workerVersions = []): void
     {
         $web = new WebFunctions($this->aws->lambdaWeb(), $this->sleeper);
         $web->waitEndpoint($config->functionName());
@@ -202,6 +223,54 @@ final class AwsDeployer implements Deployer
         if ($consoleVersion !== null) {
             $this->consoleFunction()->point($config->consoleFunctionName(), $consoleVersion);
         }
+        foreach ($workerVersions as $queue => $version) {
+            // Only the alias moves back: the event source mapping follows it.
+            $this->workerFunctions()->function()->point($config->workerFunctionName((string) $queue), $version);
+        }
+    }
+
+    public function syncWorkers(AppConfig $config, array $workerVersions, Closure $onStep): void
+    {
+        $workers = $this->workerFunctions();
+        $failed = static fn (string $queue, string $function, \Throwable $e) => $onStep('deploy.worker_failed', ['queue' => $queue, 'function' => $function, 'error' => self::errorText($e)]);
+        foreach ($config->queues as $queue) {
+            $version = $workerVersions[$queue->name]['version'] ?? null;
+            if ($version === null) {
+                continue;
+            }
+            try {
+                $workers->activate($config, $queue, $version, $onStep);
+            } catch (\Throwable $e) {
+                $failed($queue->name, $config->workerFunctionName($queue->name), $e);
+            }
+        }
+
+        // Workers of queues that left arco.php. Without queues in arco.php, the lookup is only worth a
+        // warning when the profile may read functions: profiles that never used queues stay quiet.
+        $kept = array_map(static fn (QueueConfig $queue): string => $queue->name, $config->queues);
+        try {
+            $stale = array_values(array_diff($workers->existing($config, self::tags($config)), $kept));
+        } catch (AwsException $e) {
+            if ($config->queues === [] && in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
+                return;
+            }
+            $failed('*', $config->functionName() . '-queue-*', $e);
+            return;
+        }
+        foreach ($stale as $queue) {
+            try {
+                $workers->remove($config, $queue);
+                $onStep('deploy.worker_removed', ['queue' => $queue, 'function' => $config->workerFunctionName($queue)]);
+            } catch (\Throwable $e) {
+                $failed($queue, $config->workerFunctionName($queue), $e);
+            }
+        }
+    }
+
+    private static function errorText(\Throwable $e): string
+    {
+        $message = $e instanceof AwsException ? $e->getAwsErrorMessage() : null;
+        return is_string($message) && $message !== '' ? $message : $e->getMessage();
     }
 
     public function attachDomains(AppConfig $config, DeployResult $result, array $cachedPaths, ?callable $onStep = null): DeployResult
@@ -232,12 +301,73 @@ final class AwsDeployer implements Deployer
             $step('remove.step_scheduler', ['rule' => SchedulerRule::name($config)]);
             $this->schedulerRule()->delete($config);
         }
+        $this->removeWorkers($config, $step);
+        $this->removeResources($config, $step);
         $step('remove.step_console', ['function' => $config->consoleFunctionName()]);
         $this->consoleFunction()->delete($config->consoleFunctionName());
         $step('remove.step_function', ['function' => $config->functionName()]);
         (new WebFunctions($this->aws->lambdaWeb(), $this->sleeper))->delete($config->functionName());
         if ($config->role === null) {
             (new ExecutionRole($this->aws->iam()))->delete(ExecutionRole::roleName($config));
+        }
+    }
+
+    /**
+     * Deletes the event source mappings and functions of the environment's workers: the queues in
+     * arco.php and any left from queues removed earlier. A profile that may not list functions only
+     * loses the leftovers.
+     *
+     * @param callable(string, array<string, string|int>): void $step
+     */
+    private function removeWorkers(AppConfig $config, callable $step): void
+    {
+        $workers = $this->workerFunctions();
+        $queues = array_map(static fn (QueueConfig $queue): string => $queue->name, $config->queues);
+        try {
+            $queues = array_values(array_unique([...$queues, ...$workers->existing($config, self::tags($config))]));
+        } catch (AwsException $e) {
+            if (! in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
+                throw $e;
+            }
+        }
+        foreach ($queues as $queue) {
+            $step('remove.step_worker', ['queue' => $queue, 'function' => $config->workerFunctionName($queue)]);
+            $workers->remove($config, $queue);
+        }
+    }
+
+    /**
+     * Deletes the resources stack of the queues. Queues are retained: each is listed with its message
+     * count, for the user to read and delete.
+     *
+     * @param callable(string, array<string, string|int>): void $step
+     */
+    private function removeResources(AppConfig $config, callable $step): void
+    {
+        $name = ResourcesStack::name($config);
+        $stacks = new Stacks($this->aws->cloudFormation(), $this->sleeper);
+        try {
+            $stack = $stacks->describe($name);
+        } catch (AwsException $e) {
+            // Profiles that never used queues may lack CloudFormation permissions: no stack.
+            if (in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
+                return;
+            }
+            throw $e;
+        }
+        if ($stack === null) {
+            return;
+        }
+        if (($stack['tags']['arco:app'] ?? null) !== $config->app || ($stack['tags']['arco:environment'] ?? null) !== $config->environment) {
+            // Not ours: left alone, the rest of the remove goes on.
+            return;
+        }
+        $urls = $this->stackQueues($name);
+        $step('remove.step_resources', ['stack' => $name]);
+        $stacks->delete($name);
+        $queues = new Queues($this->aws->sqs(), $this->aws->lambda());
+        foreach ($urls as $url) {
+            $step('remove.queue_kept', ['queue' => self::queueName($url), 'url' => $url, 'messages' => $queues->messageCount($url) ?? '?']);
         }
     }
 
@@ -488,6 +618,11 @@ final class AwsDeployer implements Deployer
     private function consoleFunction(): ConsoleFunction
     {
         return new ConsoleFunction($this->aws->lambda(), $this->sleeper);
+    }
+
+    private function workerFunctions(): WorkerFunctions
+    {
+        return new WorkerFunctions($this->aws->lambda(), $this->sleeper, new Queues($this->aws->sqs(), $this->aws->lambda()));
     }
 
     private function schedulerRule(): SchedulerRule

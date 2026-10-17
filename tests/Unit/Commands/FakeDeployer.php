@@ -44,6 +44,12 @@ final class FakeDeployer implements Deployer
     public bool $resourcesStack = false;
     /** thrown by deployResources(), e.g. a queue name retained in AWS */
     public ?\Throwable $resourcesError = null;
+    /** thrown by syncWorkers(), e.g. AWS refusing lambda:ListFunctions */
+    public ?\Throwable $workersError = null;
+    /** whether workers of removed queues are left: syncWorkers() then acts even without queues */
+    public bool $workersLeft = false;
+    /** @var array<string, array{version: string, previous: ?string}> returned by prepare() as the workers' versions */
+    public array $workerVersions = [];
     /** @var list<array{0: string, 1: array<string, string|int>}> steps reported by remove() */
     public array $removeSteps = [];
 
@@ -65,7 +71,7 @@ final class FakeDeployer implements Deployer
         if (! is_file($package->path)) {
             throw new \LogicException("Package $package->path does not exist during deploy");
         }
-        return new PreparedDeploy('rev-2', $this->previousRevision, 'bucket', 'key', $this->consoleVersion, $this->previousConsoleVersion);
+        return new PreparedDeploy('rev-2', $this->previousRevision, 'bucket', 'key', $this->consoleVersion, $this->previousConsoleVersion, null, null, $this->workerVersions);
     }
 
     public function release(AppConfig $config, PreparedDeploy $prepared, ?callable $onStep = null): DeployResult
@@ -74,7 +80,7 @@ final class FakeDeployer implements Deployer
         if ($this->releaseError !== null) {
             throw $this->releaseError;
         }
-        return new DeployResult('abc.on.aws', $prepared->revisionId, $prepared->previousRevisionId, $prepared->bucket, $prepared->key, [], $prepared->consoleVersion, $prepared->previousConsoleVersion);
+        return new DeployResult('abc.on.aws', $prepared->revisionId, $prepared->previousRevisionId, $prepared->bucket, $prepared->key, [], $prepared->consoleVersion, $prepared->previousConsoleVersion, $prepared->workerVersions);
     }
 
     public function activateConsole(AppConfig $config, string $version): void
@@ -93,9 +99,26 @@ final class FakeDeployer implements Deployer
         }
     }
 
-    public function rollback(AppConfig $config, string $revisionId, ?string $consoleVersion = null): void
+    public function rollback(AppConfig $config, string $revisionId, ?string $consoleVersion = null, array $workerVersions = []): void
     {
         $this->calls[] = "rollback:$revisionId" . ($consoleVersion === null ? '' : ":console=$consoleVersion");
+    }
+
+    public function syncWorkers(AppConfig $config, array $workerVersions, \Closure $onStep): void
+    {
+        // Like AwsDeployer: nothing happens without queues or workers left from earlier ones.
+        if ($config->queues === [] && ! $this->workersLeft) {
+            return;
+        }
+        $this->calls[] = 'workers:' . implode(',', array_map(fn ($queue) => $queue->name, $config->queues));
+        if ($this->workersError !== null) {
+            throw $this->workersError;
+        }
+        foreach ($config->queues as $queue) {
+            if (isset($workerVersions[$queue->name])) {
+                $onStep('deploy.worker_ready', ['queue' => $queue->name, 'function' => $config->workerFunctionName($queue->name), 'version' => $workerVersions[$queue->name]['version']]);
+            }
+        }
     }
 
     public function attachDomains(AppConfig $config, DeployResult $result, array $cachedPaths, ?callable $onStep = null): DeployResult
