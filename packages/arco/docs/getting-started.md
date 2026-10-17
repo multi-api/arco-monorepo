@@ -530,24 +530,26 @@ With `storage()`, `cache()` or `failedJobsTable()`, the deploy profile also need
 
 - the CloudFormation actions of [Permissions for queues](#permissions-for-queues) on
   `stack/arco-*-resources/*` (buckets and tables live in the same resources stack)
-- on the buckets Arco creates (`arn:aws:s3:::<app>-*`; CloudFormation creates and updates them with the
-  profile's credentials): `s3:CreateBucket`, `s3:PutBucketTagging`, `s3:PutEncryptionConfiguration`,
-  `s3:PutBucketPublicAccessBlock`, `s3:PutLifecycleConfiguration` (`expire`), `s3:PutBucketCORS` (`cors`),
-  `s3:PutBucketPolicy` and `s3:DeleteBucketPolicy` (`public`), `s3:GetBucket*`
+- on the buckets Arco creates, by their bucket ARN only (`arn:aws:s3:::<app>-*`, without `/*`, so none of
+  these reaches the files): `s3:Get*` and `s3:Put*` (CloudFormation creates, reads back and updates each
+  bucket setting with the profile's credentials: tags, encryption, Block Public Access, lifecycle, CORS,
+  policy), `s3:CreateBucket`, `s3:DeleteBucketPolicy` (removing the last public prefix), and `s3:DeleteBucket`,
+  used only when the deploy that creates a bucket fails and rolls back
 - `s3:ListBucket` on the same buckets: the deploy checks a bucket name before creating it (`HeadBucket`, which
   answers 403 without it, read as "name taken") and whether a kept bucket still has files
-- `s3:DeleteBucket` on the same buckets, used only when the deploy that creates a bucket fails and rolls back
-- on the tables (`arn:aws:dynamodb:*:*:table/<app>-*`): `dynamodb:CreateTable`, `dynamodb:DescribeTable` (also
-  the check before creating a table and the item count of a kept one; without it the deploy stops and names
-  it), `dynamodb:UpdateTable`, `dynamodb:UpdateTimeToLive`, `dynamodb:DescribeTimeToLive`,
-  `dynamodb:TagResource`, and `dynamodb:DeleteTable` (only for the rollback of a deploy that created the table)
+- on the tables Arco creates (`arn:aws:dynamodb:*:*:table/<app>-*`): `dynamodb:CreateTable`,
+  `dynamodb:UpdateTable`, `dynamodb:Describe*` (CloudFormation reads the table, its TTL, backups and streaming
+  settings; the deploy also checks a table before creating it and counts the items of a kept one, and stops
+  naming `dynamodb:DescribeTable` without it), `dynamodb:UpdateTimeToLive`, `dynamodb:TagResource`,
+  `dynamodb:UntagResource`, `dynamodb:ListTagsOfResource`, and `dynamodb:DeleteTable` (only for the rollback
+  of a deploy that created the table)
 - `tag:GetResources`, for the retained buckets in `arco storage:list`
 - `sts:GetCallerIdentity` (already in the minimal list): bucket names hold the account id
 
 `existing` buckets and tables need nothing from the deploy profile: only the execution role uses them. If
 CloudFormation reports an access denial for another action on a bucket or table, the failed stack event
-names it: add it to the profile. The execution role's statements (and what to add to your own `role()`) are
-in [Storage permissions](configuration.md#storage-permissions) and
+names it: add that action to the profile (on the same bucket or table ARNs) and deploy again. The execution
+role's statements (and what to add to your own `role()`) are in [Storage permissions](configuration.md#storage-permissions) and
 [Table permissions](configuration.md#table-permissions).
 
 ### Permissions for custom domains

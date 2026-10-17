@@ -44,11 +44,11 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `Query`, `Scan`, batch actions and `DescribeTable` on the tables), `existing` ones included. With your own
   `role()`, add them yourself (see the configuration reference).
 - **Added:** deploy-profile permissions for storage and tables (see Permissions for storage and tables in the
-  getting-started guide): `s3:CreateBucket`, `PutBucketTagging`, `PutEncryptionConfiguration`,
-  `PutBucketPublicAccessBlock`, `PutLifecycleConfiguration`, `PutBucketCORS`, `PutBucketPolicy`,
-  `DeleteBucketPolicy`, `GetBucket*`, `ListBucket`, `DeleteBucket` (rollback only), `dynamodb:CreateTable`,
-  `DescribeTable`, `UpdateTable`, `UpdateTimeToLive`, `DescribeTimeToLive`, `TagResource`, `DeleteTable`
-  (rollback only), and `tag:GetResources`.
+  getting-started guide): on the app's bucket ARNs only (`arn:aws:s3:::<app>-*`, no object access)
+  `s3:Get*`, `s3:Put*`, `s3:CreateBucket`, `s3:DeleteBucketPolicy`, `s3:ListBucket` and `s3:DeleteBucket`
+  (rollback only); on the app's tables `dynamodb:CreateTable`, `UpdateTable`, `Describe*`, `UpdateTimeToLive`,
+  `TagResource`, `UntagResource`, `ListTagsOfResource` and `DeleteTable` (rollback only); and
+  `tag:GetResources`. An action a failed stack event names goes on the same ARNs.
 - **Added:** before any change, the deploy checks the package for what `arco.php` needs: storage needs
   `league/flysystem-aws-s3-v3`, `aws/aws-sdk-php` and `multiapi/arco-laravel` 0.6+; the cache table
   `aws/aws-sdk-php`; the failed-jobs table `aws/aws-sdk-php` and `multiapi/arco-laravel` 0.6+ (queues as in
