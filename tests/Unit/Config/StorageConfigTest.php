@@ -43,6 +43,15 @@ final class StorageConfigTest extends TestCase
         self::assertSame('https://legacy.bucket.s3.us-east-1.amazonaws.com', $s->url($c));
     }
 
+    public function test_the_arn_partition_follows_the_region(): void
+    {
+        $s = new StorageConfig('files', existing: 'legacy.bucket');
+        $at = fn (string $region) => ConfigResolver::resolve(App::make('shop')->region($region)->environment('production', fn ($e) => $e->account('123456789012'))->toArray(), 'production');
+
+        self::assertSame('arn:aws-cn:s3:::legacy.bucket', $s->arn($at('cn-north-1')));
+        self::assertSame('arn:aws-us-gov:s3:::legacy.bucket', $s->arn($at('us-gov-west-1')));
+    }
+
     public function test_bucket_name_rules(): void
     {
         foreach (['abc', 'my-bucket.1', str_repeat('a', 63)] as $name) {

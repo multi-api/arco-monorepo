@@ -127,7 +127,7 @@ return [
     'deploy.step_resources' => 'Resources stack {stack} (queues, storage and tables)',
     'deploy.queue_created' => 'Queue {queue}: created {name}',
     'deploy.queue_updated' => 'Queue {queue}: {name} up to date',
-    'deploy.queue_variable_overridden' => 'The variable {key} in arco.php overrides the value Arco sets for the queues.',
+    'deploy.variable_overridden' => 'The variable {key} in arco.php overrides the value Arco sets for it.',
     'deploy.queue_now_existing' => 'The queue {queue} is no longer managed by Arco: it stays in AWS with its messages, and its worker reads it as the existing queue {as}.',
     'deploy.queue_dlq_now_existing' => 'The dead-letter queue {queue} is no longer managed by Arco: it stays in AWS with its messages. Keep it while the redrive policy of the existing queue {as} points at it.',
     'deploy.queue_kept' => 'The queue {queue} is no longer in arco.php. Arco kept it in AWS with its messages (about {messages}): {url}. Move or read any messages you need, then delete it in the SQS console when it is no longer needed.',

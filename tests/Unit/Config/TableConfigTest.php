@@ -34,6 +34,14 @@ final class TableConfigTest extends TestCase
         self::assertSame('arn:aws:dynamodb:us-east-1:123456789012:table/Legacy_Cache', $t->arn($c));
     }
 
+    public function test_the_arn_partition_follows_the_region(): void
+    {
+        $at = fn (string $region) => ConfigResolver::resolve(App::make('shop')->region($region)->environment('production', fn ($e) => $e->account('123456789012'))->toArray(), 'production');
+
+        self::assertSame('arn:aws-cn:dynamodb:cn-north-1:123456789012:table/shop-production-cache', (new TableConfig('cache'))->arn($at('cn-north-1')));
+        self::assertSame('arn:aws-us-gov:dynamodb:us-gov-west-1:123456789012:table/shop-production-cache', (new TableConfig('cache'))->arn($at('us-gov-west-1')));
+    }
+
     public function test_table_name_rules(): void
     {
         foreach (['abc', 'My_Table.v-2', str_repeat('a', 255)] as $name) {

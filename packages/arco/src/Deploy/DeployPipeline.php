@@ -53,12 +53,70 @@ final class DeployPipeline
     {
         return [
             ...$preset->defaultVariables(),
-            ...self::queueVariables($config),
+            ...self::injectedVariables($config),
             ...$config->variables,
             'ARCO' => '1',
             'ARCO_APP' => $config->app,
             'ARCO_ENV' => $config->environment,
         ];
+    }
+
+    /**
+     * The variables Arco adds for the queues, the storage and the tables; the user's own win over them.
+     *
+     * @return array<string, string>
+     */
+    public static function injectedVariables(AppConfig $config): array
+    {
+        return [...self::queueVariables($config), ...self::storageVariables($config), ...self::tableVariables($config)];
+    }
+
+    /**
+     * The variables storage adds: the default bucket behind Laravel's stock s3 disk, and every bucket
+     * (ARCO_STORAGE, name => bucket and url) for the named disks arco-laravel registers.
+     *
+     * @return array<string, string>
+     */
+    public static function storageVariables(AppConfig $config): array
+    {
+        $default = $config->defaultStorage();
+        if ($default === null) {
+            return [];
+        }
+        $buckets = [];
+        foreach ($config->storage as $storage) {
+            $buckets[$storage->name] = ['bucket' => $storage->bucketName($config), 'url' => $storage->url($config)];
+        }
+        return [
+            'FILESYSTEM_DISK' => 's3',
+            'AWS_BUCKET' => $default->bucketName($config),
+            'AWS_URL' => $default->url($config),
+            'ARCO_STORAGE' => json_encode($buckets, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+        ];
+    }
+
+    /**
+     * The variables the cache and failed-jobs tables add. ARCO_CACHE_TABLE only for a table Arco
+     * created: arco-laravel then matches the store's attributes to it (key, value, expires_at).
+     *
+     * @return array<string, string>
+     */
+    public static function tableVariables(AppConfig $config): array
+    {
+        $variables = [];
+        if ($config->cacheTable !== null) {
+            $table = $config->cacheTable->tableName($config);
+            $variables['CACHE_STORE'] = 'dynamodb';
+            $variables['DYNAMODB_CACHE_TABLE'] = $table;
+            if ($config->cacheTable->existing === null) {
+                $variables['ARCO_CACHE_TABLE'] = $table;
+            }
+        }
+        if ($config->failedJobsTable !== null) {
+            $variables['QUEUE_FAILED_DRIVER'] = 'dynamodb';
+            $variables['ARCO_FAILED_JOBS_TABLE'] = $config->failedJobsTable->tableName($config);
+        }
+        return $variables;
     }
 
     /**
@@ -244,9 +302,10 @@ final class DeployPipeline
     private function deployBuilt(AppConfig $config, FrameworkPreset $preset, Package $package, Deployer $deployer, Verifier $verifier, callable $onStep, ?CommandPlan $plan, bool $removeConsole): DeployOutcome
     {
         $variables = self::variables($config, $preset);
-        foreach (array_keys(self::queueVariables($config)) as $key) {
-            if ($key !== 'ARCO_QUEUES' && array_key_exists($key, $config->variables)) {
-                $onStep('deploy.queue_variable_overridden', ['key' => $key]);
+        foreach (array_keys(self::injectedVariables($config)) as $key) {
+            // ARCO_* values are Arco's own wiring: a user value for them is not an override worth a note.
+            if (! str_starts_with($key, 'ARCO_') && array_key_exists($key, $config->variables)) {
+                $onStep('deploy.variable_overridden', ['key' => $key]);
             }
         }
         // Before any AWS change: workers need arco:work and Laravel's SQS driver needs the AWS SDK.

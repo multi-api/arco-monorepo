@@ -49,6 +49,50 @@ final class PolicyBuilderTest extends TestCase
         PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], null, $arns);
     }
 
+    public function test_buckets_and_tables_extend_the_policy(): void
+    {
+        $buckets = ['arn:aws:s3:::shop-production-uploads-111111111111', 'arn:aws:s3:::legacy.bucket'];
+        $tables = ['arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-cache', 'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-failed-jobs'];
+        $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], null, [], [], $buckets, $tables);
+
+        $bySid = array_column($doc['Statement'], null, 'Sid');
+        self::assertSame([
+            [
+                'Sid' => 'ArcoStorage',
+                'Effect' => 'Allow',
+                'Action' => ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:GetObjectAcl', 's3:PutObjectAcl'],
+                'Resource' => ['arn:aws:s3:::shop-production-uploads-111111111111/*', 'arn:aws:s3:::legacy.bucket/*'],
+            ],
+            [
+                'Sid' => 'ArcoStorageList',
+                'Effect' => 'Allow',
+                'Action' => ['s3:ListBucket'],
+                'Resource' => $buckets,
+            ],
+        ], [$bySid['ArcoStorage'], $bySid['ArcoStorageList']]);
+        self::assertSame([
+            'Sid' => 'ArcoTables',
+            'Effect' => 'Allow',
+            'Action' => ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan', 'dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem', 'dynamodb:DescribeTable'],
+            'Resource' => $tables,
+        ], $bySid['ArcoTables']);
+    }
+
+    public function test_without_buckets_or_tables_there_are_no_storage_statements(): void
+    {
+        $sids = array_column(PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [])['Statement'], 'Sid');
+
+        self::assertSame(['ArcoLogs'], $sids);
+    }
+
+    public function test_the_storage_statements_count_toward_the_size_limit(): void
+    {
+        $this->expectException(DeployException::class);
+        $arns = array_map(fn (int $i) => "arn:aws:s3:::shop-production-bucket-$i-111111111111", range(1, 150));
+
+        PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], null, [], [], $arns);
+    }
+
     public function test_the_console_may_read_runtime_binaries_from_the_code_bucket_only(): void
     {
         $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], 'arco-111111111111-us-east-1');

@@ -36,7 +36,7 @@ final readonly class StorageConfig
 
     public function arn(AppConfig $config): string
     {
-        return 'arn:aws:s3:::' . $this->bucketName($config);
+        return 'arn:' . Partition::of($config->region ?? '') . ':s3:::' . $this->bucketName($config);
     }
 
     public function url(AppConfig $config): string

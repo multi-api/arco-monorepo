@@ -1596,6 +1596,35 @@ final class AwsDeployerTest extends TestCase
         self::assertNotContains('deploy.step_console', array_column($steps, 0));
     }
 
+    public function test_prepare_lets_the_role_use_every_bucket_and_table(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result([]),                                   // HeadBucket
+            new Result([]), new Result([]), new Result([]), new Result([]),
+            new Result(['VersionId' => 'v1']),                // HeadObject (web zip)
+            new Result(['Role' => ['Arn' => 'arn:role']]),    // GetRole
+            new Result([]),                                   // PutRolePolicy
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        );
+        $config = $this->resourcesConfig(fn (App $app) => $app->storage('uploads')->storage('media', existing: 'legacy.bucket')->cache()->failedJobsTable(existing: 'Legacy_Failed'));
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prepare($config, $this->package(), null, [], fn () => null);
+
+        $policy = json_decode(self::byOperation($mocks)['PutRolePolicy'][0]['PolicyDocument'], true);
+        $bySid = array_column($policy['Statement'], null, 'Sid');
+        self::assertSame(['arn:aws:s3:::shop-production-uploads-111111111111', 'arn:aws:s3:::legacy.bucket'], $bySid['ArcoStorageList']['Resource']);
+        self::assertSame(['arn:aws:s3:::shop-production-uploads-111111111111/*', 'arn:aws:s3:::legacy.bucket/*'], $bySid['ArcoStorage']['Resource']);
+        self::assertSame([
+            'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-cache',
+            'arn:aws:dynamodb:us-east-1:111111111111:table/Legacy_Failed',
+        ], $bySid['ArcoTables']['Resource']);
+    }
+
     public function test_a_queue_without_a_dead_letter_queue_gets_no_max_receives(): void
     {
         $queue = new \Multiapi\Arco\Config\QueueConfig('mail', tries: 5, dlq: false);

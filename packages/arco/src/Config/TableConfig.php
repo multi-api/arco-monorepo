@@ -27,6 +27,6 @@ final readonly class TableConfig
 
     public function arn(AppConfig $config): string
     {
-        return 'arn:aws:dynamodb:' . ($config->region ?? '') . ':' . ($config->account ?? '') . ':table/' . $this->tableName($config);
+        return 'arn:' . Partition::of($config->region ?? '') . ':dynamodb:' . ($config->region ?? '') . ':' . ($config->account ?? '') . ':table/' . $this->tableName($config);
     }
 }

@@ -8,6 +8,8 @@ use Multiapi\Arco\Aws\AwsClients;
 use Aws\Exception\AwsException;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\QueueConfig;
+use Multiapi\Arco\Config\StorageConfig;
+use Multiapi\Arco\Config\TableConfig;
 use Multiapi\Arco\Deploy\Domains\Certificates;
 use Multiapi\Arco\Deploy\Domains\CustomDomains;
 use Multiapi\Arco\Deploy\Domains\DomainStack;
@@ -64,7 +66,9 @@ final class AwsDeployer implements Deployer
             // a console skipped for size, arco rollback). Dropping it waits for the storage clean-up.
             $policy = PolicyBuilder::document($region, $account, $function, SecretResolver::references($variables), $config->permissions, $bucket,
                 array_map(fn (QueueConfig $queue) => $queue->arn($config), $config->queues),
-                array_map(fn (QueueConfig $queue) => $config->workerFunctionName($queue->name), $config->queues));
+                array_map(fn (QueueConfig $queue) => $config->workerFunctionName($queue->name), $config->queues),
+                array_map(fn (StorageConfig $storage) => $storage->arn($config), $config->storage),
+                array_map(fn (TableConfig $table) => $table->arn($config), array_values(array_filter([$config->cacheTable, $config->failedJobsTable]))));
             ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags);
         }
 

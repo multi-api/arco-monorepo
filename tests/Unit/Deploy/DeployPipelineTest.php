@@ -146,16 +146,87 @@ final class DeployPipelineTest extends TestCase
         self::assertSame('mine', $deployer->variables['SQS_QUEUE']);
         self::assertSame('https://sqs.us-east-1.amazonaws.com/123456789012', $deployer->variables['SQS_PREFIX']);
         self::assertSame(
-            [['deploy.queue_variable_overridden', ['key' => 'QUEUE_CONNECTION']], ['deploy.queue_variable_overridden', ['key' => 'SQS_QUEUE']]],
-            array_values(array_filter($steps, fn (array $step) => $step[0] === 'deploy.queue_variable_overridden')),
+            [['deploy.variable_overridden', ['key' => 'QUEUE_CONNECTION']], ['deploy.variable_overridden', ['key' => 'SQS_QUEUE']]],
+            array_values(array_filter($steps, fn (array $step) => $step[0] === 'deploy.variable_overridden')),
         );
     }
 
-    public function test_without_queues_no_queue_variables_are_set(): void
+    private function resourcesConfig(callable $build, array $variables = []): AppConfig
+    {
+        $app = $build(App::make('shop')->region('us-east-1')->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))->variables($variables));
+        return ConfigResolver::resolve($app->environment('production', fn (Environment $e) => $e->account('123456789012'))->toArray(), 'production');
+    }
+
+    public function test_storage_adds_the_default_disk_and_every_bucket(): void
+    {
+        $variables = DeployPipeline::variables($this->resourcesConfig(fn (App $app) => $app->storage('uploads')->storage('media', existing: 'legacy.bucket', default: true)), new PlainPhpPreset());
+
+        self::assertSame([
+            'FILESYSTEM_DISK' => 's3',
+            'AWS_BUCKET' => 'legacy.bucket',
+            'AWS_URL' => 'https://legacy.bucket.s3.us-east-1.amazonaws.com',
+            'ARCO_STORAGE' => '{"uploads":{"bucket":"shop-production-uploads-123456789012","url":"https://shop-production-uploads-123456789012.s3.us-east-1.amazonaws.com"},"media":{"bucket":"legacy.bucket","url":"https://legacy.bucket.s3.us-east-1.amazonaws.com"}}',
+            'ARCO' => '1',
+            'ARCO_APP' => 'shop',
+            'ARCO_ENV' => 'production',
+        ], $variables);
+    }
+
+    public function test_tables_arco_creates_add_their_variables(): void
+    {
+        $variables = DeployPipeline::variables($this->resourcesConfig(fn (App $app) => $app->cache()->failedJobsTable()), new PlainPhpPreset());
+
+        self::assertSame([
+            'CACHE_STORE' => 'dynamodb',
+            'DYNAMODB_CACHE_TABLE' => 'shop-production-cache',
+            'ARCO_CACHE_TABLE' => 'shop-production-cache',
+            'QUEUE_FAILED_DRIVER' => 'dynamodb',
+            'ARCO_FAILED_JOBS_TABLE' => 'shop-production-failed-jobs',
+            'ARCO' => '1',
+            'ARCO_APP' => 'shop',
+            'ARCO_ENV' => 'production',
+        ], $variables);
+    }
+
+    public function test_existing_tables_leave_the_cache_attributes_to_the_app(): void
+    {
+        $variables = DeployPipeline::variables($this->resourcesConfig(fn (App $app) => $app->cache(existing: 'Legacy_Cache')->failedJobsTable(existing: 'Legacy_Failed')), new PlainPhpPreset());
+
+        self::assertSame([
+            'CACHE_STORE' => 'dynamodb',
+            'DYNAMODB_CACHE_TABLE' => 'Legacy_Cache',
+            'QUEUE_FAILED_DRIVER' => 'dynamodb',
+            'ARCO_FAILED_JOBS_TABLE' => 'Legacy_Failed',
+            'ARCO' => '1',
+            'ARCO_APP' => 'shop',
+            'ARCO_ENV' => 'production',
+        ], $variables);
+    }
+
+    public function test_a_user_variable_wins_over_storage_and_tables_and_the_override_is_noted(): void
+    {
+        $user = ['FILESYSTEM_DISK' => 'local', 'AWS_BUCKET' => 'b', 'AWS_URL' => 'u', 'CACHE_STORE' => 'file', 'DYNAMODB_CACHE_TABLE' => 't', 'QUEUE_FAILED_DRIVER' => 'database', 'ARCO_STORAGE' => '{}'];
+        $config = $this->resourcesConfig(fn (App $app) => $app->storage('uploads')->cache()->failedJobsTable(), $user);
+        $deployer = new FakeDeployer('rev-1');
+        $steps = [];
+
+        $this->pipeline()->deploy($config, new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        foreach ($user as $key => $value) {
+            self::assertSame($value, $deployer->variables[$key]);
+        }
+        self::assertSame('shop-production-cache', $deployer->variables['ARCO_CACHE_TABLE']);
+        self::assertSame(
+            array_map(fn (string $key) => ['deploy.variable_overridden', ['key' => $key]], ['FILESYSTEM_DISK', 'AWS_BUCKET', 'AWS_URL', 'CACHE_STORE', 'DYNAMODB_CACHE_TABLE', 'QUEUE_FAILED_DRIVER']),
+            array_values(array_filter($steps, fn (array $step) => $step[0] === 'deploy.variable_overridden')),
+        );
+    }
+
+    public function test_without_queues_or_resources_no_variables_are_added(): void
     {
         $variables = DeployPipeline::variables($this->config(), new PlainPhpPreset());
 
-        foreach (['QUEUE_CONNECTION', 'SQS_PREFIX', 'SQS_QUEUE', 'ARCO_QUEUES'] as $key) {
+        foreach (['QUEUE_CONNECTION', 'SQS_PREFIX', 'SQS_QUEUE', 'ARCO_QUEUES', 'FILESYSTEM_DISK', 'AWS_BUCKET', 'AWS_URL', 'ARCO_STORAGE', 'CACHE_STORE', 'DYNAMODB_CACHE_TABLE', 'ARCO_CACHE_TABLE', 'QUEUE_FAILED_DRIVER', 'ARCO_FAILED_JOBS_TABLE'] as $key) {
             self::assertArrayNotHasKey($key, $variables);
         }
     }
