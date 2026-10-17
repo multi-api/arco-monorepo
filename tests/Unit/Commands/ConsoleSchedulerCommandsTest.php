@@ -245,4 +245,29 @@ final class ConsoleSchedulerCommandsTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('->scheduler(1)', $this->source());
     }
+
+    public function test_scheduler_set_names_the_tasks_a_combined_interval_protects(): void
+    {
+        $this->project();
+        $inspector = fn (string $dir): array => [['task' => 'half-hourly', 'minutes' => [0, 30]], ['task' => 'every-twenty', 'minutes' => [0, 20, 40]]];
+
+        $tester = $this->run_(new SchedulerSetCommand($inspector), ['--env' => 'production'], ['']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->scheduler(10)', $this->source());
+        self::assertStringContainsString('every 10 minutes', self::display($tester));
+        self::assertStringContainsString('half-hourly, every-twenty', self::display($tester));
+    }
+
+    public function test_scheduler_set_names_every_task_when_hourly_is_enough(): void
+    {
+        $this->project();
+        $inspector = fn (string $dir): array => [['task' => 'backup:run', 'minutes' => [0]], ['task' => 'report', 'minutes' => []]];
+
+        $tester = $this->run_(new SchedulerSetCommand($inspector), ['--env' => 'production'], ['']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->scheduler(60)', $this->source());
+        self::assertStringContainsString('backup:run, report', self::display($tester));
+    }
 }

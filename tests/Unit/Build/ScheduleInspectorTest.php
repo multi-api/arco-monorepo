@@ -49,7 +49,7 @@ final class ScheduleInspectorTest extends TestCase
         self::assertSame([['task' => 'reports:send', 'minutes' => [0, 30]], ['task' => 'Closure', 'minutes' => [0]]], $tasks);
         self::assertSame(['/usr/bin/php', 'artisan', 'arco:schedule-intervals'], $calls[0]['command']);
         self::assertSame($this->project, $calls[0]['cwd']);
-        self::assertSame('1', $calls[0]['env']['ARCO'] ?? null);
+        self::assertSame(['ARCO' => '1'], $calls[0]['env']);
     }
 
     public function test_a_failing_command_gives_null(): void
@@ -73,5 +73,20 @@ final class ScheduleInspectorTest extends TestCase
 
         self::assertNull((new ScheduleInspector(self::runner('[]', $calls)))->tasks($this->project, 'php'));
         self::assertSame([], $calls);
+    }
+
+    public function test_a_timed_out_run_gives_null(): void
+    {
+        $timeout = new \Symfony\Component\Process\Exception\ProcessTimedOutException(new \Symfony\Component\Process\Process(['php', 'artisan']), \Symfony\Component\Process\Exception\ProcessTimedOutException::TYPE_GENERAL);
+
+        self::assertNull((new ScheduleInspector(self::runner($timeout)))->tasks($this->project, 'php'));
+        self::assertSame(60, ScheduleInspector::TIMEOUT);
+    }
+
+    public function test_the_default_runner_stops_after_the_short_timeout(): void
+    {
+        $runner = (new \ReflectionProperty(ScheduleInspector::class, 'runner'))->getValue(new ScheduleInspector());
+        self::assertInstanceOf(\Multiapi\Arco\Build\ProcessCommandRunner::class, $runner);
+        self::assertSame(60.0, (new \ReflectionProperty($runner, 'timeout'))->getValue($runner));
     }
 }

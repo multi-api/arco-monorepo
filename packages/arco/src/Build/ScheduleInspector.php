@@ -12,12 +12,14 @@ use Throwable;
 final class ScheduleInspector
 {
     public const COMMAND = 'arco:schedule-intervals';
+    /** Seconds before a hung app boot is given up on, so it cannot stall a deploy or scheduler:set. */
+    public const TIMEOUT = 60;
 
     private readonly CommandRunner $runner;
 
     public function __construct(?CommandRunner $runner = null)
     {
-        $this->runner = $runner ?? new ProcessCommandRunner();
+        $this->runner = $runner ?? new ProcessCommandRunner(null, self::TIMEOUT);
     }
 
     /** @return list<array{task: string, minutes: list<int>}>|null */
@@ -28,8 +30,9 @@ final class ScheduleInspector
         }
         try {
             // ARCO=1: ArcoServiceProvider registers its commands only for Arco.
-            $output = $this->runner->run([$php, 'artisan', self::COMMAND], $projectDir, ['ARCO' => '1', 'ARCO_BUILD' => '1']);
+            $output = $this->runner->run([$php, 'artisan', self::COMMAND], $projectDir, ['ARCO' => '1']);
         } catch (Throwable) {
+            // A failed or timed-out run (ProcessTimedOutException) alike.
             return null;
         }
         return self::parse($output);

@@ -89,7 +89,8 @@ final class SchedulerSetCommand extends ArcoCommand
     }
 
     /**
-     * The interval the app's schedule needs (1 when it cannot be read), naming the tasks that need it.
+     * The interval the app's schedule needs (1 when it cannot be read), naming the tasks that the next
+     * longer interval would skip.
      */
     private function suggestedInterval(SymfonyStyle $io): int
     {
@@ -102,12 +103,9 @@ final class SchedulerSetCommand extends ArcoCommand
             return 1;
         }
         $required = SchedulerInterval::required(array_merge([], ...array_map(static fn (array $task): array => $task['minutes'], $tasks)));
-        $names = [];
-        foreach ($tasks as $task) {
-            if (SchedulerInterval::required($task['minutes']) === $required) {
-                $names[] = $task['task'];
-            }
-        }
+        // The tasks the next longer interval would skip; at 60 (the longest) none would, so all are named.
+        $longer = array_values(array_filter(SchedulerInterval::ALLOWED, static fn (int $every): bool => $every > $required));
+        $names = $longer === [] ? array_column($tasks, 'task') : SchedulerInterval::missed($longer[0], $tasks);
         $io->note($this->t('scheduler.suggested', ['minutes' => $required, 'tasks' => implode(', ', $names)]));
         return $required;
     }
