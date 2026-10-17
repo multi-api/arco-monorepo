@@ -40,7 +40,7 @@ final class WorkerFunctionsTest extends TestCase
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(AwsMocks::error(\Aws\Lambda\Exception\LambdaException::class, 'GetFunctionConfiguration', 'ResourceNotFoundException', 404));
-        $function = (new WorkerFunctions($mocks->clients()->lambda(), AwsMocks::noSleep(), new \Multiapi\Arco\Deploy\Queues($mocks->clients()->sqs(), $mocks->clients()->lambda())))->function();
+        $function = (new WorkerFunctions($mocks->clients()->lambda(), AwsMocks::noSleep(), new \Multiapi\Arco\Deploy\Queues($mocks->clients()->sqs(), $mocks->clients()->lambda()), $mocks->clients()->taggingApi()))->function();
 
         try {
             $function->wait('shop-production-queue-emails');

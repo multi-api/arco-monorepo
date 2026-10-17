@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Deploy;
 
 use Aws\Lambda\Exception\LambdaException;
 use Aws\Lambda\LambdaClient;
+use Aws\ResourceGroupsTaggingAPI\ResourceGroupsTaggingAPIClient;
 use Multiapi\Arco\Arco;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\QueueConfig;
@@ -23,7 +24,7 @@ final class WorkerFunctions
 
     private readonly LambdaFunction $function;
 
-    public function __construct(private readonly LambdaClient $lambda, Sleeper $sleeper, private readonly Queues $queues)
+    public function __construct(private readonly LambdaClient $lambda, Sleeper $sleeper, private readonly Queues $queues, private readonly ResourceGroupsTaggingAPIClient $tagging)
     {
         $this->function = new LambdaFunction($lambda, $sleeper, 'deploy.worker_missing', 'deploy.worker_update_failed');
     }
@@ -197,8 +198,10 @@ final class WorkerFunctions
     }
 
     /**
-     * The queue names of this environment's workers that exist in AWS: functions named like a worker
-     * AND tagged with this app and environment (a similar name of another app is never touched).
+     * The queue names of this environment's workers that exist in AWS, from one tag-filtered lookup
+     * (Resource Groups Tagging API: arco:app and arco:environment) and the worker name prefix, so a
+     * similar name of another app or environment is never matched. Needs tag:GetResources, which the
+     * runtime binary clean-up already requires. The tag index can lag a few seconds behind a new function.
      *
      * @param array<string, string> $tags
      * @return list<string>
@@ -206,27 +209,27 @@ final class WorkerFunctions
     public function existing(AppConfig $config, array $tags): array
     {
         $prefix = $config->functionName() . '-queue-';
+        $filters = [];
+        foreach ($tags as $key => $value) {
+            $filters[] = ['Key' => $key, 'Values' => [$value]];
+        }
         $queues = [];
-        $marker = null;
+        $token = null;
         do {
-            $page = Aws::call($this->lambda, 'ListFunctions', $marker === null ? [] : ['Marker' => $marker]);
-            foreach (Aws::maps($page['Functions'] ?? []) as $function) {
-                $name = Aws::string($function['FunctionName'] ?? null);
+            $page = Aws::call($this->tagging, 'GetResources', [
+                'ResourceTypeFilters' => ['lambda:function'],
+                'TagFilters' => $filters,
+                ...($token === null ? [] : ['PaginationToken' => $token]),
+            ]);
+            foreach (Aws::maps($page['ResourceTagMappingList'] ?? []) as $resource) {
+                $arn = Aws::string($resource['ResourceARN'] ?? null);
+                $name = $arn === null ? null : (explode(':', $arn)[6] ?? null);
                 if ($name !== null && str_starts_with($name, $prefix) && strlen($name) > strlen($prefix)) {
                     $queues[] = substr($name, strlen($prefix));
                 }
             }
-            $marker = Aws::string($page['NextMarker'] ?? null);
-        } while ($marker !== null);
-
-        return array_values(array_filter($queues, function (string $queue) use ($config, $tags): bool {
-            $found = Aws::map(Aws::call($this->lambda, 'GetFunction', ['FunctionName' => $config->workerFunctionName($queue)])['Tags'] ?? null);
-            foreach ($tags as $key => $value) {
-                if (($found[$key] ?? null) !== $value) {
-                    return false;
-                }
-            }
-            return true;
-        }));
+            $token = Aws::string($page['PaginationToken'] ?? null);
+        } while ($token !== null);
+        return $queues;
     }
 }

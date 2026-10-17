@@ -250,11 +250,11 @@ final class AwsDeployer implements Deployer
         $kept = array_map(static fn (QueueConfig $queue): string => $queue->name, $config->queues);
         try {
             $stale = array_values(array_diff($workers->existing($config, self::tags($config)), $kept));
-        } catch (AwsException $e) {
-            if ($config->queues === [] && in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
-                return;
+        } catch (\Throwable $e) {
+            // Nothing to clean up is the common case: an app without queues never hears about a failed lookup.
+            if ($config->queues !== []) {
+                $onStep('deploy.worker_scan_failed', ['error' => self::errorText($e)]);
             }
-            $failed('*', $config->functionName() . '-queue-*', $e);
             return;
         }
         foreach ($stale as $queue) {
@@ -314,8 +314,8 @@ final class AwsDeployer implements Deployer
 
     /**
      * Deletes the event source mappings and functions of the environment's workers: the queues in
-     * arco.php and any left from queues removed earlier. A profile that may not list functions only
-     * loses the leftovers.
+     * arco.php and any left from queues removed earlier (found by tag; when that lookup fails, only the
+     * queues in arco.php are removed, with a warning when there are any).
      *
      * @param callable(string, array<string, string|int>): void $step
      */
@@ -325,9 +325,10 @@ final class AwsDeployer implements Deployer
         $queues = array_map(static fn (QueueConfig $queue): string => $queue->name, $config->queues);
         try {
             $queues = array_values(array_unique([...$queues, ...$workers->existing($config, self::tags($config))]));
-        } catch (AwsException $e) {
-            if (! in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
-                throw $e;
+        } catch (\Throwable $e) {
+            // Only the queues in arco.php are removed; without any, there is nothing to warn about.
+            if ($config->queues !== []) {
+                $step('remove.worker_scan_failed', ['error' => self::errorText($e)]);
             }
         }
         foreach ($queues as $queue) {
@@ -622,7 +623,7 @@ final class AwsDeployer implements Deployer
 
     private function workerFunctions(): WorkerFunctions
     {
-        return new WorkerFunctions($this->aws->lambda(), $this->sleeper, new Queues($this->aws->sqs(), $this->aws->lambda()));
+        return new WorkerFunctions($this->aws->lambda(), $this->sleeper, new Queues($this->aws->sqs(), $this->aws->lambda()), $this->aws->taggingApi());
     }
 
     private function schedulerRule(): SchedulerRule

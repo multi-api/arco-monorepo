@@ -406,7 +406,7 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
             AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400), // no events: access, no rule
-            new Result(['Functions' => []]),                                                    // ListFunctions: no workers
+            new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // no resources stack
             self::lambdaMissing('DeleteFunction'),                                              // console never deployed
             new Result([]),                                                                     // DeleteWebFunction
@@ -417,7 +417,7 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['DescribeStacks', 'DescribeRule', 'ListFunctions', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
+        self::assertSame(['DescribeStacks', 'DescribeRule', 'GetResources', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
         self::assertSame('shop-production-console', $mocks->params[4]['FunctionName']);
         self::assertSame(['remove.scheduler_unreadable', 'remove.step_console', 'remove.step_function'], $steps, 'an unreadable rule is a warning, and the remove goes on');
         self::assertContains('remove.scheduler_unreadable', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
@@ -435,7 +435,7 @@ final class AwsDeployerTest extends TestCase
             $missing(),
             new Result(['CertificateSummaryList' => []]),
             self::noRule(),
-            new Result(['Functions' => []]),                                                    // ListFunctions: no workers
+            new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production-resources does not exist'),
             new Result([]),                                                                     // DeleteFunction (console)
             new Result([]),
@@ -446,7 +446,7 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($config, function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListCertificates', 'DescribeRule', 'ListFunctions', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
+        self::assertSame(['DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListCertificates', 'DescribeRule', 'GetResources', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
         self::assertSame(['remove.step_distribution', 'remove.step_console', 'remove.step_function'], $steps);
     }
 
@@ -510,7 +510,7 @@ final class AwsDeployerTest extends TestCase
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production does not exist'),
             new Result(['CertificateSummaryList' => []]),
             self::noRule(),
-            new Result(['Functions' => []]),                                                    // ListFunctions: no workers
+            new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production-resources does not exist'),
             new Result([]),                                                                     // DeleteFunction (console)
             new Result([]),
@@ -584,7 +584,7 @@ final class AwsDeployerTest extends TestCase
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
             new Result(['Name' => 'arco-shop-production-scheduler']),                          // DescribeRule
             new Result(['FailedEntryCount' => 0]), new Result([]), new Result([]),              // RemoveTargets, DeleteRule, RemovePermission
-            new Result(['Functions' => []]),                                                    // ListFunctions: no workers
+            new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // no resources stack
             new Result([]),                                                                     // DeleteFunction (console)
             new Result([]),                                                                     // DeleteWebFunction
@@ -595,7 +595,7 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['DescribeStacks', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'ListFunctions', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
+        self::assertSame(['DescribeStacks', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'GetResources', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
         self::assertSame('arco-shop-production-scheduler', $mocks->params[3]['Name']);
         self::assertSame('shop-production-console', $mocks->params[7]['FunctionName']);
         self::assertSame(['remove.step_scheduler', 'remove.step_console', 'remove.step_function'], $steps);
@@ -1059,6 +1059,14 @@ final class AwsDeployerTest extends TestCase
         return $params;
     }
 
+    private static function workers(string ...$queues): Result
+    {
+        return new Result(['ResourceTagMappingList' => [
+            ...array_map(fn (string $queue) => ['ResourceARN' => self::arn("shop-production-queue-$queue")], $queues),
+            ['ResourceARN' => self::arn('shop-production-console')],
+        ]]);
+    }
+
     private static function arn(string $function): string
     {
         return "arn:aws:lambda:us-east-1:111111111111:function:$function";
@@ -1156,9 +1164,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['EventSourceMappings' => $otherConsumer ? [['FunctionArn' => self::arn('legacy-worker') . ':prod'], ['FunctionArn' => self::arn('legacy-worker')]] : []]),
             new Result(['UUID' => 'u2']),
             // workers of removed queues
-            new Result(['Functions' => [['FunctionName' => 'shop-production-queue-emails'], ['FunctionName' => 'shop-production-queue-reports'], ['FunctionName' => 'shop-production-console']]]),
-            new Result(['Tags' => ['arco:app' => 'shop', 'arco:environment' => 'production']]),
-            new Result(['Tags' => ['arco:app' => 'shop', 'arco:environment' => 'production']]),
+            self::workers('emails', 'reports'),
         );
     }
 
@@ -1178,8 +1184,10 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([
             'UpdateAlias', 'CreateAlias', 'GetAlias', 'ListEventSourceMappings', 'CreateEventSourceMapping',
             'UpdateAlias', 'GetAlias', 'ListEventSourceMappings', 'ListEventSourceMappings', 'CreateEventSourceMapping',
-            'ListFunctions', 'GetFunction', 'GetFunction',
+            'GetResources',
         ], $mocks->calls);
+        self::assertSame(['lambda:function'], $mocks->params[10]['ResourceTypeFilters']);
+        self::assertSame([['Key' => 'arco:app', 'Values' => ['shop']], ['Key' => 'arco:environment', 'Values' => ['production']]], $mocks->params[10]['TagFilters']);
         self::assertNotContains('PutFunctionEventInvokeConfig', $mocks->calls, 'workers keep Lambda\'s retries: SQS redelivery brings a failed job back');
         self::assertSame(['FunctionName' => 'shop-production-queue-emails', 'Name' => 'live', 'FunctionVersion' => '1'], self::p($mocks->params[0]));
         $alias = self::arn('shop-production-queue-emails') . ':live';
@@ -1231,13 +1239,12 @@ final class AwsDeployerTest extends TestCase
             new Result(['AliasArn' => self::arn('shop-production-queue-emails') . ':live']),
             new Result(['EventSourceMappings' => [['UUID' => 'u-existing', 'FunctionArn' => self::arn('shop-production-queue-emails') . ':live']]]),
             new Result([]),                                                                     // UpdateEventSourceMapping
-            new Result(['Functions' => [['FunctionName' => 'shop-production-queue-emails']]]),
-            new Result(['Tags' => ['arco:app' => 'shop', 'arco:environment' => 'production']]),
+            self::workers('emails'),
         );
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncWorkers($config, ['emails' => ['version' => '5', 'previous' => '4']], fn () => null);
 
-        self::assertSame(['UpdateAlias', 'GetAlias', 'ListEventSourceMappings', 'UpdateEventSourceMapping', 'ListFunctions', 'GetFunction'], $mocks->calls);
+        self::assertSame(['UpdateAlias', 'GetAlias', 'ListEventSourceMappings', 'UpdateEventSourceMapping', 'GetResources'], $mocks->calls);
         self::assertSame([
             'UUID' => 'u-existing',
             'BatchSize' => 20,
@@ -1252,13 +1259,13 @@ final class AwsDeployerTest extends TestCase
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
         $mocks = new AwsMocks();
         $mocks->handler->append(
-            new Result(['Functions' => [
-                ['FunctionName' => 'shop-production-queue-old'],
-                ['FunctionName' => 'shop-production-queue-other'],  // same prefix, tagged for another environment
-                ['FunctionName' => 'shop-production-console'],
-            ]]),
-            new Result(['Tags' => ['arco:app' => 'shop', 'arco:environment' => 'production']]),
-            new Result(['Tags' => ['arco:app' => 'shop', 'arco:environment' => 'staging']]),
+            // the tag filter already holds back other apps and environments; the prefix holds back the console and the web function
+            new Result(['ResourceTagMappingList' => [
+                ['ResourceARN' => self::arn('shop-production-queue-old')],
+                ['ResourceARN' => self::arn('shop-production-console')],
+                ['ResourceARN' => self::arn('shop-production-queue-')],
+            ], 'PaginationToken' => 'p2']),
+            new Result(['ResourceTagMappingList' => []]),
             new Result(['EventSourceMappings' => [['UUID' => 'u-old']]]),
             new Result([]),                                                                     // DeleteEventSourceMapping
             new Result([]),                                                                     // DeleteFunction
@@ -1267,23 +1274,51 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncWorkers($config, [], function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
 
-        self::assertSame(['ListFunctions', 'GetFunction', 'GetFunction', 'ListEventSourceMappings', 'DeleteEventSourceMapping', 'DeleteFunction'], $mocks->calls);
-        self::assertSame('shop-production-queue-old:live', $mocks->params[3]['FunctionName']);
-        self::assertSame(['UUID' => 'u-old'], self::p($mocks->params[4]));
-        self::assertSame('shop-production-queue-old', $mocks->params[5]['FunctionName']);
+        self::assertSame(['GetResources', 'GetResources', 'ListEventSourceMappings', 'DeleteEventSourceMapping', 'DeleteFunction'], $mocks->calls);
+        self::assertSame('p2', $mocks->params[1]['PaginationToken'], 'the lookup is paginated');
+        self::assertSame('shop-production-queue-old:live', $mocks->params[2]['FunctionName']);
+        self::assertSame(['UUID' => 'u-old'], self::p($mocks->params[3]));
+        self::assertSame('shop-production-queue-old', $mocks->params[4]['FunctionName']);
         self::assertSame([['deploy.worker_removed', ['queue' => 'old', 'function' => 'shop-production-queue-old']]], $steps);
     }
 
-    public function test_without_queues_a_profile_that_cannot_list_functions_stays_quiet(): void
+    public function test_without_queues_any_error_of_the_worker_lookup_stays_silent(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+        foreach ([
+            AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'AccessDeniedException', 400),
+            AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'InvalidParameterException', 400),
+        ] as $error) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append($error);
+            $steps = [];
+
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncWorkers($config, [], function (string $key) use (&$steps): void { $steps[] = $key; });
+
+            self::assertSame([], $steps);
+            self::assertSame(['GetResources'], $mocks->calls);
+        }
+    }
+
+    public function test_with_queues_a_failed_worker_lookup_is_its_own_warning(): void
+    {
         $mocks = new AwsMocks();
-        $mocks->handler->append(AwsMocks::error(LambdaException::class, 'ListFunctions', 'AccessDeniedException', 403));
+        $mocks->handler->append(
+            new Result([]), new Result(['AliasArn' => self::arn('shop-production-queue-emails') . ':live']), new Result(['EventSourceMappings' => []]), new Result(['UUID' => 'u1']),
+            new Result([]), new Result(['AliasArn' => self::arn('shop-production-queue-reports') . ':live']), new Result(['EventSourceMappings' => []]), new Result(['EventSourceMappings' => []]), new Result(['UUID' => 'u2']),
+            AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'InvalidParameterException', 400, 'Rate exceeded'),
+        );
         $steps = [];
 
-        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncWorkers($config, [], function (string $key) use (&$steps): void { $steps[] = $key; });
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncWorkers(
+            $this->queuesConfig(),
+            ['emails' => ['version' => '1', 'previous' => null], 'reports' => ['version' => '9', 'previous' => '8']],
+            function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; },
+        );
 
-        self::assertSame([], $steps);
+        self::assertContains(['deploy.worker_scan_failed', ['error' => 'Rate exceeded']], $steps);
+        self::assertNotContains('deploy.worker_failed', array_column($steps, 0));
+        self::assertContains('deploy.worker_scan_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
 
     public function test_a_failing_mapping_is_a_warning_and_the_other_queues_still_get_theirs(): void
@@ -1298,7 +1333,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['AliasArn' => self::arn('shop-production-queue-reports') . ':live']),
             new Result(['EventSourceMappings' => []]), new Result(['EventSourceMappings' => []]),
             new Result(['UUID' => 'u2']),
-            new Result(['Functions' => []]),
+            new Result(['ResourceTagMappingList' => []]),
         );
         $steps = [];
 
@@ -1366,9 +1401,7 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production does not exist'), // domains stack
             self::noRule(),
-            new Result(['Functions' => [['FunctionName' => 'shop-production-queue-emails'], ['FunctionName' => 'shop-production-queue-gone']]]),
-            new Result(['Tags' => ['arco:app' => 'shop', 'arco:environment' => 'production']]),
-            new Result(['Tags' => ['arco:app' => 'shop', 'arco:environment' => 'production']]),
+            self::workers('emails', 'gone'),
             // emails
             new Result(['EventSourceMappings' => [['UUID' => 'u1']]]), new Result([]), new Result([]),
             // reports (in arco.php, never deployed)
@@ -1393,14 +1426,14 @@ final class AwsDeployerTest extends TestCase
 
         self::assertSame([
             'DescribeStacks', 'DescribeRule',
-            'ListFunctions', 'GetFunction', 'GetFunction',
+            'GetResources',
             'ListEventSourceMappings', 'DeleteEventSourceMapping', 'DeleteFunction',
             'ListEventSourceMappings', 'DeleteFunction',
             'ListEventSourceMappings', 'DeleteFunction',
             'DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'GetQueueAttributes',
             'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole',
         ], $mocks->calls);
-        self::assertSame('shop-production-console', $mocks->params[18]['FunctionName'], 'the console goes after the workers and the stack');
+        self::assertSame('shop-production-console', $mocks->params[16]['FunctionName'], 'the console goes after the workers and the stack');
         self::assertSame([
             ['remove.step_worker', ['queue' => 'emails', 'function' => 'shop-production-queue-emails']],
             ['remove.step_worker', ['queue' => 'reports', 'function' => 'shop-production-queue-reports']],
@@ -1411,5 +1444,28 @@ final class AwsDeployerTest extends TestCase
             ['remove.step_function', ['function' => 'shop-production']],
         ], $steps);
         self::assertContains('remove.queue_kept', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
+    public function test_remove_warns_when_the_worker_lookup_fails_and_still_deletes_the_workers_in_arco_php(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->queue('emails')->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+            self::noRule(),
+            AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'InvalidParameterException', 400, 'Rate exceeded'),
+            new Result(['EventSourceMappings' => []]), new Result([]),                          // emails: mappings, DeleteFunction
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+            new Result([]), new Result([]),
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
+            new Result([]), new Result([]),
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($config, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertContains(['remove.worker_scan_failed', ['error' => 'Rate exceeded']], $steps);
+        self::assertContains('remove.step_worker', array_column($steps, 0));
+        self::assertContains('remove.worker_scan_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
 }
