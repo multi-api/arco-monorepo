@@ -48,6 +48,7 @@ final class SchedulerRuleTest extends TestCase
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'ResourceNotFoundException', 400),
             new Result(['RuleArn' => 'arn:aws:events:us-east-1:123456789012:rule/arco-shop-production-scheduler']),
             new Result(['FailedEntryCount' => 0, 'FailedEntries' => []]),
             new Result(['Statement' => '{}']),
@@ -55,7 +56,8 @@ final class SchedulerRuleTest extends TestCase
 
         self::rule($mocks)->put($this->config(), 'arn:aws:lambda:us-east-1:123456789012:function:shop-production-console:live', ['arco:app' => 'shop', 'arco:environment' => 'production']);
 
-        self::assertSame(['PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
+        self::assertSame(['DescribeRule', 'PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
+        array_shift($mocks->params);
         self::assertSame('arco-shop-production-scheduler', $mocks->params[0]['Name']);
         self::assertSame('cron(0/5 * * * ? *)', $mocks->params[0]['ScheduleExpression']);
         self::assertSame('ENABLED', $mocks->params[0]['State']);
@@ -78,6 +80,7 @@ final class SchedulerRuleTest extends TestCase
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            new Result(['Name' => 'arco-shop-production-scheduler', 'State' => 'ENABLED']),
             new Result(['RuleArn' => 'arn:rule']),
             new Result(['FailedEntryCount' => 0]),
             AwsMocks::error(LambdaException::class, 'AddPermission', 'ResourceConflictException', 409),
@@ -85,7 +88,7 @@ final class SchedulerRuleTest extends TestCase
 
         self::rule($mocks)->put($this->config(), 'arn:alias', []);
 
-        self::assertSame(['PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
+        self::assertSame(['DescribeRule', 'PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
         self::assertCount(0, $mocks->handler);
     }
 
@@ -93,12 +96,55 @@ final class SchedulerRuleTest extends TestCase
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            new Result(['Name' => 'arco-shop-production-scheduler', 'State' => 'ENABLED']),
             new Result(['RuleArn' => 'arn:rule']),
             new Result(['FailedEntryCount' => 1, 'FailedEntries' => [['TargetId' => 'arco-console', 'ErrorCode' => 'X', 'ErrorMessage' => 'bad target']]]),
         );
 
         $this->expectExceptionMessage('bad target');
         self::rule($mocks)->put($this->config(), 'arn:alias', []);
+    }
+
+    public function test_put_keeps_a_paused_rule_paused_and_creates_new_rules_enabled(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Name' => 'arco-shop-production-scheduler', 'State' => 'DISABLED']),
+            new Result(['RuleArn' => 'arn:rule']),
+            new Result(['FailedEntryCount' => 0]),
+            new Result([]),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'ResourceNotFoundException', 400),
+            new Result(['RuleArn' => 'arn:rule']),
+            new Result(['FailedEntryCount' => 0]),
+            new Result([]),
+        );
+        $rule = self::rule($mocks);
+
+        self::assertTrue($rule->put($this->config(), 'arn:alias', []), 'kept paused');
+        self::assertSame('DISABLED', $mocks->params[1]['State']);
+        self::assertFalse($rule->put($this->config(), 'arn:alias', []));
+        self::assertSame('ENABLED', $mocks->params[5]['State']);
+    }
+
+    public function test_state_pause_and_resume(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Name' => 'arco-shop-production-scheduler', 'State' => 'DISABLED']),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'ResourceNotFoundException', 400),
+            new Result([]),
+            new Result([]),
+        );
+        $rule = self::rule($mocks);
+
+        self::assertSame('DISABLED', $rule->state($this->config()));
+        self::assertNull($rule->state($this->config()));
+        $rule->pause($this->config());
+        $rule->resume($this->config());
+
+        self::assertSame(['DescribeRule', 'DescribeRule', 'DisableRule', 'EnableRule'], $mocks->calls);
+        self::assertSame('arco-shop-production-scheduler', $mocks->params[2]['Name']);
+        self::assertSame('arco-shop-production-scheduler', $mocks->params[3]['Name']);
     }
 
     public function test_delete_removes_target_rule_and_permission(): void

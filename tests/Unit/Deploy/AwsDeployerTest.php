@@ -593,6 +593,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(
             new Result(['AliasArn' => $alias, 'FunctionVersion' => '7']),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'ResourceNotFoundException', 400),
             new Result(['RuleArn' => 'arn:aws:events:us-east-1:123456789012:rule/arco-shop-production-scheduler']),
             new Result(['FailedEntryCount' => 0]),
             new Result(['Statement' => '{}']),
@@ -601,11 +602,57 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncScheduler($config, function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
 
-        self::assertSame(['GetAlias', 'PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
+        self::assertSame(['GetAlias', 'DescribeRule', 'PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
         self::assertSame(['FunctionName' => 'shop-production-console', 'Name' => 'live'], array_intersect_key($mocks->params[0], ['FunctionName' => 1, 'Name' => 1]));
-        self::assertSame([['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']], $mocks->params[1]['Tags']);
-        self::assertSame($alias, $mocks->params[2]['Targets'][0]['Arn']);
+        self::assertSame([['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']], $mocks->params[2]['Tags']);
+        self::assertSame('ENABLED', $mocks->params[2]['State'], 'a new rule starts enabled');
+        self::assertSame($alias, $mocks->params[3]['Targets'][0]['Arn']);
         self::assertSame([['deploy.scheduler_set', ['every' => 5]]], $steps);
+    }
+
+    public function test_sync_scheduler_keeps_a_paused_rule_paused(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->scheduler(5)->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '7']),
+            new Result(['Name' => 'arco-shop-production-scheduler', 'State' => 'DISABLED']),
+            new Result(['RuleArn' => 'arn:rule']),
+            new Result(['FailedEntryCount' => 0]),
+            new Result([]),
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncScheduler($config, function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame('DISABLED', $mocks->params[2]['State']);
+        self::assertSame([['deploy.scheduler_set', ['every' => 5]], ['deploy.scheduler_paused', []]], $steps);
+        self::assertNotContains('deploy.scheduler_paused', \Multiapi\Arco\Cli\StepPrinter::WARNINGS, 'a note, not a warning');
+    }
+
+    public function test_describe_reads_whether_the_scheduler_is_paused(): void
+    {
+        $with = fn (?int $every) => ConfigResolver::resolve(($every === null ? App::make('shop') : App::make('shop')->scheduler($every))->region('us-east-1')->environment('production')->toArray(), 'production');
+        $web = fn () => [new Result(['functionName' => 'shop-production', 'state' => 'Active']), new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => []])];
+        $mocks = new AwsMocks();
+        $alias = new Result(['FunctionVersion' => '7']);
+        $mocks->handler->append(...[
+            ...$web(), $alias, new Result(['State' => 'DISABLED']),
+            ...$web(), $alias, new Result(['State' => 'ENABLED']),
+            ...$web(), $alias, AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'ResourceNotFoundException', 400),
+            ...$web(), $alias, AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400),
+            ...$web(),
+        ]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        self::assertTrue($deployer->describe($with(5))?->schedulerPaused);
+        self::assertFalse($deployer->describe($with(5))?->schedulerPaused);
+        self::assertNull($deployer->describe($with(5))?->schedulerPaused, 'no rule');
+        self::assertNull($deployer->describe($with(5))?->schedulerPaused, 'unreadable');
+        $before = count($mocks->calls);
+        self::assertNull($deployer->describe($with(null))?->schedulerPaused);
+        self::assertNotContains('DescribeRule', array_slice($mocks->calls, $before), 'no scheduler: no lookup');
+        self::assertCount(0, $mocks->handler);
     }
 
     public function test_apply_log_retention(): void

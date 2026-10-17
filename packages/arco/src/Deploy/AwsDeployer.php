@@ -272,8 +272,11 @@ final class AwsDeployer implements Deployer
         }
         $function = $config->consoleFunctionName();
         $alias = $this->consoleFunction()->aliasArn($function) ?? throw DeployException::make('deploy.console_missing', ['function' => $function]);
-        $this->schedulerRule()->put($config, $alias, self::tags($config));
+        $paused = $this->schedulerRule()->put($config, $alias, self::tags($config));
         $onStep('deploy.scheduler_set', ['every' => $config->scheduler]);
+        if ($paused) {
+            $onStep('deploy.scheduler_paused', []);
+        }
     }
 
     public function applyLogRetention(AppConfig $config, Closure $onStep): void
@@ -328,6 +331,15 @@ final class AwsDeployer implements Deployer
                 // The function status is still useful without CloudFormation access.
             }
         }
+        $schedulerPaused = null;
+        if ($config->scheduler !== null) {
+            try {
+                $state = $this->schedulerRule()->state($config);
+                $schedulerPaused = $state === null ? null : $state === SchedulerRule::DISABLED;
+            } catch (AwsException) {
+                // Unknown without EventBridge read access; the rest of the status still shows.
+            }
+        }
         return new AppStatus(
             $config->functionName(),
             WebFunctions::text($function['state'] ?? null),
@@ -338,6 +350,7 @@ final class AwsDeployer implements Deployer
             $config->consoleEnabled() ? $config->consoleFunctionName() : null,
             $consoleVersion,
             $consoleVersionError,
+            $schedulerPaused,
         );
     }
 

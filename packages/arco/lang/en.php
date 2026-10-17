@@ -112,6 +112,7 @@ return [
     'deploy.console_remove_failed' => 'The console is off, but the console function {function} could not be deleted ({error}). The deploy is live and verified; allow lambda:DeleteFunction in the profile and deploy again to remove it.',
     'deploy.scheduler_too_slow' => 'The scheduler runs schedule:run every {every} minutes, so it skips some runs of: {tasks}. The app\'s schedule needs every {required} minutes: run "arco scheduler:set {required}" and deploy again.',
     'deploy.scheduler_set' => 'Scheduler: schedule:run every {every} min on the console\'s live alias',
+    'deploy.scheduler_paused' => 'The scheduler is paused and stays paused; run arco scheduler:resume to turn it back on',
     'deploy.scheduler_removed' => 'Removed the scheduler rule (the scheduler is off)',
     'deploy.scheduler_skipped' => 'The scheduler (every {every} min) was not updated: this deploy did not move the live alias of {function} (see the warning above). The deploy is live and verified; fix that and deploy again.',
     'deploy.scheduler_failed' => 'The deploy is live and verified, but the scheduler rule {rule} could not be updated ({error}). Allow the events: actions for the rule and lambda:AddPermission and lambda:RemovePermission on the console function in the profile, then deploy again.',

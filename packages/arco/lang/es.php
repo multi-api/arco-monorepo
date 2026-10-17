@@ -112,6 +112,7 @@ return [
     'deploy.console_remove_failed' => 'La consola está desactivada, pero no se pudo borrar la función de consola {function} ({error}). El despliegue está activo y verificado; permite lambda:DeleteFunction en el perfil y vuelve a desplegar para eliminarla.',
     'deploy.scheduler_too_slow' => 'El scheduler ejecuta schedule:run cada {every} minutos, así que se salta ejecuciones de: {tasks}. La programación de la app necesita cada {required} minutos: ejecuta "arco scheduler:set {required}" y vuelve a desplegar.',
     'deploy.scheduler_set' => 'Scheduler: schedule:run cada {every} min en el alias live de la consola',
+    'deploy.scheduler_paused' => 'El scheduler está en pausa y sigue en pausa; ejecuta arco scheduler:resume para reactivarlo',
     'deploy.scheduler_removed' => 'Se eliminó la regla del scheduler (el scheduler está desactivado)',
     'deploy.scheduler_skipped' => 'El scheduler (cada {every} min) no se actualizó: este despliegue no movió el alias live de {function} (ver el aviso anterior). El despliegue está activo y verificado; corrígelo y vuelve a desplegar.',
     'deploy.scheduler_failed' => 'El despliegue está activo y verificado, pero no se pudo actualizar la regla del scheduler {rule} ({error}). Permite las acciones events: de la regla y lambda:AddPermission y lambda:RemovePermission en la función de consola en el perfil, y vuelve a desplegar.',
