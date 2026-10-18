@@ -21,7 +21,8 @@ jobs:
         with:
           fetch-depth: 0          # the split needs the full history
           persist-credentials: false
-      - uses: danharrin/monorepo-split-github-action@ac9845270ef47266435b4f124b133a323619e738 # v2.3.0
+      - id: split
+        uses: danharrin/monorepo-split-github-action@ac9845270ef47266435b4f124b133a323619e738 # v2.3.0
         env:
           GITHUB_TOKEN: ${{ secrets.SPLIT_TOKEN }}
         with:
@@ -32,3 +33,41 @@ jobs:
           tag: ${{ github.ref_name }}
           user_name: github-actions[bot]
           user_email: 41898282+github-actions[bot]@users.noreply.github.com
+      # The action swallows push failures (GitHub sometimes answers
+      # "remote rejected ... (failure)" yet the step ends green), so check the
+      # tag really reached the target repository.
+      - id: verify
+        env:
+          REPO_NAME: ${{ matrix.package.repo }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if git ls-remote --exit-code --tags "https://github.com/multi-api/${REPO_NAME}.git" "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Tag ${TAG} is missing on multi-api/${REPO_NAME}; retrying the split once."
+          fi
+      - if: steps.verify.outputs.pushed != 'true'
+        run: sleep 20
+      - id: split_retry
+        if: steps.verify.outputs.pushed != 'true'
+        uses: danharrin/monorepo-split-github-action@ac9845270ef47266435b4f124b133a323619e738 # v2.3.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.SPLIT_TOKEN }}
+        with:
+          package_directory: ${{ matrix.package.local }}
+          repository_organization: multi-api
+          repository_name: ${{ matrix.package.repo }}
+          branch: main
+          tag: ${{ github.ref_name }}
+          user_name: github-actions[bot]
+          user_email: 41898282+github-actions[bot]@users.noreply.github.com
+      - if: steps.verify.outputs.pushed != 'true'
+        env:
+          REPO_NAME: ${{ matrix.package.repo }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if ! git ls-remote --exit-code --tags "https://github.com/multi-api/${REPO_NAME}.git" "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} is still missing on multi-api/${REPO_NAME} after retrying the split."
+            exit 1
+          fi
