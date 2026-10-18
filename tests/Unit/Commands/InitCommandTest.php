@@ -2,17 +2,21 @@
 
 namespace Multiapi\Arco\Tests\Unit\Commands;
 
+use Multiapi\Arco\Build\AppInspector;
 use Multiapi\Arco\Build\PresetRegistry;
 use Multiapi\Arco\Commands\InitCommand;
 use Multiapi\Arco\Config\ConfigLoader;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Validator;
+use Multiapi\Arco\Deploy\DeployCommands;
 use Multiapi\Arco\Laravel\LaravelPreset;
 use Aws\Route53\Exception\Route53Exception;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Deploy\AwsMocks;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use Symfony\Component\Console\Tester\CommandTester;
 
 final class InitCommandTest extends TestCase
 {
@@ -323,7 +327,7 @@ ENV);
         $project = new ProjectFixture();
         $zones = new FakeZones(['acme-prod' => FakeZones::holding('222222222222', ['acmeapp.io' => '/hostedzone/Z1'])]);
         $tester = self::init($project, $zones);
-        $tester->setInputs(['yes', 'localhost', 'arco.acmeapp.io, api-arco.acmeapp.io', 'acme-prod']);
+        $tester->setInputs(['yes', 'localhost', 'arco.acmeapp.io, api-arco.acmeapp.io', 'acme-prod', '', '']);
 
         $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
 
@@ -345,7 +349,7 @@ ENV);
     {
         $project = new ProjectFixture();
         $tester = self::init($project);
-        $tester->setInputs(['']);
+        $tester->setInputs(['', '', '']);
 
         $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
 
@@ -362,7 +366,7 @@ ENV);
             'acme-prod' => FakeZones::holding('222222222222', ['acmeapp.io' => '/hostedzone/Z1']),
         ]);
         $tester = self::init($project, $zones);
-        $tester->setInputs(['yes', 'arco.acmeapp.io', 'p', 'acme-prod']);
+        $tester->setInputs(['yes', 'arco.acmeapp.io', 'p', 'acme-prod', '', '']);
 
         $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
 
@@ -379,7 +383,7 @@ ENV);
         $project = new ProjectFixture();
         $zones = new FakeZones([]);
         $tester = self::init($project, $zones);
-        $tester->setInputs(['yes', 'arco.acmeapp.io', '@manual']);
+        $tester->setInputs(['yes', 'arco.acmeapp.io', '@manual', '', '']);
 
         $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
 
@@ -395,7 +399,7 @@ ENV);
         $project = new ProjectFixture();
         $zones = new FakeZones([]);
         $tester = self::init($project, $zones);
-        $tester->setInputs(['yes', 'arco.acmeapp.io', '']);
+        $tester->setInputs(['yes', 'arco.acmeapp.io', '', '', '']);
         $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
         $tester->assertCommandIsSuccessful();
         self::assertNull(self::config($project)->dnsProfile);
@@ -408,7 +412,7 @@ ENV);
         putenv('AWS_PROFILE=p');
         $zones = new FakeZones(['p' => FakeZones::holding('111111111111', ['acmeapp.io' => '/hostedzone/Z1'])]);
         $tester = self::init($project, $zones);
-        $tester->setInputs(['yes', 'arco.acmeapp.io', '']);
+        $tester->setInputs(['yes', 'arco.acmeapp.io', '', '', '']);
         $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
         putenv('AWS_PROFILE');
         $tester->assertCommandIsSuccessful();
@@ -429,8 +433,8 @@ ENV);
     {
         $project = new ProjectFixture();
         self::laravelProject($project, 'mysql');
-        $tester = $project->tester(new InitCommand(new PresetRegistry([new LaravelPreset()])));
-        $tester->setInputs(['no', 'yes']); // no custom domain; yes to migrations
+        $tester = self::laravelInit($project);
+        $tester->setInputs(['no', 'yes', 'yes', '']); // no custom domain; console; yes to migrations; retention
 
         $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
 
@@ -448,8 +452,8 @@ ENV);
     {
         $project = new ProjectFixture();
         self::laravelProject($project, '"pgsql"');
-        $tester = $project->tester(new InitCommand(new PresetRegistry([new LaravelPreset()])));
-        $tester->setInputs(['no', 'no']);
+        $tester = self::laravelInit($project);
+        $tester->setInputs(['no', 'yes', 'no', '']); // console yes, migrations no
 
         $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
 
@@ -463,14 +467,281 @@ ENV);
     {
         $project = new ProjectFixture();
         self::laravelProject($project, 'sqlite');
-        $tester = $project->tester(new InitCommand(new PresetRegistry([new LaravelPreset()])));
-        $tester->setInputs(['no']);
+        $tester = self::laravelInit($project);
+        $tester->setInputs(['no', '', '']);
         $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
         self::assertSame([], ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production')->deployCommands);
 
         self::laravelProject($project, 'pgsql');
         $tester->execute(['--name' => 'shop', '--region' => 'us-east-1', '--force' => true], ['interactive' => false]);
         self::assertSame([], ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production')->deployCommands);
+        $project->restore();
+    }
+
+    /** @param list<array{task: string, minutes: list<int>}>|null $schedule what artisan reports */
+    private static function laravelInit(ProjectFixture $project, ?array $schedule = null): CommandTester
+    {
+        return $project->tester(new InitCommand(new PresetRegistry([new LaravelPreset()]), null, new AppInspector(fn (): ?array => $schedule)));
+    }
+
+    /** A Laravel app with a queued job on 'emails', an S3 disk and the DynamoDB cache. */
+    private static function fullLaravelApp(ProjectFixture $project, string $connection = 'sqlite'): void
+    {
+        self::laravelProject($project, $connection);
+        file_put_contents("$project->dir/.env", "DB_CONNECTION=$connection\nFILESYSTEM_DISK=s3\nCACHE_STORE=dynamodb\n");
+        mkdir("$project->dir/app/Jobs", 0777, true);
+        file_put_contents("$project->dir/app/Jobs/SendWelcome.php", "<?php\n\nclass SendWelcome implements ShouldQueue\n{\n    public \$queue = 'emails';\n}\n");
+    }
+
+    /** The display on one line, without the "!" SymfonyStyle starts a wrapped note line with. */
+    private static function flatDisplay(CommandTester $tester): string
+    {
+        return (string) preg_replace('/\s+(!\s+)?/', ' ', $tester->getDisplay());
+    }
+
+    private static function assertValid(ProjectFixture $project): void
+    {
+        self::assertSame([], (new Validator())->validate(self::config($project), $project->dir)->errors);
+    }
+
+    public function test_interactive_accepts_everything_detected(): void
+    {
+        $project = new ProjectFixture();
+        self::fullLaravelApp($project);
+        $tester = self::laravelInit($project, [['task' => 'a', 'minutes' => [0, 5]]]);
+        // domain, console, scheduler, interval, queues, queue names, failed jobs, storage, storage name, cache, retention
+        $tester->setInputs(array_fill(0, 11, ''));
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        $config = self::config($project);
+        self::assertTrue($config->console);
+        self::assertSame(5, $config->scheduler);
+        self::assertSame(['default', 'emails'], array_map(fn ($queue) => $queue->name, $config->queues));
+        self::assertNotNull($config->failedJobsTable);
+        self::assertSame(['files'], array_map(fn ($storage) => $storage->name, $config->storage));
+        self::assertNotNull($config->cacheTable);
+        self::assertSame(30, $config->logRetention);
+        self::assertSame('app', $config->sources['scheduler'] ?? null);
+        self::assertStringContainsString('every 5 minutes or more often, for: a', self::flatDisplay($tester));
+        self::assertValid($project);
+        $project->restore();
+    }
+
+    public function test_interactive_picks_some_queues_and_declines_the_rest(): void
+    {
+        $project = new ProjectFixture();
+        self::fullLaravelApp($project);
+        $tester = self::laravelInit($project);
+        // domain, console, queues, queue names, failed jobs, storage, cache, retention
+        $tester->setInputs(['', 'no', '', 'emails', 'no', 'no', 'no', '']);
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        $config = self::config($project);
+        self::assertNull($config->console);
+        self::assertSame(['emails'], array_map(fn ($queue) => $queue->name, $config->queues));
+        self::assertNull($config->failedJobsTable);
+        self::assertSame([], $config->storage);
+        self::assertNull($config->cacheTable);
+        self::assertSame(30, $config->logRetention);
+        self::assertValid($project);
+        $project->restore();
+    }
+
+    public function test_declining_console_skips_migrate_and_scheduler(): void
+    {
+        $project = new ProjectFixture();
+        self::laravelProject($project, 'pgsql');
+        $tester = self::laravelInit($project, [['task' => 'a', 'minutes' => [0]]]);
+        $tester->setInputs(['', 'no', '']); // domain, console, retention
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        $php = (string) file_get_contents("$project->dir/arco.php");
+        self::assertStringNotContainsString('deployCommands', $php);
+        self::assertStringNotContainsString('scheduler', $php);
+        self::assertStringNotContainsString('console', $php);
+        self::assertStringNotContainsString('Run "migrate --force"', $tester->getDisplay());
+        self::assertStringContainsString('Running migrations on deploy needs the console function', self::flatDisplay($tester));
+        self::assertValid($project);
+        $project->restore();
+    }
+
+    public function test_migrate_writes_console(): void
+    {
+        $project = new ProjectFixture();
+        self::laravelProject($project, 'mysql');
+        $tester = self::laravelInit($project);
+        $tester->setInputs(['', 'yes', 'yes', '']); // domain, console, migrate, retention
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        $config = self::config($project);
+        self::assertTrue($config->console);
+        self::assertSame([DeployCommands::MIGRATE], $config->deployCommands);
+        self::assertStringContainsString("    ->deployCommands(['migrate --force'])\n    ->console()\n", (string) file_get_contents("$project->dir/arco.php"));
+        self::assertValid($project);
+        $project->restore();
+    }
+
+    public function test_migrate_flag_without_console_flag_turns_the_console_on(): void
+    {
+        $project = new ProjectFixture();
+        self::laravelProject($project, 'mysql');
+        $tester = self::laravelInit($project);
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1', '--migrate' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $config = self::config($project);
+        self::assertTrue($config->console);
+        self::assertSame([DeployCommands::MIGRATE], $config->deployCommands);
+        self::assertValid($project);
+        $project->restore();
+    }
+
+    public function test_schedule_unread_suggests_every_minute(): void
+    {
+        $project = new ProjectFixture();
+        self::laravelProject($project, 'sqlite');
+        mkdir("$project->dir/routes");
+        file_put_contents("$project->dir/routes/console.php", "<?php\n\nSchedule::command('reports:send')->hourly();\n");
+        $tester = self::laravelInit($project, []);
+        $tester->setInputs(['', '', '', '', '']); // domain, console, scheduler, interval, retention
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(1, self::config($project)->scheduler);
+        self::assertStringContainsString('their times could not be read', self::flatDisplay($tester));
+        $project->restore();
+    }
+
+    public function test_non_interactive_writes_only_flags_and_prints_hints(): void
+    {
+        $project = new ProjectFixture();
+        self::fullLaravelApp($project);
+        $tester = self::laravelInit($project, [['task' => 'a', 'minutes' => [0, 5]]]);
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $config = self::config($project);
+        self::assertNull($config->console);
+        self::assertNull($config->scheduler);
+        self::assertNull($config->logRetention);
+        self::assertSame([], $config->queues);
+        self::assertSame([], $config->storage);
+        self::assertNull($config->cacheTable);
+        self::assertNull($config->failedJobsTable);
+        $display = $tester->getDisplay();
+        foreach (['arco console:add', 'arco scheduler:set 5', 'arco logs:retention 30', 'arco queue:add default', 'arco queue:add emails', 'arco storage:add files', 'arco cache:add'] as $hint) {
+            self::assertSame(1, substr_count($display, $hint), $hint);
+        }
+        $project->restore();
+    }
+
+    public function test_non_interactive_non_laravel_project_prints_no_hints(): void
+    {
+        $project = new ProjectFixture();
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('arco console:add', $tester->getDisplay());
+        self::assertStringNotContainsString('WARNING', $tester->getDisplay());
+        $project->restore();
+    }
+
+    public function test_flags_without_questions(): void
+    {
+        $project = new ProjectFixture();
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+
+        $tester->execute([
+            '--name' => 'shop', '--region' => 'us-east-1', '--console' => true, '--scheduler' => '10',
+            '--queue' => ['default', 'emails'], '--storage' => 'uploads', '--cache' => true, '--failed-jobs-table' => true, '--log-retention' => '14',
+        ], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString(
+            "    ->region('us-east-1')\n    ->console()\n    ->scheduler(10)\n    ->logRetention(14)\n    ->queue('default')\n    ->queue('emails')\n    ->failedJobsTable()\n    ->storage('uploads')\n    ->cache()\n    ->environment(",
+            (string) file_get_contents("$project->dir/arco.php"),
+        );
+        self::assertValid($project);
+        $project->restore();
+    }
+
+    public function test_flags_answer_their_questions(): void
+    {
+        $project = new ProjectFixture();
+        self::fullLaravelApp($project);
+        $tester = self::laravelInit($project, [['task' => 'a', 'minutes' => [0, 5]]]);
+        $tester->setInputs(['', '', '']); // domain, failed jobs, cache
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1', '--scheduler' => '15', '--queue' => ['emails'], '--storage' => 'uploads', '--log-retention' => '7']);
+
+        $tester->assertCommandIsSuccessful();
+        $config = self::config($project);
+        self::assertTrue($config->console);
+        self::assertSame(15, $config->scheduler);
+        self::assertSame(7, $config->logRetention);
+        self::assertSame(['emails'], array_map(fn ($queue) => $queue->name, $config->queues));
+        self::assertSame(['uploads'], array_map(fn ($storage) => $storage->name, $config->storage));
+        self::assertNotNull($config->failedJobsTable);
+        self::assertNotNull($config->cacheTable);
+        self::assertValid($project);
+        $project->restore();
+    }
+
+    /** @return array<string, array{0: array<string, mixed>}> */
+    public static function invalidFlags(): array
+    {
+        return [
+            'scheduler interval' => [['--scheduler' => '7']],
+            'log retention' => [['--log-retention' => '10']],
+            'reserved storage' => [['--storage' => 'public']],
+            'storage name' => [['--storage' => 'Files']],
+            'queue name' => [['--queue' => ['Bad Name']]],
+            'scheduler without console' => [['--scheduler' => '5', '--no-console' => true]],
+            'migrate without console' => [['--migrate' => true, '--no-console' => true]],
+        ];
+    }
+
+    /** @param array<string, mixed> $flags */
+    #[DataProvider('invalidFlags')]
+    public function test_invalid_flags_write_nothing(array $flags): void
+    {
+        $project = new ProjectFixture();
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1'] + $flags, ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertFileDoesNotExist("$project->dir/arco.php");
+        $project->restore();
+    }
+
+    public function test_non_laravel_project_asks_only_console_and_retention(): void
+    {
+        $project = new ProjectFixture();
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+        $tester->setInputs(['', 'yes', 'never']); // domain, console, retention
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        $config = self::config($project);
+        self::assertTrue($config->console);
+        self::assertNull($config->logRetention);
+        self::assertStringNotContainsString('WARNING', $tester->getDisplay());
+        self::assertValid($project);
         $project->restore();
     }
 }

@@ -6,10 +6,12 @@ use Multiapi\Arco\Arco;
 use Multiapi\Arco\Aws\DnsZoneFinder;
 use Multiapi\Arco\Aws\LocalState;
 use Multiapi\Arco\Build\AppInspector;
+use Multiapi\Arco\Build\Detection;
 use Multiapi\Arco\Build\PresetRegistry;
 use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\ChoosesDns;
+use Multiapi\Arco\Commands\Concerns\SuggestsSchedulerInterval;
 use Multiapi\Arco\Config\ArcoFileEditor;
 use Multiapi\Arco\Config\ConfigLoader;
 use Multiapi\Arco\Config\ConfigResolver;
@@ -19,16 +21,22 @@ use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Question\ChoiceQuestion;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
+/**
+ * @phpstan-type InitFlags array{console: ?bool, migrate: ?bool, scheduler: ?int, logRetention: ?int, queues: list<string>, failedJobsTable: bool, storage: ?string, cache: bool}
+ */
 #[AsCommand(name: 'init', description: 'Create arco.php for this project')]
 final class InitCommand extends ArcoCommand
 {
     use ChoosesDns;
+    use SuggestsSchedulerInterval;
 
     private const SECRET_LIKE = '/(^APP_KEY$|_KEY$|_SECRET$|_PASSWORD$|_TOKEN$)/';
 
-    public function __construct(private readonly ?PresetRegistry $presets = null, ?DnsZoneFinder $zoneFinder = null)
+    /** @param AppInspector|null $inspector reads what a Laravel app uses; default: one that asks artisan for the schedule */
+    public function __construct(private readonly ?PresetRegistry $presets = null, ?DnsZoneFinder $zoneFinder = null, private readonly ?AppInspector $inspector = null)
     {
         $this->zoneFinder = $zoneFinder ?? DnsZoneFinder::default();
         parent::__construct();
@@ -42,7 +50,15 @@ final class InitCommand extends ArcoCommand
             ->addOption('force', null, InputOption::VALUE_NONE, 'Overwrite an existing arco.php')
             ->addOption('domain', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Custom domain for the environments (repeatable)')
             ->addOption('dns-profile', null, InputOption::VALUE_REQUIRED, 'AWS profile whose Route 53 holds the DNS zones of the domains')
-            ->addOption('dns', null, InputOption::VALUE_REQUIRED, '"manual" when the DNS is not in Route 53');
+            ->addOption('dns', null, InputOption::VALUE_REQUIRED, '"manual" when the DNS is not in Route 53')
+            ->addOption('console', null, InputOption::VALUE_NEGATABLE, 'Add the console function (arco command, tinker, deploy commands, scheduler)')
+            ->addOption('migrate', null, InputOption::VALUE_NEGATABLE, 'Run "migrate --force" on every deploy (adds the console function)')
+            ->addOption('scheduler', null, InputOption::VALUE_REQUIRED, 'Run the Laravel scheduler every N minutes (' . implode(', ', Validator::SCHEDULER_INTERVALS) . ')')
+            ->addOption('log-retention', null, InputOption::VALUE_REQUIRED, 'Days CloudWatch keeps the logs')
+            ->addOption('queue', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Add an SQS queue and its worker function (repeatable)')
+            ->addOption('failed-jobs-table', null, InputOption::VALUE_NONE, 'Keep failed jobs in a DynamoDB table')
+            ->addOption('storage', null, InputOption::VALUE_REQUIRED, 'Add an S3 bucket under this storage name')
+            ->addOption('cache', null, InputOption::VALUE_NONE, 'Add the DynamoDB cache table');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -82,21 +98,21 @@ final class InitCommand extends ArcoCommand
         }
 
         try {
+            $flags = $this->flags($input);
             [$domains, $dns] = $this->askDomains($input, $io, $environments, $dir);
         } catch (UserError $e) {
             $io->error($e->getMessage());
             return self::FAILURE;
         }
 
-        $deployCommands = [];
-        $connection = $preset->name() === 'laravel' ? AppInspector::databaseConnection("$dir/.env") : null;
-        if ($connection !== null && $connection !== 'sqlite' && $input->isInteractive()
-            && $io->confirm($this->t('init.ask_migrate', ['connection' => $connection]), true)) {
-            $deployCommands = [DeployCommands::MIGRATE];
-        }
+        $laravel = $preset->name() === 'laravel';
+        $detection = $laravel ? ($this->inspector ?? new AppInspector())->detect($dir) : null;
+        $connection = $laravel ? AppInspector::databaseConnection("$dir/.env") : null;
+        [$choices, $migrate] = $this->choose($input, $io, $flags, $detection, $connection);
+        $deployCommands = $migrate ? [DeployCommands::MIGRATE] : [];
 
         $secretKeys = self::secretKeys("$dir/.env");
-        file_put_contents($path, self::render(self::slug($name), $region, $environments, $secretKeys, $domains, $dns, $deployCommands));
+        file_put_contents($path, self::render(self::slug($name), $region, $environments, $secretKeys, $domains, $dns, $deployCommands, $choices));
         self::ignoreLocalState("$dir/.gitignore");
 
         $io->success($this->t('init.created', ['preset' => $preset->name()]));
@@ -109,8 +125,194 @@ final class InitCommand extends ArcoCommand
                 }
             }
         }
+        $hints = $detection !== null && ! $input->isInteractive() ? $this->hints($detection, $flags, $choices) : [];
+        if ($hints !== []) {
+            $io->writeln($this->t('init.detected_hint'));
+            foreach ($hints as $hint) {
+                $io->writeln('  vendor/bin/arco ' . $hint);
+            }
+        }
         $io->writeln($this->t('init.deploy_next', ['environment' => $environments[0] ?? 'production']));
         return self::SUCCESS;
+    }
+
+    /**
+     * The resource flags, validated before anything is asked or written.
+     *
+     * @return InitFlags
+     */
+    private function flags(InputInterface $input): array
+    {
+        $console = $input->getOption('console');
+        $migrate = $input->getOption('migrate');
+        $numbers = ['scheduler' => null, 'logRetention' => null];
+        foreach (['scheduler' => 'scheduler', 'logRetention' => 'log-retention'] as $setting => $option) {
+            $value = $input->getOption($option);
+            if (! is_string($value)) {
+                continue;
+            }
+            $number = preg_match('/^-?\d{1,9}$/', $value) === 1 ? (int) $value : $value;
+            $error = Validator::settingError($setting, $number);
+            if ($error !== null) {
+                throw new UserError($this->t($error['key'], $error['params']));
+            }
+            $numbers[$setting] = (int) $number;
+        }
+        /** @var list<string> $queues */
+        $queues = array_values(array_unique(array_filter((array) $input->getOption('queue'), 'is_string')));
+        foreach ($queues as $queue) {
+            if (preg_match(Validator::NAME, $queue) !== 1) {
+                throw new UserError($this->t('validation.queue_name', ['name' => $queue]));
+            }
+        }
+        $storage = $input->getOption('storage');
+        $storage = is_string($storage) ? $storage : null;
+        if ($storage !== null) {
+            $this->checkStorageName($storage);
+        }
+        if ($console === false && ($numbers['scheduler'] !== null || $migrate === true)) {
+            throw new UserError($this->t('init.needs_console'));
+        }
+        return [
+            'console' => is_bool($console) ? $console : null,
+            'migrate' => is_bool($migrate) ? $migrate : null,
+            'scheduler' => $numbers['scheduler'],
+            'logRetention' => $numbers['logRetention'],
+            'queues' => $queues,
+            'failedJobsTable' => (bool) $input->getOption('failed-jobs-table'),
+            'storage' => $storage,
+            'cache' => (bool) $input->getOption('cache'),
+        ];
+    }
+
+    private function checkStorageName(string $name): void
+    {
+        if (preg_match(Validator::NAME, $name) !== 1) {
+            throw new UserError($this->t('validation.storage_name', ['name' => $name]));
+        }
+        if (in_array($name, Validator::LARAVEL_DISKS, true)) {
+            throw new UserError($this->t('validation.storage_reserved', ['name' => $name]));
+        }
+    }
+
+    /**
+     * The resources to write: each flag answers its question; without a terminal only the flags count.
+     * The detected pieces are offered only for Laravel apps ($detection null otherwise).
+     *
+     * @param InitFlags $flags
+     * @return array{0: InitChoices, 1: bool} the choices and whether to migrate on deploy
+     */
+    private function choose(InputInterface $input, SymfonyStyle $io, array $flags, ?Detection $detection, ?string $connection): array
+    {
+        $ask = $input->isInteractive();
+        // The scheduler and deploy commands run in the console function: asking for them turns it on.
+        $console = $flags['console'] ?? ($flags['scheduler'] !== null || $flags['migrate'] === true ? true : null);
+        $console ??= $ask && $io->confirm($this->t('init.ask_console'), true);
+
+        $migrate = $flags['migrate'] ?? false;
+        if ($flags['migrate'] === null && $ask && $connection !== null && $connection !== 'sqlite') {
+            if ($console) {
+                $migrate = $io->confirm($this->t('init.ask_migrate', ['connection' => $connection]), true);
+            } else {
+                $io->note($this->t('init.migrate_needs_console', ['connection' => $connection]));
+            }
+        }
+
+        $scheduler = $flags['scheduler'];
+        $schedule = $detection?->schedule;
+        if ($scheduler === null && $ask && $console && $schedule !== null) {
+            $suggested = $this->suggestInterval($io, $schedule);
+            if ($schedule === []) {
+                $io->note($this->t('init.schedule_unread'));
+            }
+            if ($io->confirm($this->t('init.ask_scheduler'), true)) {
+                $scheduler = $this->askInterval($io, $suggested);
+            }
+        }
+
+        $queues = $flags['queues'];
+        $detected = $detection->queues ?? [];
+        if ($queues === [] && $ask && $detected !== []
+            && $io->confirm($this->t('init.ask_queues', ['count' => $detection->queuedClasses ?? 0]), true)) {
+            $queues = count($detected) > 1 ? $this->askQueueNames($io, $detected) : $detected;
+        }
+
+        $failedJobsTable = $flags['failedJobsTable'];
+        if (! $failedJobsTable && $ask && $queues !== []) {
+            // With a SQL database Laravel's database-uuids driver keeps them in a table of its own.
+            $failedJobsTable = $io->confirm($this->t('init.ask_failed_jobs'), ! ($detection->sqlDatabase ?? false));
+        }
+
+        $storage = $flags['storage'];
+        if ($storage === null && $ask && ($detection->storage ?? false) && $io->confirm($this->t('init.ask_storage'), true)) {
+            $answer = $io->ask($this->t('init.ask_storage_name'), 'files', function (mixed $value): string {
+                $name = is_string($value) ? $value : '';
+                $this->checkStorageName($name);
+                return $name;
+            });
+            $storage = is_string($answer) ? $answer : 'files';
+        }
+
+        $cache = $flags['cache'] || ($ask && ($detection->cache ?? false) && $io->confirm($this->t('init.ask_cache'), true));
+
+        $logRetention = $flags['logRetention'];
+        if ($logRetention === null && $ask) {
+            $choices = [];
+            foreach (Validator::LOG_RETENTION_DAYS as $days) {
+                $choices[$days] = (string) $days;
+            }
+            $choices['never'] = $this->t('init.log_retention_never');
+            $answer = $io->choice($this->t('init.ask_log_retention'), $choices, '30');
+            $logRetention = is_numeric($answer) ? (int) $answer : null;
+        }
+
+        return [new InitChoices($console, $scheduler, $logRetention, $queues, $failedJobsTable, $storage, $cache), $migrate];
+    }
+
+    /**
+     * @param non-empty-list<string> $names
+     * @return list<string> the chosen names, in the order detected
+     */
+    private function askQueueNames(SymfonyStyle $io, array $names): array
+    {
+        // SymfonyStyle shows a multiselect default by its keys.
+        $question = new ChoiceQuestion($this->t('init.ask_queue_names'), $names, implode(',', array_keys($names)));
+        $question->setMultiselect(true);
+        $answer = $io->askQuestion($question);
+        $chosen = is_array($answer) ? $answer : [];
+        return array_values(array_filter($names, static fn (string $name): bool => in_array($name, $chosen, true)));
+    }
+
+    /**
+     * The commands that add each detected piece a run without a terminal left out (only flags count there).
+     *
+     * @param InitFlags $flags
+     * @return list<string>
+     */
+    private function hints(Detection $detection, array $flags, InitChoices $choices): array
+    {
+        $hints = [];
+        if ($flags['console'] === null && ! $choices->console) {
+            $hints[] = 'console:add';
+        }
+        if ($detection->schedule !== null && $choices->scheduler === null && $flags['console'] !== false) {
+            $hints[] = 'scheduler:set ' . $this->requiredInterval($detection->schedule);
+        }
+        if ($choices->logRetention === null) {
+            $hints[] = 'logs:retention 30';
+        }
+        if ($choices->queues === []) {
+            foreach ($detection->queues as $queue) {
+                $hints[] = 'queue:add ' . $queue;
+            }
+        }
+        if ($detection->storage && $choices->storage === null) {
+            $hints[] = 'storage:add files';
+        }
+        if ($detection->cache && ! $choices->cache) {
+            $hints[] = 'cache:add';
+        }
+        return $hints;
     }
 
     /**
@@ -205,13 +407,17 @@ final class InitCommand extends ArcoCommand
      * @param array<string, list<string>> $domains per environment
      * @param array<string, string|false> $dns per environment; absent means Route 53 in the deploy account
      * @param list<string> $deployCommands app-level deploy commands
+     * @param InitChoices|null $choices resources written on the App chain, after the deploy commands
      */
-    public static function render(string $name, string $region, array $environments, array $secretKeys, array $domains = [], array $dns = [], array $deployCommands = []): string
+    public static function render(string $name, string $region, array $environments, array $secretKeys, array $domains = [], array $dns = [], array $deployCommands = [], ?InitChoices $choices = null): string
     {
         $php = "<?php\n\nuse Multiapi\\Arco\\Config\\App;\nuse Multiapi\\Arco\\Config\\Environment;\n\n";
         $php .= 'return App::make(' . var_export($name, true) . ")\n    ->region(" . var_export($region, true) . ')';
         if ($deployCommands !== []) {
             $php .= "\n    ->deployCommands([" . implode(', ', array_map(fn (string $c) => var_export($c, true), $deployCommands)) . '])';
+        }
+        foreach ($choices?->lines() ?? [] as $line) {
+            $php .= "\n    " . $line;
         }
         foreach ($environments as $environment) {
             $php .= "\n    ->environment(" . var_export($environment, true) . ", fn (Environment \$env) => \$env\n        ->variables([\n";

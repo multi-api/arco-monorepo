@@ -18,7 +18,7 @@ final class Validator
     private const VARIABLE = '/^[A-Za-z_][A-Za-z0-9_]*$/';
     private const SECRET_LIKE = '/(_KEY|_SECRET|_PASSWORD|_TOKEN)$/';
     /** Disks Laravel's stock config/filesystems.php defines: a storage cannot take their names. */
-    private const LARAVEL_DISKS = ['s3', 'public', 'local'];
+    public const LARAVEL_DISKS = ['s3', 'public', 'local'];
     private const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal'];
     /** Environment variables Lambda sets itself and refuses in function configuration. */
     private const RESERVED = [
