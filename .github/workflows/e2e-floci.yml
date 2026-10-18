@@ -35,9 +35,3 @@ jobs:
           coverage: none
       - run: composer install --no-interaction --no-progress
       - run: composer test:e2e
-      - if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: e2e-logs
-          path: build/tmp/e2e/**/*.log
-          if-no-files-found: ignore
