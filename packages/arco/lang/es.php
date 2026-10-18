@@ -192,6 +192,7 @@ return [
     'init.log_retention_never' => 'no borrarlos nunca',
     'init.needs_console' => '--scheduler y --migrate se ejecutan en la función de consola: quita --no-console.',
     'init.detected_hint' => 'No se agregó (no hay terminal para preguntar). Agrega cada uno con:',
+    'init.needs_packages' => 'Instala los paquetes de Composer que necesitan estas funciones antes de desplegar:',
     'init.queues_too_long' => 'Se omitieron las colas {queues}: el nombre de su cola SQS o de su función worker sería demasiado largo con este nombre de app y de entorno.',
     'deploy.php_cli_downloading' => 'Descargando el PHP CLI del build de runtime {build} para la función de consola ({size} MB; se descarga una vez y queda en caché)',
     'deploy.console_downloads_binary' => 'Función de consola: descarga el binario de FrankenPHP al arrancar en frío ({reason}).',

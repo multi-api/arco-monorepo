@@ -192,6 +192,7 @@ return [
     'init.log_retention_never' => 'never delete them',
     'init.needs_console' => '--scheduler and --migrate run in the console function: remove --no-console.',
     'init.detected_hint' => 'Not added (no terminal to ask). Add each one with:',
+    'init.needs_packages' => 'Install the Composer packages these features need before deploying:',
     'init.queues_too_long' => 'Left out queue(s) {queues}: their SQS queue or worker function name would be too long with this app and environment name.',
     'deploy.php_cli_downloading' => 'Downloading the PHP CLI of runtime build {build} for the console function ({size} MB; downloaded once, then cached)',
     'deploy.console_downloads_binary' => 'Console function: downloads the FrankenPHP binary at cold start ({reason}).',

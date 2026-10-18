@@ -17,6 +17,7 @@ use Multiapi\Arco\Config\ConfigLoader;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Validator;
 use Multiapi\Arco\Deploy\DeployCommands;
+use Multiapi\Arco\Deploy\PackageRequirements;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -114,7 +115,7 @@ final class InitCommand extends ArcoCommand
 
         $secretKeys = self::secretKeys("$dir/.env");
         $php = self::render($app, $region, $environments, $secretKeys, $domains, $dns, $deployCommands, $choices);
-        [$errors, $warnings] = $this->check($dir, $php, $environments);
+        [$errors, $warnings, $raw] = $this->check($dir, $php, $environments);
         if ($errors !== []) {
             foreach ($errors as $error) {
                 $io->error($error);
@@ -142,6 +143,11 @@ final class InitCommand extends ArcoCommand
             foreach ($hints as $hint) {
                 $io->writeln('  vendor/bin/arco ' . $hint);
             }
+        }
+        $missing = self::missingPackages($dir, $raw, $environments[0] ?? 'production');
+        if ($missing !== []) {
+            $io->writeln($this->t('init.needs_packages'));
+            $io->writeln('  composer require ' . implode(' ', $missing));
         }
         $io->writeln($this->t('init.deploy_next', ['environment' => $environments[0] ?? 'production']));
         return self::SUCCESS;
@@ -366,7 +372,7 @@ final class InitCommand extends ArcoCommand
      * as `arco deploy` will show them. It is loaded from a temporary file under .arco/, removed right after.
      *
      * @param list<string> $environments
-     * @return array{0: list<string>, 1: list<string>} error and warning messages
+     * @return array{0: list<string>, 1: list<string>, 2: array<string, mixed>} error messages, warning messages and the loaded config
      */
     private function check(string $dir, string $php, array $environments): array
     {
@@ -391,7 +397,42 @@ final class InitCommand extends ArcoCommand
                 }
             }
         }
-        return [array_values(array_unique($messages[0])), array_values(array_unique($messages[1]))];
+        return [array_values(array_unique($messages[0])), array_values(array_unique($messages[1])), $raw];
+    }
+
+    /**
+     * The requirements of the first environment's features that composer.lock does not list under `packages`
+     * (the ones Arco packages; `packages-dev` is left out of a `--no-dev` build). No lock file: nothing to compare.
+     * Constraints are not compared: the deploy check does that.
+     *
+     * @param array<string, mixed> $raw
+     * @return list<string> requirements for `composer require`
+     */
+    private static function missingPackages(string $dir, array $raw, string $environment): array
+    {
+        $lock = is_file("$dir/composer.lock") ? json_decode((string) file_get_contents("$dir/composer.lock"), true) : null;
+        if (! is_array($lock)) {
+            return [];
+        }
+        $installed = [];
+        foreach (is_array($lock['packages'] ?? null) ? $lock['packages'] : [] as $package) {
+            if (is_array($package) && is_string($package['name'] ?? null)) {
+                $installed[$package['name']] = true;
+            }
+        }
+        $missing = [];
+        foreach (PackageRequirements::forConfig(ConfigResolver::resolve($raw, $environment)) as $requirements) {
+            foreach ($requirements as [$requirement]) {
+                if (! isset($installed[explode(':', $requirement)[0]])) {
+                    $missing[$requirement] = true;
+                }
+            }
+        }
+        // 0.6 brings what 0.5 did: one requirement for both.
+        if (isset($missing[PackageRequirements::ARCO_LARAVEL_05], $missing[PackageRequirements::ARCO_LARAVEL_06])) {
+            unset($missing[PackageRequirements::ARCO_LARAVEL_05]);
+        }
+        return array_map('strval', array_keys($missing));
     }
 
     public static function slug(string $value): string

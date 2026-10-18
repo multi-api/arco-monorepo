@@ -3,6 +3,28 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## 0.7.0
+
+- **Added:** `arco init` reads the Laravel app and offers what it finds, one question each: the console
+  function, `migrate --force` on deploy (only with a server database and the console), the scheduler (with
+  the interval the app's schedule needs, when `multiapi/arco-laravel` can report it), SQS queues with their
+  workers (from `ShouldQueue` classes and `onQueue()` calls), a failed-jobs table, an S3 storage, the
+  DynamoDB cache table and CloudWatch log retention (default 30 days). Detection runs only for the Laravel
+  preset and never fails `init`: when artisan cannot boot, the schedule is read from the code.
+- **Added:** `arco init` flags that answer those questions: `--console` / `--no-console`, `--migrate` /
+  `--no-migrate`, `--scheduler=N`, `--log-retention=N`, `--queue=NAME` (repeatable), `--failed-jobs-table`,
+  `--storage=NAME` and `--cache`. Without a terminal `init` writes only what the flags say and prints the
+  `arco` command that adds each detected piece it left out.
+- **Added:** `arco init` ends with `composer require ...` for the packages the chosen features need
+  (`multiapi/arco-laravel`, `aws/aws-sdk-php`, `league/flysystem-aws-s3-v3`) when `composer.lock` does not
+  list them under `packages`. Without a `composer.lock` nothing is checked; the deploy still verifies the
+  package.
+- **Changed:** `arco init` validates the `arco.php` it is about to write, for every environment, and writes
+  nothing when it would not validate; warnings are shown after the file is created.
+- **Fixed:** answering yes to `migrate` in `arco init` now also writes `->console()`. Before, it wrote
+  `->deployCommands()` alone, which `arco deploy` has refused since 0.4 (deploy commands run in the console
+  function). Declining the console skips the migrate and scheduler questions.
+
 ## 0.6.0
 
 - **Added:** S3 storage. `->storage('uploads')` (app or environment level, merged by name; `->storage('uploads',

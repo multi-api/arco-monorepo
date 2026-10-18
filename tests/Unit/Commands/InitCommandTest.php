@@ -742,6 +742,52 @@ ENV);
         $project->restore();
     }
 
+    public function test_prints_missing_packages(): void
+    {
+        $project = new ProjectFixture();
+        file_put_contents("$project->dir/composer.lock", json_encode([
+            'packages' => [['name' => 'laravel/framework', 'version' => 'v11.0.0']],
+            'packages-dev' => [['name' => 'aws/aws-sdk-php', 'version' => '3.0.0']],
+        ]));
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1', '--storage' => 'files'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString(
+            'composer require league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.6',
+            $tester->getDisplay(),
+        );
+        $project->restore();
+    }
+
+    public function test_no_package_hint_when_present(): void
+    {
+        $project = new ProjectFixture();
+        file_put_contents("$project->dir/composer.lock", json_encode(['packages' => [
+            ['name' => 'league/flysystem-aws-s3-v3'], ['name' => 'aws/aws-sdk-php'], ['name' => 'multiapi/arco-laravel'],
+        ]]));
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1', '--storage' => 'files'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('composer require', $tester->getDisplay());
+        $project->restore();
+    }
+
+    public function test_no_package_hint_without_a_lock_file(): void
+    {
+        $project = new ProjectFixture();
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1', '--storage' => 'files'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('composer require', $tester->getDisplay());
+        $project->restore();
+    }
+
     public function test_flags_without_questions(): void
     {
         $project = new ProjectFixture();
