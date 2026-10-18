@@ -33,9 +33,20 @@ Route::get('/e2e/cache', function () {
 
 Route::get('/e2e/storage', function () {
     $value = bin2hex(random_bytes(8));
-    Storage::put('e2e/check.txt', $value);
+    // The default disk with `throw` on: a failed write answers with S3's error instead of `false`.
+    $disk = Storage::build(['throw' => true] + config('filesystems.disks.' . config('filesystems.default')));
+    try {
+        $disk->put('e2e/check.txt', $value);
 
-    return response()->json(['ok' => Storage::get('e2e/check.txt') === $value]);
+        return response()->json(['ok' => $disk->get('e2e/check.txt') === $value]);
+    } catch (Throwable $e) {
+        $errors = [];
+        for ($error = $e; $error !== null; $error = $error->getPrevious()) {
+            $errors[] = get_class($error) . ': ' . $error->getMessage();
+        }
+
+        return response()->json(['ok' => false, 'error' => implode(' <- ', $errors)], 500);
+    }
 });
 
 Route::get('/e2e/dispatch', function () {
