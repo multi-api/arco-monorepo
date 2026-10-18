@@ -14,7 +14,7 @@ use Multiapi\Arco\Secrets\SecretReference;
 
 final class Validator
 {
-    private const NAME = '/^[a-z][a-z0-9-]*$/';
+    public const NAME = '/^[a-z][a-z0-9-]*$/';
     private const VARIABLE = '/^[A-Za-z_][A-Za-z0-9_]*$/';
     private const SECRET_LIKE = '/(_KEY|_SECRET|_PASSWORD|_TOKEN)$/';
     /** Disks Laravel's stock config/filesystems.php defines: a storage cannot take their names. */

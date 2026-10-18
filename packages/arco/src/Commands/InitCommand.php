@@ -5,6 +5,7 @@ namespace Multiapi\Arco\Commands;
 use Multiapi\Arco\Arco;
 use Multiapi\Arco\Aws\DnsZoneFinder;
 use Multiapi\Arco\Aws\LocalState;
+use Multiapi\Arco\Build\AppInspector;
 use Multiapi\Arco\Build\PresetRegistry;
 use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\UserError;
@@ -88,7 +89,7 @@ final class InitCommand extends ArcoCommand
         }
 
         $deployCommands = [];
-        $connection = $preset->name() === 'laravel' ? self::databaseConnection("$dir/.env") : null;
+        $connection = $preset->name() === 'laravel' ? AppInspector::databaseConnection("$dir/.env") : null;
         if ($connection !== null && $connection !== 'sqlite' && $input->isInteractive()
             && $io->confirm($this->t('init.ask_migrate', ['connection' => $connection]), true)) {
             $deployCommands = [DeployCommands::MIGRATE];
@@ -253,21 +254,6 @@ final class InitCommand extends ArcoCommand
             $keys[] = $key;
         }
         return array_values(array_unique($keys));
-    }
-
-    /** DB_CONNECTION from .env, lowercase, or null when it is not set. */
-    private static function databaseConnection(string $envFile): ?string
-    {
-        if (! is_file($envFile)) {
-            return null;
-        }
-        foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
-            if (preg_match('/^\s*(?:export\s+)?DB_CONNECTION\s*=(.*)$/', $line, $m)) {
-                $value = strtolower(self::unquote($m[1]));
-                return $value === '' ? null : $value;
-            }
-        }
-        return null;
     }
 
     private static function unquote(string $value): string
