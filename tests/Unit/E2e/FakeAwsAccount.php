@@ -30,6 +30,8 @@ final class FakeAwsAccount
     public array $queues = [];
     /** @var array<string, array<string, string>> parameter name => tags */
     public array $parameters = [];
+    /** @var list<array{0: string, 1: ?string}> S3 bucket operation => the ExpectedBucketOwner it sent */
+    public array $bucketOwners = [];
 
     public function __construct(public string $account = '111122223333')
     {
@@ -80,6 +82,14 @@ final class FakeAwsAccount
     private function answer(string $operation, array $args): array
     {
         $string = static fn (string $key): string => is_string($args[$key] ?? null) ? $args[$key] : '';
+        if (in_array($operation, ['GetBucketTagging', 'ListObjectVersions', 'DeleteObjects', 'DeleteBucket'], true)) {
+            $owner = is_string($args['ExpectedBucketOwner'] ?? null) ? $args['ExpectedBucketOwner'] : null;
+            $this->bucketOwners[] = [$operation, $owner];
+            // As S3 does: a bucket of another account answers 403 when the caller names its expected owner.
+            if ($owner !== null && $owner !== $this->account) {
+                throw self::error($operation, 'AccessDenied', 403);
+            }
+        }
         switch ($operation) {
             case 'GetCallerIdentity':
                 return ['Account' => $this->account, 'Arn' => "arn:aws:iam::{$this->account}:user/e2e"];

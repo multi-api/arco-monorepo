@@ -8,17 +8,24 @@ use PHPUnit\Framework\TestCase;
 
 final class EndpointTest extends TestCase
 {
-    private string|false $original;
+    private const VARIABLES = ['AWS_ENDPOINT_URL', 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'];
+
+    /** @var array<string, string|false> */
+    private array $original = [];
 
     protected function setUp(): void
     {
-        $this->original = getenv('AWS_ENDPOINT_URL');
-        putenv('AWS_ENDPOINT_URL');
+        foreach (self::VARIABLES as $name) {
+            $this->original[$name] = getenv($name);
+            putenv($name);
+        }
     }
 
     protected function tearDown(): void
     {
-        putenv($this->original === false ? 'AWS_ENDPOINT_URL' : "AWS_ENDPOINT_URL=$this->original");
+        foreach ($this->original as $name => $value) {
+            putenv($value === false ? $name : "$name=$value");
+        }
     }
 
     public function test_unset_means_real_aws(): void
@@ -56,5 +63,35 @@ final class EndpointTest extends TestCase
             self::assertSame('https', Endpoint::scheme(), $value);
             self::assertSame('https://b.s3.us-east-1.amazonaws.com', Endpoint::bucketUrl('b', 'us-east-1'), $value);
         }
+    }
+
+    public function test_a_malformed_value_is_reported_as_unrecognised(): void
+    {
+        self::assertNull(Endpoint::unrecognised());
+        putenv('AWS_ENDPOINT_URL=');
+        self::assertNull(Endpoint::unrecognised());
+        putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+        self::assertNull(Endpoint::unrecognised());
+        putenv('AWS_ENDPOINT_URL=localhost:4566');
+        self::assertSame('localhost:4566', Endpoint::unrecognised());
+    }
+
+    public function test_the_sdk_ignore_flag_turns_the_override_off_as_it_does_for_the_sdk(): void
+    {
+        putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+        foreach (['true', 'TRUE', 'True', 'on', '1'] as $flag) {
+            putenv("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=$flag");
+            self::assertNull(Endpoint::override(), $flag);
+            self::assertSame('https', Endpoint::scheme(), $flag);
+            self::assertSame('https://b.s3.us-east-1.amazonaws.com', Endpoint::bucketUrl('b', 'us-east-1'), $flag);
+        }
+        foreach (['false', '0', 'off', ''] as $flag) {
+            putenv("AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=$flag");
+            self::assertSame('http://localhost:4566', Endpoint::override(), $flag);
+        }
+
+        putenv('AWS_ENDPOINT_URL=localhost:4566');
+        putenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true');
+        self::assertNull(Endpoint::unrecognised());
     }
 }

@@ -114,11 +114,15 @@ final class DeployCommand extends ArcoCommand
                 }
             }
 
-            $aws = $this->awsClients($config, $input, $io);
-
+            // Before the client setup, so the note shows even when the profile or STS fails.
             if (($endpoint = Endpoint::override()) !== null) {
                 $io->writeln($this->t('deploy.endpoint_override', ['endpoint' => $endpoint]));
+            } elseif (($raw = Endpoint::unrecognised()) !== null) {
+                $io->warning($this->t('deploy.endpoint_unrecognised', ['value' => $raw]));
             }
+
+            $aws = $this->awsClients($config, $input, $io);
+
             $io->writeln($this->t('deploy.target', [
                 'app' => $config->app,
                 'environment' => $config->environment,
@@ -202,7 +206,8 @@ final class DeployCommand extends ArcoCommand
             }
             $io->success($success);
 
-            if ($config->account === null && $input->isInteractive()
+            // Behind an endpoint override the account is the emulator's (Floci: 000000000000), not one to lock.
+            if ($config->account === null && $input->isInteractive() && Endpoint::override() === null
                 && $io->confirm($this->t('aws.add_account_lock', ['environment' => $config->environment, 'account' => $aws->accountId()]), true)) {
                 $params = ['environment' => $config->environment, 'account' => $aws->accountId()];
                 ArcoFileEditor::addAccount($this->projectDir() . '/arco.php', $config->environment, $aws->accountId())

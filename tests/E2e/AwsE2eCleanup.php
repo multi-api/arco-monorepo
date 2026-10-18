@@ -218,7 +218,7 @@ final class AwsE2eCleanup
                     $list = Aws::call($this->aws->dynamoDb(), 'ListTagsOfResource', ['ResourceArn' => Aws::string($table['TableArn'] ?? null) ?? ''])['Tags'] ?? [];
                     break;
                 default:
-                    $list = Aws::call($this->aws->s3(), 'GetBucketTagging', ['Bucket' => $name])['TagSet'] ?? [];
+                    $list = Aws::call($this->aws->s3(), 'GetBucketTagging', ['Bucket' => $name, 'ExpectedBucketOwner' => $this->account])['TagSet'] ?? [];
             }
         } catch (AwsException $e) {
             return match ($e->getAwsErrorCode()) {
@@ -248,12 +248,12 @@ final class AwsE2eCleanup
         Aws::call($this->aws->sqs(), 'DeleteQueue', ['QueueUrl' => $this->queueUrl($name)]);
     }
 
-    /** Deletes every object version and delete marker, then the bucket. */
+    /** Deletes every object version and delete marker, then the bucket; S3 refuses if it is not the guarded account's. */
     private function deleteBucket(string $name): void
     {
         $s3 = $this->aws->s3();
         do {
-            $page = Aws::call($s3, 'ListObjectVersions', ['Bucket' => $name, 'MaxKeys' => 1000]);
+            $page = Aws::call($s3, 'ListObjectVersions', ['Bucket' => $name, 'ExpectedBucketOwner' => $this->account, 'MaxKeys' => 1000]);
             $objects = [];
             foreach ([...Aws::maps($page['Versions'] ?? []), ...Aws::maps($page['DeleteMarkers'] ?? [])] as $version) {
                 $key = Aws::string($version['Key'] ?? null);
@@ -262,7 +262,7 @@ final class AwsE2eCleanup
                 }
             }
             if ($objects !== []) {
-                $result = Aws::call($s3, 'DeleteObjects', ['Bucket' => $name, 'Delete' => ['Objects' => $objects, 'Quiet' => true]]);
+                $result = Aws::call($s3, 'DeleteObjects', ['Bucket' => $name, 'ExpectedBucketOwner' => $this->account, 'Delete' => ['Objects' => $objects, 'Quiet' => true]]);
                 $errors = Aws::maps($result['Errors'] ?? []);
                 if ($errors !== []) {
                     throw new \RuntimeException("s3:DeleteObjects failed in $name: " . json_encode($errors));
@@ -270,7 +270,7 @@ final class AwsE2eCleanup
             }
             // Always list again from the start: what was listed is gone, so no marker is needed.
         } while ($objects !== [] && ($page['IsTruncated'] ?? false) === true);
-        Aws::call($s3, 'DeleteBucket', ['Bucket' => $name]);
+        Aws::call($s3, 'DeleteBucket', ['Bucket' => $name, 'ExpectedBucketOwner' => $this->account]);
     }
 
     /** @return list<string> */

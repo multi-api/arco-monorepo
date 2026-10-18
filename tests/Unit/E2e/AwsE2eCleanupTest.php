@@ -129,6 +129,41 @@ final class AwsE2eCleanupTest extends TestCase
         self::assertSame(3, count(array_keys($calls, 'DeleteObjects', true)), '5 versions, 2 per page');
     }
 
+    public function test_every_s3_bucket_call_names_the_guarded_account_as_expected_owner(): void
+    {
+        $this->leftovers();
+
+        $cleanup = $this->cleanup();
+        $cleanup->apply($cleanup->plan(self::APP));
+
+        $operations = array_unique(array_column($this->aws->bucketOwners, 0));
+        sort($operations);
+        self::assertSame(['DeleteBucket', 'DeleteObjects', 'GetBucketTagging', 'ListObjectVersions'], $operations);
+        foreach ($this->aws->bucketOwners as [$operation, $owner]) {
+            self::assertSame(self::ACCOUNT, $owner, $operation);
+        }
+    }
+
+    public function test_a_bucket_of_another_account_is_not_emptied(): void
+    {
+        $this->leftovers();
+        $cleanup = $this->cleanup();
+        $plan = $cleanup->plan(self::APP);
+        // The same names now answer for another owner: S3 refuses the calls that name the expected owner.
+        $this->aws->account = '999999999999';
+
+        try {
+            $cleanup->apply($plan);
+            self::fail('apply() must report the bucket it could not delete.');
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('s3-bucket ' . self::BUCKET . ': AccessDenied', $e->getMessage());
+        }
+
+        self::assertCount(5, $this->aws->buckets[self::BUCKET]['versions']);
+        self::assertNotContains('DeleteObjects', $this->aws->calls);
+        self::assertNotContains('DeleteBucket', $this->aws->calls);
+    }
+
     public function test_apply_checks_the_tags_again_before_deleting(): void
     {
         $this->leftovers();
