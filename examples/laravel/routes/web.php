@@ -33,16 +33,18 @@ Route::get('/e2e/cache', function () {
 
 Route::get('/e2e/storage', function () {
     $value = bin2hex(random_bytes(8));
-    // The default disk with `throw` on: a failed write answers with S3's error instead of `false`.
-    $disk = Storage::build(['throw' => true] + config('filesystems.disks.' . config('filesystems.default')));
     try {
+        // The default disk with `throw` on: a failed write answers with S3's error instead of `false`.
+        $disk = Storage::build(['throw' => true] + config('filesystems.disks.' . config('filesystems.default')));
         $disk->put('e2e/check.txt', $value);
 
         return response()->json(['ok' => $disk->get('e2e/check.txt') === $value]);
     } catch (Throwable $e) {
+        // Messages (bucket, key, endpoint) only against a local emulator; on AWS just the error code or class.
         $errors = [];
         for ($error = $e; $error !== null; $error = $error->getPrevious()) {
-            $errors[] = get_class($error) . ': ' . $error->getMessage();
+            $code = $error instanceof Aws\Exception\AwsException ? $error->getAwsErrorCode() : null;
+            $errors[] = (string) getenv('AWS_ENDPOINT_URL') !== '' ? get_class($error) . ': ' . $error->getMessage() : ($code ?? get_class($error));
         }
 
         return response()->json(['ok' => false, 'error' => implode(' <- ', $errors)], 500);

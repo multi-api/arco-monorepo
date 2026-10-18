@@ -121,6 +121,9 @@ final class FlociE2eTest extends TestCase
             // host under localhost) can never be the origin. Skip only when the log shows exactly that
             // for this deploy's endpoint: then the alias and the origin Arco set up are both right.
             $origin = (string) parse_url((string) self::$url, PHP_URL_HOST);
+            if ($origin === '') {
+                self::fail('[custom domain] answered 502 and the function URL has no host to match in Floci\'s log: ' . self::$url);
+            }
             $log = self::flociLog("custom origin fetch failed for host $origin");
             if (str_contains($log, 'UnknownHostException')) {
                 self::markTestSkipped('Known Floci gap: CloudFront cannot fetch from a Web Function endpoint origin '
@@ -148,13 +151,17 @@ final class FlociE2eTest extends TestCase
             self::assertTrue(is_array($data) && ($data['ok'] ?? null) === true, '[storage] S3 did not return the file just written: ' . E2eHttp::excerpt($answer['body']));
             return;
         }
-        // The route reports the S3 error in its answer; the function's log is the fallback.
-        $logs = self::arco(['logs', '--env=' . self::ENV, '--since=10m'], 120)->getOutput();
-        if (str_contains($answer['body'] . $logs, self::ACL_GAP)) {
+        // The route answers S3's error in its body; the function's log is only the fallback when it has none.
+        $data = json_decode($answer['body'], true);
+        $error = is_array($data) && is_string($data['error'] ?? null) && $data['error'] !== '' ? $data['error'] : null;
+        $logs = $error === null ? self::arco(['logs', '--env=' . self::ENV, '--since=10m'], 120)->getOutput() : '';
+        $evidence = $error ?? $logs;
+        if (str_contains($evidence, self::ACL_GAP)) {
             self::markTestSkipped('Known Floci gap: Flysystem sends x-amz-acl private (AccessControlListNotSupported). Observed: '
-                . self::firstLineWith($answer['body'] . "\n" . $logs, self::ACL_GAP));
+                . self::firstLineWith($evidence, self::ACL_GAP));
         }
-        self::fail("[storage] /e2e/storage answered {$answer['status']}: " . E2eHttp::excerpt($answer['body']) . "\nLogs:\n" . self::tail($logs, 30));
+        self::fail("[storage] /e2e/storage answered {$answer['status']}: " . E2eHttp::excerpt($answer['body'])
+            . ($error === null ? "\nLogs:\n" . self::tail($logs, 30) : ''));
     }
 
     #[Depends('test_up')]
@@ -167,7 +174,8 @@ final class FlociE2eTest extends TestCase
         $status = null;
         $deadline = time() + 120;
         while (time() < $deadline) {
-            $status = $this->http->json('queue', self::url("/e2e/job/$id"))['status'] ?? null;
+            // The request's own retries stay within what is left of the 120 s.
+            $status = $this->http->json('queue', self::url("/e2e/job/$id"), deadlineSeconds: max(1, $deadline - time()))['status'] ?? null;
             if ($status === 'done') {
                 break;
             }
@@ -182,13 +190,14 @@ final class FlociE2eTest extends TestCase
         $last = null;
         $deadline = time() + 150;
         while (time() < $deadline) {
-            $last = $this->http->json('scheduler', self::url('/e2e/schedule'))['last'] ?? null;
-            if (is_string($last) && $last !== '') {
+            $last = $this->http->json('scheduler', self::url('/e2e/schedule'), deadlineSeconds: max(1, $deadline - time()))['last'] ?? null;
+            // Any non-empty marker counts: DynamoDB may hand a numeric-looking string back as a number.
+            if (is_scalar($last) && (string) $last !== '') {
                 break;
             }
             sleep(5);
         }
-        self::assertIsString($last, '[scheduler] the scheduled task did not run within 150 s (no e2e-schedule in the cache)');
+        self::assertTrue(is_scalar($last) && (string) $last !== '', '[scheduler] the scheduled task did not run within 150 s (no e2e-schedule in the cache)');
     }
 
     #[Depends('test_up')]

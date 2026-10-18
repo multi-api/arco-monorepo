@@ -21,8 +21,8 @@
 # The e2e suite starts its own Floci (FLOCI_IMAGE, a local AWS emulator) as arco-e2e-floci-<pid> with a
 # fresh data volume and the host's Docker socket (Floci runs the Lambda functions as sibling containers).
 # PHPUnit runs in Floci's network namespace, so localhost:4566 is Floci, with test credentials and no
-# AWS config files: it cannot reach real AWS. A trap removes Floci, its volume and the containers and
-# volumes Floci created (labelled with its resource namespace, arco-e2e-floci-<pid>) on any exit.
+# AWS config files: it cannot reach real AWS. A trap removes Floci, its volume and the containers,
+# volumes and networks Floci created (labelled with its resource namespace, arco-e2e-floci-<pid>) on any exit.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -84,19 +84,24 @@ e2e() {
   # Floci builds its function domains under the base URL's host: *.localhost:4566, which curl in the
   # test container resolves to loopback, that is Floci.
   endpoint=http://localhost:4566
-  # Floci labels the containers and volumes it creates floci_namespace=<resource namespace> and puts
-  # "-<namespace>-" in their names; the namespace set below is this Floci's own container name (unique
-  # per run), so label and name tell them apart from those of any other Floci on this host.
+  # Floci labels the containers, volumes and networks it creates floci_namespace=<resource namespace>;
+  # the namespace set below is this Floci's own container name (unique per run), so the exact label
+  # tells them apart from those of any other Floci on this host.
   cleanup() {
-    trap - EXIT INT TERM HUP
+    trap - EXIT
+    # A second Ctrl-C must not cut the cleanup short.
+    trap '' INT TERM HUP
     docker rm -f "arco-e2e-phpunit-$$" >/dev/null 2>&1 || true
     docker rm -f "$floci" >/dev/null 2>&1 || true
-    ids=$( (docker ps -aq --filter "label=floci_namespace=$floci"; docker ps -aq --filter "name=-$floci-") | sort -u)
+    ids=$(docker ps -aq --filter "label=floci_namespace=$floci")
     # shellcheck disable=SC2086
     [ -z "$ids" ] || docker rm -f $ids >/dev/null 2>&1 || true
-    vols=$( (docker volume ls -q --filter "label=floci_namespace=$floci"; docker volume ls -q --filter "name=-$floci-") | sort -u)
+    vols=$(docker volume ls -q --filter "label=floci_namespace=$floci")
     # shellcheck disable=SC2086
     [ -z "$vols" ] || docker volume rm -f $vols >/dev/null 2>&1 || true
+    nets=$(docker network ls -q --filter "label=floci_namespace=$floci")
+    # shellcheck disable=SC2086
+    [ -z "$nets" ] || docker network rm $nets >/dev/null 2>&1 || true
     docker volume rm -f "$data" >/dev/null 2>&1 || true
   }
   trap cleanup EXIT

@@ -15,18 +15,18 @@ Run one E2E at a time. What the runner does:
    - `FLOCI_BASE_URL=http://localhost:4566` (Floci puts this host and port in the domains it hands out),
    - `FLOCI_STORAGE_MODE=persistent`, `FLOCI_STORAGE_PERSISTENT_PATH=/app/data`,
    - `FLOCI_SERVICES_CLOUDFRONT_ALLOWED_PRIVATE_ORIGIN_HOSTS=localhost,*.localhost` (CloudFront may proxy to the local function endpoint),
-   - `FLOCI_DOCKER_RESOURCE_NAMESPACE=arco-e2e-floci-<pid>`: Floci labels every container and volume it creates `floci_namespace=<namespace>`, which is how the cleanup finds them.
+   - `FLOCI_DOCKER_RESOURCE_NAMESPACE=arco-e2e-floci-<pid>`: Floci labels every container and volume it creates (and any network) `floci_namespace=<namespace>`, which is how the cleanup finds them.
    No port is published: nothing on the host has to be free.
 2. Waits up to 120 s for `http://localhost:4566/_localstack/health`.
 3. Runs `vendor/bin/phpunit --testsuite e2e` in the test image, inside Floci's network namespace (`--network container:arco-e2e-floci-<pid>`), so `localhost:4566` and `*.localhost:4566` are Floci. The environment is `AWS_ENDPOINT_URL=http://localhost:4566`, keys `test`/`test`, `AWS_REGION=us-east-1`, `AWS_CONFIG_FILE=/dev/null`, `AWS_SHARED_CREDENTIALS_FILE=/dev/null`. The suite refuses to start with anything else (and with `AWS_PROFILE`, `AWS_SESSION_TOKEN` or other credential sources set), so it cannot reach a real AWS account. The Docker socket and `ARCO_E2E_FLOCI_CONTAINER` let a check quote Floci's own log in its failure or skip message.
-4. On any exit (success, failure, Ctrl-C) a `trap` removes the PHPUnit container, the Floci container, every container and volume labelled `floci_namespace=arco-e2e-floci-<pid>` or with `-arco-e2e-floci-<pid>-` in its name (Floci names them `floci-aws-…` and `floci-lambda-web-…`), and the data volume. Other Floci instances on the host (and their function containers) are never touched.
+4. On any exit (success, failure, Ctrl-C) a `trap` removes the PHPUnit container, the Floci container, every container, volume and network labelled `floci_namespace=arco-e2e-floci-<pid>` (Floci names its containers `floci-aws-…` and `floci-lambda-web-…`), and the data volume. The cleanup ignores further Ctrl-C. Other Floci instances on the host (and their function containers) are never touched.
 
 Manual check after changing the runner (interrupt mid-deploy, then nothing named `arco-e2e` may remain):
 
 ```sh
 perl -e 'setpgrp(0,0); exec @ARGV' bin/test-docker e2e > /tmp/e2e.log 2>&1 &
 pid=$!; sleep 90; kill -INT -- -$pid; wait $pid    # exit 130
-docker ps -a --format '{{.Names}}' | grep arco-e2e; docker volume ls -q | grep arco-e2e   # both empty
+docker ps -a --format '{{.Names}}' | grep arco-e2e; docker volume ls -q | grep arco-e2e; docker network ls | grep arco-e2e   # all empty
 ```
 
 An interrupted run skips PHPUnit's end-of-run cleanup, so its app copy stays in `build/tmp/integration/e2e-app-*` (git-ignored); delete it by hand.

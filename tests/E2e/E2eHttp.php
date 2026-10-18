@@ -32,7 +32,8 @@ final class E2eHttp
         $last = 'no request made';
         do {
             try {
-                $response = $this->client->get($url, ['headers' => $headers]);
+                // No single request runs past the deadline (60 s at most).
+                $response = $this->client->get($url, ['headers' => $headers, 'timeout' => min(60, max(1, $deadline - time()))]);
                 $answer = ['status' => $response->getStatusCode(), 'body' => (string) $response->getBody()];
                 if ($answer['status'] < 500 || ! $retryServerErrors) {
                     return $answer;
