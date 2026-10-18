@@ -183,4 +183,25 @@ final class AppInspectorTest extends TestCase
 
         self::assertSame(0, $this->inspector()->detect($this->project)->queuedClasses);
     }
+
+    public function test_unreadable_app_directory_does_not_fail_detection(): void
+    {
+        mkdir("$this->project/app", 0777, true);
+        chmod("$this->project/app", 0000);
+        try {
+            if (is_readable("$this->project/app")) {
+                self::markTestSkipped('The directory stays readable (running as root).');
+            }
+            self::assertSame([], $this->inspector()->detect($this->project)->queues);
+        } finally {
+            chmod("$this->project/app", 0755);
+        }
+    }
+
+    public function test_queue_names_cannot_span_lines(): void
+    {
+        $this->write('app/Jobs/A.php', "<?php class A implements ShouldQueue {}\n\$a->onQueue('multi\n');");
+
+        self::assertSame(['default'], $this->inspector()->detect($this->project)->queues);
+    }
 }

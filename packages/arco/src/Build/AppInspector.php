@@ -33,16 +33,17 @@ final class AppInspector
 
     public function detect(string $projectDir): Detection
     {
-        $files = self::phpFiles("$projectDir/app");
-        [$queues, $queuedClasses] = $this->queues($projectDir, $files);
+        $appCode = self::phpSources("$projectDir/app");
+        [$queues, $queuedClasses] = $this->queues($appCode, self::phpSources("$projectDir/routes"));
+        $connection = self::databaseConnection("$projectDir/.env");
 
         return new Detection(
             $this->schedule($projectDir),
             $queues,
             $queuedClasses,
-            $this->usesStorage($projectDir, $files),
+            $this->usesStorage($projectDir, $appCode),
             $this->usesDynamoDbCache($projectDir),
-            ($connection = self::databaseConnection("$projectDir/.env")) !== null && $connection !== 'sqlite',
+            $connection !== null && $connection !== 'sqlite',
         );
     }
 
@@ -71,14 +72,15 @@ final class AppInspector
     }
 
     /**
-     * @param list<string> $files the PHP files under app/
+     * @param list<string> $appCode the contents of the PHP files under app/
+     * @param list<string> $routeCode the contents of the PHP files under routes/
      * @return array{0: list<string>, 1: int} queue names and the number of queued classes
      */
-    private function queues(string $dir, array $files): array
+    private function queues(array $appCode, array $routeCode): array
     {
         $classes = 0;
-        foreach ($files as $file) {
-            if (preg_match('/implements\s[^{]*\bShouldQueue\b/', (string) @file_get_contents($file)) === 1) {
+        foreach ($appCode as $code) {
+            if (preg_match('/implements\s[^{]*\bShouldQueue\b/', $code) === 1) {
                 $classes++;
             }
         }
@@ -86,10 +88,8 @@ final class AppInspector
             return [[], 0];
         }
         $names = [];
-        $sources = [...$files, ...self::phpFiles("$dir/routes")];
-        foreach ($sources as $file) {
-            $code = (string) @file_get_contents($file);
-            preg_match_all('/->onQueue\(\s*(?:queue\s*:\s*)?[\'"]([^\'"]*)[\'"]|onQueue\s*:\s*[\'"]([^\'"]*)[\'"]|public\s+(?:\?string\s+)?\$queue\s*=\s*[\'"]([^\'"]*)[\'"]/', $code, $matches);
+        foreach ([...$appCode, ...$routeCode] as $code) {
+            preg_match_all('/->onQueue\(\s*(?:queue\s*:\s*)?[\'"]([^\'"\r\n]*)[\'"]|onQueue\s*:\s*[\'"]([^\'"\r\n]*)[\'"]|public\s+(?:\?string\s+)?\$queue\s*=\s*[\'"]([^\'"\r\n]*)[\'"]/', $code, $matches);
             foreach ([1, 2, 3] as $group) {
                 foreach ($matches[$group] as $name) {
                     if ($name !== '' && $name !== 'default' && preg_match(Validator::NAME, $name) === 1) {
@@ -103,8 +103,8 @@ final class AppInspector
         return [['default', ...$others], $classes];
     }
 
-    /** @param list<string> $files the PHP files under app/ */
-    private function usesStorage(string $dir, array $files): bool
+    /** @param list<string> $appCode the contents of the PHP files under app/ */
+    private function usesStorage(string $dir, array $appCode): bool
     {
         if (strtolower((string) self::envValue("$dir/.env", 'FILESYSTEM_DISK')) === 's3') {
             return true;
@@ -113,8 +113,8 @@ final class AppInspector
         if (is_array($composer) && is_array($composer['require'] ?? null) && array_key_exists('league/flysystem-aws-s3-v3', $composer['require'])) {
             return true;
         }
-        foreach ($files as $file) {
-            if (preg_match('/disk\(\s*[\'"]s3[\'"]\s*\)/', (string) @file_get_contents($file)) === 1) {
+        foreach ($appCode as $code) {
+            if (preg_match('/disk\(\s*[\'"]s3[\'"]\s*\)/', $code) === 1) {
                 return true;
             }
         }
@@ -140,15 +140,32 @@ final class AppInspector
     /** The unquoted value of the first `KEY=` line of an .env file, or null when the file or key is missing. */
     private static function envValue(string $envFile, string $key): ?string
     {
-        if (! is_file($envFile)) {
-            return null;
-        }
-        foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
-            if (preg_match('/^\s*(?:export\s+)?' . preg_quote($key, '/') . '\s*=(.*)$/', $line, $m)) {
-                return self::unquote($m[1]);
+        foreach (self::envEntries($envFile) as [$name, $value]) {
+            if ($name === $key) {
+                return $value;
             }
         }
         return null;
+    }
+
+    /**
+     * The `KEY=value` lines of an .env file in order, values unquoted and stripped of trailing comments.
+     * Empty when the file is missing. Shared with `arco init`, which reads the secret-looking keys.
+     *
+     * @return list<array{0: string, 1: string}> [key, value] pairs
+     */
+    public static function envEntries(string $envFile): array
+    {
+        if (! is_file($envFile)) {
+            return [];
+        }
+        $entries = [];
+        foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
+            if (preg_match('/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=(.*)$/', $line, $m)) {
+                $entries[] = [$m[1], self::unquote($m[2])];
+            }
+        }
+        return $entries;
     }
 
     private static function unquote(string $value): string
@@ -160,22 +177,22 @@ final class AppInspector
         return $value;
     }
 
-    /** @return list<string> the regular .php files below $dir, without following symlinks, at most MAX_FILES */
-    private static function phpFiles(string $dir): array
+    /** @return list<string> the contents of the regular .php files below $dir, without following symlinks, at most MAX_FILES files */
+    private static function phpSources(string $dir): array
     {
         if (! is_dir($dir) || is_link($dir)) {
             return [];
         }
-        $iterator = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(
-            new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
-            fn (SplFileInfo $entry): bool => ! $entry->isLink(),
-        ));
-        $files = [];
+        $sources = [];
         try {
+            $iterator = new RecursiveIteratorIterator(new RecursiveCallbackFilterIterator(
+                new RecursiveDirectoryIterator($dir, FilesystemIterator::SKIP_DOTS),
+                fn (SplFileInfo $entry): bool => ! $entry->isLink(),
+            ));
             foreach ($iterator as $entry) {
                 if ($entry instanceof SplFileInfo && $entry->isFile() && $entry->getExtension() === 'php') {
-                    $files[] = $entry->getPathname();
-                    if (count($files) >= self::MAX_FILES) {
+                    $sources[] = (string) @file_get_contents($entry->getPathname());
+                    if (count($sources) >= self::MAX_FILES) {
                         break;
                     }
                 }
@@ -183,6 +200,6 @@ final class AppInspector
         } catch (Throwable) {
             // An unreadable directory ends the scan with what was found.
         }
-        return $files;
+        return $sources;
     }
 }

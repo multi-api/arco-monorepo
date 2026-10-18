@@ -238,31 +238,18 @@ final class InitCommand extends ArcoCommand
             return [];
         }
         $keys = [];
-        foreach (file($envFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
-            if (! preg_match('/^\s*(?:export\s+)?([A-Z][A-Z0-9_]*)\s*=(.*)$/', $line, $m)) {
-                continue;
-            }
-            [, $key, $value] = $m;
+        foreach (AppInspector::envEntries($envFile) as [$key, $value]) {
             // AWS_* keys are either reserved by Lambda or replaced by the execution role.
             if (! preg_match(self::SECRET_LIKE, $key) || str_starts_with($key, 'AWS_') || Validator::isReserved($key)) {
                 continue;
             }
             // Placeholders such as `REDIS_PASSWORD=null` or `APP_KEY=` hold no secret to store.
-            if (in_array(strtolower(self::unquote($value)), ['', 'null'], true)) {
+            if (in_array(strtolower($value), ['', 'null'], true)) {
                 continue;
             }
             $keys[] = $key;
         }
         return array_values(array_unique($keys));
-    }
-
-    private static function unquote(string $value): string
-    {
-        $value = trim((string) preg_replace('/\s+#.*$/', '', $value));
-        if (strlen($value) >= 2 && ($value[0] === '"' || $value[0] === "'") && $value[-1] === $value[0]) {
-            return substr($value, 1, -1);
-        }
-        return $value;
     }
 
     private static function ignoreLocalState(string $gitignore): void
