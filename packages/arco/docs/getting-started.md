@@ -43,7 +43,8 @@ is read from the code) and asks, in this order:
 
 1. Console function (default yes): `arco command`, tinker, deploy commands and the scheduler.
 2. `migrate --force` on every deploy, only with the console and a server database (not SQLite).
-3. Scheduler, only when the app has a schedule: suggests the interval its tasks need.
+3. Scheduler, only when the app has a schedule, or when a schedule was found but its times could not be read
+   (then it suggests every minute): suggests the interval its tasks need.
 4. SQS queues with their worker functions, from the queues the code uses.
 5. Failed-jobs table (DynamoDB), only with queues; the default is yes when the app has no SQL database.
 6. S3 storage, when the app uses S3 (name defaults to `files`).

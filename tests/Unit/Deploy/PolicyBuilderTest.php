@@ -60,7 +60,7 @@ final class PolicyBuilderTest extends TestCase
             [
                 'Sid' => 'ArcoStorage',
                 'Effect' => 'Allow',
-                'Action' => ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:GetObjectAcl', 's3:PutObjectAcl'],
+                'Action' => ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:GetObjectAcl', 's3:PutObjectAcl', 's3:AbortMultipartUpload'],
                 'Resource' => ['arn:aws:s3:::shop-production-uploads-111111111111/*', 'arn:aws:s3:::legacy.bucket/*'],
             ],
             [
@@ -73,7 +73,7 @@ final class PolicyBuilderTest extends TestCase
         self::assertSame([
             'Sid' => 'ArcoTables',
             'Effect' => 'Allow',
-            'Action' => ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:Scan', 'dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem', 'dynamodb:DescribeTable'],
+            'Action' => ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Query', 'dynamodb:BatchGetItem', 'dynamodb:BatchWriteItem', 'dynamodb:DescribeTable'],
             'Resource' => $tables,
         ], $bySid['ArcoTables']);
     }

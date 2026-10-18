@@ -147,6 +147,9 @@ final class ResourcesStackTest extends TestCase
                 'BucketName' => 'shop-production-uploads-111111111111',
                 'BucketEncryption' => ['ServerSideEncryptionConfiguration' => [['ServerSideEncryptionByDefault' => ['SSEAlgorithm' => 'AES256']]]],
                 'PublicAccessBlockConfiguration' => ['BlockPublicAcls' => true, 'BlockPublicPolicy' => true, 'IgnorePublicAcls' => true, 'RestrictPublicBuckets' => true],
+                'LifecycleConfiguration' => ['Rules' => [
+                    ['Id' => 'arco-abort-incomplete-uploads', 'AbortIncompleteMultipartUpload' => ['DaysAfterInitiation' => 7], 'Status' => 'Enabled'],
+                ]],
                 'Tags' => self::tags('storage:uploads'),
             ],
         ], $resources['StorageUploads']);
@@ -170,6 +173,7 @@ final class ResourcesStackTest extends TestCase
                 'LifecycleConfiguration' => ['Rules' => [
                     ['Id' => 'arco-expire-1', 'Prefix' => 'tmp/', 'ExpirationInDays' => 1, 'Status' => 'Enabled'],
                     ['Id' => 'arco-expire-2', 'Prefix' => 'exports/', 'ExpirationInDays' => 30, 'Status' => 'Enabled'],
+                    ['Id' => 'arco-abort-incomplete-uploads', 'AbortIncompleteMultipartUpload' => ['DaysAfterInitiation' => 7], 'Status' => 'Enabled'],
                 ]],
                 'CorsConfiguration' => ['CorsRules' => [[
                     'AllowedOrigins' => ['https://www.multiapi.cl', 'http://localhost:3000'],

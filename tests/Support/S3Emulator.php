@@ -16,19 +16,30 @@ final class S3Emulator
         $this->dir = TempPaths::path('arco-s3-');
         mkdir("$this->dir/objects", 0777, true);
         touch("$this->dir/requests.jsonl");
-        $this->port = random_int(40000, 49999);
-        $this->server = new Process([PHP_BINARY, '-S', "$bind:$this->port", __DIR__ . '/s3-emulator.php'], null, ['ARCO_S3_DIR' => $this->dir]);
-        $this->server->start();
-        $deadline = microtime(true) + 5;
-        while (microtime(true) < $deadline) {
-            $socket = @fsockopen('127.0.0.1', $this->port);
-            if (is_resource($socket)) {
-                fclose($socket);
-                return;
+        // A random port may be taken by another process: retry with a new one when the server dies or never answers.
+        $lastError = '';
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            $port = random_int(40000, 49999);
+            $server = new Process([PHP_BINARY, '-S', "$bind:$port", __DIR__ . '/s3-emulator.php'], null, ['ARCO_S3_DIR' => $this->dir]);
+            $server->start();
+            $deadline = microtime(true) + 5;
+            while ($server->isRunning() && microtime(true) < $deadline) {
+                $socket = @fsockopen('127.0.0.1', $port);
+                if (is_resource($socket)) {
+                    fclose($socket);
+                    if (! $server->isRunning()) {
+                        break; // the answer came from another process that owns the port
+                    }
+                    $this->port = $port;
+                    $this->server = $server;
+                    return;
+                }
+                usleep(50_000);
             }
-            usleep(50_000);
+            $lastError = $server->getErrorOutput();
+            $server->stop(1);
         }
-        throw new \RuntimeException('The S3 emulator did not start: ' . $this->server->getErrorOutput());
+        throw new \RuntimeException('The S3 emulator did not start after 5 attempts: ' . $lastError);
     }
 
     public function put(string $bucket, string $key, string $sourcePath): void

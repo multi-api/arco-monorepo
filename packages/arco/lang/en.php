@@ -536,7 +536,7 @@ return [
     'queue.dlq_missing' => 'The dead-letter queue {dlq} does not exist yet. Run arco deploy first.',
     'queue.dlq_summary' => 'The dead-letter queue {dlq} has about {count} messages.',
     'queue.dlq_empty' => 'The dead-letter queue {dlq} is empty.',
-    'queue.dlq_sample' => 'A sample of {shown} (reading them here does not remove or delay them):',
+    'queue.dlq_sample' => 'A sample of {shown} (reading them here does not remove or delay them; their receive count goes up):',
     'queue.dlq_message' => 'Message {id}: received {receives} times, sent {sent}',
     'queue.dlq_redrive_hint' => 'Once the cause is fixed, send them back to the queue with "arco queue:dlq {queue} --redrive".',
     'queue.redrive_started' => 'Moving about {count} messages from {dlq} back to {queue} (task {task}). SQS moves them in the background; follow the counts with "arco queue:list".',
