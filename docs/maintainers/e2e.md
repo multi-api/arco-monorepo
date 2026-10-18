@@ -88,3 +88,50 @@ The image is pinned in one place, `FLOCI_IMAGE` in `bin/test-docker`. Lambda Web
 > Two causes: the origin client resolves names through the system resolver, which does not map `*.localhost` to loopback; and `ValidatingDnsResolver` compares `allowed-private-origin-hosts` by exact name, so `*.localhost` (or `*.localhost.floci.io`) cannot allow endpoints whose host is generated per function.
 >
 > Suggestion: route origins that are Floci's own generated hosts (Function URLs, Web Function endpoints, S3 website endpoints) internally, or accept `*.`-prefixed patterns in `allowed-private-origin-hosts`.
+
+# Real-AWS end-to-end run
+
+`composer test:e2e-aws` (`bin/test-docker e2e-aws`, PHPUnit suite `e2e-aws`, `tests/E2e/AwsE2eTest.php`) deploys `examples/laravel` (environment `e2e`: console, scheduler every minute, queue `default`, storage `files`, cache, Lambda URL only, no custom domain) to the dedicated Arco E2E account and runs the same checks as the Floci suite minus the custom domain. `test_storage` must pass on AWS (no Floci gap skip). It is the release gate (see [releasing.md](releasing.md)); it is manual and is not run in CI.
+
+It is a **dry run unless `ARCO_E2E_DRY_RUN=0`**. Until the dedicated account exists, only the dry run is meaningful, and only once that account's profile is set up.
+
+## Inputs
+
+| Variable | |
+|---|---|
+| `AWS_PROFILE` | required: a profile in your `~/.aws` for the E2E account. For SSO, run `aws sso login --profile <it>` first (the container mounts `~/.aws` read-only and cannot refresh the token). |
+| `ARCO_E2E_ACCOUNT` | required: the 12-digit id of the dedicated E2E account. |
+| `ARCO_E2E_DRY_RUN` | `1` (default) or `0` for a real run. |
+
+```sh
+AWS_PROFILE=arco-e2e ARCO_E2E_ACCOUNT=123456789012 composer test:e2e-aws                       # dry run
+AWS_PROFILE=arco-e2e ARCO_E2E_ACCOUNT=123456789012 ARCO_E2E_DRY_RUN=0 composer test:e2e-aws    # real run
+```
+
+The container gets a network, the repository at its host path, the `arco-test-cache` volume, a throwaway `HOME` (tmpfs) with your `~/.aws` mounted read-only at `HOME/.aws`, and from your shell exactly `AWS_PROFILE`, `ARCO_E2E_ACCOUNT` and `ARCO_E2E_DRY_RUN`. It never gets `AWS_ENDPOINT_URL` or access keys from your shell.
+
+## Safety
+
+- **Guard first.** Before any other AWS call, `AwsE2eCleanup::connect()` refuses when any `AWS_ENDPOINT_URL*` variable is set, when `ARCO_E2E_ACCOUNT` is not 12 digits, and when `sts:GetCallerIdentity` for the profile returns any other account (for example a production profile left active). `examples/laravel/arco.php` also locks the `e2e` environment to `ARCO_E2E_ACCOUNT` (`->account()`), so every `arco` command of the run refuses another account too.
+- **One app name per run.** `arco-e2e-<8 hex>`, passed to `arco.php` as `ARCO_E2E_APP`; the APP_KEY reference follows it (`arco-ssm:/<app>/e2e/app-key`). The cleanup refuses any other app name, so it can never be pointed at `arco-example` or a real app.
+- **Tag-scoped cleanup.** `arco remove` keeps queues, buckets and tables by design. `AwsE2eCleanup` finds candidates by name prefix `<app>-e2e-` (`s3:ListBuckets`, `dynamodb:ListTables`, `sqs:ListQueues`) and by tag (`tag:GetResources` with `arco:app=<app>` and `arco:environment=e2e`), and deletes one only when its name has that prefix **and** its own service reports both tags. A resource with the right name but without the tags, or tagged but named otherwise, is reported (`[cleanup] leaves alone …`) and left alone. Name and tags are checked again right before each delete. Buckets are emptied first (every version and delete marker).
+- **The APP_KEY parameter** `/<app>/e2e/app-key` is the one exception: the run creates it (tagged `arco:app`, `arco:environment`) and the cleanup deletes it by that exact name.
+
+## What a run does
+
+Dry run (`ARCO_E2E_DRY_RUN=1`): guard, `arco package --env=e2e`, then prints the resources a real run would create (from the resolved config) and what the cleanup finds for the new app name (normally nothing). Only read calls reach AWS (`sts:GetCallerIdentity`, `List*`, `Get*`, `Describe*`, `tag:GetResources`). The checks are reported as skipped.
+
+Real run (`ARCO_E2E_DRY_RUN=0`):
+
+1. Guard; create the SecureString parameter `/<app>/e2e/app-key`.
+2. `arco deploy --env=e2e --yes`, `arco info --env=e2e --json` for the URL.
+3. Checks: `test_up`, `test_cache`, `test_storage`, `test_queue_job`, `test_scheduler`, `test_arco_command`, `test_logs` (as in the Floci table above).
+4. `arco remove --env=e2e --force`, then the cleanup prints its plan, what it leaves alone and each delete. A failed remove or a failed delete fails the run and names what is left.
+
+Step 4 also runs when the deploy fails. If the run is killed (Ctrl-C), nothing cleans up: the app name is printed at the start (`[e2e-aws] … app arco-e2e-…`); run `AWS_PROFILE=<profile> ARCO_E2E_APP=<it> ARCO_E2E_ACCOUNT=<id> vendor/bin/arco remove --env=e2e --force` from a copy of `examples/laravel`, then delete the retained `<app>-e2e-*` queues, bucket and table and the parameter by hand.
+
+## Permissions of the E2E profile
+
+Besides what `arco deploy` and `arco remove` need ([getting started: minimal IAM permissions](../../packages/arco/docs/getting-started.md#minimal-iam-permissions), with SSM scoped to `parameter/arco-e2e-*`): `ssm:PutParameter`, `ssm:AddTagsToResource`, `ssm:DescribeParameters`, `ssm:DeleteParameter`; `s3:ListAllMyBuckets`, `s3:GetBucketTagging`, `s3:ListBucketVersions`, `s3:DeleteObjectVersion`, `s3:DeleteBucket`; `dynamodb:ListTables`, `dynamodb:DescribeTable`, `dynamodb:ListTagsOfResource`, `dynamodb:DeleteTable`; `sqs:ListQueues`, `sqs:GetQueueUrl`, `sqs:ListQueueTags`, `sqs:DeleteQueue`; `tag:GetResources`.
+
+The cleanup itself is covered by `tests/Unit/E2e/AwsE2eCleanupTest.php` against an in-memory account (`FakeAwsAccount`): no network, no profile.

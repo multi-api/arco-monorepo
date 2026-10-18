@@ -17,12 +17,18 @@
 #   bin/test-docker analyse                      PHPStan only
 #   bin/test-docker integration [phpunit args]   the integration suite (composer test:integration)
 #   bin/test-docker e2e [phpunit args]           the end-to-end suite against a local Floci (composer test:e2e)
+#   bin/test-docker e2e-aws [phpunit args]       the real-AWS end-to-end run, dry run by default (composer test:e2e-aws)
 #
 # The e2e suite starts its own Floci (FLOCI_IMAGE, a local AWS emulator) as arco-e2e-floci-<pid> with a
 # fresh data volume and the host's Docker socket (Floci runs the Lambda functions as sibling containers).
 # PHPUnit runs in Floci's network namespace, so localhost:4566 is Floci, with test credentials and no
 # AWS config files: it cannot reach real AWS. A trap removes Floci, its volume and the containers,
 # volumes and networks Floci created (labelled with its resource namespace, arco-e2e-floci-<pid>) on any exit.
+#
+# The e2e-aws run is the only mode that reaches real AWS. Its container gets a network, the host's
+# ~/.aws read-only (under a throwaway HOME, so SSO token caches resolve), and exactly AWS_PROFILE,
+# ARCO_E2E_ACCOUNT and ARCO_E2E_DRY_RUN (default 1) from the host: never AWS_ENDPOINT_URL or keys.
+# The suite itself refuses any account but ARCO_E2E_ACCOUNT before it calls anything else.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -148,6 +154,30 @@ e2e() {
   return "$status"
 }
 
+e2e_aws() {
+  if [ -z "${AWS_PROFILE:-}" ] || [ -z "${ARCO_E2E_ACCOUNT:-}" ]; then
+    echo "e2e-aws needs AWS_PROFILE and ARCO_E2E_ACCOUNT (the dedicated E2E account id): see docs/maintainers/e2e.md." >&2
+    exit 2
+  fi
+  if [ ! -d "$HOME/.aws" ]; then
+    echo "e2e-aws reads the profile from $HOME/.aws, which does not exist." >&2
+    exit 2
+  fi
+  # shellcheck disable=SC2086
+  docker run --rm --init $tty --name "arco-e2e-aws-phpunit-$$" \
+    --user "$(id -u):$(id -g)" \
+    --mount "type=bind,source=$ROOT,target=$ROOT" \
+    --mount "type=volume,source=arco-test-cache,target=/cache" \
+    --tmpfs /e2e-home:mode=1777 \
+    --mount "type=bind,source=$HOME/.aws,target=/e2e-home/.aws,readonly" \
+    --env HOME=/e2e-home --env COMPOSER_CACHE_DIR=/cache/composer \
+    --env AWS_PROFILE="$AWS_PROFILE" \
+    --env ARCO_E2E_ACCOUNT="$ARCO_E2E_ACCOUNT" \
+    --env ARCO_E2E_DRY_RUN="${ARCO_E2E_DRY_RUN:-1}" \
+    --workdir "$ROOT" \
+    "$IMAGE" vendor/bin/phpunit --testsuite e2e-aws --display-skipped "$@"
+}
+
 suite=${1:-all}
 [ $# -gt 0 ] && shift
 case "$suite" in
@@ -155,11 +185,12 @@ case "$suite" in
   runtime) run node --test 'packages/arco/runtime/test/*.test.js' ;;
   integration) integration "$@" ;;
   e2e) e2e "$@" ;;
+  e2e-aws) e2e_aws "$@" ;;
   analyse) run vendor/bin/phpstan analyse -c docker/test/phpstan.neon --memory-limit=4G --no-progress "$@" ;;
   all)
     run vendor/bin/phpunit --testsuite unit
     run node --test 'packages/arco/runtime/test/*.test.js'
     run vendor/bin/phpstan analyse -c docker/test/phpstan.neon --memory-limit=4G --no-progress
     ;;
-  *) echo "usage: bin/test-docker [all|unit|runtime|analyse|integration|e2e] [args]" >&2; exit 2 ;;
+  *) echo "usage: bin/test-docker [all|unit|runtime|analyse|integration|e2e|e2e-aws] [args]" >&2; exit 2 ;;
 esac

@@ -50,6 +50,10 @@
             "Composer\\Config::disableProcessTimeout",
             "bin/test-docker e2e"
         ],
+        "test:e2e-aws": [
+            "Composer\\Config::disableProcessTimeout",
+            "bin/test-docker e2e-aws"
+        ],
         "test:runtime": "node --test 'packages/arco/runtime/test/*.test.js'",
         "analyse": "phpstan analyse --memory-limit=4G",
         "test:docker": [
@@ -65,7 +69,8 @@
         "test:docker": "Unit tests, runtime tests and PHPStan in a throwaway container (the way to run them)",
         "test:docker:unit": "Unit tests in the container; extra PHPUnit arguments pass through after --",
         "test:integration": "Integration suite (Lambda simulation) in a container with the host's Docker socket",
-        "test:e2e": "End-to-end suite: deploys examples/laravel to a throwaway local Floci (AWS emulator) and checks every feature"
+        "test:e2e": "End-to-end suite: deploys examples/laravel to a throwaway local Floci (AWS emulator) and checks every feature",
+        "test:e2e-aws": "Real-AWS end-to-end run against the dedicated E2E account (AWS_PROFILE, ARCO_E2E_ACCOUNT); a dry run unless ARCO_E2E_DRY_RUN=0"
     },
     "config": {
         "platform": {

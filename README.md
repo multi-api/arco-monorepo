@@ -38,8 +38,8 @@ access to the Docker socket is root-equivalent on the host: a test could start a
 mounts any host path. Pass PHPUnit arguments after `--`, e.g.
 `composer test:integration -- --filter WorkerRuntimeTest`.
 
-Releases: pushing a tag `vX.Y.Z` splits each package into its repository
-(`.github/workflows/split.yml`). Runtime binaries: see
+Releases: see [docs/maintainers/releasing.md](docs/maintainers/releasing.md) (pushing a tag
+`vX.Y.Z` splits each package into its repository, `.github/workflows/split.yml`). Runtime binaries: see
 [docs/maintainers/runtime-builds.md](docs/maintainers/runtime-builds.md).
 
 ## License

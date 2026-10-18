@@ -3,7 +3,6 @@
 namespace Multiapi\Arco\Tests\E2e;
 
 use Aws\Route53\Route53Client;
-use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\Attributes\Depends;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -20,6 +19,8 @@ use Symfony\Component\Process\Process;
 #[Group('e2e')]
 final class FlociE2eTest extends TestCase
 {
+    use E2eChecks;
+
     /** The exact environment bin/test-docker e2e sets: anything else could reach a real AWS account. */
     private const REQUIRED_ENV = [
         'AWS_ENDPOINT_URL' => 'http://localhost:4566',
@@ -37,24 +38,22 @@ final class FlociE2eTest extends TestCase
     private const DOMAIN = 'app.arco-e2e.test';
     private const ACL_GAP = 'AccessControlListNotSupported';
 
-    private static ?string $app = null;
-    private static ?string $url = null;
     private static ?string $distribution = null;
     private static bool $deployed = false;
-    private static float $started = 0.0;
 
-    private E2eHttp $http;
+    protected static function environment(): string
+    {
+        return self::ENV;
+    }
 
     public static function setUpBeforeClass(): void
     {
         self::refuseUnlessFloci();
 
-        $began = microtime(true);
         self::createHostedZone();
         self::$app = self::copyExample();
 
-        $deploy = self::arco(['deploy', '--env=' . self::ENV, '--yes', '--no-interaction'], 1800);
-        self::report('deploy', $began, $deploy->isSuccessful() ? 'ok' : 'FAILED');
+        $deploy = self::deploy();
         // Set before checking, so tearDownAfterClass removes whatever a failed deploy left behind.
         self::$deployed = true;
         if (! $deploy->isSuccessful()) {
@@ -62,12 +61,7 @@ final class FlociE2eTest extends TestCase
         }
         fwrite(STDERR, "\n" . self::tail($deploy->getOutput(), 40) . "\n");
 
-        $info = self::arco(['info', '--env=' . self::ENV, '--json'], 120);
-        $data = json_decode($info->getOutput(), true);
-        if (! is_array($data) || ! is_string($data['url'] ?? null)) {
-            self::fail("[deploy] arco info --json gave no URL:\n" . $info->getOutput() . $info->getErrorOutput());
-        }
-        self::$url = rtrim($data['url'], '/');
+        $data = self::readInfo();
         $distribution = $data['distribution'] ?? null;
         self::$distribution = is_array($distribution) && is_string($distribution['domain'] ?? null) ? $distribution['domain'] : null;
         fwrite(STDERR, sprintf("[deploy] url %s, distribution %s\n", self::$url, self::$distribution ?? '-'));
@@ -85,24 +79,6 @@ final class FlociE2eTest extends TestCase
             // Not a failure of the run: bin/test-docker discards the whole Floci anyway.
             fwrite(STDERR, "[remove] arco remove failed:\n" . self::tail($remove->getOutput() . $remove->getErrorOutput(), 40) . "\n");
         }
-    }
-
-    protected function setUp(): void
-    {
-        $this->http = new E2eHttp();
-        self::$started = microtime(true);
-    }
-
-    protected function tearDown(): void
-    {
-        self::report($this->name(), self::$started, $this->status()->asString());
-    }
-
-    public function test_up(): void
-    {
-        // The first request after a deploy may pull the runtime image and cold-start (20-30 s on Floci).
-        $answer = $this->http->get('up', self::url('/up'), deadlineSeconds: 180);
-        self::assertSame(200, $answer['status'], '[up] /up answered ' . $answer['status'] . ': ' . E2eHttp::excerpt($answer['body']));
     }
 
     #[Depends('test_up')]
@@ -136,13 +112,6 @@ final class FlociE2eTest extends TestCase
     }
 
     #[Depends('test_up')]
-    public function test_cache(): void
-    {
-        $data = $this->http->json('cache', self::url('/e2e/cache'));
-        self::assertTrue($data['ok'] ?? null, '[cache] the DynamoDB cache did not return the value just stored: ' . json_encode($data));
-    }
-
-    #[Depends('test_up')]
     public function test_storage(): void
     {
         $answer = $this->http->get('storage', self::url('/e2e/storage'), retryServerErrors: false);
@@ -162,59 +131,6 @@ final class FlociE2eTest extends TestCase
         }
         self::fail("[storage] /e2e/storage answered {$answer['status']}: " . E2eHttp::excerpt($answer['body'])
             . ($error === null ? "\nLogs:\n" . self::tail($logs, 30) : ''));
-    }
-
-    #[Depends('test_up')]
-    public function test_queue_job(): void
-    {
-        $dispatched = $this->http->json('queue', self::url('/e2e/dispatch'));
-        $id = $dispatched['id'] ?? null;
-        self::assertIsString($id, '[queue] /e2e/dispatch returned no job id: ' . json_encode($dispatched));
-
-        $status = null;
-        $deadline = time() + 120;
-        while (time() < $deadline) {
-            // The request's own retries stay within what is left of the 120 s.
-            $status = $this->http->json('queue', self::url("/e2e/job/$id"), deadlineSeconds: max(1, $deadline - time()))['status'] ?? null;
-            if ($status === 'done') {
-                break;
-            }
-            sleep(5);
-        }
-        self::assertSame('done', $status, "[queue] job $id was not processed by the queue worker within 120 s");
-    }
-
-    #[Depends('test_up')]
-    public function test_scheduler(): void
-    {
-        $last = null;
-        $deadline = time() + 150;
-        while (time() < $deadline) {
-            $last = $this->http->json('scheduler', self::url('/e2e/schedule'), deadlineSeconds: max(1, $deadline - time()))['last'] ?? null;
-            // Any non-empty marker counts: DynamoDB may hand a numeric-looking string back as a number.
-            if (is_scalar($last) && (string) $last !== '') {
-                break;
-            }
-            sleep(5);
-        }
-        self::assertTrue(is_scalar($last) && (string) $last !== '', '[scheduler] the scheduled task did not run within 150 s (no e2e-schedule in the cache)');
-    }
-
-    #[Depends('test_up')]
-    public function test_arco_command(): void
-    {
-        $command = self::arco(['command', '--env=' . self::ENV, 'about --only=environment', '--no-interaction'], 300);
-        $output = $command->getOutput() . $command->getErrorOutput();
-        self::assertTrue($command->isSuccessful(), "[arco command] exit {$command->getExitCode()}:\n" . self::tail($output, 40));
-        self::assertStringContainsString('production', $output, "[arco command] output does not show the production environment:\n" . self::tail($output, 40));
-    }
-
-    #[Depends('test_up')]
-    public function test_logs(): void
-    {
-        $logs = self::arco(['logs', '--env=' . self::ENV, '--since=10m', '--no-interaction'], 120);
-        self::assertTrue($logs->isSuccessful(), "[logs] exit {$logs->getExitCode()}:\n" . self::tail($logs->getOutput() . $logs->getErrorOutput(), 40));
-        self::assertNotSame('', trim($logs->getOutput()), '[logs] arco logs printed nothing for the last 10 minutes');
     }
 
     private static function refuseUnlessFloci(): void
@@ -248,59 +164,6 @@ final class FlociE2eTest extends TestCase
         $route53->createHostedZone(['Name' => self::ZONE, 'CallerReference' => 'arco-e2e-' . bin2hex(random_bytes(6))]);
     }
 
-    /**
-     * Copies examples/laravel without its dependencies to a run-long shared temp path (deploy writes
-     * .arco/ into the project) and points its path repository at the monorepo's packages, since the
-     * relative ../../packages no longer resolves from the copy.
-     */
-    private static function copyExample(): string
-    {
-        $repo = dirname(__DIR__, 2);
-        $source = "$repo/examples/laravel";
-        $target = TempPaths::shared('e2e-app-', untilRunEnds: true);
-        mkdir($target, 0777, true);
-
-        $skip = ['vendor', 'node_modules', '.arco', '.git'];
-        $items = new \RecursiveIteratorIterator(
-            new \RecursiveCallbackFilterIterator(
-                new \RecursiveDirectoryIterator($source, \FilesystemIterator::SKIP_DOTS),
-                static fn (\SplFileInfo $file, string $path, \RecursiveDirectoryIterator $iterator): bool => ! ($iterator->getSubPath() === '' && in_array($file->getFilename(), $skip, true)),
-            ),
-            \RecursiveIteratorIterator::SELF_FIRST,
-        );
-        foreach ($items as $item) {
-            \assert($item instanceof \SplFileInfo);
-            $destination = $target . substr($item->getPathname(), strlen($source));
-            if ($item->isDir() && ! $item->isLink()) {
-                mkdir($destination, 0777, true);
-            } elseif (! copy($item->getPathname(), $destination)) {
-                throw new \RuntimeException("Cannot copy {$item->getPathname()}.");
-            }
-        }
-
-        foreach (['composer.json', 'composer.lock'] as $file) {
-            $contents = (string) file_get_contents("$target/$file");
-            file_put_contents("$target/$file", str_replace('"../../packages/', '"' . "$repo/packages/", $contents));
-        }
-
-        return $target;
-    }
-
-    /** @param list<string> $arguments */
-    private static function arco(array $arguments, int $timeout): Process
-    {
-        \assert(self::$app !== null);
-        $process = new Process([PHP_BINARY, dirname(__DIR__, 2) . '/packages/arco/bin/arco', ...$arguments], self::$app, null, null, $timeout);
-        $process->run();
-        return $process;
-    }
-
-    private static function url(string $path): string
-    {
-        \assert(self::$url !== null);
-        return self::$url . $path;
-    }
-
     /** The last lines of the Floci container's log that mention $needle (bin/test-docker names the container). */
     private static function flociLog(string $needle): string
     {
@@ -312,16 +175,6 @@ final class FlociE2eTest extends TestCase
         $logs->run();
         $lines = array_filter(explode("\n", $logs->getOutput() . $logs->getErrorOutput()), static fn (string $line): bool => str_contains($line, $needle));
         return implode("\n", array_slice($lines, -10)) ?: '(nothing)';
-    }
-
-    private static function report(string $check, float $began, string $result): void
-    {
-        fwrite(STDERR, sprintf("[e2e] %-40s %-10s %7.1f s\n", $check, $result, microtime(true) - $began));
-    }
-
-    private static function tail(string $text, int $lines): string
-    {
-        return implode("\n", array_slice(explode("\n", rtrim($text)), -$lines));
     }
 
     private static function firstLineWith(string $text, string $needle): string
