@@ -77,27 +77,33 @@ final class Builder
     }
 
     /**
-     * The staged copy lives in a temporary directory, so relative `path` repositories (monorepos) would no longer
-     * resolve. Rewrites them to absolute paths in the staged composer.json and composer.lock only.
+     * The staged copy lives in a temporary directory, so relative `path` repositories that point outside the project
+     * (monorepos) would no longer resolve. Rewrites those to absolute paths, with `symlink` off so the package is
+     * copied into vendor and ships in the zip, in the staged composer.json and composer.lock only. Paths inside the
+     * project resolve in the staged copy as they are and are left alone. The edited composer.json may make Composer
+     * warn that the lock file is not up to date: expected, the install still uses the lock.
      */
     private static function absolutizePathRepositories(string $projectDir, string $appDir): void
     {
+        $root = realpath($projectDir) ?: $projectDir;
+
         $json = self::readJson("$appDir/composer.json");
-        $repositories = $json['repositories'] ?? null;
-        if ($json !== null && is_array($repositories)) {
+        $repositories = $json->repositories ?? null;
+        if ($json !== null && ($repositories instanceof \stdClass || is_array($repositories))) {
             $changed = false;
-            foreach ($repositories as $key => $repository) {
-                if (is_array($repository) && ($repository['type'] ?? null) === 'path' && is_string($repository['url'] ?? null)) {
-                    $url = self::absolutePath($projectDir, $repository['url']);
-                    if ($url !== $repository['url']) {
-                        $repository['url'] = $url;
-                        $repositories[$key] = $repository;
+            foreach ((array) $repositories as $repository) {
+                if ($repository instanceof \stdClass && ($repository->type ?? null) === 'path' && is_string($repository->url ?? null)) {
+                    $url = self::outsidePath($root, $repository->url);
+                    if ($url !== null) {
+                        $repository->url = $url;
+                        $options = ($repository->options ?? null) instanceof \stdClass ? $repository->options : new \stdClass();
+                        $options->symlink ??= false;
+                        $repository->options = $options;
                         $changed = true;
                     }
                 }
             }
             if ($changed) {
-                $json['repositories'] = $repositories;
                 self::writeJson("$appDir/composer.json", $json);
             }
         }
@@ -108,41 +114,49 @@ final class Builder
         }
         $changed = false;
         foreach (['packages', 'packages-dev'] as $section) {
-            $packages = $lock[$section] ?? null;
-            if (! is_array($packages)) {
+            if (! isset($lock->$section) || ! is_array($lock->$section)) {
                 continue;
             }
-            foreach ($packages as $i => $package) {
-                $dist = is_array($package) ? ($package['dist'] ?? null) : null;
-                if (is_array($package) && is_array($dist) && ($dist['type'] ?? null) === 'path' && is_string($dist['url'] ?? null)) {
-                    $url = self::absolutePath($projectDir, $dist['url']);
-                    if ($url !== $dist['url']) {
-                        $dist['url'] = $url;
-                        $package['dist'] = $dist;
-                        $packages[$i] = $package;
+            foreach ($lock->$section as $package) {
+                $dist = $package instanceof \stdClass ? ($package->dist ?? null) : null;
+                if ($package instanceof \stdClass && $dist instanceof \stdClass && ($dist->type ?? null) === 'path' && is_string($dist->url ?? null)) {
+                    $url = self::outsidePath($root, $dist->url);
+                    if ($url !== null) {
+                        $dist->url = $url;
+                        $options = ($package->{'transport-options'} ?? null) instanceof \stdClass ? $package->{'transport-options'} : new \stdClass();
+                        $options->symlink ??= false;
+                        $package->{'transport-options'} = $options;
                         $changed = true;
                     }
                 }
             }
-            $lock[$section] = $packages;
         }
         if ($changed) {
             self::writeJson("$appDir/composer.lock", $lock);
         }
     }
 
-    /** @return array<mixed>|null */
-    private static function readJson(string $file): ?array
+    /** Decoded with objects so an empty `{}` (config, extra, scripts) is written back as `{}`. */
+    private static function readJson(string $file): ?\stdClass
     {
         $contents = is_file($file) ? file_get_contents($file) : false;
-        $data = $contents === false ? null : json_decode($contents, true);
-        return is_array($data) ? $data : null;
+        $data = $contents === false ? null : json_decode($contents);
+        return $data instanceof \stdClass ? $data : null;
     }
 
-    /** @param array<mixed> $data */
-    private static function writeJson(string $file, array $data): void
+    private static function writeJson(string $file, \stdClass $data): void
     {
         file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+    }
+
+    /** The absolute form of a relative URL that resolves outside $root, or null when it should stay as it is. */
+    private static function outsidePath(string $root, string $url): ?string
+    {
+        $absolute = self::absolutePath($root, $url);
+        if ($absolute === $url) {
+            return null;
+        }
+        return $absolute === $root || str_starts_with($absolute, rtrim($root, '/') . '/') ? null : $absolute;
     }
 
     /** Absolute paths, `~` paths, URLs and Windows drives stay as they are; the rest resolves against $projectDir. */

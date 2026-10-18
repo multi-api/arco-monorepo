@@ -66,10 +66,14 @@ final class BuilderTest extends TestCase
         self::assertDirectoryDoesNotExist($result->stagingDir);
     }
 
-    public function test_relative_path_repositories_are_absolute_in_the_staged_copy_only(): void
+    public function test_relative_path_repositories_outside_the_project_are_absolute_in_the_staged_copy_only(): void
     {
-        $composer = json_encode(['repositories' => [
+        $composer = json_encode(['extra' => new \stdClass(), 'repositories' => [
             ['type' => 'path', 'url' => '../../packages/*', 'options' => ['symlink' => false]],
+            ['type' => 'path', 'url' => '../sibling'],
+            ['type' => 'path', 'url' => '../kept', 'options' => ['symlink' => true]],
+            ['type' => 'path', 'url' => 'packages/*'],
+            ['type' => 'path', 'url' => './local/x'],
             ['type' => 'path', 'url' => '/abs/pkg'],
             ['type' => 'vcs', 'url' => '../not-a-path'],
         ]], JSON_UNESCAPED_SLASHES);
@@ -77,25 +81,40 @@ final class BuilderTest extends TestCase
             ['name' => 'a/a', 'dist' => ['type' => 'path', 'url' => '../../packages/a']],
             ['name' => 'b/b', 'dist' => ['type' => 'path', 'url' => '/abs/b']],
             ['name' => 'c/c', 'dist' => ['type' => 'zip', 'url' => 'https://example.test/c.zip']],
+            ['name' => 'e/e', 'dist' => ['type' => 'path', 'url' => 'packages/e']],
         ], 'packages-dev' => [
-            ['name' => 'd/d', 'dist' => ['type' => 'path', 'url' => 'local/d']],
+            ['name' => 'd/d', 'dist' => ['type' => 'path', 'url' => '../d'], 'transport-options' => ['symlink' => true]],
         ]], JSON_UNESCAPED_SLASHES);
         file_put_contents("$this->project/composer.json", $composer);
         file_put_contents("$this->project/composer.lock", $lock);
-        $parent = dirname($this->project, 2);
+        $root = realpath($this->project);
+        $parent = dirname($root);
+        $grand = dirname($parent);
 
         $result = (new Builder(new FakeRunner()))->build($this->config(), new PlainPhpPreset(), $this->project);
 
-        $staged = json_decode((string) file_get_contents("$result->appDir/composer.json"), true);
-        self::assertSame("$parent/packages/*", $staged['repositories'][0]['url']);
+        $raw = (string) file_get_contents("$result->appDir/composer.json");
+        self::assertStringContainsString('"extra": {}', $raw, 'an empty object stays an object');
+        $staged = json_decode($raw, true);
+        self::assertSame("$grand/packages/*", $staged['repositories'][0]['url']);
         self::assertSame(['symlink' => false], $staged['repositories'][0]['options']);
-        self::assertSame('/abs/pkg', $staged['repositories'][1]['url']);
-        self::assertSame('../not-a-path', $staged['repositories'][2]['url']);
+        self::assertSame("$parent/sibling", $staged['repositories'][1]['url']);
+        self::assertSame(['symlink' => false], $staged['repositories'][1]['options']);
+        self::assertSame("$parent/kept", $staged['repositories'][2]['url']);
+        self::assertSame(['symlink' => true], $staged['repositories'][2]['options'], 'an explicit symlink option is respected');
+        self::assertSame('packages/*', $staged['repositories'][3]['url'], 'inside the project: left alone');
+        self::assertArrayNotHasKey('options', $staged['repositories'][3]);
+        self::assertSame('./local/x', $staged['repositories'][4]['url']);
+        self::assertSame('/abs/pkg', $staged['repositories'][5]['url']);
+        self::assertSame('../not-a-path', $staged['repositories'][6]['url']);
         $stagedLock = json_decode((string) file_get_contents("$result->appDir/composer.lock"), true);
-        self::assertSame("$parent/packages/a", $stagedLock['packages'][0]['dist']['url']);
+        self::assertSame("$grand/packages/a", $stagedLock['packages'][0]['dist']['url']);
+        self::assertSame(['symlink' => false], $stagedLock['packages'][0]['transport-options']);
         self::assertSame('/abs/b', $stagedLock['packages'][1]['dist']['url']);
         self::assertSame('https://example.test/c.zip', $stagedLock['packages'][2]['dist']['url']);
-        self::assertSame("$this->project/local/d", $stagedLock['packages-dev'][0]['dist']['url']);
+        self::assertSame('packages/e', $stagedLock['packages'][3]['dist']['url']);
+        self::assertSame("$parent/d", $stagedLock['packages-dev'][0]['dist']['url']);
+        self::assertSame(['symlink' => true], $stagedLock['packages-dev'][0]['transport-options']);
         self::assertSame($composer, file_get_contents("$this->project/composer.json"), 'the project is never modified');
         self::assertSame($lock, file_get_contents("$this->project/composer.lock"));
         $result->cleanup();
@@ -106,7 +125,7 @@ final class BuilderTest extends TestCase
         file_put_contents("$this->project/composer.json", '{"repositories":[{"type":"path","url":"../x"}]}');
         $result = (new Builder(new FakeRunner()))->build($this->config(), new PlainPhpPreset(), $this->project);
         $staged = json_decode((string) file_get_contents("$result->appDir/composer.json"), true);
-        self::assertSame(dirname($this->project) . '/x', $staged['repositories'][0]['url']);
+        self::assertSame(dirname((string) realpath($this->project)) . '/x', $staged['repositories'][0]['url']);
         self::assertFileDoesNotExist("$result->appDir/composer.lock");
         $result->cleanup();
     }
