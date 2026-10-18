@@ -168,8 +168,8 @@ final class ResourcesStack
 
     /**
      * A private bucket (spec §8): every Block Public Access setting on, SSE-S3, a lifecycle rule that aborts
-     * incomplete multipart uploads (plus `expire` rules), no CORS without `cors`. Public prefixes relax only the two policy settings
-     * their bucket policy needs; ACLs stay blocked.
+     * incomplete multipart uploads (plus `expire` rules), no CORS without `cors`. Public prefixes relax only
+     * the two policy settings their bucket policy needs; ACLs stay blocked.
      *
      * @return array<string, mixed>
      */

@@ -2,10 +2,13 @@
 
 namespace Multiapi\Arco\Tests\Unit\Config;
 
+use Composer\Autoload\ClassLoader;
+use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\ConfigException;
 use Multiapi\Arco\Config\ConfigLoader;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
 
 final class ConfigLoaderTest extends TestCase
 {
@@ -15,6 +18,29 @@ final class ConfigLoaderTest extends TestCase
         mkdir($dir);
         file_put_contents("$dir/arco.php", $php);
         return "$dir/arco.php";
+    }
+
+    public function test_autoload_path_skips_a_foreign_loader_that_cannot_find_arco(): void
+    {
+        $arco = new ClassLoader();
+        $arco->addClassMap([App::class => __FILE__]);
+
+        $path = ConfigLoader::autoloadPathFor([
+            'phar:///Applications/Herd.app/dump.phar/vendor' => new ClassLoader(),
+            '/projects/shop/vendor' => $arco,
+        ]);
+
+        $this->assertSame('/projects/shop/vendor/autoload.php', $path);
+    }
+
+    public function test_autoload_path_falls_back_to_the_running_class_loader(): void
+    {
+        $path = ConfigLoader::autoloadPathFor(['/elsewhere/vendor' => new ClassLoader()]);
+
+        $this->assertSame(
+            dirname((string) (new ReflectionClass(ClassLoader::class))->getFileName(), 2) . '/autoload.php',
+            $path,
+        );
     }
 
     public function test_loads_config_in_a_separate_process(): void

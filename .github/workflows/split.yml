@@ -67,6 +67,7 @@ jobs:
           REPO_NAME: ${{ matrix.package.repo }}
           TAG: ${{ github.ref_name }}
         run: |
+          # git ls-remote runs unauthenticated: this assumes the split target repos are public.
           if ! git ls-remote --exit-code --tags "https://github.com/multi-api/${REPO_NAME}.git" "refs/tags/${TAG}" >/dev/null 2>&1; then
             echo "::error::Tag ${TAG} is still missing on multi-api/${REPO_NAME} after retrying the split."
             exit 1

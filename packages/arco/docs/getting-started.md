@@ -37,8 +37,9 @@ Supported regions: us-east-1, us-east-2, us-west-2, ap-northeast-1, eu-west-1.
 
 ### What `init` detects and asks
 
-For Laravel apps `init` also reads the project (static scan of `app/`, `.env`, and the schedule from
-`php artisan arco:schedule-intervals`, which has a 60 second timeout; when artisan cannot boot, the schedule
+For Laravel apps `init` also reads the project (static scan of `app/`, `routes/`, `bootstrap/app.php`, `config/cache.php`,
+`composer.json` and `.env`, and the schedule from `php artisan arco:schedule-intervals`, which has a 60 second
+timeout; when artisan cannot boot, the schedule
 is read from the code) and asks, in this order:
 
 1. Console function (default yes): `arco command`, tinker, deploy commands and the scheduler.

@@ -532,7 +532,8 @@ knows them): use a shorter app, environment or storage name. Storage names use l
 and hyphens and start with a letter.
 
 Every bucket Arco creates is private: all four S3 Block Public Access settings on, encrypted with SSE-S3,
-no lifecycle rule without `expire`, no CORS without `cors`, and tagged `arco:app`, `arco:environment` and
+a lifecycle rule `arco-abort-incomplete-uploads` (multipart uploads left incomplete are aborted after 7 days)
+plus one rule per `expire` prefix, no CORS without `cors`, and tagged `arco:app`, `arco:environment` and
 `arco:resource` (`storage:<name>`). Buckets live in the resources stack with the queues (see
 [Deploys](#deploys)): it is updated before any code, so a new bucket exists before code that writes to it.
 
@@ -683,8 +684,8 @@ vendor/bin/arco storage:list --env=production
 
 The managed execution role gets two statements for every bucket in `arco.php`, `existing` ones included:
 `ArcoStorage` (`s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:GetObjectAcl`, `s3:PutObjectAcl`,
-`s3:AbortMultipartUpload` on the bucket's objects) and `ArcoStorageList` (`s3:ListBucket` on the bucket). With your own `role()`, give it
-the same:
+`s3:AbortMultipartUpload` on the bucket's objects) and `ArcoStorageList` (`s3:ListBucket` on the bucket).
+With your own `role()`, give it the same:
 
 ```json
 {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:GetObjectAcl", "s3:PutObjectAcl", "s3:AbortMultipartUpload"], "Resource": ["arn:aws:s3:::<app>-<env>-uploads-<account>/*"]},

@@ -29,8 +29,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 - **Changed:** the `ArcoStorage` statement adds `s3:AbortMultipartUpload`, and every bucket Arco creates gets a
   lifecycle rule (`arco-abort-incomplete-uploads`) that aborts multipart uploads left incomplete for 7 days,
   next to its `expire` rules. The bucket is updated in place; `existing` buckets are not touched.
-- **Fixed:** `arco init` Spanish and English wording (`queue.dlq_sample` mentions that reading raises the
-  receive count; retained-resource messages say how to use the existing one).
+- **Fixed:** wording of `queue:dlq` (reading raises the receive count) and, in Spanish, of the deploy errors
+  for retained queues, buckets and tables.
+- **Fixed:** `arco.php` failed to load with Laravel Herd's PHP when Herd dumps are on.
 - **Fixed:** the integration-test S3 emulator retries with another port when its port is taken.
 
 ## 0.6.0
