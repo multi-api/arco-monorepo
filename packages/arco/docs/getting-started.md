@@ -474,6 +474,11 @@ in both the history and Live Tail is printed once. Live Tail follows at most 10 
 uses two, the console one, each queue worker one): with more, `--follow` polls and says so; narrow it with
 `--source`, `--console` or `--queue`. Ctrl+C ends `--follow` cleanly; a second Ctrl+C exits at once.
 
+## Try it locally
+
+With `AWS_ENDPOINT_URL` set, Arco deploys to a local AWS emulator instead of AWS. See
+[Try your app locally with Floci](local-floci.md).
+
 ## Using Arco in CI
 
 Provide AWS credentials through the environment (for example with

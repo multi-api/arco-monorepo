@@ -12,7 +12,8 @@ Lambda Web Functions with FrankenPHP.
 
 User documentation lives with the CLI: [README](packages/arco/README.md),
 [getting started](packages/arco/docs/getting-started.md),
-[configuration](packages/arco/docs/configuration.md), [changelog](packages/arco/CHANGELOG.md).
+[configuration](packages/arco/docs/configuration.md), [try it locally with Floci](packages/arco/docs/local-floci.md),
+[changelog](packages/arco/CHANGELOG.md).
 
 ## Development
 
