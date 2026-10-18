@@ -215,6 +215,7 @@ return [
     'deploy.endpoint_failed' => 'The endpoint update failed: {reason}',
     'deploy.endpoint_missing' => 'The endpoint of {function} was not found.',
     'deploy.timeout' => 'Timed out waiting for {what}.',
+    'deploy.endpoint_override' => 'Using the AWS endpoint {endpoint} from AWS_ENDPOINT_URL.',
     'deploy.target' => 'Deploying {app} → {environment} · account {account} ({profile}) · {region}',
     'deploy.dns_target' => 'DNS records go to Route 53 in account {account} ({profile})',
     'deploy.confirm_create' => '{function} does not exist yet. Create it now?',

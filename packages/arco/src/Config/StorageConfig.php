@@ -2,6 +2,8 @@
 
 namespace Multiapi\Arco\Config;
 
+use Multiapi\Arco\Aws\Endpoint;
+
 /** One S3 bucket Arco manages (or references, when `existing` is set). */
 final readonly class StorageConfig
 {
@@ -47,6 +49,6 @@ final readonly class StorageConfig
 
     public function url(AppConfig $config): string
     {
-        return 'https://' . $this->bucketName($config) . '.s3.' . ($config->region ?? '') . '.amazonaws.com';
+        return Endpoint::bucketUrl($this->bucketName($config), $config->region ?? '');
     }
 }

@@ -119,6 +119,8 @@ final class ArcoServiceProvider extends ServiceProvider
                 'region' => self::region(),
                 'url' => is_string($entry['url'] ?? null) ? $entry['url'] : null,
                 ...self::credentials(),
+                // A local emulator (AWS_ENDPOINT_URL) cannot serve virtual-hosted bucket names.
+                ...(Env::get('AWS_USE_PATH_STYLE_ENDPOINT') === 'true' ? ['use_path_style_endpoint' => true] : []),
             ]);
         }
     }

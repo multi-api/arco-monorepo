@@ -33,6 +33,17 @@ final class StorageConfigTest extends TestCase
         self::assertSame('https://shop-production-files-123456789012.s3.us-east-1.amazonaws.com', $s->url($c));
     }
 
+    public function test_the_url_is_path_style_behind_an_endpoint_override(): void
+    {
+        $original = getenv('AWS_ENDPOINT_URL');
+        putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+        try {
+            self::assertSame('http://localhost:4566/shop-production-files-123456789012', (new StorageConfig('files'))->url($this->config()));
+        } finally {
+            putenv($original === false ? 'AWS_ENDPOINT_URL' : "AWS_ENDPOINT_URL=$original");
+        }
+    }
+
     public function test_existing_bucket_is_used_as_is(): void
     {
         $s = new StorageConfig('files', existing: 'legacy.bucket');

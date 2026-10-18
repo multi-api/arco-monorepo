@@ -133,6 +133,27 @@ final class DeployCommandTest extends TestCase
         self::assertSame([], $deployer->calls);
     }
 
+    public function test_the_deploy_names_an_aws_endpoint_override_once(): void
+    {
+        $original = getenv('AWS_ENDPOINT_URL');
+        try {
+            putenv('AWS_ENDPOINT_URL');
+            $this->aws->append(new Result(['Account' => '222222222222']));
+            $tester = $this->tester(new FakeDeployer());
+            $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--yes' => true], ['interactive' => false]);
+            self::assertStringNotContainsString('AWS_ENDPOINT_URL', $tester->getDisplay());
+
+            putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+            $this->aws->append(new Result(['Account' => '222222222222']));
+            $tester = $this->tester(new FakeDeployer());
+            $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--yes' => true], ['interactive' => false]);
+            $display = $tester->getDisplay();
+            self::assertSame(1, substr_count($display, 'Using the AWS endpoint http://localhost:4566 from AWS_ENDPOINT_URL.'));
+        } finally {
+            putenv($original === false ? 'AWS_ENDPOINT_URL' : "AWS_ENDPOINT_URL=$original");
+        }
+    }
+
     public function test_failed_verification_exits_non_zero_and_shows_logs(): void
     {
         $this->aws->append(new Result(['Account' => '222222222222']));

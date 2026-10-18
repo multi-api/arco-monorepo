@@ -5,6 +5,7 @@ namespace Multiapi\Arco\Commands;
 use Closure;
 use GuzzleHttp\Client;
 use Multiapi\Arco\Aws\AwsClients;
+use Multiapi\Arco\Aws\Endpoint;
 use Multiapi\Arco\Build\PresetRegistry;
 use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\StepPrinter;
@@ -115,6 +116,9 @@ final class DeployCommand extends ArcoCommand
 
             $aws = $this->awsClients($config, $input, $io);
 
+            if (($endpoint = Endpoint::override()) !== null) {
+                $io->writeln($this->t('deploy.endpoint_override', ['endpoint' => $endpoint]));
+            }
             $io->writeln($this->t('deploy.target', [
                 'app' => $config->app,
                 'environment' => $config->environment,
