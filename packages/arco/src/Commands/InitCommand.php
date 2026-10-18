@@ -97,8 +97,9 @@ final class InitCommand extends ArcoCommand
             }
         }
 
+        $app = self::slug($name);
         try {
-            $flags = $this->flags($input);
+            $flags = $this->flags($input, $app, $environments);
             [$domains, $dns] = $this->askDomains($input, $io, $environments, $dir);
         } catch (UserError $e) {
             $io->error($e->getMessage());
@@ -108,15 +109,25 @@ final class InitCommand extends ArcoCommand
         $laravel = $preset->name() === 'laravel';
         $detection = $laravel ? ($this->inspector ?? new AppInspector())->detect($dir) : null;
         $connection = $laravel ? AppInspector::databaseConnection("$dir/.env") : null;
-        [$choices, $migrate] = $this->choose($input, $io, $flags, $detection, $connection);
+        [$choices, $migrate] = $this->choose($input, $io, $flags, $detection, $connection, $app, $environments);
         $deployCommands = $migrate ? [DeployCommands::MIGRATE] : [];
 
         $secretKeys = self::secretKeys("$dir/.env");
-        file_put_contents($path, self::render(self::slug($name), $region, $environments, $secretKeys, $domains, $dns, $deployCommands, $choices));
+        $php = self::render($app, $region, $environments, $secretKeys, $domains, $dns, $deployCommands, $choices);
+        [$errors, $warnings] = $this->check($dir, $php, $environments);
+        if ($errors !== []) {
+            foreach ($errors as $error) {
+                $io->error($error);
+            }
+            return self::FAILURE;
+        }
+        file_put_contents($path, $php);
         self::ignoreLocalState("$dir/.gitignore");
 
         $io->success($this->t('init.created', ['preset' => $preset->name()]));
-        $this->showWarnings($io, $path, $environments);
+        foreach ($warnings as $warning) {
+            $io->warning($warning);
+        }
         if ($secretKeys !== []) {
             $io->writeln($this->t('init.secrets_next'));
             foreach ($environments as $environment) {
@@ -125,7 +136,7 @@ final class InitCommand extends ArcoCommand
                 }
             }
         }
-        $hints = $detection !== null && ! $input->isInteractive() ? $this->hints($detection, $flags, $choices) : [];
+        $hints = $detection !== null && ! $input->isInteractive() ? $this->hints($detection, $flags, $choices, $app, $environments) : [];
         if ($hints !== []) {
             $io->writeln($this->t('init.detected_hint'));
             foreach ($hints as $hint) {
@@ -139,9 +150,10 @@ final class InitCommand extends ArcoCommand
     /**
      * The resource flags, validated before anything is asked or written.
      *
+     * @param list<string> $environments
      * @return InitFlags
      */
-    private function flags(InputInterface $input): array
+    private function flags(InputInterface $input, string $app, array $environments): array
     {
         $console = $input->getOption('console');
         $migrate = $input->getOption('migrate');
@@ -151,7 +163,7 @@ final class InitCommand extends ArcoCommand
             if (! is_string($value)) {
                 continue;
             }
-            $number = preg_match('/^-?\d{1,9}$/', $value) === 1 ? (int) $value : $value;
+            $number = self::intOrText($value);
             $error = Validator::settingError($setting, $number);
             if ($error !== null) {
                 throw new UserError($this->t($error['key'], $error['params']));
@@ -161,14 +173,12 @@ final class InitCommand extends ArcoCommand
         /** @var list<string> $queues */
         $queues = array_values(array_unique(array_filter((array) $input->getOption('queue'), 'is_string')));
         foreach ($queues as $queue) {
-            if (preg_match(Validator::NAME, $queue) !== 1) {
-                throw new UserError($this->t('validation.queue_name', ['name' => $queue]));
-            }
+            $this->checkName($this->queueErrors($app, $environments, $queue));
         }
         $storage = $input->getOption('storage');
         $storage = is_string($storage) ? $storage : null;
         if ($storage !== null) {
-            $this->checkStorageName($storage);
+            $this->checkName($this->storageErrors($app, $environments, $storage));
         }
         if ($console === false && ($numbers['scheduler'] !== null || $migrate === true)) {
             throw new UserError($this->t('init.needs_console'));
@@ -185,13 +195,33 @@ final class InitCommand extends ArcoCommand
         ];
     }
 
-    private function checkStorageName(string $name): void
+    /**
+     * Why a queue Arco creates cannot take this name in one of the environments.
+     *
+     * @param list<string> $environments
+     * @return list<array{key: string, params: array<string, string>}>
+     */
+    private function queueErrors(string $app, array $environments, string $name): array
     {
-        if (preg_match(Validator::NAME, $name) !== 1) {
-            throw new UserError($this->t('validation.storage_name', ['name' => $name]));
-        }
-        if (in_array($name, Validator::LARAVEL_DISKS, true)) {
-            throw new UserError($this->t('validation.storage_reserved', ['name' => $name]));
+        return array_merge([], ...array_map(static fn (string $environment): array => Validator::newQueueErrors($app, $environment, $name), $environments));
+    }
+
+    /**
+     * Why a storage Arco creates cannot take this name in one of the environments.
+     *
+     * @param list<string> $environments
+     * @return list<array{key: string, params: array<string, string>}>
+     */
+    private function storageErrors(string $app, array $environments, string $name): array
+    {
+        return array_values(array_filter(array_map(static fn (string $environment): ?array => Validator::newStorageError($app, $environment, $name), $environments)));
+    }
+
+    /** @param list<array{key: string, params: array<string, string>}> $errors */
+    private function checkName(array $errors): void
+    {
+        if ($errors !== []) {
+            throw new UserError($this->t($errors[0]['key'], $errors[0]['params']));
         }
     }
 
@@ -200,9 +230,10 @@ final class InitCommand extends ArcoCommand
      * The detected pieces are offered only for Laravel apps ($detection null otherwise).
      *
      * @param InitFlags $flags
+     * @param list<string> $environments
      * @return array{0: InitChoices, 1: bool} the choices and whether to migrate on deploy
      */
-    private function choose(InputInterface $input, SymfonyStyle $io, array $flags, ?Detection $detection, ?string $connection): array
+    private function choose(InputInterface $input, SymfonyStyle $io, array $flags, ?Detection $detection, ?string $connection, string $app, array $environments): array
     {
         $ask = $input->isInteractive();
         // The scheduler and deploy commands run in the console function: asking for them turns it on.
@@ -231,7 +262,18 @@ final class InitCommand extends ArcoCommand
         }
 
         $queues = $flags['queues'];
-        $detected = $detection->queues ?? [];
+        $detected = [];
+        $tooLong = [];
+        foreach ($detection->queues ?? [] as $queue) {
+            if ($this->queueErrors($app, $environments, $queue) === []) {
+                $detected[] = $queue;
+            } else {
+                $tooLong[] = $queue;
+            }
+        }
+        if ($ask && $queues === [] && $tooLong !== []) {
+            $io->note($this->t('init.queues_too_long', ['queues' => implode(', ', $tooLong)]));
+        }
         if ($queues === [] && $ask && $detected !== []
             && $io->confirm($this->t('init.ask_queues', ['count' => $detection->queuedClasses ?? 0]), true)) {
             $queues = count($detected) > 1 ? $this->askQueueNames($io, $detected) : $detected;
@@ -245,9 +287,9 @@ final class InitCommand extends ArcoCommand
 
         $storage = $flags['storage'];
         if ($storage === null && $ask && ($detection->storage ?? false) && $io->confirm($this->t('init.ask_storage'), true)) {
-            $answer = $io->ask($this->t('init.ask_storage_name'), 'files', function (mixed $value): string {
+            $answer = $io->ask($this->t('init.ask_storage_name'), 'files', function (mixed $value) use ($app, $environments): string {
                 $name = is_string($value) ? $value : '';
-                $this->checkStorageName($name);
+                $this->checkName($this->storageErrors($app, $environments, $name));
                 return $name;
             });
             $storage = is_string($answer) ? $answer : 'files';
@@ -287,9 +329,10 @@ final class InitCommand extends ArcoCommand
      * The commands that add each detected piece a run without a terminal left out (only flags count there).
      *
      * @param InitFlags $flags
+     * @param list<string> $environments
      * @return list<string>
      */
-    private function hints(Detection $detection, array $flags, InitChoices $choices): array
+    private function hints(Detection $detection, array $flags, InitChoices $choices, string $app, array $environments): array
     {
         $hints = [];
         if ($flags['console'] === null && ! $choices->console) {
@@ -303,6 +346,9 @@ final class InitCommand extends ArcoCommand
         }
         if ($choices->queues === []) {
             foreach ($detection->queues as $queue) {
+                if ($this->queueErrors($app, $environments, $queue) !== []) {
+                    continue;
+                }
                 $hints[] = 'queue:add ' . $queue;
             }
         }
@@ -316,25 +362,36 @@ final class InitCommand extends ArcoCommand
     }
 
     /**
-     * The validation warnings of the written arco.php (deploy commands that cannot work on Lambda...),
-     * once each across environments, as `arco deploy` will show them.
+     * The validation errors and warnings of the arco.php about to be written, once each across environments,
+     * as `arco deploy` will show them. It is loaded from a temporary file under .arco/, removed right after.
      *
      * @param list<string> $environments
+     * @return array{0: list<string>, 1: list<string>} error and warning messages
      */
-    private function showWarnings(SymfonyStyle $io, string $path, array $environments): void
+    private function check(string $dir, string $php, array $environments): array
     {
-        $raw = (new ConfigLoader())->load($path);
-        $shown = [];
+        $stateDir = "$dir/.arco";
+        $created = ! is_dir($stateDir) && @mkdir($stateDir, 0777, true);
+        $file = $stateDir . '/init-' . bin2hex(random_bytes(6)) . '.php';
+        try {
+            file_put_contents($file, $php);
+            $raw = (new ConfigLoader())->load($file);
+        } finally {
+            @unlink($file);
+            if ($created) {
+                @rmdir($stateDir);
+            }
+        }
+        $messages = [[], []];
         foreach ($environments as $environment) {
-            $validation = (new Validator())->validate(ConfigResolver::resolve($raw, $environment), dirname($path));
-            foreach ($validation->warnings as $warning) {
-                $message = $this->t($warning['key'], $warning['params']);
-                if (! isset($shown[$message])) {
-                    $shown[$message] = true;
-                    $io->warning($message);
+            $validation = (new Validator())->validate(ConfigResolver::resolve($raw, $environment), $dir);
+            foreach ([$validation->errors, $validation->warnings] as $kind => $problems) {
+                foreach ($problems as $problem) {
+                    $messages[$kind][] = $this->t($problem['key'], $problem['params']);
                 }
             }
         }
+        return [array_values(array_unique($messages[0])), array_values(array_unique($messages[1]))];
     }
 
     public static function slug(string $value): string

@@ -56,7 +56,7 @@ final class SchedulerSetCommand extends ArcoCommand
         try {
             $given = $input->getArgument('minutes');
             $minutes = is_string($given) && $given !== ''
-                ? (preg_match('/^-?\d{1,9}$/', $given) === 1 ? (int) $given : $given)
+                ? self::intOrText($given)
                 : $this->askMinutes($input, $io);
             $error = Validator::settingError('scheduler', $minutes);
             if ($error !== null) {

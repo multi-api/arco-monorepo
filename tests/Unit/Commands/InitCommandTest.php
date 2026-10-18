@@ -551,6 +551,89 @@ ENV);
         $project->restore();
     }
 
+    public function test_interactive_reasks_an_invalid_storage_name(): void
+    {
+        $project = new ProjectFixture();
+        self::fullLaravelApp($project);
+        $tester = self::laravelInit($project);
+        // domain, console, queues, storage, storage names (two refused), cache, retention
+        $tester->setInputs(['', 'no', 'no', '', 'public', 'Bad Name', 'uploads', 'no', '']);
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['uploads'], array_map(fn ($storage) => $storage->name, self::config($project)->storage));
+        $display = self::flatDisplay($tester);
+        self::assertStringContainsString('Storage cannot be named "public"', $display);
+        self::assertStringContainsString('Storage name "Bad Name" must start with a lowercase letter', $display);
+        self::assertValid($project);
+        $project->restore();
+    }
+
+    public function test_interactive_reasks_a_storage_name_whose_bucket_name_is_too_long(): void
+    {
+        $project = new ProjectFixture();
+        self::fullLaravelApp($project);
+        $tester = self::laravelInit($project);
+        // domain, console, queues, storage, storage names (the default is too long), cache, retention
+        $tester->setInputs(['', 'no', 'no', '', '', 'up', 'no', '']);
+
+        // <app>-production-files-<account> is 65 characters with a 35-character app name; -up- fits in 63.
+        $tester->execute(['--name' => str_repeat('a', 35), '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['up'], array_map(fn ($storage) => $storage->name, self::config($project)->storage));
+        self::assertStringContainsString('is longer than 63 characters', self::flatDisplay($tester));
+        self::assertValid($project);
+        $project->restore();
+    }
+
+    public function test_interactive_leaves_out_detected_queues_whose_names_are_too_long(): void
+    {
+        $project = new ProjectFixture();
+        self::laravelProject($project, 'sqlite');
+        mkdir("$project->dir/app/Jobs", 0777, true);
+        file_put_contents("$project->dir/app/Jobs/Notify.php", "<?php\n\nclass Notify implements ShouldQueue\n{\n    public \$queue = 'notifications';\n}\n");
+        $tester = self::laravelInit($project);
+        $tester->setInputs(['', 'no', '', '', '']); // domain, console, queues, failed jobs, retention
+
+        // <35-character app>-production-queue-notifications is 66 characters, over the 64 of a function name.
+        $tester->execute(['--name' => str_repeat('a', 35), '--region' => 'us-east-1']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['default'], array_map(fn ($queue) => $queue->name, self::config($project)->queues));
+        self::assertStringContainsString('Left out queue(s) notifications', self::flatDisplay($tester));
+        self::assertValid($project);
+        $project->restore();
+    }
+
+    public function test_storage_flag_too_long_for_the_app_name_writes_nothing(): void
+    {
+        $project = new ProjectFixture();
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+
+        $tester->execute(['--name' => str_repeat('a', 40), '--region' => 'us-east-1', '--storage' => 'uploads'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertFileDoesNotExist("$project->dir/arco.php");
+        self::assertStringContainsString('is longer than 63 characters', self::flatDisplay($tester));
+        $project->restore();
+    }
+
+    public function test_a_config_that_would_not_validate_is_not_written(): void
+    {
+        $project = new ProjectFixture();
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+
+        $tester->execute(['--name' => str_repeat('a', 60), '--region' => 'us-east-1'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertFileDoesNotExist("$project->dir/arco.php");
+        self::assertDirectoryDoesNotExist("$project->dir/.arco");
+        self::assertStringContainsString('is longer than 64 characters', self::flatDisplay($tester));
+        $project->restore();
+    }
+
     public function test_declining_console_skips_migrate_and_scheduler(): void
     {
         $project = new ProjectFixture();

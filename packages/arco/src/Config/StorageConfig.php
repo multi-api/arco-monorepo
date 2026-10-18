@@ -31,7 +31,13 @@ final readonly class StorageConfig
 
     public function bucketName(AppConfig $config): string
     {
-        return $this->existing ?? $config->app . '-' . $config->environment . '-' . $this->name . '-' . ($config->account ?? '');
+        return $this->existing ?? self::managedBucketName($config->app, $config->environment, $this->name, $config->account ?? '');
+    }
+
+    /** The name of the bucket Arco creates for a storage: <app>-<environment>-<storage>-<account>. */
+    public static function managedBucketName(string $app, string $environment, string $storage, string $account): string
+    {
+        return $app . '-' . $environment . '-' . $storage . '-' . $account;
     }
 
     public function arn(AppConfig $config): string
