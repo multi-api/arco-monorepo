@@ -66,6 +66,51 @@ final class BuilderTest extends TestCase
         self::assertDirectoryDoesNotExist($result->stagingDir);
     }
 
+    public function test_relative_path_repositories_are_absolute_in_the_staged_copy_only(): void
+    {
+        $composer = json_encode(['repositories' => [
+            ['type' => 'path', 'url' => '../../packages/*', 'options' => ['symlink' => false]],
+            ['type' => 'path', 'url' => '/abs/pkg'],
+            ['type' => 'vcs', 'url' => '../not-a-path'],
+        ]], JSON_UNESCAPED_SLASHES);
+        $lock = json_encode(['packages' => [
+            ['name' => 'a/a', 'dist' => ['type' => 'path', 'url' => '../../packages/a']],
+            ['name' => 'b/b', 'dist' => ['type' => 'path', 'url' => '/abs/b']],
+            ['name' => 'c/c', 'dist' => ['type' => 'zip', 'url' => 'https://example.test/c.zip']],
+        ], 'packages-dev' => [
+            ['name' => 'd/d', 'dist' => ['type' => 'path', 'url' => 'local/d']],
+        ]], JSON_UNESCAPED_SLASHES);
+        file_put_contents("$this->project/composer.json", $composer);
+        file_put_contents("$this->project/composer.lock", $lock);
+        $parent = dirname($this->project, 2);
+
+        $result = (new Builder(new FakeRunner()))->build($this->config(), new PlainPhpPreset(), $this->project);
+
+        $staged = json_decode((string) file_get_contents("$result->appDir/composer.json"), true);
+        self::assertSame("$parent/packages/*", $staged['repositories'][0]['url']);
+        self::assertSame(['symlink' => false], $staged['repositories'][0]['options']);
+        self::assertSame('/abs/pkg', $staged['repositories'][1]['url']);
+        self::assertSame('../not-a-path', $staged['repositories'][2]['url']);
+        $stagedLock = json_decode((string) file_get_contents("$result->appDir/composer.lock"), true);
+        self::assertSame("$parent/packages/a", $stagedLock['packages'][0]['dist']['url']);
+        self::assertSame('/abs/b', $stagedLock['packages'][1]['dist']['url']);
+        self::assertSame('https://example.test/c.zip', $stagedLock['packages'][2]['dist']['url']);
+        self::assertSame("$this->project/local/d", $stagedLock['packages-dev'][0]['dist']['url']);
+        self::assertSame($composer, file_get_contents("$this->project/composer.json"), 'the project is never modified');
+        self::assertSame($lock, file_get_contents("$this->project/composer.lock"));
+        $result->cleanup();
+    }
+
+    public function test_path_repositories_without_a_lock_file_are_fine(): void
+    {
+        file_put_contents("$this->project/composer.json", '{"repositories":[{"type":"path","url":"../x"}]}');
+        $result = (new Builder(new FakeRunner()))->build($this->config(), new PlainPhpPreset(), $this->project);
+        $staged = json_decode((string) file_get_contents("$result->appDir/composer.json"), true);
+        self::assertSame(dirname($this->project) . '/x', $staged['repositories'][0]['url']);
+        self::assertFileDoesNotExist("$result->appDir/composer.lock");
+        $result->cleanup();
+    }
+
     public function test_include_patterns_cannot_package_env_files(): void
     {
         foreach ([['**'], ['.env.production', '.env*']] as $include) {

@@ -51,6 +51,7 @@ final class Builder
 
         try {
             if (is_file("$appDir/composer.json")) {
+                self::absolutizePathRepositories($projectDir, $appDir);
                 $step('build.composer', []);
                 $this->runner->run(
                     [$this->composer, 'install', '--no-dev', '--optimize-autoloader', '--no-interaction', '--no-progress'],
@@ -73,5 +74,91 @@ final class Builder
         }
 
         return $result;
+    }
+
+    /**
+     * The staged copy lives in a temporary directory, so relative `path` repositories (monorepos) would no longer
+     * resolve. Rewrites them to absolute paths in the staged composer.json and composer.lock only.
+     */
+    private static function absolutizePathRepositories(string $projectDir, string $appDir): void
+    {
+        $json = self::readJson("$appDir/composer.json");
+        $repositories = $json['repositories'] ?? null;
+        if ($json !== null && is_array($repositories)) {
+            $changed = false;
+            foreach ($repositories as $key => $repository) {
+                if (is_array($repository) && ($repository['type'] ?? null) === 'path' && is_string($repository['url'] ?? null)) {
+                    $url = self::absolutePath($projectDir, $repository['url']);
+                    if ($url !== $repository['url']) {
+                        $repository['url'] = $url;
+                        $repositories[$key] = $repository;
+                        $changed = true;
+                    }
+                }
+            }
+            if ($changed) {
+                $json['repositories'] = $repositories;
+                self::writeJson("$appDir/composer.json", $json);
+            }
+        }
+
+        $lock = self::readJson("$appDir/composer.lock");
+        if ($lock === null) {
+            return;
+        }
+        $changed = false;
+        foreach (['packages', 'packages-dev'] as $section) {
+            $packages = $lock[$section] ?? null;
+            if (! is_array($packages)) {
+                continue;
+            }
+            foreach ($packages as $i => $package) {
+                $dist = is_array($package) ? ($package['dist'] ?? null) : null;
+                if (is_array($package) && is_array($dist) && ($dist['type'] ?? null) === 'path' && is_string($dist['url'] ?? null)) {
+                    $url = self::absolutePath($projectDir, $dist['url']);
+                    if ($url !== $dist['url']) {
+                        $dist['url'] = $url;
+                        $package['dist'] = $dist;
+                        $packages[$i] = $package;
+                        $changed = true;
+                    }
+                }
+            }
+            $lock[$section] = $packages;
+        }
+        if ($changed) {
+            self::writeJson("$appDir/composer.lock", $lock);
+        }
+    }
+
+    /** @return array<mixed>|null */
+    private static function readJson(string $file): ?array
+    {
+        $contents = is_file($file) ? file_get_contents($file) : false;
+        $data = $contents === false ? null : json_decode($contents, true);
+        return is_array($data) ? $data : null;
+    }
+
+    /** @param array<mixed> $data */
+    private static function writeJson(string $file, array $data): void
+    {
+        file_put_contents($file, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n");
+    }
+
+    /** Absolute paths, `~` paths, URLs and Windows drives stay as they are; the rest resolves against $projectDir. */
+    private static function absolutePath(string $projectDir, string $url): string
+    {
+        if ($url === '' || $url[0] === '/' || $url[0] === '~' || $url[0] === '\\' || preg_match('#^[A-Za-z][A-Za-z0-9+.-]*:#', $url) === 1) {
+            return $url;
+        }
+        $segments = [];
+        foreach (explode('/', rtrim($projectDir, '/') . '/' . $url) as $segment) {
+            if ($segment === '..') {
+                array_pop($segments);
+            } elseif ($segment !== '.' && $segment !== '') {
+                $segments[] = $segment;
+            }
+        }
+        return '/' . implode('/', $segments);
     }
 }
