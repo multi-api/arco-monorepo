@@ -474,6 +474,11 @@ in both the history and Live Tail is printed once. Live Tail follows at most 10 
 uses two, the console one, each queue worker one): with more, `--follow` polls and says so; narrow it with
 `--source`, `--console` or `--queue`. Ctrl+C ends `--follow` cleanly; a second Ctrl+C exits at once.
 
+## Try it locally
+
+With `AWS_ENDPOINT_URL` set, Arco deploys to a local AWS emulator instead of AWS. See
+[Try your app locally with Floci](local-floci.md).
+
 ## Using Arco in CI
 
 Provide AWS credentials through the environment (for example with
@@ -486,19 +491,17 @@ vendor/bin/arco remove --env=production --force --no-interaction
 ```
 
 `--yes` confirms creating a new environment; `--force` skips the typed confirmation of `remove`.
-Arco's own end-to-end check, `.github/workflows/e2e.yml`, deploys `examples/laravel` to a real
-account this way. It authenticates with GitHub OIDC and the role in the repository secret
-`ARCO_E2E_ROLE_ARN`.
+Arco's own real-AWS end-to-end run deploys `examples/laravel` to a dedicated test account this way.
 
 ### Minimal IAM permissions
 
-The role used by the E2E workflow lives in a dedicated test account and needs:
+A deploy role (like the one of Arco's own end-to-end run, in a dedicated test account) needs:
 
 - `lambda:*WebFunction*`
 - `iam:GetRole`, `iam:CreateRole`, `iam:PutRolePolicy`, `iam:DeleteRolePolicy`, `iam:DeleteRole`,
   `iam:PassRole` on `arn:aws:iam::*:role/arco-*`
 - `s3:*` on `arn:aws:s3:::arco-*` (and its objects)
-- `ssm:PutParameter`, `ssm:GetParameters` on `parameter/arco-example/*`
+- `ssm:PutParameter`, `ssm:GetParameters` on your app's parameters (`parameter/<app>/*`)
 - `logs:FilterLogEvents`, `logs:GetLogEvents`
 - `sts:GetCallerIdentity`
 - for the console function (`arn:aws:lambda:*:*:function:*-console` and `...:*-console:*`):

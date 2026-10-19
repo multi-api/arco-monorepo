@@ -12,6 +12,13 @@
         <testsuite name="integration">
             <directory>tests/Integration</directory>
         </testsuite>
+        <testsuite name="e2e">
+            <directory>tests/E2e</directory>
+            <exclude>tests/E2e/AwsE2eTest.php</exclude>
+        </testsuite>
+        <testsuite name="e2e-aws">
+            <file>tests/E2e/AwsE2eTest.php</file>
+        </testsuite>
     </testsuites>
     <extensions>
         <bootstrap class="Multiapi\Arco\Tests\Support\RemoveTempPaths"/>

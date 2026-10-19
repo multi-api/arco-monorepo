@@ -1,0 +1,38 @@
+name: E2E (Floci)
+on:
+  pull_request:
+    paths:
+      - 'packages/**'
+      - 'tests/**'
+      - 'examples/**'
+      - 'composer.*'
+      - 'bin/test-docker'
+      - 'docker/test/**'
+      - '.github/workflows/e2e-floci.yml'
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: e2e-floci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  e2e:
+    # ARM: the FrankenPHP binary the suite deploys is linux-arm64.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # bin/test-docker needs vendor/ on the checkout (it mounts the repository); everything
+      # else, including PHP for the suite, runs in the test image it builds on demand.
+      - uses: shivammathur/setup-php@accd6127cb78bee3e8082180cb391013d204ef9f # 2.37.0
+        with:
+          php-version: '8.4'
+          extensions: zip
+          coverage: none
+      - run: composer install --no-interaction --no-progress
+      - run: composer test:e2e

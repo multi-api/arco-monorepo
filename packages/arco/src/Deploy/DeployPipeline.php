@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Deploy;
 
 use Aws\Exception\AwsException;
 use Closure;
+use Multiapi\Arco\Aws\Endpoint;
 use Multiapi\Arco\Binary\BinaryException;
 use Multiapi\Arco\Binary\BinaryProvider;
 use Multiapi\Arco\Binary\RuntimeBuild;
@@ -68,7 +69,17 @@ final class DeployPipeline
      */
     public static function injectedVariables(AppConfig $config): array
     {
-        return [...self::queueVariables($config), ...self::storageVariables($config), ...self::tableVariables($config)];
+        return [...self::queueVariables($config), ...self::storageVariables($config), ...self::tableVariables($config), ...self::endpointVariables()];
+    }
+
+    /**
+     * With an AWS endpoint override (an emulator such as Floci) S3 needs path-style requests.
+     *
+     * @return array<string, string>
+     */
+    public static function endpointVariables(): array
+    {
+        return Endpoint::override() === null ? [] : ['AWS_USE_PATH_STYLE_ENDPOINT' => 'true'];
     }
 
     /**

@@ -26,9 +26,15 @@ final class DeployCommandTest extends TestCase
     private string $project;
     private string $cwd;
     private MockHandler $aws;
+    /** @var array<string, string|false> */
+    private array $endpointEnv = [];
 
     protected function setUp(): void
     {
+        foreach (['AWS_ENDPOINT_URL', 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'] as $name) {
+            $this->endpointEnv[$name] = getenv($name);
+            putenv($name);
+        }
         $this->cwd = (string) getcwd();
         $this->project = TempPaths::path('arco-cmd-');
         mkdir("$this->project/public", 0777, true);
@@ -66,6 +72,9 @@ final class DeployCommandTest extends TestCase
         chdir($this->cwd);
         putenv('AWS_CONFIG_FILE');
         putenv('AWS_SHARED_CREDENTIALS_FILE');
+        foreach ($this->endpointEnv as $name => $value) {
+            putenv($value === false ? $name : "$name=$value");
+        }
     }
 
     /** @var list<array{0: ?string, 1: ?string, 2: bool}> deploy profile, DNS profile, force */
@@ -131,6 +140,78 @@ final class DeployCommandTest extends TestCase
         self::assertSame(1, $tester->getStatusCode());
         self::assertStringContainsString('--profile', $tester->getDisplay());
         self::assertSame([], $deployer->calls);
+    }
+
+    public function test_the_deploy_names_an_aws_endpoint_override_once(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester(new FakeDeployer());
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--yes' => true], ['interactive' => false]);
+        self::assertStringNotContainsString('AWS_ENDPOINT_URL', $tester->getDisplay());
+
+        putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester(new FakeDeployer());
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--yes' => true], ['interactive' => false]);
+        $display = $tester->getDisplay();
+        self::assertSame(1, substr_count($display, 'Using the AWS endpoint http://localhost:4566 from AWS_ENDPOINT_URL.'));
+        // The note comes before the target line, which needs the credentials.
+        self::assertLessThan(strpos($display, 'shop → production'), strpos($display, 'Using the AWS endpoint'));
+    }
+
+    public function test_the_endpoint_note_shows_even_when_the_profile_setup_fails(): void
+    {
+        putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+        $deployer = new FakeDeployer();
+        $tester = $this->tester($deployer);
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('--profile', $tester->getDisplay());
+        self::assertStringContainsString('Using the AWS endpoint http://localhost:4566 from AWS_ENDPOINT_URL.', $tester->getDisplay());
+        self::assertSame([], $deployer->calls);
+    }
+
+    public function test_an_unrecognised_endpoint_is_warned_about_because_the_sdk_may_still_use_it(): void
+    {
+        putenv('AWS_ENDPOINT_URL=localhost:4566');
+        $tester = $this->tester(new FakeDeployer());
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+
+        $display = (string) preg_replace('/[\s!]+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('AWS_ENDPOINT_URL is set to "localhost:4566"', $display);
+        self::assertStringContainsString('The AWS SDK may still send its calls there, while Arco builds AWS-style URLs.', $display);
+        self::assertStringNotContainsString('Using the AWS endpoint', $display);
+    }
+
+    public function test_the_sdk_ignore_flag_silences_the_endpoint_note_and_warning(): void
+    {
+        putenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true');
+        foreach (['http://localhost:4566', 'localhost:4566'] as $value) {
+            putenv("AWS_ENDPOINT_URL=$value");
+            $tester = $this->tester(new FakeDeployer());
+            $tester->execute(['--env' => 'production'], ['interactive' => false]);
+            self::assertStringNotContainsString('AWS_ENDPOINT_URL', $tester->getDisplay(), $value);
+            self::assertStringNotContainsString('Using the AWS endpoint', $tester->getDisplay(), $value);
+        }
+    }
+
+    public function test_no_account_lock_is_offered_behind_an_endpoint_override(): void
+    {
+        putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+        $before = (string) file_get_contents("$this->project/arco.php");
+        $this->aws->append(new Result(['Account' => '000000000000']));
+        $tester = $this->tester(new FakeDeployer());
+        // profile choice, confirm creation; no third answer: a lock question would run out of input
+        $tester->setInputs(['acme-prod', 'yes']);
+
+        $tester->execute(['--env' => 'production']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('Lock "production"', $tester->getDisplay());
+        self::assertSame($before, (string) file_get_contents("$this->project/arco.php"));
     }
 
     public function test_failed_verification_exits_non_zero_and_shows_logs(): void

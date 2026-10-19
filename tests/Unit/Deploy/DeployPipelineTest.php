@@ -94,6 +94,38 @@ final class DeployPipelineTest extends TestCase
         return new DeployPipeline(new Builder(new FakeRunner(onRun: $this->composerInstall())), new BinaryProvider(new \Multiapi\Arco\Binary\GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager(), $scheduleInspector ?? fn (string $appDir) => null);
     }
 
+    public function test_an_endpoint_override_adds_path_style_s3_and_a_user_value_wins(): void
+    {
+        $original = getenv('AWS_ENDPOINT_URL');
+        try {
+            putenv('AWS_ENDPOINT_URL');
+            $deployer = new FakeDeployer('rev-1');
+            $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (): void {});
+            self::assertArrayNotHasKey('AWS_USE_PATH_STYLE_ENDPOINT', $deployer->variables);
+
+            putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+            $deployer = new FakeDeployer('rev-1');
+            $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (): void {});
+            self::assertSame('true', $deployer->variables['AWS_USE_PATH_STYLE_ENDPOINT']);
+
+            $config = ConfigResolver::resolve(
+                App::make('shop')->region('us-east-1')
+                    ->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))
+                    ->variables(['AWS_USE_PATH_STYLE_ENDPOINT' => 'false'])
+                    ->environment('production', fn (Environment $e) => $e)
+                    ->toArray(),
+                'production',
+            );
+            $deployer = new FakeDeployer('rev-1');
+            $steps = [];
+            $this->pipeline()->deploy($config, new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+            self::assertSame('false', $deployer->variables['AWS_USE_PATH_STYLE_ENDPOINT']);
+            self::assertContains(['deploy.variable_overridden', ['key' => 'AWS_USE_PATH_STYLE_ENDPOINT']], $steps);
+        } finally {
+            putenv($original === false ? 'AWS_ENDPOINT_URL' : "AWS_ENDPOINT_URL=$original");
+        }
+    }
+
     public function test_successful_deploy_merges_variables_and_cleans_up(): void
     {
         $deployer = new FakeDeployer('rev-1');

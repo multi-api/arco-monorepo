@@ -20,7 +20,7 @@ final class ArcoServiceProviderTest extends TestCase
         unset(
             $_SERVER['ARCO'], $_SERVER['AWS_ACCESS_KEY_ID'], $_SERVER['AWS_SECRET_ACCESS_KEY'], $_SERVER['AWS_SESSION_TOKEN'],
             $_SERVER['AWS_REGION'], $_SERVER['AWS_DEFAULT_REGION'], $_SERVER['ARCO_STORAGE'], $_SERVER['ARCO_CACHE_TABLE'],
-            $_SERVER['ARCO_FAILED_JOBS_TABLE'],
+            $_SERVER['ARCO_FAILED_JOBS_TABLE'], $_SERVER['AWS_USE_PATH_STYLE_ENDPOINT'],
         );
     }
 
@@ -64,6 +64,16 @@ final class ArcoServiceProviderTest extends TestCase
         self::assertSame('shop-prod-media', $config->get('filesystems.disks.media.bucket'));
         self::assertSame('session', $config->get('filesystems.disks.media.token'));
         self::assertSame(['driver' => 'local'], $config->get('filesystems.disks.local'));
+    }
+
+    public function test_named_disks_use_path_style_when_arco_says_so(): void
+    {
+        self::lambdaCredentials();
+        $_SERVER['ARCO_STORAGE'] = '{"uploads":{"bucket":"b","url":"http://localhost:4566/b"}}';
+        self::assertNull(self::registered([])->get('filesystems.disks.uploads.use_path_style_endpoint'));
+
+        $_SERVER['AWS_USE_PATH_STYLE_ENDPOINT'] = 'true';
+        self::assertTrue(self::registered([])->get('filesystems.disks.uploads.use_path_style_endpoint'));
     }
 
     public function test_the_region_falls_back_to_aws_default_region(): void

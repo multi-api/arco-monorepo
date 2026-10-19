@@ -58,6 +58,8 @@ final class CodeBucketTest extends TestCase
         $mocks->handler->append(AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404), new Result(['VersionId' => 'v2']));
         self::assertSame('v2', (new CodeBucket($mocks->clients()->s3()))->upload('b', 'shop/prod/h.zip', (string) $file));
         self::assertSame(['HeadObject', 'PutObject'], $mocks->calls);
+        // 'private' is rejected by S3-compatible emulators (Floci); this ACL is valid on AWS too.
+        self::assertSame('bucket-owner-full-control', $mocks->params[1]['ACL']);
     }
 
     public function test_prune_keeps_newest_and_protected(): void

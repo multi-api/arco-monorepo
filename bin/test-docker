@@ -16,10 +16,25 @@
 #   bin/test-docker runtime                      node --test runtime tests only
 #   bin/test-docker analyse                      PHPStan only
 #   bin/test-docker integration [phpunit args]   the integration suite (composer test:integration)
+#   bin/test-docker e2e [phpunit args]           the end-to-end suite against a local Floci (composer test:e2e)
+#   bin/test-docker e2e-aws [phpunit args]       the real-AWS end-to-end run, dry run by default (composer test:e2e-aws)
+#
+# The e2e suite starts its own Floci (FLOCI_IMAGE, a local AWS emulator) as arco-e2e-floci-<pid> with a
+# fresh data volume and the host's Docker socket (Floci runs the Lambda functions as sibling containers).
+# PHPUnit runs in Floci's network namespace, so localhost:4566 is Floci, with test credentials and no
+# AWS config files: it cannot reach real AWS. A trap removes Floci, its volume and the containers,
+# volumes and networks Floci created (labelled with its resource namespace, arco-e2e-floci-<pid>) on any exit.
+#
+# The e2e-aws run is the only mode that reaches real AWS. Its container gets a network, the host's
+# ~/.aws read-only (under a throwaway HOME, so SSO token caches resolve), and exactly AWS_PROFILE,
+# ARCO_E2E_ACCOUNT and ARCO_E2E_DRY_RUN (default 1) from the host: never AWS_ENDPOINT_URL or keys.
+# The suite itself refuses any account but ARCO_E2E_ACCOUNT before it calls anything else.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 IMAGE=arco-test:php84
+# Bump procedure: docs/maintainers/e2e.md.
+FLOCI_IMAGE=floci/floci:nightly-10172026
 CONTEXT="$ROOT/docker/test"
 
 # Rebuild only when the Dockerfile changed since the image was built.
@@ -68,17 +83,115 @@ integration() {
     "$IMAGE" vendor/bin/phpunit --testsuite integration "$@"
 }
 
+e2e() {
+  sock=/var/run/docker.sock
+  floci="arco-e2e-floci-$$"
+  data="arco-e2e-floci-data-$$"
+  # Floci builds its function domains under the base URL's host: *.localhost:4566, which curl in the
+  # test container resolves to loopback, that is Floci.
+  endpoint=http://localhost:4566
+  # Floci labels the containers, volumes and networks it creates floci_namespace=<resource namespace>;
+  # the namespace set below is this Floci's own container name (unique per run), so the exact label
+  # tells them apart from those of any other Floci on this host.
+  cleanup() {
+    trap - EXIT
+    # A second Ctrl-C must not cut the cleanup short.
+    trap '' INT TERM HUP
+    docker rm -f "arco-e2e-phpunit-$$" >/dev/null 2>&1 || true
+    docker rm -f "$floci" >/dev/null 2>&1 || true
+    ids=$(docker ps -aq --filter "label=floci_namespace=$floci") || true
+    # shellcheck disable=SC2086
+    [ -z "$ids" ] || docker rm -f $ids >/dev/null 2>&1 || true
+    vols=$(docker volume ls -q --filter "label=floci_namespace=$floci") || true
+    # shellcheck disable=SC2086
+    [ -z "$vols" ] || docker volume rm -f $vols >/dev/null 2>&1 || true
+    nets=$(docker network ls -q --filter "label=floci_namespace=$floci") || true
+    # shellcheck disable=SC2086
+    [ -z "$nets" ] || docker network rm $nets >/dev/null 2>&1 || true
+    docker volume rm -f "$data" >/dev/null 2>&1 || true
+  }
+  trap cleanup EXIT
+  trap 'exit 130' INT TERM HUP
+
+  docker volume create "$data" >/dev/null
+  docker run -d --name "$floci" \
+    --mount "type=volume,source=$data,target=/app/data" \
+    --mount "type=bind,source=$sock,target=$sock" \
+    --env FLOCI_BASE_URL="$endpoint" \
+    --env FLOCI_STORAGE_MODE=persistent \
+    --env FLOCI_STORAGE_PERSISTENT_PATH=/app/data \
+    --env FLOCI_DOCKER_RESOURCE_NAMESPACE="$floci" \
+    --env 'FLOCI_SERVICES_CLOUDFRONT_ALLOWED_PRIVATE_ORIGIN_HOSTS=localhost,*.localhost' \
+    "$FLOCI_IMAGE" >/dev/null
+
+  echo "Waiting for $floci ($FLOCI_IMAGE)..." >&2
+  waited=0
+  until docker run --rm --network "container:$floci" "$IMAGE" curl -fsS -o /dev/null http://localhost:4566/_localstack/health 2>/dev/null; do
+    waited=$((waited + 2))
+    if [ "$waited" -ge 120 ]; then
+      echo "Floci did not become healthy within 120 s:" >&2
+      docker logs --tail 50 "$floci" >&2 || true
+      exit 1
+    fi
+    sleep 2
+  done
+
+  gid=$(docker run --rm --network none --mount "type=bind,source=$sock,target=$sock" "$IMAGE" stat -c %g "$sock")
+  status=0
+  # shellcheck disable=SC2086
+  docker run --rm --init $tty --network "container:$floci" --name "arco-e2e-phpunit-$$" \
+    --user "$(id -u):$(id -g)" --group-add "$gid" \
+    --mount "type=bind,source=$ROOT,target=$ROOT" \
+    --mount "type=bind,source=$sock,target=$sock" \
+    --mount "type=volume,source=arco-test-cache,target=/cache" \
+    --env AWS_ENDPOINT_URL="$endpoint" \
+    --env AWS_ACCESS_KEY_ID=test --env AWS_SECRET_ACCESS_KEY=test --env AWS_REGION=us-east-1 \
+    --env AWS_CONFIG_FILE=/dev/null --env AWS_SHARED_CREDENTIALS_FILE=/dev/null \
+    --env ARCO_E2E_FLOCI_CONTAINER="$floci" \
+    --env HOME=/cache/home --env COMPOSER_CACHE_DIR=/cache/composer \
+    --workdir "$ROOT" \
+    "$IMAGE" vendor/bin/phpunit --testsuite e2e --display-skipped "$@" || status=$?
+  return "$status"
+}
+
+e2e_aws() {
+  if [ -z "${AWS_PROFILE:-}" ] || [ -z "${ARCO_E2E_ACCOUNT:-}" ]; then
+    echo "e2e-aws needs AWS_PROFILE and ARCO_E2E_ACCOUNT (the dedicated E2E account id): see docs/maintainers/e2e.md." >&2
+    exit 2
+  fi
+  if [ ! -d "$HOME/.aws" ]; then
+    echo "e2e-aws reads the profile from $HOME/.aws, which does not exist." >&2
+    exit 2
+  fi
+  # shellcheck disable=SC2086
+  docker run --rm --init $tty --name "arco-e2e-aws-phpunit-$$" \
+    --user "$(id -u):$(id -g)" \
+    --mount "type=bind,source=$ROOT,target=$ROOT" \
+    --mount "type=volume,source=arco-test-cache,target=/cache" \
+    --tmpfs /e2e-home:mode=1777 \
+    --mount "type=bind,source=$HOME/.aws,target=/e2e-home/.aws,readonly" \
+    --env HOME=/e2e-home --env COMPOSER_CACHE_DIR=/cache/composer \
+    --env AWS_PROFILE="$AWS_PROFILE" \
+    --env ARCO_E2E_ACCOUNT="$ARCO_E2E_ACCOUNT" \
+    --env ARCO_E2E_DRY_RUN="${ARCO_E2E_DRY_RUN:-1}" \
+    --env AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true \
+    --workdir "$ROOT" \
+    "$IMAGE" vendor/bin/phpunit --testsuite e2e-aws --display-skipped "$@"
+}
+
 suite=${1:-all}
 [ $# -gt 0 ] && shift
 case "$suite" in
   unit)    run vendor/bin/phpunit --testsuite unit "$@" ;;
   runtime) run node --test 'packages/arco/runtime/test/*.test.js' ;;
   integration) integration "$@" ;;
+  e2e) e2e "$@" ;;
+  e2e-aws) e2e_aws "$@" ;;
   analyse) run vendor/bin/phpstan analyse -c docker/test/phpstan.neon --memory-limit=4G --no-progress "$@" ;;
   all)
     run vendor/bin/phpunit --testsuite unit
     run node --test 'packages/arco/runtime/test/*.test.js'
     run vendor/bin/phpstan analyse -c docker/test/phpstan.neon --memory-limit=4G --no-progress
     ;;
-  *) echo "usage: bin/test-docker [all|unit|runtime|analyse|integration] [args]" >&2; exit 2 ;;
+  *) echo "usage: bin/test-docker [all|unit|runtime|analyse|integration|e2e|e2e-aws] [args]" >&2; exit 2 ;;
 esac

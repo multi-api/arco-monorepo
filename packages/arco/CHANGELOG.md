@@ -3,6 +3,32 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## 0.8.1
+
+- **Note:** the `v0.8.0` tag was created on the 0.7.0 commit by mistake, so 0.8.0 ships exactly the code of
+  0.7.0. Everything below is the 0.8 release; use 0.8.1.
+- **Added:** `AWS_ENDPOINT_URL` points Arco at a local AWS emulator such as [Floci](https://github.com/floci-io/floci),
+  the same variable the AWS SDK honours (the SDK reads it itself; Arco reads it for its URLs). Arco recognises
+  only `http(s)://host[:port]`; for any other non-empty value `arco deploy` warns that the SDK may still use it
+  while Arco builds AWS-style URLs. `AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true` turns it off for both. With an
+  endpoint set, URLs use `http` when the endpoint does, bucket URLs are path style (`<endpoint>/<bucket>`), the
+  app gets `AWS_USE_PATH_STYLE_ENDPOINT=true` (your `variables()` win), `arco deploy` prints a note naming the
+  endpoint before it loads credentials, so an `AWS_ENDPOINT_URL` exported for another tool does not redirect a
+  deploy unnoticed, and it does not offer to lock the environment to the emulator's account. Nothing changes on
+  AWS when it is unset. See `docs/local-floci.md`.
+- **Added:** `multiapi/arco-laravel`'s named S3 disks honour `AWS_USE_PATH_STYLE_ENDPOINT`.
+- **Added:** end-to-end suites. `composer test:e2e` deploys `examples/laravel` to a throwaway Floci in Docker
+  and checks the function, cache, storage, queue, scheduler, `arco command`, logs and the CloudFront
+  distribution; `composer test:e2e-aws` is the manual run against a dedicated real AWS account (dry run unless
+  `ARCO_E2E_DRY_RUN=0`, cleanup limited to resources tagged `arco:app=<run app name>`, refuses any account but
+  `ARCO_E2E_ACCOUNT`). Maintainer docs: `docs/maintainers/e2e.md` and `releasing.md`.
+- **Added:** `.github/workflows/e2e-floci.yml` runs the Floci suite in CI, on ARM. It replaces the manual
+  `e2e.yml` workflow, which is removed.
+- **Changed:** the package upload sets the ACL `bucket-owner-full-control` instead of `private`.
+- **Fixed:** relative Composer `path` repositories that point outside the project (monorepos) could not be
+  installed in the staged build, so the deploy failed. They are now rewritten to absolute paths, copied instead
+  of symlinked; path repositories inside the project are untouched.
+
 ## 0.7.0
 
 - **Added:** `arco init` reads the Laravel app and offers what it finds, one question each: the console

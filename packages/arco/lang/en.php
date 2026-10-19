@@ -215,6 +215,8 @@ return [
     'deploy.endpoint_failed' => 'The endpoint update failed: {reason}',
     'deploy.endpoint_missing' => 'The endpoint of {function} was not found.',
     'deploy.timeout' => 'Timed out waiting for {what}.',
+    'deploy.endpoint_override' => 'Using the AWS endpoint {endpoint} from AWS_ENDPOINT_URL.',
+    'deploy.endpoint_unrecognised' => 'AWS_ENDPOINT_URL is set to "{value}", which Arco does not recognise as http(s)://host[:port]. The AWS SDK may still send its calls there, while Arco builds AWS-style URLs. Fix or unset it.',
     'deploy.target' => 'Deploying {app} → {environment} · account {account} ({profile}) · {region}',
     'deploy.dns_target' => 'DNS records go to Route 53 in account {account} ({profile})',
     'deploy.confirm_create' => '{function} does not exist yet. Create it now?',
