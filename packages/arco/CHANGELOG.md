@@ -3,8 +3,10 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## 0.8.0
+## 0.8.1
 
+- **Note:** the `v0.8.0` tag was created on the 0.7.0 commit by mistake, so 0.8.0 ships exactly the code of
+  0.7.0. Everything below is the 0.8 release; use 0.8.1.
 - **Added:** `AWS_ENDPOINT_URL` points Arco at a local AWS emulator such as [Floci](https://github.com/floci-io/floci),
   the same variable the AWS SDK honours (the SDK reads it itself; Arco reads it for its URLs). Arco recognises
   only `http(s)://host[:port]`; for any other non-empty value `arco deploy` warns that the SDK may still use it
