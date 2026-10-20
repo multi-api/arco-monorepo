@@ -42,7 +42,7 @@ final class DeployCommand extends ArcoCommand
     use ResolvesTarget;
 
     private DeployPipeline $pipeline;
-    /** @var Closure(AwsClients, ?AwsClients, bool): Deployer */
+    /** @var Closure(AwsClients, ?AwsClients, bool, bool): Deployer */
     private Closure $deployerFactory;
     /** @var Closure(AwsClients): Verifier */
     private Closure $verifierFactory;
@@ -60,7 +60,7 @@ final class DeployCommand extends ArcoCommand
     ) {
         $this->awsFactory = $awsFactory ?? fn (?string $profile, string $region) => new AwsClients($profile, $region);
         $this->pipeline = $pipeline ?? DeployPipeline::default();
-        $this->deployerFactory = $deployerFactory ?? fn (AwsClients $aws, ?AwsClients $dns = null, bool $forceDns = false) => new AwsDeployer($aws, new Sleeper(), $dns, $forceDns);
+        $this->deployerFactory = $deployerFactory ?? fn (AwsClients $aws, ?AwsClients $dns = null, bool $forceDns = false, bool $force = false) => new AwsDeployer($aws, new Sleeper(), $dns, $forceDns, $force);
         $this->verifierFactory = $verifierFactory ?? fn (AwsClients $aws) => new AwsVerifier($aws->logs(), new Client(), new Sleeper());
         $this->presets = $presets ?? PresetRegistry::default();
         $this->consoleFactory = $consoleFactory ?? fn (AwsClients $aws, AppConfig $config) => new LambdaConsole($aws->lambda(LambdaConsole::clientOptions($config)));
@@ -74,6 +74,7 @@ final class DeployCommand extends ArcoCommand
             ->addOption('yes', 'y', InputOption::VALUE_NONE, 'Do not ask for confirmation')
             ->addOption('dns-profile', null, InputOption::VALUE_REQUIRED, 'AWS profile whose Route 53 holds the DNS zones of the custom domains')
             ->addOption('force-dns', null, InputOption::VALUE_NONE, 'Replace existing DNS records of the custom domains that point elsewhere')
+            ->addOption('force', null, InputOption::VALUE_NONE, 'Dangerous: deploy over a function, role or scheduler rule tagged for another app or environment, or carrying no Arco tags, and tag it for this one. Only when you are sure it is yours')
             ->addOption('package', null, InputOption::VALUE_REQUIRED, 'Deploy a zip written by "arco package" instead of building')
             ->addOption('migrate', null, InputOption::VALUE_NONE, 'Run "migrate --force" before traffic moves (added to the deploy commands)')
             ->addOption('no-deploy-commands', null, InputOption::VALUE_NONE, 'Skip the deploy commands of arco.php');
@@ -136,7 +137,7 @@ final class DeployCommand extends ArcoCommand
                 $io->writeln($this->t('deploy.dns_target', ['account' => $this->checkDnsCredentials($dns), 'profile' => (string) $dns->profile]));
             }
 
-            $deployer = ($this->deployerFactory)($aws, $dns, (bool) $input->getOption('force-dns'));
+            $deployer = ($this->deployerFactory)($aws, $dns, (bool) $input->getOption('force-dns'), (bool) $input->getOption('force'));
             if ($deployer->describe($config) === null && ! $input->getOption('yes')) {
                 if (! $input->isInteractive()) {
                     throw new UserError($this->t('deploy.confirm_required'));

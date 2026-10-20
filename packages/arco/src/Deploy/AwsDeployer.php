@@ -29,13 +29,58 @@ final class AwsDeployer implements Deployer
      * @param AwsClients|null $dns clients for the account holding the DNS zones (dns() profile or
      *                             --dns-profile); null for the deploy account
      * @param bool $forceDns replace existing DNS records that point elsewhere (--force-dns)
+     * @param bool $force change name-addressed resources another app or environment owns, or that carry
+     *                    no Arco tags (deploy --force); never used by remove
      */
     public function __construct(
         private readonly AwsClients $aws,
         private readonly Sleeper $sleeper = new Sleeper(),
         private readonly ?AwsClients $dns = null,
         private readonly bool $forceDns = false,
+        private readonly bool $force = false,
     ) {
+    }
+
+    /** @var array<string, true> names whose ownership this deployer already checked (checkOwnership()) */
+    private array $verified = [];
+
+    public function checkOwnership(AppConfig $config, Closure $onStep): void
+    {
+        $guard = new OwnershipGuard($this->aws);
+        $names = [];
+        $resources = [];
+        if ($config->role === null) {
+            $resources[] = $guard->role($names[] = ExecutionRole::roleName($config));
+        }
+        $resources[] = $guard->webFunction($names[] = $config->functionName());
+        // Checked whether the console is on or off: a deploy updates it, or deletes it once verified.
+        $resources[] = $guard->lambdaFunction($names[] = $config->consoleFunctionName(), OwnershipGuard::CONSOLE_MARKER);
+        foreach ($config->queues as $queue) {
+            $resources[] = $guard->lambdaFunction($names[] = $config->workerFunctionName($queue->name), OwnershipGuard::WORKER_MARKER);
+        }
+        $resources[] = $guard->schedulerRule($names[] = SchedulerRule::name($config));
+        $guard->claim($config, array_values(array_filter($resources)), $this->force, $onStep);
+        foreach ($names as $name) {
+            $this->verified[$name] = true;
+        }
+    }
+
+    /**
+     * Checks one name-addressed resource outside a deploy's checkOwnership() (scheduler:set --apply, the
+     * console's removal): skipped when this deployer already checked it.
+     *
+     * @param Closure(OwnershipGuard): ?NamedResource $read
+     * @param callable(string, array<string, string|int>): void $onStep
+     */
+    private function claimOne(AppConfig $config, string $name, Closure $read, callable $onStep): void
+    {
+        if (isset($this->verified[$name])) {
+            return;
+        }
+        $guard = new OwnershipGuard($this->aws);
+        $resource = $read($guard);
+        $guard->claim($config, $resource === null ? [] : [$resource], $this->force, $onStep);
+        $this->verified[$name] = true;
     }
 
     public function prepare(AppConfig $config, Package $package, ?ConsoleArtifacts $console, array $variables, ?callable $onStep = null): PreparedDeploy
@@ -297,6 +342,9 @@ final class AwsDeployer implements Deployer
     public function remove(AppConfig $config, ?callable $onStep = null): void
     {
         $step = $onStep ?? static function (string $key, array $params = []): void {};
+        $queues = $this->workerQueues($config, $step);
+        // Before anything is deleted: a resource another app or environment owns stops the whole remove.
+        $this->checkRemoval($config, $queues);
         if ($config->domains !== [] || $this->stackExists($config)) {
             $this->customDomains($config)->remove($config, $step);
         }
@@ -305,7 +353,7 @@ final class AwsDeployer implements Deployer
             $step('remove.step_scheduler', ['rule' => SchedulerRule::name($config)]);
             $this->schedulerRule()->delete($config);
         }
-        $this->removeWorkers($config, $step);
+        $this->removeWorkers($config, $queues, $step);
         $this->removeResources($config, $step);
         $step('remove.step_console', ['function' => $config->consoleFunctionName()]);
         $this->consoleFunction()->delete($config->consoleFunctionName());
@@ -317,24 +365,58 @@ final class AwsDeployer implements Deployer
     }
 
     /**
-     * Deletes the event source mappings and functions of the environment's workers: the queues in
-     * arco.php and any left from queues removed earlier (found by tag; when that lookup fails, only the
-     * queues in arco.php are removed, with a warning when there are any).
+     * The queues whose workers remove deletes: the queues in arco.php and any left from queues removed
+     * earlier (found by tag; when that lookup fails, only the queues in arco.php, with a warning when
+     * there are any).
      *
      * @param callable(string, array<string, string|int>): void $step
+     * @return list<string>
      */
-    private function removeWorkers(AppConfig $config, callable $step): void
+    private function workerQueues(AppConfig $config, callable $step): array
     {
-        $workers = $this->workerFunctions();
         $queues = array_map(static fn (QueueConfig $queue): string => $queue->name, $config->queues);
         try {
-            $queues = array_values(array_unique([...$queues, ...$workers->existing($config, self::tags($config))]));
+            return array_values(array_unique([...$queues, ...$this->workerFunctions()->existing($config, self::tags($config))]));
         } catch (\Throwable $e) {
             // Only the queues in arco.php are removed; without any, there is nothing to warn about.
             if ($config->queues !== []) {
                 $step('remove.worker_scan_failed', ['error' => self::errorText($e)]);
             }
+            return $queues;
         }
+    }
+
+    /**
+     * Reads the tags of every name-addressed resource remove deletes and refuses, before any is
+     * deleted, when one belongs to another app or environment (or carries no sign of Arco).
+     *
+     * @param list<string> $queues
+     * @throws DeployException remove.not_owned, remove.untagged_resource, remove.tags_unreadable
+     */
+    private function checkRemoval(AppConfig $config, array $queues): void
+    {
+        $guard = new OwnershipGuard($this->aws);
+        $resources = [$guard->schedulerRule(SchedulerRule::name($config))];
+        foreach ($queues as $queue) {
+            $resources[] = $guard->lambdaFunction($config->workerFunctionName($queue), OwnershipGuard::WORKER_MARKER);
+        }
+        $resources[] = $guard->lambdaFunction($config->consoleFunctionName(), OwnershipGuard::CONSOLE_MARKER);
+        $resources[] = $guard->webFunction($config->functionName());
+        if ($config->role === null) {
+            $resources[] = $guard->role(ExecutionRole::roleName($config));
+        }
+        $guard->checkRemoval($config, array_values(array_filter($resources)));
+    }
+
+    /**
+     * Deletes the event source mappings and functions of the environment's workers (workerQueues()).
+     *
+     * @param list<string> $queues
+     * @param callable(string, array<string, string|int>): void $step
+     */
+    private function removeWorkers(AppConfig $config, array $queues, callable $step): void
+    {
+        $workers = $this->workerFunctions();
         foreach ($queues as $queue) {
             $step('remove.step_worker', ['queue' => $queue, 'function' => $config->workerFunctionName($queue)]);
             $workers->remove($config, $queue);
@@ -380,6 +462,7 @@ final class AwsDeployer implements Deployer
 
     public function removeConsole(AppConfig $config, Closure $onStep): void
     {
+        $this->claimOne($config, $config->consoleFunctionName(), fn (OwnershipGuard $guard) => $guard->lambdaFunction($config->consoleFunctionName(), OwnershipGuard::CONSOLE_MARKER), $onStep);
         // The scheduler rule goes before the function it invokes.
         $this->removeScheduler($config, $onStep);
         $this->consoleFunction()->delete($config->consoleFunctionName());
@@ -390,9 +473,16 @@ final class AwsDeployer implements Deployer
     {
         $unreadable = fn (string $error) => $onStep('deploy.scheduler_unreadable', ['rule' => SchedulerRule::name($config), 'function' => $config->consoleFunctionName(), 'error' => $error]);
         if ($this->schedulerRuleExists($config, $unreadable)) {
+            $this->claimRule($config, $onStep);
             $this->schedulerRule()->delete($config);
             $onStep('deploy.scheduler_removed', []);
         }
+    }
+
+    /** @param callable(string, array<string, string|int>): void $onStep */
+    private function claimRule(AppConfig $config, callable $onStep): void
+    {
+        $this->claimOne($config, SchedulerRule::name($config), fn (OwnershipGuard $guard) => $guard->schedulerRule(SchedulerRule::name($config)), $onStep);
     }
 
     public function syncScheduler(AppConfig $config, Closure $onStep): void
@@ -405,6 +495,7 @@ final class AwsDeployer implements Deployer
                 }
             };
             if ($this->schedulerRuleExists($config, $unreadable)) {
+                $this->claimRule($config, $onStep);
                 $this->schedulerRule()->delete($config);
                 $onStep('deploy.scheduler_removed', []);
             }
@@ -412,6 +503,7 @@ final class AwsDeployer implements Deployer
         }
         $function = $config->consoleFunctionName();
         $alias = $this->consoleFunction()->aliasArn($function) ?? throw DeployException::make('deploy.console_missing', ['function' => $function]);
+        $this->claimRule($config, $onStep);
         $paused = $this->schedulerRule()->put($config, $alias, self::tags($config));
         $onStep('deploy.scheduler_set', ['every' => $config->scheduler]);
         if ($paused) {
@@ -845,9 +937,7 @@ final class AwsDeployer implements Deployer
     /** @return array<string, string> */
     private static function tags(AppConfig $config): array
     {
-        // Stable on purpose: a tag change would update every tagged resource (and the CloudFront stack) on
-        // each Arco upgrade. The Arco version is in each revision's description instead.
-        return ['arco:app' => $config->app, 'arco:environment' => $config->environment];
+        return Ownership::tags($config);
     }
 
     /** S3 prefix of the environment's web zips. */

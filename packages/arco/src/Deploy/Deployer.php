@@ -10,6 +10,18 @@ use Multiapi\Arco\Package\Package;
 interface Deployer
 {
     /**
+     * Before any AWS change of a deploy: reads the `arco:app`/`arco:environment` tags of every resource
+     * Arco addresses by name (execution role, web function, console function, workers, scheduler rule)
+     * and refuses one that carries another app's or environment's tags, or no tags and no sign that
+     * Arco made it, unless the deployer was built with --force. Resources this environment owns that
+     * lack the tags get them (step deploy.tags_added).
+     *
+     * @param Closure(string, array<string, string|int>): void $onStep
+     * @throws DeployException deploy.not_owned, deploy.untagged_resource, deploy.tags_unreadable
+     */
+    public function checkOwnership(AppConfig $config, Closure $onStep): void;
+
+    /**
      * Uploads the package and puts the code in place without moving traffic: execution role, a new
      * web revision, and (with $console) the console zip and runtime binary uploaded, the console
      * function (when the console is on) and one worker per queue updated with a published version.

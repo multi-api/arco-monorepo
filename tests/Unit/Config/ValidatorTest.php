@@ -31,6 +31,30 @@ final class ValidatorTest extends TestCase
         self::assertTrue($result->isValid());
     }
 
+    /** @return iterable<string, array{string, string, list<array{key: string, params: array<string, string>}>}> */
+    public static function reservedNames(): iterable
+    {
+        foreach (['-console', '-resources', '-scheduler', '-host'] as $suffix) {
+            yield "environment ending in $suffix" => ['shop', "prod$suffix", [['key' => 'validation.environment_name_suffix', 'params' => ['name' => "prod$suffix", 'suffix' => $suffix]]]];
+            yield "app ending in $suffix" => ["shop$suffix", 'prod', [['key' => 'validation.app_name_suffix', 'params' => ['name' => "shop$suffix", 'suffix' => $suffix]]]];
+        }
+        yield 'environment containing -queue-' => ['shop', 'prod-queue-emails', [['key' => 'validation.environment_name_queue', 'params' => ['name' => 'prod-queue-emails']]]];
+        yield 'app containing -queue-' => ['shop-queue-x', 'prod', [['key' => 'validation.app_name_queue', 'params' => ['name' => 'shop-queue-x']]]];
+        // Neither name contains -queue-, but <app>-<env> is the worker of shop/prod's queue "emails".
+        yield 'app and environment joined into a worker name' => ['shop-prod', 'queue-emails', [['key' => 'validation.function_name_queue', 'params' => ['app' => 'shop-prod', 'environment' => 'queue-emails', 'function' => 'shop-prod-queue-emails']]]];
+        yield 'hyphens elsewhere are fine' => ['shop', 'eu-prod', []];
+        yield 'a suffix inside the name is fine' => ['shop', 'console-eu', []];
+        yield 'an environment named like a suffix without the hyphen is fine' => ['shop', 'console', []];
+    }
+
+    /** @param list<array{key: string, params: array<string, string>}> $errors */
+    #[\PHPUnit\Framework\Attributes\DataProvider('reservedNames')]
+    public function test_names_that_collide_with_arcos_own_resource_names_are_rejected(string $app, string $environment, array $errors): void
+    {
+        $result = (new Validator())->validate(ConfigResolver::resolve(App::make($app)->region('us-east-1')->environment($environment)->toArray(), $environment), sys_get_temp_dir());
+        self::assertSame($errors, $result->errors);
+    }
+
     public function test_names_region_and_ranges(): void
     {
         $app = App::make('Shop_App')

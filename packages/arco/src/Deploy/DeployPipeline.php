@@ -372,6 +372,8 @@ final class DeployPipeline
                 throw DeployException::make('deploy.workers_package_too_large', ['max' => (int) round(ConsoleFunction::MAX_UNZIPPED_BYTES / 1048576)]);
             }
 
+            // Before any AWS change: resources addressed by name must belong to this app and environment.
+            $deployer->checkOwnership($config, $onStep(...));
             // Queues exist before any code that could use them; a failure stops the deploy before traffic moves.
             $deployer->deployResources($config, $onStep(...));
 

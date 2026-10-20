@@ -3,8 +3,19 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.9.0
 
+- **Changed:** before a deploy updates, or `arco remove` deletes, the web function, console function, queue
+  workers, execution role or scheduler rule, Arco reads their `arco:app`/`arco:environment` tags and refuses,
+  before changing anything, a resource tagged for another app or environment (names are `<app>-<env>`, so app
+  `shop-eu` + env `prod` and app `shop` + env `eu-prod` collide), or one with no tags and no Arco description.
+  Untagged resources that an older Arco made (its description is on them) are this environment's, and the
+  deploy tags them. `arco deploy --force` overrides a refusal (dangerous); `arco remove` never deletes another
+  environment's resources. The deploy profile needs `lambda:ListTags` and `events:ListTagsForResource`
+  (and `lambda:TagResource`, `iam:TagRole` to tag older resources); without them the deploy stops naming
+  the permission. `scheduler:set --apply` / `scheduler:remove --apply` check the rule the same way.
+- **Changed:** app and environment names may not end in `-console`, `-resources`, `-scheduler` or `-host`, nor
+  contain `-queue-` (nor may `<app>-<env>` as a whole): validation names the rule.
 - The E2E suite now pins Floci `nightly-10192026`, where storage writes and CloudFront to a Web Function work, so all eight Floci checks are mandatory.
 
 ## 0.8.1

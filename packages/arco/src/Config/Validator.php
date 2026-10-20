@@ -61,6 +61,36 @@ final class Validator
     {
     }
 
+    /**
+     * Endings of the names Arco derives from <app>-<environment> for its other resources (console
+     * function, resources stack, scheduler rule, CloudFront function); `-queue-` marks a worker.
+     */
+    public const RESERVED_SUFFIXES = ['-console', '-resources', '-scheduler', '-host'];
+
+    /**
+     * App and environment names that would collide with a name Arco gives another resource of some
+     * app and environment: ending in a reserved suffix, or containing `-queue-` (also across the
+     * hyphen that joins them).
+     */
+    private static function addReservedNameErrors(AppConfig $config, ValidationResult $result): void
+    {
+        $queue = false;
+        foreach (['app' => $config->app, 'environment' => $config->environment] as $kind => $name) {
+            foreach (self::RESERVED_SUFFIXES as $suffix) {
+                if (str_ends_with($name, $suffix)) {
+                    $result->error("validation.{$kind}_name_suffix", ['name' => $name, 'suffix' => $suffix]);
+                }
+            }
+            if (str_contains($name, '-queue-')) {
+                $result->error("validation.{$kind}_name_queue", ['name' => $name]);
+                $queue = true;
+            }
+        }
+        if (! $queue && str_contains($config->functionName(), '-queue-')) {
+            $result->error('validation.function_name_queue', ['app' => $config->app, 'environment' => $config->environment, 'function' => $config->functionName()]);
+        }
+    }
+
     public function validate(AppConfig $config, string $projectDir): ValidationResult
     {
         $result = new ValidationResult();
@@ -71,6 +101,7 @@ final class Validator
         if (! preg_match(self::NAME, $config->environment)) {
             $result->error('validation.environment_name', ['name' => $config->environment]);
         }
+        self::addReservedNameErrors($config, $result);
         if (strlen($config->functionName()) > 64) {
             $result->error('validation.function_name_length', ['name' => $config->functionName()]);
         } elseif (strlen($config->consoleFunctionName()) > 64) {

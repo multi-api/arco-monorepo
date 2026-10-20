@@ -27,6 +27,26 @@ return App::make('myapp')
 
 The file is loaded in a separate PHP process. Validation runs before any build or AWS call.
 
+## Names and ownership
+
+Arco names every resource after `<app>-<env>`: the web function `<app>-<env>`, the console function
+`<app>-<env>-console`, one worker `<app>-<env>-queue-<queue>` per queue, the execution role
+`arco-<app>-<env>`, the scheduler rule `arco-<app>-<env>-scheduler`, the stacks `arco-<app>-<env>` and
+`arco-<app>-<env>-resources`. So that these names never collide across apps and environments:
+
+- app and environment names must not end in `-console`, `-resources`, `-scheduler` or `-host`, and must
+  not contain `-queue-` (nor may `<app>-<env>` as a whole, as with app `shop-prod` and environment
+  `queue-emails`). Validation names the rule that a name breaks.
+- hyphens are otherwise allowed, so app `shop-eu` with environment `prod` and app `shop` with environment
+  `eu-prod` share every name. Arco tells them apart by the `arco:app` and `arco:environment` tags it puts
+  on everything it creates: before a deploy changes, or `arco remove` deletes, a function, role or
+  scheduler rule, Arco reads its tags and refuses (before changing anything) when they belong to another
+  app or environment. A resource with Arco's name but no tags is refused too, unless Arco's own
+  description is on it (every Arco version wrote one): then it is this environment's, and the deploy adds
+  the tags. `arco deploy --force` overrides a refusal and tags the resource for this environment; it is
+  dangerous, so use it only for a resource you know is yours. `arco remove` has no override: it never
+  deletes another environment's resources.
+
 ## Inheritance
 
 Every setting resolves as: **Arco default < app level < environment level**. `variables()` and
@@ -44,7 +64,7 @@ like the others (an environment's call replaces the app's, and `cache(false)` tu
 
 | Method | Default | Maps to |
 |---|---|---|
-| `App::make(name)` | required | App name. Function name is `<app>-<env>` (max 64 chars, lowercase letters, digits, hyphens, starting with a letter) |
+| `App::make(name)` | required | App name. Function name is `<app>-<env>` (max 64 chars, lowercase letters, digits, hyphens, starting with a letter; see [Names and ownership](#names-and-ownership)) |
 | `region(string)` | required | AWS region; must be one of us-east-1, us-east-2, us-west-2, ap-northeast-1, eu-west-1 |
 | `concurrency(int)` | AWS default (64) | Upper bound of requests each instance handles at once: revision `maxConcurrencyPerEnvironment` (1 to 128). Lambda applies its own dynamic limit below it |
 | `timeout(int)` | 30 | Revision `timeoutSeconds` (3 to 900) |

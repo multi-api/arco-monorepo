@@ -79,14 +79,17 @@ final class DeployCommandTest extends TestCase
 
     /** @var list<array{0: ?string, 1: ?string, 2: bool}> deploy profile, DNS profile, force */
     private array $factoryCalls = [];
+    /** @var list<bool> --force (ownership override) per deployer built */
+    private array $ownershipForced = [];
 
     private function tester(FakeDeployer $deployer, bool $verifies = true, ?int $initMs = 800, ?FakeConsole $console = null, ?PresetRegistry $presets = null): CommandTester
     {
         $command = new DeployCommand(
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $this->aws, 'credentials' => false]),
             pipeline: new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager()),
-            deployerFactory: function (AwsClients $aws, ?AwsClients $dns, bool $force) use ($deployer) {
+            deployerFactory: function (AwsClients $aws, ?AwsClients $dns, bool $force, bool $forceOwnership = false) use ($deployer) {
                 $this->factoryCalls[] = [$aws->profile, $dns?->profile, $force];
+                $this->ownershipForced[] = $forceOwnership;
                 return $deployer;
             },
             verifierFactory: fn () => new FakeVerifier($verifies, $initMs),
@@ -226,6 +229,32 @@ final class DeployCommandTest extends TestCase
         self::assertStringContainsString('Application.InitCodeError', $tester->getDisplay());
         self::assertStringContainsString('{"arco":"fatal","error":"boom"}', $tester->getDisplay());
         self::assertContains('rollback:rev-1', $deployer->calls);
+    }
+
+    public function test_force_overrides_the_ownership_checks_and_is_off_by_default(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']), new Result(['Account' => '222222222222']));
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1');
+
+        $this->tester(new FakeDeployer('rev-1', $status))->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+        $this->tester(new FakeDeployer('rev-1', $status))->execute(['--env' => 'production', '--profile' => 'acme-prod', '--force' => true], ['interactive' => false]);
+
+        self::assertSame([false, true], $this->ownershipForced);
+        self::assertStringContainsString('Dangerous', (new DeployCommand())->getDefinition()->getOption('force')->getDescription());
+    }
+
+    public function test_an_ownership_refusal_fails_the_deploy_with_its_message(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = new FakeDeployer('rev-1', new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'));
+        $deployer->ownershipError = \Multiapi\Arco\Deploy\DeployException::make('deploy.not_owned', ['resource' => 'shop-production', 'app' => 'shop', 'environment' => 'staging']);
+
+        $tester = $this->tester($deployer);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('tagged for app "shop", environment "staging"', preg_replace('/\s+/', ' ', $tester->getDisplay()) ?? '');
+        self::assertNotContains('prepare', $deployer->calls);
     }
 
     public function test_custom_domains_use_the_dns_profile_and_are_listed_in_the_summary(): void

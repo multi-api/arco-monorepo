@@ -50,6 +50,10 @@ final class FakeDeployer implements Deployer
     public bool $workersLeft = false;
     /** @var array<string, array{version: string, previous: ?string}> returned by prepare() as the workers' versions */
     public array $workerVersions = [];
+    /** thrown by checkOwnership(), e.g. a web function tagged for another app */
+    public ?\Throwable $ownershipError = null;
+    /** how many times checkOwnership() ran */
+    public int $ownershipChecks = 0;
     /** @var list<array{0: string, 1: array<string, string|int>}> steps reported by remove() */
     public array $removeSteps = [];
 
@@ -169,6 +173,13 @@ final class FakeDeployer implements Deployer
             throw $this->logRetentionError;
         }
         $onStep(...\Multiapi\Arco\Deploy\AwsDeployer::logRetentionStep($config->logRetention, \Multiapi\Arco\Deploy\AwsDeployer::logRetentionScope($config)));
+    }
+    public function checkOwnership(AppConfig $config, \Closure $onStep): void
+    {
+        $this->ownershipChecks++;
+        if ($this->ownershipError !== null) {
+            throw $this->ownershipError;
+        }
     }
     public function deployResources(AppConfig $config, \Closure $onStep): void
     {

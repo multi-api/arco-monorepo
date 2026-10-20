@@ -220,6 +220,11 @@ report for the new revision instead.
 If the new revision fails verification, traffic returns to the previous revision and the
 recent logs are printed.
 
+Before changing anything, the deploy checks that the function, role and scheduler rule it would update
+belong to this app and environment (their `arco:app` and `arco:environment` tags), and stops otherwise:
+see [Names and ownership](configuration.md#names-and-ownership). `--force` overrides that check
+(dangerous: only for a resource you know is yours).
+
 ### Build once, deploy later
 
 `arco package --env=production` builds the zip without deploying. It is written to
@@ -264,7 +269,8 @@ vendor/bin/arco info --env=production --json   # machine-readable output
 vendor/bin/arco remove --env=production        # asks you to type the environment name
 ```
 
-`remove` deletes the function, the console function, the queue workers and the endpoint and the execution role, and with custom domains the
+`remove` first checks the tags of the functions, role and scheduler rule it deletes and stops, deleting
+nothing, when one belongs to another app or environment. It then deletes the function, the console function, the queue workers and the endpoint and the execution role, and with custom domains the
 CloudFront stack, its DNS aliases and a certificate Arco requested. The shared code bucket,
 your SSM parameters, the SQS queues (with their messages), the storage buckets (with their files) and the
 cache and failed-jobs tables (with their items) are kept; `remove` lists each one it kept.
@@ -497,7 +503,11 @@ Arco's own real-AWS end-to-end run deploys `examples/laravel` to a dedicated tes
 
 A deploy role (like the one of Arco's own end-to-end run, in a dedicated test account) needs:
 
-- `lambda:*WebFunction*`
+- `lambda:*WebFunction*`, plus `lambda:ListTags` (the ownership check reads the tags of the web
+  function, the console function and the workers) and `lambda:TagResource` (only to tag a resource an older
+  Arco left untagged)
+- `iam:TagRole` on `arn:aws:iam::*:role/arco-*`, only to tag a role an older Arco left untagged (`iam:GetRole`
+  already returns the role's tags)
 - `iam:GetRole`, `iam:CreateRole`, `iam:PutRolePolicy`, `iam:DeleteRolePolicy`, `iam:DeleteRole`,
   `iam:PassRole` on `arn:aws:iam::*:role/arco-*`
 - `s3:*` on `arn:aws:s3:::arco-*` (and its objects)
@@ -512,7 +522,7 @@ A deploy role (like the one of Arco's own end-to-end run, in a dedicated test ac
 - `logs:StartLiveTail` for `arco logs --follow` (Live Tail; without
   `logs:StartLiveTail` follow polls instead). `logs:FilterLogEvents` covers `arco logs` without `--follow`
 - for the scheduler (`arn:aws:events:*:*:rule/arco-*-scheduler`): `events:PutRule`, `events:PutTargets`,
-  `events:DescribeRule`, `events:RemoveTargets`, `events:DeleteRule`, `events:TagResource`,
+  `events:DescribeRule`, `events:ListTagsForResource` (the ownership check), `events:RemoveTargets`, `events:DeleteRule`, `events:TagResource`,
   `events:DisableRule`, `events:EnableRule` (`scheduler:pause` / `scheduler:resume`); on the console
   function: `lambda:AddPermission`, `lambda:RemovePermission`, `lambda:GetPolicy`
 - for the version check of the runtime clean-up: `lambda:ListVersionsByFunction` on the Arco functions
@@ -526,7 +536,9 @@ A deploy role (like the one of Arco's own end-to-end run, in a dedicated test ac
 
 For your own apps, scope the SSM resource to your parameters and add Secrets Manager read access
 if you use `arco-secret:` references. If a permission is missing, Arco reports which operation
-AWS denied. The deploy keeps the live console version plus the 4 newest and deletes older ones on a best-effort
+AWS denied. Without `lambda:ListTags` or `events:ListTagsForResource` the ownership check cannot read
+the tags: the deploy stops and names the permission (`--force` skips the check), and `arco remove` deletes
+nothing. The deploy keeps the live console version plus the 4 newest and deletes older ones on a best-effort
 basis: without `lambda:ListVersionsByFunction` or `lambda:DeleteFunction` that step becomes a warning.
 
 People who only run `arco command`, `arco tinker` or `arco logs` need `lambda:InvokeFunction` on the console

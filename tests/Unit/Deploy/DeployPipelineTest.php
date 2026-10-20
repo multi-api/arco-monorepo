@@ -1196,6 +1196,23 @@ final class DeployPipelineTest extends TestCase
         self::assertLessThan(array_search('deploy.queue_created', $steps, true), array_search('package.ready', $steps, true));
     }
 
+    public function test_ownership_is_checked_before_any_aws_change_and_a_refusal_stops_the_deploy(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+        self::assertSame(1, $deployer->ownershipChecks);
+
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->ownershipError = DeployException::make('deploy.not_owned', ['resource' => 'shop-production', 'app' => 'shop-eu', 'environment' => 'prod']);
+        try {
+            $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+            self::fail('expected deploy.not_owned');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.not_owned', $e->key);
+        }
+        self::assertSame([], $deployer->calls, 'no resources stack, no prepare, no traffic');
+    }
+
     public function test_a_failed_resources_deploy_stops_before_any_traffic_moves(): void
     {
         $deployer = new FakeDeployer('rev-1');
