@@ -43,10 +43,11 @@ final class EnvironmentGroup
      * Creates the group, or updates its query when it differs from the environment's. A group with the
      * name that does not carry this environment's tags (someone else's) is left alone.
      *
+     * @return bool whether the group was created or its query updated (false: it was already the environment's)
      * @throws DeployException deploy.group_not_ours
      * @throws AwsException a refused or failed call
      */
-    public function ensure(AppConfig $config): void
+    public function ensure(AppConfig $config): bool
     {
         $name = self::name($config);
         $current = $this->currentQuery($name);
@@ -57,10 +58,10 @@ final class EnvironmentGroup
                 'ResourceQuery' => ['Type' => self::TYPE, 'Query' => self::query($config)],
                 'Tags' => Ownership::tags($config),
             ]);
-            return;
+            return true;
         }
         if (self::matches($current, $config)) {
-            return;
+            return false;
         }
         $group = Aws::map(Aws::call($this->groups, 'GetGroup', ['Group' => $name])['Group'] ?? null);
         $arn = Aws::string($group['GroupArn'] ?? null) ?? throw new \UnexpectedValueException('resource-groups:GetGroup returned no GroupArn.');
@@ -74,6 +75,7 @@ final class EnvironmentGroup
             throw DeployException::make('deploy.group_not_ours', ['group' => $name]);
         }
         Aws::call($this->groups, 'UpdateGroupQuery', ['Group' => $name, 'ResourceQuery' => ['Type' => self::TYPE, 'Query' => self::query($config)]]);
+        return true;
     }
 
     /**

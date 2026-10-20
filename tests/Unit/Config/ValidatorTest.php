@@ -761,4 +761,17 @@ final class ValidatorTest extends TestCase
         self::assertContains('validation.table_existing', $this->queueErrors(App::make('shop')->cache(existing: 'a b')));
         self::assertContains('validation.table_existing', $this->queueErrors(App::make('shop')->failedJobsTable(existing: 'x')));
     }
+
+    public function test_the_suffix_message_names_each_suffix_resource_not_only_the_console(): void
+    {
+        foreach (['en' => ['the console function', 'the resources stack', 'the scheduler rule', 'the CloudFront host function'], 'es' => ['la función de consola', 'el stack de recursos', 'la regla del scheduler', 'la función host de CloudFront']] as $lang => $kinds) {
+            $text = (new \Multiapi\Arco\Cli\Translator($lang, \Multiapi\Arco\Arco::packageRoot() . '/lang'))
+                ->trans('validation.function_name_suffix', ['app' => 'shop-eu', 'environment' => 'scheduler', 'function' => 'shop-eu-scheduler', 'suffix' => '-scheduler']);
+            foreach ($kinds as $kind) {
+                self::assertStringContainsString($kind, $text, $lang);
+            }
+            self::assertStringNotContainsString('is also the console function', $text);
+            self::assertStringNotContainsString('también es la función de consola', $text);
+        }
+    }
 }

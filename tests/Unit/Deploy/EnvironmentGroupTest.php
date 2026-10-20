@@ -41,7 +41,7 @@ final class EnvironmentGroupTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(self::notFound(), new Result(['Group' => ['GroupArn' => 'arn:aws:resource-groups:us-east-1:111111111111:group/arco-shop-production']]));
 
-        (new EnvironmentGroup($mocks->clients()->resourceGroups()))->ensure($this->config());
+        self::assertTrue((new EnvironmentGroup($mocks->clients()->resourceGroups()))->ensure($this->config()), 'created');
 
         self::assertSame(['GetGroupQuery', 'CreateGroup'], $mocks->calls);
         self::assertSame('arco-shop-production', $mocks->params[0]['Group']);
@@ -57,7 +57,7 @@ final class EnvironmentGroupTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(self::query('{"TagFilters": [{"Key": "arco:environment", "Values": ["production"]}, {"Key": "arco:app", "Values": ["shop"]}], "ResourceTypeFilters": ["AWS::AllSupported"]}'));
 
-        (new EnvironmentGroup($mocks->clients()->resourceGroups()))->ensure($this->config());
+        self::assertFalse((new EnvironmentGroup($mocks->clients()->resourceGroups()))->ensure($this->config()), 'unchanged');
 
         self::assertSame(['GetGroupQuery'], $mocks->calls);
     }
@@ -72,7 +72,7 @@ final class EnvironmentGroupTest extends TestCase
             new Result([]),
         );
 
-        (new EnvironmentGroup($mocks->clients()->resourceGroups()))->ensure($this->config());
+        self::assertTrue((new EnvironmentGroup($mocks->clients()->resourceGroups()))->ensure($this->config()), 'updated');
 
         self::assertSame(['GetGroupQuery', 'GetGroup', 'GetTags', 'UpdateGroupQuery'], $mocks->calls);
         self::assertSame('arn:aws:resource-groups:us-east-1:111111111111:group/arco-shop-production', $mocks->params[2]['Arn']);

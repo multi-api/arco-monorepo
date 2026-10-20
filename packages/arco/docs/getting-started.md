@@ -549,8 +549,10 @@ A deploy role (like the one of Arco's own end-to-end run, in a dedicated test ac
 - for the version check of the runtime clean-up: `lambda:ListVersionsByFunction` on the Arco functions
   (it reads every tagged function's versions), and `tag:GetResources` (without it the clean-up warns on every deploy)
 - for log retention, on every deploy (an environment without `logRetention()` gets the 30-day default):
-  `logs:CreateLogGroup`, `logs:PutRetentionPolicy`, `logs:DeleteRetentionPolicy`, and `logs:TagResource` (Arco
-  tags each log group for the environment; without it the groups stay untagged, with one note per deploy)
+  `logs:CreateLogGroup`, `logs:PutRetentionPolicy`, `logs:DeleteRetentionPolicy`, `logs:DescribeLogGroups` (Arco
+  reads the current retention and changes, and reports, only a group whose retention differs; without it every
+  deploy sets the retention and says so), and `logs:TagResource` (Arco tags each log group for the environment;
+  without it the groups stay untagged, with one note per deploy)
 - for the environment's Resource Group `arco-<app>-<env>` (a view of its tagged resources in the AWS console):
   `resource-groups:GetGroupQuery`, `resource-groups:CreateGroup`, `resource-groups:Tag`,
   `resource-groups:GetGroup`, `resource-groups:GetTags`, `resource-groups:UpdateGroupQuery` and, for

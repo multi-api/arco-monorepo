@@ -546,8 +546,9 @@ final class InitCommand extends ArcoCommand
         }
         $keys = [];
         foreach (AppInspector::envEntries($envFile) as [$key, $value]) {
-            // AWS_* keys are either reserved by Lambda or replaced by the execution role.
-            if (! preg_match(self::SECRET_LIKE, $key) || str_starts_with($key, 'AWS_') || Validator::isReserved($key)) {
+            // AWS_* keys are either reserved by Lambda or replaced by the execution role; ARCO* names are
+            // reserved for Arco and variables() refuses them.
+            if (! preg_match(self::SECRET_LIKE, $key) || str_starts_with($key, 'AWS_') || str_starts_with($key, 'ARCO') || Validator::isReserved($key)) {
                 continue;
             }
             // Placeholders such as `REDIS_PASSWORD=null` or `APP_KEY=` hold no secret to store.

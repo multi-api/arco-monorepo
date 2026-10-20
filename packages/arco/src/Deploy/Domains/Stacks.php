@@ -36,8 +36,8 @@ final class Stacks
     }
 
     /**
-     * The template the stack runs now (as it was submitted), or null when it cannot be read: a profile
-     * without cloudformation:GetTemplate, or a template that is not JSON.
+     * The template the stack runs now (as it was submitted), or null when it cannot be read: any refused
+     * or failed cloudformation:GetTemplate call, or a template that is not JSON.
      *
      * @return array<string, mixed>|null
      */
@@ -45,11 +45,9 @@ final class Stacks
     {
         try {
             $body = Aws::call($this->cloudFormation, 'GetTemplate', ['StackName' => $name, 'TemplateStage' => 'Original'])['TemplateBody'] ?? null;
-        } catch (AwsException $e) {
-            if (in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
-                return null;
-            }
-            throw $e;
+        } catch (AwsException) {
+            // Only used to say what an update changes: any failure means "unknown", reported as updated.
+            return null;
         }
         if (is_string($body)) {
             $body = json_decode($body, true);

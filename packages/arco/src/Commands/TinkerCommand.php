@@ -67,7 +67,8 @@ final class TinkerCommand extends ArcoCommand
                 $io->getErrorStyle()->warning($this->t('deprecated.force_tinker'));
                 $input->setOption('yes', true);
             }
-            $config = $this->loadTarget($input, $io);
+            // stderr: config warnings (deprecated.*) must not mix with the value --execute prints on stdout.
+            $config = $this->loadTarget($input, $io->getErrorStyle());
             if (! $config->consoleEnabled()) {
                 throw new UserError($this->t('console.disabled', ['environment' => $config->environment]));
             }

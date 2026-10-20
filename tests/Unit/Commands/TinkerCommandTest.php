@@ -363,4 +363,19 @@ final class TinkerCommandTest extends TestCase
         self::assertSame([], $console->calls);
         self::assertStringContainsString('Nothing was run or changed', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
     }
+
+    public function test_config_warnings_go_to_stderr_not_to_the_value_execute_prints(): void
+    {
+        $this->project->restore();
+        $this->project = new ProjectFixture(str_replace('->console()', "->console()\n    ->runtime(fn (\\Multiapi\\Arco\\Config\\Runtime \$r) => \$r->workers(min: 2, max: 8))", ProjectFixture::consoleConfig()));
+        $console = new FakeConsole([FakeConsole::tinkerReply(['presented' => '3'])]);
+
+        $tester = $this->tester($console);
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => '1 + 2'], ['interactive' => false, 'capture_stderr_separately' => true]);
+
+        self::assertSame(0, $tester->getStatusCode(), $tester->getDisplay() . $tester->getErrorOutput());
+        self::assertStringNotContainsString('deprecated', $tester->getDisplay());
+        self::assertStringContainsString('= 3', $tester->getDisplay());
+        self::assertStringContainsString('workers(min:, max:) is deprecated', preg_replace('/\s+/', ' ', $tester->getErrorOutput()));
+    }
 }

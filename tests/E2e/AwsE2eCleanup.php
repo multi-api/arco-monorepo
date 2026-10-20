@@ -117,8 +117,16 @@ final class AwsE2eCleanup
         foreach ($this->queuesNamed($prefix) as $name) {
             $add(self::QUEUE, $name);
         }
-        foreach ($this->logGroupsNamed() as $name) {
-            $add(self::LOG_GROUP, $name);
+        try {
+            foreach ($this->logGroupsNamed() as $name) {
+                $add(self::LOG_GROUP, $name);
+            }
+        } catch (AwsException $e) {
+            // A profile that may not list log groups: they are reported and left, the rest is still planned.
+            if (! self::denied($e)) {
+                throw $e;
+            }
+            $this->skip(self::LOG_GROUP, $this->logGroupPrefixes()[0] . '* ' . $this->logGroupPrefixes()[1] . '*', 'log groups not checked: ' . self::awsText($e));
         }
         foreach ($this->taggedResources($app) as $resource) {
             $add($resource['type'], $resource['name']);
@@ -238,6 +246,10 @@ final class AwsE2eCleanup
         } catch (AwsException $e) {
             if ($e->getAwsErrorCode() === 'ResourceNotFoundException') {
                 return 'no longer exists';
+            }
+            if (self::denied($e)) {
+                // Its tags cannot be read, so it is not verified: never deleted.
+                return 'log groups not checked: ' . self::awsText($e);
             }
             throw $e;
         }
@@ -436,6 +448,16 @@ final class AwsE2eCleanup
             }
         }
         return false;
+    }
+
+    private static function denied(AwsException $e): bool
+    {
+        return in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true);
+    }
+
+    private static function awsText(AwsException $e): string
+    {
+        return trim(($e->getAwsErrorCode() ?? 'error') . ' ' . ($e->getAwsErrorMessage() ?? ''));
     }
 
     private function skip(string $type, string $name, string $reason): void

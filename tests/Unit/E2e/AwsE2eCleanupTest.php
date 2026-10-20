@@ -345,4 +345,37 @@ final class AwsE2eCleanupTest extends TestCase
         self::assertSame([], $this->aws->mutatingCalls());
         self::assertCount(1, $cleanup->skipped());
     }
+
+    public function test_log_groups_that_cannot_be_listed_are_reported_and_the_rest_is_still_planned(): void
+    {
+        $this->leftovers();
+        $this->logGroups();
+        $this->aws->denied = ['DescribeLogGroups'];
+        $cleanup = $this->cleanup();
+
+        $plan = $cleanup->plan(self::APP);
+
+        self::assertCount(5, $plan, 'bucket, table, queue, DLQ and parameter are still planned');
+        self::assertNotContains('logs-log-group', array_column($plan, 'type'));
+        $reasons = array_column($cleanup->skipped(), 'reason');
+        self::assertCount(1, $reasons);
+        self::assertStringStartsWith('log groups not checked: AccessDeniedException', $reasons[0]);
+        self::assertSame([], $this->aws->mutatingCalls());
+    }
+
+    public function test_log_groups_whose_tags_cannot_be_read_are_never_planned(): void
+    {
+        $this->leftovers();
+        $this->logGroups();
+        $this->aws->denied = ['ListTagsForResource'];
+        $cleanup = $this->cleanup();
+
+        $plan = $cleanup->plan(self::APP);
+        $cleanup->apply($plan);
+
+        self::assertCount(5, $plan);
+        self::assertCount(4, array_filter($cleanup->skipped(), static fn (array $s): bool => str_starts_with($s['reason'], 'log groups not checked: AccessDeniedException')));
+        self::assertNotContains('DeleteLogGroup', $this->aws->calls);
+        self::assertCount(4, $this->aws->logGroups, 'every log group is still there');
+    }
 }

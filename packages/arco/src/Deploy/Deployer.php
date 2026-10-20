@@ -120,7 +120,7 @@ interface Deployer
     /**
      * Sets the retention of the web and (when the console is on) console log groups, creating them
      * when missing, and tags each for the environment (a refused tag is the note
-     * deploy.log_tags_not_added, the retention is still set). Without a logRetention() setting the default (AwsDeployer::DEFAULT_LOG_RETENTION days) is applied and announced by deploy.log_retention_default. Steps: deploy.log_retention, deploy.log_retention_one_day, deploy.log_retention_never (AwsDeployer::logRetentionStep()) or deploy.log_retention_default.
+     * deploy.log_tags_not_added, the retention is still set). Without a logRetention() setting the default (AwsDeployer::DEFAULT_LOG_RETENTION days) is applied and announced by deploy.log_retention_default, only when it changes a group (new, or with another or no retention; always when the retention cannot be read). Steps: deploy.log_retention, deploy.log_retention_one_day, deploy.log_retention_never (AwsDeployer::logRetentionStep()) or deploy.log_retention_default.
      *
      * @param Closure(string, array<string, string|int>): void $onStep
      */
@@ -149,7 +149,7 @@ interface Deployer
     /**
      * Once the deploy is verified: creates the environment's Resource Group `arco-<app>-<env>` (a tag
      * query on arco:app and arco:environment), or updates its query when it differs (step
-     * deploy.group_ready). A convenience view: a refused call (deploy.group_denied), a group with the
+     * deploy.group_ready, only then: an unchanged group prints nothing). A convenience view: a refused call (deploy.group_denied), a group with the
      * name someone else made (deploy.group_not_ours) or another failure (deploy.group_failed) is a note,
      * never thrown. `remove()` deletes the group last, only when its query is this environment's.
      *

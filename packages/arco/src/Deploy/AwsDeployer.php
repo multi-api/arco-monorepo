@@ -72,10 +72,56 @@ final class AwsDeployer implements Deployer
             $names[] = SchedulerRule::name($config);
         }
         $resources[] = $rule;
+        // Read-only, before claim() tags anything: a stack refusal later would come after those tags.
+        $this->checkStacks($config);
         $guard->claim($config, array_values(array_filter($resources)), $this->force, $onStep);
         foreach ($names as $name) {
             $this->verified[$name] = true;
         }
+    }
+
+    /**
+     * The stacks a deploy would refuse to update (stack.not_ours, domains.stack_not_ours) are read
+     * here, before checkOwnership() tags or changes anything, and refused even with --force (it overrides
+     * the ownership of functions, role and rule, never of a stack). deployResources() and the domains
+     * step check again when they run.
+     *
+     * @throws DeployException stack.not_ours, domains.stack_not_ours
+     * @throws AwsException a refused read of the resources stack while the config has resources (the
+     *         deploy would stop on it in deployResources() anyway)
+     */
+    private function checkStacks(AppConfig $config): void
+    {
+        $stacks = new Stacks($this->aws->cloudFormation(), $this->sleeper);
+        /** @var array<string, mixed> $resources */
+        $resources = ResourcesStack::template($config)['Resources'];
+        // Without resources, someone else's stack with the name is left alone: nothing to refuse.
+        if ($resources !== []) {
+            $name = ResourcesStack::name($config);
+            $stack = $stacks->describe($name);
+            if ($stack !== null && ! self::ownsStack($stack, $config)) {
+                throw DeployException::make('stack.not_ours', ['stack' => $name, 'app' => $config->app, 'environment' => $config->environment]);
+            }
+        }
+        if ($config->domains !== []) {
+            $name = DomainStack::stackName($config);
+            try {
+                $stack = $stacks->describe($name);
+            } catch (AwsException $e) {
+                // The domains step reports a refused CloudFormation read when it runs.
+                if (in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
+                    return;
+                }
+                throw $e;
+            }
+            CustomDomains::assertOwned($stack, $name, $config);
+        }
+    }
+
+    /** @param array{tags: array<string, string>} $stack */
+    private static function ownsStack(array $stack, AppConfig $config): bool
+    {
+        return ($stack['tags']['arco:app'] ?? null) === $config->app && ($stack['tags']['arco:environment'] ?? null) === $config->environment;
     }
 
     /**
@@ -396,6 +442,9 @@ final class AwsDeployer implements Deployer
         } catch (AwsException $e) {
             $denied = in_array($e->getAwsErrorCode(), EnvironmentGroup::DENIED, true);
             $step($denied ? 'remove.group_denied' : 'remove.group_failed', ['group' => $name, 'error' => self::awsError($e)]);
+        } catch (\Throwable $e) {
+            // Anything else (a dropped connection, an unexpected answer): still only a note, the remove succeeded.
+            $step('remove.group_failed', ['group' => $name, 'error' => self::errorText($e)]);
         }
     }
 
@@ -403,7 +452,7 @@ final class AwsDeployer implements Deployer
     {
         $name = EnvironmentGroup::name($config);
         try {
-            (new EnvironmentGroup($this->aws->resourceGroups()))->ensure($config);
+            $changed = (new EnvironmentGroup($this->aws->resourceGroups()))->ensure($config);
         } catch (DeployException $e) {
             $onStep($e->key, $e->params);
             return;
@@ -412,7 +461,10 @@ final class AwsDeployer implements Deployer
             $onStep($denied ? 'deploy.group_denied' : 'deploy.group_failed', ['group' => $name, 'error' => self::awsError($e)]);
             return;
         }
-        $onStep('deploy.group_ready', ['group' => $name]);
+        // Printed when the deploy created the group or updated its query: an unchanged group is not news.
+        if ($changed) {
+            $onStep('deploy.group_ready', ['group' => $name]);
+        }
     }
 
     public function resources(AppConfig $config): array
@@ -461,7 +513,13 @@ final class AwsDeployer implements Deployer
         $resources[] = $guard->lambdaFunction($config->consoleFunctionName(), OwnershipGuard::CONSOLE_MARKER);
         $resources[] = $guard->webFunction($config->functionName(), self::prefix($config));
         if ($config->role === null) {
-            $resources[] = $guard->role(ExecutionRole::roleName($config));
+            $role = $guard->role(ExecutionRole::roleName($config));
+            // The role (and CloudFront) serve the function in the role's region: a region() change followed by
+            // remove would otherwise delete them from under the environment still live there.
+            if ($role !== null) {
+                ExecutionRole::refuseOtherRegion($role->name, $role->tags[ExecutionRole::REGION_TAG] ?? null, (string) $config->region);
+            }
+            $resources[] = $role;
         }
         $guard->checkRemoval($config, array_values(array_filter($resources)));
     }
@@ -574,7 +632,7 @@ final class AwsDeployer implements Deployer
 
     public function applyLogRetention(AppConfig $config, Closure $onStep): void
     {
-        // No setting: the default applies (and is announced once), so groups never silently keep logs forever.
+        // No setting: the default applies (and is announced when it changes a group), so groups never silently keep logs forever.
         $days = $config->logRetention ?? self::DEFAULT_LOG_RETENTION;
         $scope = self::logRetentionScope($config);
         $groups = LogGroups::for($config, 'web');
@@ -583,16 +641,21 @@ final class AwsDeployer implements Deployer
         }
         $region = (string) $config->region;
         // Lambda makes a group untagged on the first invoke: Arco adopts it and tags it for the environment.
-        $untagged = (new LogRetention($this->aws->logs()))->apply([...$groups, ...LogGroups::for($config, 'queues')], $days, self::tags($config),
+        ['untagged' => $untagged, 'changed' => $changed] = (new LogRetention($this->aws->logs()))->apply([...$groups, ...LogGroups::for($config, 'queues')], $days, self::tags($config),
             fn (string $group): string => LogGroups::arn($region, $this->aws->accountId(), $group));
         if ($untagged !== []) {
-            // One warning for the deploy, not one per group.
+            // One note for the deploy, not one per group, and only when a tag was attempted and refused.
             $onStep('deploy.log_tags_not_added', ['groups' => implode(', ', array_column($untagged, 'group')), 'error' => $untagged[0]['error']]);
         }
+        if ($config->logRetention === null) {
+            // The default is announced when it changes a group (new, or kept forever until now), not on every deploy.
+            if ($changed !== []) {
+                $onStep('deploy.log_retention_default', ['groups' => $scope]);
+            }
+            return;
+        }
         // {groups} is a code (web, all, web_queues, all_queues) the step printer translates: only the groups touched are named.
-        $onStep(...($config->logRetention === null
-            ? ['deploy.log_retention_default', ['groups' => $scope]]
-            : self::logRetentionStep($config->logRetention, $scope)));
+        $onStep(...self::logRetentionStep($config->logRetention, $scope));
     }
 
     /**

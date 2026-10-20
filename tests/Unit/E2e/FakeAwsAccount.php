@@ -34,6 +34,8 @@ final class FakeAwsAccount
     public array $parameters = [];
     /** @var list<array{0: string, 1: ?string}> S3 bucket operation => the ExpectedBucketOwner it sent */
     public array $bucketOwners = [];
+    /** @var list<string> operations this account's profile may not call (AccessDeniedException) */
+    public array $denied = [];
 
     public function __construct(public string $account = '111122223333')
     {
@@ -84,6 +86,9 @@ final class FakeAwsAccount
     private function answer(string $operation, array $args): array
     {
         $string = static fn (string $key): string => is_string($args[$key] ?? null) ? $args[$key] : '';
+        if (in_array($operation, $this->denied, true)) {
+            throw self::error($operation, 'AccessDeniedException', 400);
+        }
         if (in_array($operation, ['GetBucketTagging', 'ListObjectVersions', 'DeleteObjects', 'DeleteBucket'], true)) {
             $owner = is_string($args['ExpectedBucketOwner'] ?? null) ? $args['ExpectedBucketOwner'] : null;
             $this->bucketOwners[] = [$operation, $owner];

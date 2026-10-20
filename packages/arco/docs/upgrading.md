@@ -17,6 +17,28 @@ vendor/bin/arco info --env=staging     # validation runs here: errors and deprec
 or the AWS names. What it renamed or removed is below; everything it deprecates still works in 0.9, prints one
 warning per run naming the replacement, and is removed in 1.0. Fix the warnings now and 1.0 needs no change.
 
+### Before your first 0.9 deploy: add these IAM permissions
+
+**Breaking:** do this first. The 0.9 deploy reads the tags of the resources it updates, and without
+`lambda:ListTags` and `events:ListTagsForResource` it stops before changing anything (so does `arco remove`).
+Add these to the profile (or role) that deploys, then upgrade; the full list is in
+[Minimal IAM permissions](getting-started.md#minimal-iam-permissions).
+
+| Permission | Used by | Without it |
+|---|---|---|
+| `lambda:ListTags` (web, console and worker functions) | the ownership check | the deploy stops naming it (`--force` skips the check); `remove` deletes nothing |
+| `events:ListTagsForResource` (`rule/arco-*-scheduler`) | the ownership check of the scheduler rule | as above |
+| `lambda:TagResource`, `events:TagResource`, `iam:TagRole` | tagging resources an older Arco left untagged, and the `arco:region` tag of a role | a warning; the resource stays untagged until a deploy that may tag it |
+| `lambda:GetFunctionConfiguration`, `lambda:ListTags` on the console function | `arco command` and `arco tinker` (also for people who only run them) | they refuse to run |
+| `logs:CreateLogGroup`, `logs:PutRetentionPolicy` | the 30-day default, on every deploy | a warning after the deploy is live |
+| `logs:DeleteRetentionPolicy` | `logRetention(false)` (never expire) on a group that had a retention | a warning after the deploy is live |
+| `logs:DescribeLogGroups` | reading the current retention, so only a group whose retention changes gets the call and the deploy line | every deploy sets the retention of every group and prints the line |
+| `logs:TagResource` | log group tags | a note; the groups stay untagged |
+| `ssm:AddTagsToResource` (`parameter/<app>/*`) | `arco secret:set` tags the parameter | a warning; the value is stored |
+| `tag:GetResources` | `arco info --resources`, the list `arco remove` prints | `info --resources` fails; `remove` says it cannot list them |
+| `resource-groups:GetGroupQuery`, `CreateGroup`, `Tag`, `GetGroup`, `GetTags`, `UpdateGroupQuery`, `DeleteGroup` | the Resource Group | a note |
+| `cloudformation:GetTemplate` (`stack/arco-*-resources/*`) | reporting what a resources-stack update changed | every updated resource is reported as updated |
+
 ### `arco.php`: removed (an error now)
 
 An `arco.php` that still calls these stops before anything else runs, with a message naming the replacement.
@@ -76,7 +98,7 @@ $app->cache()->failedJobsTable()
 
 ```php
 // before
-->variables(['ARCO_TRUST_PROXIES' => 'false', 'ARCO_REPORT_EMAIL' => 'ops@example.com'])
+->variables(['ARCO_QUEUES' => '{"emails":"https://sqs.us-east-1.amazonaws.com/111111111111/mail"}', 'ARCO_REPORT_EMAIL' => 'ops@example.com'])
 // 0.9
 ->variables(['APP_REPORT_EMAIL' => 'ops@example.com'])
 ```
@@ -199,8 +221,10 @@ except in `arco info --json`:
 ### Behaviour in AWS
 
 - **Log retention defaults to 30 days.** An environment without `logRetention()`, new or already deployed, gets
-  30 days on its web, console and queue worker log groups on the next deploy, which says so; before, they kept
-  logs forever. Every deploy now calls `logs:CreateLogGroup` and `logs:PutRetentionPolicy`. To keep the old
+  30 days on its web, console and queue worker log groups on the next deploy, which says so once; before, they
+  kept logs forever. Every deploy now calls `logs:CreateLogGroup` and reads the current retention
+  (`logs:DescribeLogGroups`); only a group whose retention changes gets `logs:PutRetentionPolicy` and the
+  deploy line (without `logs:DescribeLogGroups`, every deploy sets it and prints the line). To keep the old
   behaviour:
 
   ```php
@@ -216,31 +240,14 @@ except in `arco info --json`:
   `arco remove` has none. `arco command`, `arco tinker`, `scheduler:pause`/`resume` and `scheduler:set/remove
   --apply` check the same way. See [Names and ownership](configuration.md#names-and-ownership).
 - **Region guard.** New execution roles are tagged `arco:region`, and `arco deploy` refuses, before any change and
-  even with `--force`, when an environment's role was created for another region than `region()`. An app lives
-  in one region; for a second region use another environment name. Roles from an older Arco get the tag on the
+  even with `--force`, when an environment's role was created for another region than `region()`; `arco remove`
+  refuses the same way before deleting anything (the role and CloudFront still serve the function in the old
+  region). An app lives in one region; for a second region use another environment name. Roles from an older Arco get the tag on the
   next deploy.
 - **Tags and a Resource Group.** Log groups and the SSM parameters `arco secret:set` writes are tagged too, and each
   environment gets a Resource Group `arco-<app>-<env>`, which `arco remove` deletes last.
 - **`updated`.** A deploy reports a bucket, table or queue the resources stack changed as `updated` instead of
   `up to date`.
-
-### New IAM permissions for the deploy profile
-
-Add these to the profile (or role) that deploys; the full list is in
-[Minimal IAM permissions](getting-started.md#minimal-iam-permissions).
-
-| Permission | Used by | Without it |
-|---|---|---|
-| `lambda:ListTags` (web, console and worker functions) | the ownership check | the deploy stops naming it (`--force` skips the check); `remove` deletes nothing |
-| `events:ListTagsForResource` (`rule/arco-*-scheduler`) | the ownership check of the scheduler rule | as above |
-| `lambda:TagResource`, `events:TagResource`, `iam:TagRole` | tagging resources an older Arco left untagged, and the `arco:region` tag of a role | a warning; the resource stays untagged until a deploy that may tag it |
-| `lambda:GetFunctionConfiguration`, `lambda:ListTags` on the console function | `arco command` and `arco tinker` (also for people who only run them) | they refuse to run |
-| `logs:CreateLogGroup`, `logs:PutRetentionPolicy` | the 30-day default, on every deploy | a warning after the deploy is live |
-| `logs:TagResource` | log group tags | a note; the groups stay untagged |
-| `ssm:AddTagsToResource` (`parameter/<app>/*`) | `arco secret:set` tags the parameter | a warning; the value is stored |
-| `tag:GetResources` | `arco info --resources`, the list `arco remove` prints | `info --resources` fails; `remove` says it cannot list them |
-| `resource-groups:GetGroupQuery`, `CreateGroup`, `Tag`, `GetGroup`, `GetTags`, `UpdateGroupQuery`, `DeleteGroup` | the Resource Group | a note |
-| `cloudformation:GetTemplate` (`stack/arco-*-resources/*`) | reporting what a resources-stack update changed | every updated resource is reported as updated |
 
 ## Earlier versions
 

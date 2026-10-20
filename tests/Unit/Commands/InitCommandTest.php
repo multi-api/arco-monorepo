@@ -166,6 +166,24 @@ ENV);
         $project->restore();
     }
 
+    public function test_arco_prefixed_secrets_in_dot_env_are_left_out(): void
+    {
+        // ARCO* names are reserved for Arco: variables() would refuse them, so arco.php would not validate.
+        $project = new ProjectFixture();
+        file_put_contents("$project->dir/.env", "ARCO_API_SECRET=x\nARCOTOKEN_KEY=y\nDB_PASSWORD=secret\n");
+
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $production = ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production');
+        self::assertSame(['APP_ENV' => 'production', 'DB_PASSWORD' => 'arco-ssm:/shop/production/db-password'], $production->variables);
+        self::assertTrue((new Validator())->validate($production, $project->dir)->isValid());
+        self::assertStringNotContainsString('ARCO_API_SECRET', (string) file_get_contents("$project->dir/arco.php"));
+        self::assertStringNotContainsString('arco-api-secret', $tester->getDisplay());
+        $project->restore();
+    }
+
     public function test_refuses_to_overwrite_without_force(): void
     {
         $project = new ProjectFixture('<?php // existing');

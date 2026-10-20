@@ -547,4 +547,22 @@ final class InfoCommandTest extends TestCase
         self::assertContains('describe', $deployer->calls);
         $project->restore();
     }
+
+    public function test_json_config_errors_print_schema_and_error_with_exit_1(): void
+    {
+        foreach ([[], ['--resources' => true]] as $extra) {
+            // An environment arco.php does not define: a config error, before any AWS call.
+            $project = new ProjectFixture(ProjectFixture::standardConfig());
+            $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+            $tester->execute(['--env' => 'nowhere', '--json' => true, ...$extra], ['interactive' => false]);
+
+            self::assertSame(1, $tester->getStatusCode());
+            $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+            self::assertSame(['schema', 'error'], array_keys($json));
+            self::assertSame(1, $json['schema']);
+            self::assertStringContainsString('nowhere', $json['error']);
+            $project->restore();
+        }
+    }
 }

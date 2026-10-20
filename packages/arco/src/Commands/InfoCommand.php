@@ -60,7 +60,13 @@ final class InfoCommand extends ArcoCommand
             // Config warnings would corrupt machine-readable output, so --json suppresses them.
             $config = $this->loadTarget($input, $input->getOption('json') ? new SymfonyStyle($input, new NullOutput()) : $io);
         } catch (Throwable $e) {
-            $io->error($this->describeError($e) ?? throw $e);
+            $message = $this->describeError($e) ?? throw $e;
+            if ($input->getOption('json')) {
+                // Scripts reading --json get the error as JSON too (like queue:list and storage:list).
+                $output->writeln((string) json_encode(['schema' => 1, 'error' => $message], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            } else {
+                $io->error($message);
+            }
             return self::FAILURE;
         }
 
