@@ -41,9 +41,9 @@ The example app is copied without `vendor/` to `build/tmp/integration/e2e-app-<r
 |---|---|
 | deploy | build, code bucket and upload, role, Web Function revision, endpoint, traffic, `/up` verification, resources stack (SQS + DLQ, S3, DynamoDB), console, worker and scheduler functions, ACM certificate, CloudFront distribution, Route 53 records |
 | `test_up` | `/up` answers 200 through the function endpoint (first request may pull the runtime image: up to 180 s) |
-| `test_custom_domain_through_cloudfront` | `arco info --json` shows a distribution, and Floci's CloudFront answers `/up` for `Host: app.arco-e2e.test` (Floci serves every distribution on its own port and picks it by Host, as the alias record would; `*.cloudfront.net` does not lead to Floci) (known Floci gap, below) |
+| `test_custom_domain_through_cloudfront` | `arco info --json` shows a distribution, and Floci's CloudFront answers `/up` for `Host: app.arco-e2e.test` (Floci serves every distribution on its own port and picks it by Host, as the alias record would; `*.cloudfront.net` does not lead to Floci) |
 | `test_cache` | `/e2e/cache`: the DynamoDB cache store reads back what it wrote |
-| `test_storage` | `/e2e/storage`: the S3 disk writes and reads a file (known Floci gap, below) |
+| `test_storage` | `/e2e/storage`: the S3 disk writes and reads a file |
 | `test_queue_job` | `/e2e/dispatch` then `/e2e/job/{id}` every 5 s for up to 120 s: SQS → worker function ran the job |
 | `test_scheduler` | `/e2e/schedule` for up to 150 s: the EventBridge rule ran `schedule:run` on the console function |
 | `test_arco_command` | `arco command --env=floci 'about --only=environment'` exits 0 and shows `production` |
@@ -53,8 +53,7 @@ The example app is copied without `vendor/` to `build/tmp/integration/e2e-app-<r
 
 A check that cannot pass because Floci lacks or breaks a whole feature is skipped with `Known Floci gap: …` and the observed error. Arco never gets a Floci-only code path; if a check fails because Arco is wrong (it would be wrong on AWS too), fix Arco.
 
-- **S3 object ACLs** (`test_storage`): Laravel's S3 disk (Flysystem) sends `x-amz-acl: private` on every write. Floci rejects it with `AccessControlListNotSupported` on buckets without ACLs (Object Ownership `BucketOwnerEnforced`, the AWS default), while real AWS accepts `private` there. The example's `/e2e/storage` route uses the disk with `throw` on and answers the error, so the skip quotes it. The check passes on its own once Floci accepts the ACL.
-- **CloudFront to a Web Function origin** (`test_custom_domain_through_cloudfront`): the request reaches the distribution Arco created (Floci routes `Host: app.arco-e2e.test` to it) and Floci tries the origin Arco set, the Web Function endpoint `<id>.001.lambda-web.us-east-1.localhost`, but fails with `UnknownHostException`: Floci's origin client neither resolves names under `localhost` nor matches wildcards in `allowed-private-origin-hosts` (exact names only, and the endpoint host is random per function). The check skips only when Floci's log shows that failure for this deploy's endpoint; any other non-200 fails. A base URL under a public loopback name (`http://localhost.floci.io:4566`, whose subdomains resolve to 127.0.0.1) was tried: names then resolve, but the loopback address is blocked for the same exact-match reason.
+There are currently none. The two former gaps, S3 rejecting the canned ACL `private` that Laravel's S3 disk sends and CloudFront not reaching a Web Function endpoint origin, were fixed upstream (floci-io/floci#5979, #5980) as of `floci/floci:nightly-10192026`, so `test_storage` and `test_custom_domain_through_cloudfront` are mandatory.
 
 ## Bumping `FLOCI_IMAGE`
 
@@ -62,36 +61,16 @@ The image is pinned in one place, `FLOCI_IMAGE` in `bin/test-docker`. Lambda Web
 
 1. Pick a tag from Docker Hub (`floci/floci`, `nightly-MMDDYYYY`) and `docker pull` it.
 2. Set `FLOCI_IMAGE` to it and run `composer test:e2e`.
-3. If a known-gap check now passes, remove the gap from this page. If a new check fails, decide whether Floci or Arco is wrong before skipping anything.
+3. If a Floci gap was skipped and now passes, remove it from this page. If a new check fails, decide whether Floci or Arco is wrong before skipping anything.
 4. Commit the bump with the run's summary.
 
-## Draft upstream issues (Floci)
+## Upstream issues
 
-### S3 ACL gap
-
-> **S3: `PutObject` with `x-amz-acl: private` fails with `AccessControlListNotSupported` on buckets with ACLs disabled**
->
-> On AWS, a bucket with Object Ownership `BucketOwnerEnforced` (the default since April 2023) rejects ACLs *except* those that grant only the bucket owner: `bucket-owner-full-control` and `private` (and an absent ACL) are accepted. Floci (`floci/floci:nightly-10172026`) rejects `x-amz-acl: private` on such buckets with `400 AccessControlListNotSupported`.
->
-> This breaks Laravel's S3 filesystem disk (league/flysystem-aws-s3-v3), which sends `x-amz-acl: private` on every write by default.
->
-> Repro: create a bucket (no ownership controls, or `BucketOwnerEnforced`), then `aws --endpoint-url http://localhost:4566 s3api put-object --bucket b --key k --body f --acl private`. Expected: 200 (as on AWS). Actual: `AccessControlListNotSupported`.
->
-> Reference: https://docs.aws.amazon.com/AmazonS3/latest/userguide/about-object-ownership.html (with ACLs disabled, requests that set the `bucket-owner-full-control` or `private` canned ACL still succeed).
-
-### CloudFront private origins
-
-> **CloudFront: `allowed-private-origin-hosts` cannot allow a Lambda Web Function / Function URL origin**
->
-> A distribution whose custom origin is a Floci Lambda Web Function endpoint (`<id>.001.lambda-web.us-east-1.localhost`, from `FLOCI_BASE_URL=http://localhost:4566`) answers `502` and logs `CloudFront custom origin fetch failed for host <id>.001.lambda-web.us-east-1.localhost: UnknownHostException` (`floci/floci:nightly-10172026`).
->
-> Two causes: the origin client resolves names through the system resolver, which does not map `*.localhost` to loopback; and `ValidatingDnsResolver` compares `allowed-private-origin-hosts` by exact name, so `*.localhost` (or `*.localhost.floci.io`) cannot allow endpoints whose host is generated per function.
->
-> Suggestion: route origins that are Floci's own generated hosts (Function URLs, Web Function endpoints, S3 website endpoints) internally, or accept `*.`-prefixed patterns in `allowed-private-origin-hosts`.
+Both former gaps were filed and fixed: [floci-io/floci#5979](https://github.com/floci-io/floci/issues/5979) (S3 ACL) and [floci-io/floci#5980](https://github.com/floci-io/floci/issues/5980) (CloudFront origin).
 
 # Real-AWS end-to-end run
 
-`composer test:e2e-aws` (`bin/test-docker e2e-aws`, PHPUnit suite `e2e-aws`, `tests/E2e/AwsE2eTest.php`) deploys `examples/laravel` (environment `e2e`: console, scheduler every minute, queue `default`, storage `files`, cache, Lambda URL only, no custom domain) to the dedicated Arco E2E account and runs the same checks as the Floci suite minus the custom domain. `test_storage` must pass on AWS (no Floci gap skip). It is the release gate (see [releasing.md](releasing.md)); it is manual and is not run in CI.
+`composer test:e2e-aws` (`bin/test-docker e2e-aws`, PHPUnit suite `e2e-aws`, `tests/E2e/AwsE2eTest.php`) deploys `examples/laravel` (environment `e2e`: console, scheduler every minute, queue `default`, storage `files`, cache, Lambda URL only, no custom domain) to the dedicated Arco E2E account and runs the same checks as the Floci suite minus the custom domain. `test_storage` must pass on AWS. It is the release gate (see [releasing.md](releasing.md)); it is manual and is not run in CI.
 
 It is a **dry run unless `ARCO_E2E_DRY_RUN=0`**. Until the dedicated account exists, only the dry run is meaningful, and only once that account's profile is set up.
 

@@ -14,7 +14,7 @@ use Symfony\Component\Process\Process;
  * this suite in Floci's network namespace and removes everything on exit. See docs/maintainers/e2e.md.
  *
  * A check that cannot pass because Floci lacks or breaks a whole feature is skipped with
- * "Known Floci gap: …" and the observed error; Arco gets no Floci-only code path.
+ * "Known Floci gap: …" and the observed error; Arco gets no Floci-only code path. There are none now.
  */
 #[Group('e2e')]
 final class FlociE2eTest extends TestCase
@@ -36,7 +36,6 @@ final class FlociE2eTest extends TestCase
     private const ENV = 'floci';
     private const ZONE = 'arco-e2e.test';
     private const DOMAIN = 'app.arco-e2e.test';
-    private const ACL_GAP = 'AccessControlListNotSupported';
 
     private static ?string $distribution = null;
     private static bool $deployed = false;
@@ -91,22 +90,6 @@ final class FlociE2eTest extends TestCase
         // CloudFront on its own port and picks the distribution by Host, as the alias DNS record would.
         $url = self::REQUIRED_ENV['AWS_ENDPOINT_URL'] . '/up';
         $answer = $this->http->get('custom domain', $url, ['Host' => self::DOMAIN], 30);
-        if ($answer['status'] === 502) {
-            // Floci refuses loopback origins unless allowed-private-origin-hosts names them exactly (no
-            // wildcards) and cannot resolve *.localhost itself, so the Web Function endpoint (a random
-            // host under localhost) can never be the origin. Skip only when the log shows exactly that
-            // for this deploy's endpoint: then the alias and the origin Arco set up are both right.
-            $origin = (string) parse_url((string) self::$url, PHP_URL_HOST);
-            if ($origin === '') {
-                self::fail('[custom domain] answered 502 and the function URL has no host to match in Floci\'s log: ' . self::$url);
-            }
-            $log = self::flociLog("custom origin fetch failed for host $origin");
-            if (str_contains($log, 'UnknownHostException')) {
-                self::markTestSkipped('Known Floci gap: CloudFront cannot fetch from a Web Function endpoint origin '
-                    . '(allowed-private-origin-hosts matches exact names only; *.localhost does not resolve in Floci). Observed: '
-                    . E2eHttp::excerpt((string) strrchr("\n" . $log, "\n"), 300));
-            }
-        }
         self::assertSame(200, $answer['status'], "[custom domain] $url with Host " . self::DOMAIN . ' (distribution ' . self::$distribution . ') answered '
             . $answer['status'] . ': ' . E2eHttp::excerpt($answer['body']) . "\nFloci's CloudFront log:\n" . self::flociLog('CloudFront'));
     }
@@ -124,11 +107,6 @@ final class FlociE2eTest extends TestCase
         $data = json_decode($answer['body'], true);
         $error = is_array($data) && is_string($data['error'] ?? null) && $data['error'] !== '' ? $data['error'] : null;
         $logs = $error === null ? self::arco(['logs', '--env=' . self::ENV, '--since=10m'], 120)->getOutput() : '';
-        $evidence = $error ?? $logs;
-        if (str_contains($evidence, self::ACL_GAP)) {
-            self::markTestSkipped('Known Floci gap: Flysystem sends x-amz-acl private (AccessControlListNotSupported). Observed: '
-                . self::firstLineWith($evidence, self::ACL_GAP));
-        }
         self::fail("[storage] /e2e/storage answered {$answer['status']}: " . E2eHttp::excerpt($answer['body'])
             . ($error === null ? "\nLogs:\n" . self::tail($logs, 30) : ''));
     }
@@ -175,15 +153,5 @@ final class FlociE2eTest extends TestCase
         $logs->run();
         $lines = array_filter(explode("\n", $logs->getOutput() . $logs->getErrorOutput()), static fn (string $line): bool => str_contains($line, $needle));
         return implode("\n", array_slice($lines, -10)) ?: '(nothing)';
-    }
-
-    private static function firstLineWith(string $text, string $needle): string
-    {
-        foreach (explode("\n", $text) as $line) {
-            if (str_contains($line, $needle)) {
-                return E2eHttp::excerpt($line, 300);
-            }
-        }
-        return $needle;
     }
 }

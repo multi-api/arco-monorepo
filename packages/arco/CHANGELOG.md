@@ -3,6 +3,10 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## Unreleased
+
+- The E2E suite now pins Floci `nightly-10192026`, where storage writes and CloudFront to a Web Function work, so all eight Floci checks are mandatory.
+
 ## 0.8.1
 
 - **Note:** the `v0.8.0` tag was created on the 0.7.0 commit by mistake, so 0.8.0 ships exactly the code of
