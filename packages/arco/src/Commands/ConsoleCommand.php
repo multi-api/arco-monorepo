@@ -48,7 +48,7 @@ final class ConsoleCommand extends ArcoCommand
             ->addOption('profile', 'p', InputOption::VALUE_REQUIRED, 'AWS profile to use')
             ->addOption('async', null, InputOption::VALUE_NONE, 'Start the command and return at once; follow it with arco logs')
             ->addOption('yes', 'y', InputOption::VALUE_NONE, 'Answer yes to the confirmation of a protected environment')
-            ->addOption('timeout', null, InputOption::VALUE_REQUIRED, 'Time limit in seconds (up to the consoleTimeout)');
+            ->addOption('timeout', null, InputOption::VALUE_REQUIRED, 'Time limit in seconds (up to console(timeout:), 900 by default)');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int

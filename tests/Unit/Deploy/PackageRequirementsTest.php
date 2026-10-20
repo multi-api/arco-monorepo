@@ -19,14 +19,14 @@ final class PackageRequirementsTest extends TestCase
 
     public function test_features(): void
     {
-        self::assertSame(['queue()' => ['multiapi/arco-laravel:^0.5', 'aws/aws-sdk-php']], self::requirements(App::make('shop')->queue('jobs')));
+        self::assertSame(['queue()' => ['multiapi/arco-laravel:^0.9', 'aws/aws-sdk-php']], self::requirements(App::make('shop')->queue('jobs')));
         self::assertSame(
-            ['storage()' => ['league/flysystem-aws-s3-v3:^3.0', 'aws/aws-sdk-php', 'multiapi/arco-laravel:^0.6']],
+            ['storage()' => ['league/flysystem-aws-s3-v3:^3.0', 'aws/aws-sdk-php', 'multiapi/arco-laravel:^0.9']],
             self::requirements(App::make('shop')->storage('files')),
         );
         self::assertSame(['cache()' => ['aws/aws-sdk-php']], self::requirements(App::make('shop')->cache()));
         self::assertSame(
-            ['failedJobsTable()' => ['aws/aws-sdk-php', 'multiapi/arco-laravel:^0.6']],
+            ['failedJobsTable()' => ['aws/aws-sdk-php', 'multiapi/arco-laravel:^0.9']],
             self::requirements(App::make('shop')->failedJobsTable()),
         );
         self::assertSame([], self::requirements(App::make('shop')));

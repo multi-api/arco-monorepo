@@ -1380,9 +1380,9 @@ final class DeployPipelineTest extends TestCase
     public function test_queues_need_a_package_with_arco_laravel_and_the_aws_sdk_before_any_change(): void
     {
         foreach ([
-            [[self::QUEUE_FILES[0]], 'multiapi/arco-laravel:^0.5'],
+            [[self::QUEUE_FILES[0]], 'multiapi/arco-laravel:^0.9'],
             [[self::QUEUE_FILES[1]], 'aws/aws-sdk-php'],
-            [self::QUEUE_FILES, 'multiapi/arco-laravel:^0.5 aws/aws-sdk-php'],
+            [self::QUEUE_FILES, 'multiapi/arco-laravel:^0.9 aws/aws-sdk-php'],
         ] as [$without, $packages]) {
             $deployer = new FakeDeployer('rev-1');
             try {
@@ -1422,17 +1422,17 @@ final class DeployPipelineTest extends TestCase
         foreach ([
             [$storage, [self::FLYSYSTEM_S3], self::PROVIDER_06, 'league/flysystem-aws-s3-v3:^3.0', '- league/flysystem-aws-s3-v3:^3.0 (storage())'],
             [$storage, [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (storage())'],
-            [$storage, [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (storage())'],
+            [$storage, [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.9', '- multiapi/arco-laravel:^0.9 (storage())'],
             [$cache, [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (cache())'],
             [fn (App $app) => $app->cache(existing: 'Legacy'), [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (cache())'],
             [$failed, [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (failedJobsTable())'],
-            [$failed, [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (failedJobsTable())'],
-            [$failed, [self::PROVIDER], self::PROVIDER_06, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (failedJobsTable())'],
-            [$all, self::VENDOR_FILES, self::PROVIDER_06, 'league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.6',
-                "- league/flysystem-aws-s3-v3:^3.0 (storage())\n- aws/aws-sdk-php (storage(), cache(), failedJobsTable())\n- multiapi/arco-laravel:^0.6 (storage(), failedJobsTable())"],
-            // arco-laravel 0.6 covers the queues too: one requirement, not ^0.5 and ^0.6.
-            [fn (App $app) => $app->queue('emails')->storage('uploads'), [self::QUEUE_FILES[0], self::PROVIDER], self::PROVIDER_06, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (queue(), storage())'],
-            [fn (App $app) => $app->queue('emails')->storage('uploads'), [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (storage())'],
+            [$failed, [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.9', '- multiapi/arco-laravel:^0.9 (failedJobsTable())'],
+            [$failed, [self::PROVIDER], self::PROVIDER_06, 'multiapi/arco-laravel:^0.9', '- multiapi/arco-laravel:^0.9 (failedJobsTable())'],
+            [$all, self::VENDOR_FILES, self::PROVIDER_06, 'league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.9',
+                "- league/flysystem-aws-s3-v3:^3.0 (storage())\n- aws/aws-sdk-php (storage(), cache(), failedJobsTable())\n- multiapi/arco-laravel:^0.9 (storage(), failedJobsTable())"],
+            // one arco-laravel requirement for every feature that needs it.
+            [fn (App $app) => $app->queue('emails')->storage('uploads'), [self::QUEUE_FILES[0], self::PROVIDER], self::PROVIDER_06, 'multiapi/arco-laravel:^0.9', '- multiapi/arco-laravel:^0.9 (queue(), storage())'],
+            [fn (App $app) => $app->queue('emails')->storage('uploads'), [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.9', '- multiapi/arco-laravel:^0.9 (storage())'],
         ] as $i => [$build, $without, $provider, $packages, $list]) {
             $deployer = new FakeDeployer('rev-1');
             try {

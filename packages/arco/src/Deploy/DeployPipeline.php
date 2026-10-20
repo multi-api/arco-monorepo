@@ -288,11 +288,6 @@ final class DeployPipeline
             }
         }
         $zip->close();
-        if (isset($missing[PackageRequirements::ARCO_LARAVEL_05], $missing[PackageRequirements::ARCO_LARAVEL_06])) {
-            // 0.6 brings what 0.5 did: one requirement for both.
-            $missing[PackageRequirements::ARCO_LARAVEL_06] = [...$missing[PackageRequirements::ARCO_LARAVEL_05], ...$missing[PackageRequirements::ARCO_LARAVEL_06]];
-            unset($missing[PackageRequirements::ARCO_LARAVEL_05]);
-        }
         if ($missing === []) {
             return;
         }

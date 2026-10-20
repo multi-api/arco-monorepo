@@ -784,7 +784,7 @@ ENV);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString(
-            'composer require league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.6',
+            'composer require league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.9',
             $tester->getDisplay(),
         );
         $project->restore();

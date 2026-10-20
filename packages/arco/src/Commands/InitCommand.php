@@ -429,10 +429,6 @@ final class InitCommand extends ArcoCommand
                 }
             }
         }
-        // 0.6 brings what 0.5 did: one requirement for both.
-        if (isset($missing[PackageRequirements::ARCO_LARAVEL_05], $missing[PackageRequirements::ARCO_LARAVEL_06])) {
-            unset($missing[PackageRequirements::ARCO_LARAVEL_05]);
-        }
         return array_map('strval', array_keys($missing));
     }
 
