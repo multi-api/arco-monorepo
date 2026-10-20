@@ -34,7 +34,7 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 IMAGE=arco-test:php84
 # Bump procedure: docs/maintainers/e2e.md.
-FLOCI_IMAGE=floci/floci:nightly-10172026
+FLOCI_IMAGE=floci/floci:nightly-10192026
 CONTEXT="$ROOT/docker/test"
 
 # Rebuild only when the Dockerfile changed since the image was built.
