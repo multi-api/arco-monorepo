@@ -191,7 +191,7 @@ final class DeployCommand extends ArcoCommand
                 $io->writeln($outcome->rolledBack
                     ? $this->t('deploy.rolled_back', ['revision' => (string) $outcome->result->previousRevisionId])
                     : $this->t('deploy.not_rolled_back'));
-                $this->commandsNotUndone($io, $outcome->commandsRan, $config->environment);
+                $this->commandsNotUndone($io, $outcome->commandsRan, $config);
                 return self::FAILURE;
             }
 
@@ -227,7 +227,7 @@ final class DeployCommand extends ArcoCommand
                     'error' => $previous === null ? '' : ($this->describeError($previous) ?? $previous->getMessage()),
                 ]));
                 $io->writeln($this->t('deploy.command_traffic_unchanged'));
-                $this->commandsNotUndone($io, $e->ran, $config->environment, 'deploy.commands_may_have_run');
+                $this->commandsNotUndone($io, $e->ran, $config, 'deploy.commands_may_have_run');
                 return self::FAILURE;
             }
             $io->error($result->crashed()
@@ -238,7 +238,7 @@ final class DeployCommand extends ArcoCommand
             }
             $io->writeln($this->t('deploy.command_traffic_unchanged'));
             // The failing command is reported above; a migrate that failed may have rolled itself back.
-            $this->commandsNotUndone($io, array_slice($e->ran, 0, -1), $config->environment);
+            $this->commandsNotUndone($io, array_slice($e->ran, 0, -1), $config);
             // R12: the command's own exit code; 1 when it has none (a Lambda error, or 0 on a crash).
             return ! $result->crashed() && $result->exitCode > 0 ? min($result->exitCode, 255) : self::FAILURE;
         } catch (Throwable $e) {
@@ -248,7 +248,7 @@ final class DeployCommand extends ArcoCommand
                 $io->error($message);
             }
             if ($config !== null) {
-                $this->commandsNotUndone($io, $ran, $config->environment);
+                $this->commandsNotUndone($io, $ran, $config);
             }
             return $message === null ? throw $e : self::FAILURE;
         }
@@ -259,14 +259,14 @@ final class DeployCommand extends ArcoCommand
      *
      * @param list<string> $ran
      */
-    private function commandsNotUndone(SymfonyStyle $io, array $ran, string $environment, string $key = 'deploy.commands_not_undone'): void
+    private function commandsNotUndone(SymfonyStyle $io, array $ran, AppConfig $config, string $key = 'deploy.commands_not_undone'): void
     {
         if ($ran === []) {
             return;
         }
         $io->writeln($this->t($key, ['commands' => implode(', ', $ran)]));
         if (DeployCommands::hasMigrate($ran)) {
-            $io->writeln($this->t('deploy.migrate_rollback_hint', ['environment' => $environment]));
+            $io->writeln($this->t('deploy.migrate_rollback_hint', ['environment' => $config->environment, 'yes' => $config->isProtected() ? ' --yes' : '']));
         }
     }
 }

@@ -69,7 +69,7 @@ final class QueueDlqCommandTest extends TestCase
         self::assertStringContainsString('received 4 times', $display);
         self::assertStringContainsString(str_repeat('x', 500) . '…', $display);
         self::assertStringNotContainsString(str_repeat('x', 501), $display);
-        self::assertStringContainsString('arco queue:dlq emails --redrive', self::display($tester));
+        self::assertStringContainsString('arco queue:dlq emails --redrive --env=production --yes', self::display($tester));
     }
 
     public function test_control_characters_in_a_body_never_reach_the_terminal(): void

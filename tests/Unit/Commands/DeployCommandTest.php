@@ -526,8 +526,8 @@ final class DeployCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
 
         $tester->assertCommandIsSuccessful();
-        self::assertStringNotContainsString('protected', $tester->getDisplay());
         self::assertStringContainsString('Migrated.', $tester->getDisplay());
+        self::assertSame(['run', 'migrate --force'], array_slice($console->calls[0], 0, 2), 'the deploy command ran on the console');
     }
 
     public function test_deploy_commands_that_cannot_work_on_lambda_are_warned_about_before_the_deploy(): void
@@ -579,7 +579,7 @@ final class DeployCommandTest extends TestCase
         $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
         self::assertStringContainsString('Deploy command "config:cache" failed with exit code 1', $display);
         self::assertStringContainsString('not undone: migrate --force.', $display, 'only the commands that succeeded');
-        self::assertStringContainsString('arco command "migrate:rollback --force" --env=production', $display);
+        self::assertStringContainsString('arco command "migrate:rollback --force" --env=production --yes', $display, 'production is protected: the hint works in CI');
         self::assertSame(1, substr_count($display, 'not undone'));
     }
 

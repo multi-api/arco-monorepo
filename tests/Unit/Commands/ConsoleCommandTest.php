@@ -193,15 +193,10 @@ final class ConsoleCommandTest extends TestCase
         self::assertStringContainsString('Nothing was run or changed', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
     }
 
-    private function productionTester(?FakeConsole $console = null): CommandTester
-    {
-        return $this->tester($console);
-    }
-
     public function test_a_protected_environment_without_a_terminal_needs_yes(): void
     {
         $console = new FakeConsole([new CommandResult(0, "migrated\n")]);
-        $tester = $this->productionTester($console);
+        $tester = $this->tester($console);
 
         $tester->execute(['args' => 'migrate --force', '--env' => 'production', '--profile' => 'p'], ['interactive' => false]);
 
@@ -215,7 +210,7 @@ final class ConsoleCommandTest extends TestCase
     public function test_yes_runs_the_command_on_a_protected_environment(): void
     {
         $console = new FakeConsole([new CommandResult(0, "migrated\n")]);
-        $tester = $this->productionTester($console);
+        $tester = $this->tester($console);
 
         $tester->execute(['args' => 'migrate --force', '--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
 
@@ -227,7 +222,7 @@ final class ConsoleCommandTest extends TestCase
     public function test_a_protected_environment_asks_at_a_terminal(): void
     {
         $console = new FakeConsole([new CommandResult(0, "ok\n")]);
-        $tester = $this->productionTester($console);
+        $tester = $this->tester($console);
         $tester->setInputs(['no']);
 
         $tester->execute(['args' => 'about', '--env' => 'production', '--profile' => 'p']);
@@ -237,7 +232,7 @@ final class ConsoleCommandTest extends TestCase
         self::assertSame([], $console->calls);
 
         $console = new FakeConsole([new CommandResult(0, "ok\n")]);
-        $tester = $this->productionTester($console);
+        $tester = $this->tester($console);
         $tester->setInputs(['yes']);
         $tester->execute(['args' => 'about', '--env' => 'production', '--profile' => 'p']);
         self::assertSame(0, $tester->getStatusCode());

@@ -66,6 +66,22 @@ final class RemoveCommandTest extends TestCase
         $project->restore();
     }
 
+    public function test_a_non_protected_environment_without_a_terminal_needs_yes(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-staging', 'Active', 'x.on.aws', 'rev-1'));
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('needs --yes without a terminal', $display);
+        self::assertStringNotContainsString('protected', $display);
+        self::assertNotContains('remove', $deployer->calls);
+        $project->restore();
+    }
+
     public function test_force_still_works_with_one_deprecation_warning(): void
     {
         $project = new ProjectFixture(ProjectFixture::standardConfig());

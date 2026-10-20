@@ -61,7 +61,7 @@ final class QueueDlqCommand extends ArcoCommand
                 throw new UserError($this->t('queue.unknown', ['queue' => $name, 'queues' => $names === [] ? $this->t('queue.none') : implode(', ', $names)]));
             }
             if ($queue->dlqName($config) === null) {
-                throw new UserError($this->t('queue.no_dlq', ['queue' => $queue->name]));
+                throw new UserError($this->t('queue.no_dlq', ['queue' => $queue->name, 'environment' => $config->environment, 'yes' => $config->isProtected() ? ' --yes' : '']));
             }
 
             $aws = $this->awsClients($config, $input, $io);
@@ -107,7 +107,7 @@ final class QueueDlqCommand extends ArcoCommand
                 }
                 $io->newLine();
             }
-            $io->writeln($this->t('queue.dlq_redrive_hint', ['queue' => $queue->name]));
+            $io->writeln($this->t('queue.dlq_redrive_hint', ['queue' => $queue->name, 'environment' => $config->environment, 'yes' => $config->isProtected() ? ' --yes' : '']));
             return self::SUCCESS;
         } catch (Throwable $e) {
             $io->error($this->describeError($e) ?? throw $e);
