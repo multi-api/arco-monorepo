@@ -173,7 +173,7 @@ before/after snippets: [Upgrading to 0.9](docs/upgrading.md#upgrading-to-09).
   `tinker --execute` prints on stdout stays clean.
 - **Fixed:** an `arco.php` still written for an 0.8 signature gets a message naming the 0.9 one:
   `binary(path: ...)` (now `binary(frankenphp: ..., php: ...)`), `dns(profile: ...)` (positional or `dns(dns: ...)`)
-  and `cache(null)` / `failedJobsTable(null)` (pass `false` to turn it off). Other errors keep PHP's text.
+  and `cache(null)` / `failedJobsTable(null)` (null meant `true`: pass `true` or nothing to keep it on, `false` to turn it off). Other errors keep PHP's text.
 
 ## 0.8.1
 
