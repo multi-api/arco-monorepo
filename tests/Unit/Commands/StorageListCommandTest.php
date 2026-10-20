@@ -144,4 +144,43 @@ final class StorageListCommandTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('No retained buckets for production.', self::display($tester));
     }
+
+    public function test_json_lists_storage_and_retained_buckets_with_schema_1(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result(['ResourceTagMappingList' => [self::bucket('shop-production-avatars-111111111111', ['arco:resource' => 'storage:avatars'])]]),
+        );
+        $this->project = new ProjectFixture(str_replace('->concurrency(48)', "->concurrency(48)->storage('uploads', expire: ['tmp/' => 7])", ProjectFixture::standardConfig()));
+        $tester = $this->project->tester(new StorageListCommand(fn (?string $profile, string $region) => $this->mocks->clients($region)));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--json' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(1, $json['schema']);
+        self::assertSame('schema', array_key_first($json));
+        self::assertSame('uploads', $json['storage'][0]['name']);
+        self::assertSame('shop-production-uploads-111111111111', $json['storage'][0]['bucket']);
+        self::assertTrue($json['storage'][0]['default']);
+        self::assertSame(['tmp/' => 7], $json['storage'][0]['expire']);
+        self::assertSame([['name' => 'avatars', 'bucket' => 'shop-production-avatars-111111111111']], $json['retained']);
+    }
+
+    public function test_json_marks_unreadable_retained_buckets_as_unknown(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'AccessDeniedException', 400),
+        );
+        $this->project = new ProjectFixture(ProjectFixture::standardConfig());
+        $tester = $this->project->tester(new StorageListCommand(fn (?string $profile, string $region) => $this->mocks->clients($region)));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--json' => true], ['interactive' => false]);
+
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame([], $json['storage']);
+        self::assertNull($json['retained']);
+        self::assertSame('AccessDeniedException', $json['retainedError']);
+    }
 }

@@ -482,4 +482,69 @@ final class InfoCommandTest extends TestCase
         self::assertStringContainsString('AWS_PROFILE', $tester->getDisplay());
         $project->restore();
     }
+
+    public function test_json_gains_schema_1_and_keeps_every_existing_key(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame(1, $json['schema']);
+        self::assertSame('schema', array_key_first($json), 'first key, as in info --resources');
+        unset($json['schema']);
+        self::assertSame(
+            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings'],
+            array_keys($json),
+        );
+        $project->restore();
+    }
+
+    public function test_profile_flag_is_used_and_runs_the_account_guard(): void
+    {
+        $config = str_replace("->timeout(60)", "->timeout(60)->account('999999999999')", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $profiles = [];
+        $mocks = new \Multiapi\Arco\Tests\Unit\Deploy\AwsMocks();
+        $mocks->handler->append(new \Aws\Result(['Account' => '111111111111']));
+        $deployer = new FakeDeployer();
+        $tester = $project->tester(new InfoCommand(
+            awsFactory: function (?string $profile, string $region) use ($mocks, &$profiles) {
+                $profiles[] = $profile;
+                return $mocks->clients($region);
+            },
+            deployerFactory: fn () => $deployer,
+        ));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(['acme-prod'], $profiles);
+        self::assertSame(['GetCallerIdentity'], $mocks->calls);
+        self::assertNotContains('describe', $deployer->calls, 'the wrong account is never read');
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('locked to account 999999999999', preg_replace('/\s+/', ' ', $tester->getDisplay()));
+
+        $mocks->handler->append(new \Aws\Result(['Account' => '111111111111']));
+        $tester->execute(['--env' => 'production', '-p' => 'acme-prod', '--json' => true], ['interactive' => false]);
+        self::assertSame(1, json_decode($tester->getDisplay(), true)['schema']);
+        self::assertStringContainsString('locked to account', json_decode($tester->getDisplay(), true)['error']);
+        $project->restore();
+    }
+
+    public function test_profile_flag_on_the_right_account_describes_the_environment(): void
+    {
+        $config = str_replace("->timeout(60)", "->timeout(60)->account('111111111111')", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $mocks = new \Multiapi\Arco\Tests\Unit\Deploy\AwsMocks();
+        $mocks->handler->append(new \Aws\Result(['Account' => '111111111111']));
+        $deployer = new FakeDeployer();
+        $tester = $project->tester(new InfoCommand(awsFactory: fn (?string $p, string $r) => $mocks->clients($r), deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertContains('describe', $deployer->calls);
+        $project->restore();
+    }
 }

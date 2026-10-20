@@ -122,7 +122,7 @@ final class AwsDeployer implements Deployer
                 array_map(fn (QueueConfig $queue) => $config->workerFunctionName($queue->name), $config->queues),
                 array_map(fn (StorageConfig $storage) => $storage->arn($config), $config->storage),
                 array_map(fn (TableConfig $table) => $table->arn($config), array_values(array_filter([$config->cacheTable, $config->failedJobsTable]))));
-            ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags);
+            ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags, $region);
         }
 
         $revision = RevisionFactory::revision($config, $bucket, $key, $versionId, $roleArn, $variables);

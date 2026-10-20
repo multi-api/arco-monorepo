@@ -29,6 +29,7 @@ final class ProfileCommand extends ArcoCommand
     protected function configure(): void
     {
         $this->addOption('env', 'e', InputOption::VALUE_REQUIRED, 'Environment')
+            ->addOption('json', null, InputOption::VALUE_NONE, 'Print the remembered profiles as JSON')
             ->addOption('set', null, InputOption::VALUE_REQUIRED, 'Profile to remember for the environment');
     }
 
@@ -37,8 +38,20 @@ final class ProfileCommand extends ArcoCommand
         $io = new SymfonyStyle($input, $output);
         try {
             $state = new LocalState($this->projectDir());
-            if (! is_string($input->getOption('env'))) {
+            $only = $input->getOption('env');
+            if ($input->getOption('json') && $input->getOption('set') === null || ! is_string($only)) {
                 $raw = (new ConfigLoader())->load($this->projectDir() . '/arco.php');
+                if ($input->getOption('json')) {
+                    $profiles = [];
+                    foreach (ConfigResolver::environments($raw) as $env) {
+                        if (is_string($only) && $env !== $only) {
+                            continue;
+                        }
+                        $profiles[] = ['environment' => $env, 'profile' => $state->profile($env)];
+                    }
+                    $output->writeln((string) json_encode(['schema' => 1, 'profiles' => $profiles], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+                    return self::SUCCESS;
+                }
                 $io->table(
                     [$this->t('profile.environment'), $this->t('profile.profile')],
                     array_map(fn (string $env) => [$env, $state->profile($env) ?? '-'], ConfigResolver::environments($raw)),

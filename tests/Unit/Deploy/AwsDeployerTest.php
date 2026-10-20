@@ -285,7 +285,7 @@ final class AwsDeployerTest extends TestCase
             new Result([]),                                   // HeadBucket
             new Result([]), new Result([]), new Result([]), new Result([]),
             new Result(['VersionId' => 'v1']),                // HeadObject (web zip already uploaded)
-            new Result(['Role' => ['Arn' => 'arn:role']]),    // GetRole
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), // GetRole
             new Result([]),                                   // PutRolePolicy
             new Result(['functionName' => 'shop-production', 'state' => 'Active']),
             new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
@@ -416,7 +416,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['Account' => '111111111111']),
             new Result([]), new Result([]), new Result([]), new Result([]), new Result([]),
             new Result(['VersionId' => 'v1']),
-            new Result(['Role' => ['Arn' => 'arn:role']]),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
             new Result([]),
             new Result(['functionName' => 'shop-production', 'state' => 'Active']),
             new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
@@ -1658,7 +1658,7 @@ final class AwsDeployerTest extends TestCase
             new Result([]),                                   // HeadBucket
             new Result([]), new Result([]), new Result([]), new Result([]),
             new Result(['VersionId' => 'v1']),                // HeadObject (web zip)
-            new Result(['Role' => ['Arn' => 'arn:role']]),    // GetRole
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), // GetRole
             new Result([]),                                   // PutRolePolicy
             new Result(['functionName' => 'shop-production', 'state' => 'Active']),
             new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
@@ -1718,7 +1718,7 @@ final class AwsDeployerTest extends TestCase
             new Result([]),                                   // HeadBucket
             new Result([]), new Result([]), new Result([]), new Result([]),
             new Result(['VersionId' => 'v1']),                // HeadObject (web zip)
-            new Result(['Role' => ['Arn' => 'arn:role']]),    // GetRole
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), // GetRole
             new Result([]),                                   // PutRolePolicy
             new Result(['functionName' => 'shop-production', 'state' => 'Active']),
             new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
@@ -2633,7 +2633,7 @@ final class AwsDeployerTest extends TestCase
         foreach ($mocks->calls as $i => $call) {
             $byOperation[$call] = $mocks->params[$i];
         }
-        self::assertSame([['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']], $byOperation['CreateRole']['Tags']);
+        self::assertSame([['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production'], ['Key' => 'arco:region', 'Value' => 'us-east-1']], $byOperation['CreateRole']['Tags']);
         self::assertSame(['arco:app' => 'shop', 'arco:environment' => 'production'], $byOperation['CreateWebFunction']['tags']);
     }
 }

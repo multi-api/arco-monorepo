@@ -105,7 +105,7 @@ final class LogsCommandTest extends TestCase
         $tester->execute(['--env' => 'staging', '--profile' => 'p', '--source' => 'console', '--json' => true], ['interactive' => false]);
 
         self::assertSame(
-            ['timestamp' => self::T, 'logGroup' => '/aws/lambda/shop-staging-console', 'logStream' => 's1', 'message' => "plain\n"],
+            ['schema' => 1, 'timestamp' => self::T, 'logGroup' => '/aws/lambda/shop-staging-console', 'logStream' => 's1', 'message' => "plain\n"],
             json_decode(trim($tester->getDisplay()), true),
         );
     }
