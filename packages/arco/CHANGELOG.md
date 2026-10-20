@@ -6,11 +6,12 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 ## 0.9.0
 
 - **Added:** `arco info --profile/-p` (it ran without a profile flag before) and the account guard: `info` refuses to
-  read an environment locked with `account()` through a profile of another account, like `deploy` does.
+  read an environment locked with `account()` through a profile of another account, like `deploy` does. This is a change in behaviour: `info` now enforces the `account()` lock for any resolved profile
+  (the flag, `AWS_PROFILE`, the remembered one), where it used to read whatever account the profile pointed to.
 - **Added:** `--json` on `arco queue:list`, `arco storage:list` and `arco profile`, and `"schema": 1` as the first key of
   every `--json` output (`info`, `info --resources`, `logs` (each line), `queue:list`, `storage:list`, `profile`).
   Existing keys are unchanged. `--json` output and exit codes are the scripting API; message texts are not.
-- **Added:** execution roles are tagged `arco:region`. `arco deploy` refuses (`deploy.region_changed`) when the
+- **Added:** execution roles are tagged `arco:region`. `arco deploy` refuses (`deploy.region_changed`), before any change and even with `--force`, when the
   existing role was created for another region than `region()`: an app lives in one region, so use another
   environment name for a second one. A role without the tag (created by an older Arco) deploys and gets it.
 - **Added:** `arco failed-jobs:add [--existing=<table>]` and `arco failed-jobs:remove` turn the failed-jobs table on or

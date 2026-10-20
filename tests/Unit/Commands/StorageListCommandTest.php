@@ -183,4 +183,17 @@ final class StorageListCommandTest extends TestCase
         self::assertNull($json['retained']);
         self::assertSame('AccessDeniedException', $json['retainedError']);
     }
+
+    public function test_json_failure_prints_schema_and_error_and_never_prompts(): void
+    {
+        $this->project = new ProjectFixture(ProjectFixture::standardConfig());
+        $tester = $this->project->tester(new StorageListCommand(fn (?string $profile, string $region) => $this->mocks->clients($region)));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(1, $json['schema']);
+        self::assertNotSame('', $json['error']);
+    }
 }

@@ -106,4 +106,20 @@ final class ExecutionRoleTest extends TestCase
             self::assertStringContainsString('{region}', $table['deploy.region_changed']);
         }
     }
+
+    public function test_a_refused_tag_on_an_untagged_role_is_warned_not_silent(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Role' => ['Arn' => 'arn:x']]),
+            AwsMocks::error(IamException::class, 'TagRole', 'AccessDenied', 403),
+            new Result([]),
+        );
+        $steps = [];
+
+        (new ExecutionRole($mocks->clients()->iam()))->ensure('r', ['Version' => '2012-10-17', 'Statement' => []], [], 'eu-west-1', function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame([['deploy.tags_not_added', ['resource' => 'r', 'error' => 'AccessDenied']]], $steps);
+        self::assertSame(['GetRole', 'TagRole', 'PutRolePolicy'], $mocks->calls);
+    }
 }

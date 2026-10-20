@@ -2636,4 +2636,25 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production'], ['Key' => 'arco:region', 'Value' => 'us-east-1']], $byOperation['CreateRole']['Tags']);
         self::assertSame(['arco:app' => 'shop', 'arco:environment' => 'production'], $byOperation['CreateWebFunction']['tags']);
     }
+
+    public function test_a_role_of_another_region_is_refused_in_the_ownership_check_even_with_force(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('eu-west-1')->environment('production')->toArray(), 'production');
+        foreach ([false, true] as $force) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(self::roleTags(self::tags() + ['arco:region' => 'us-east-1']));
+
+            try {
+                self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: $force), $config);
+                self::fail('expected a refusal');
+            } catch (DeployException $e) {
+                self::assertSame('deploy.region_changed', $e->key);
+                self::assertSame(['resource' => 'arco-shop-production', 'current' => 'us-east-1', 'region' => 'eu-west-1'], $e->params);
+            }
+            foreach (['HeadBucket', 'CreateBucket', 'PutObject', 'PutRolePolicy', 'TagRole', 'CreateRole'] as $change) {
+                self::assertNotContains($change, $mocks->calls);
+            }
+            self::assertSame(['GetRole'], $mocks->calls, 'only the role is read');
+        }
+    }
 }

@@ -43,6 +43,10 @@ final class QueueListCommand extends ArcoCommand
     {
         $io = new SymfonyStyle($input, $output);
         $json = (bool) $input->getOption('json');
+        if ($json) {
+            // No profile prompt or "profile saved" text in the JSON stream: it needs a profile that resolves.
+            $input->setInteractive(false);
+        }
         try {
             // Notes and warnings would corrupt machine-readable output, so --json sends them nowhere.
             $config = $this->loadTarget($input, $json ? new SymfonyStyle($input, new NullOutput()) : $io);
@@ -81,7 +85,12 @@ final class QueueListCommand extends ArcoCommand
             }
             return self::SUCCESS;
         } catch (Throwable $e) {
-            $io->error($this->describeError($e) ?? throw $e);
+            $message = $this->describeError($e) ?? throw $e;
+            if ($json) {
+                $output->writeln((string) json_encode(['schema' => 1, 'error' => $message], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            } else {
+                $io->error($message);
+            }
             return self::FAILURE;
         }
     }

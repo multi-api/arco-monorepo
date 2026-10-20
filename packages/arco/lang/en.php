@@ -333,6 +333,8 @@ return [
     'remove.done' => '{function} was removed. The code bucket and SSM parameters were kept.',
     'profile.environment' => 'Environment',
     'profile.profile' => 'AWS profile',
+    'profile.json_with_set' => '--json only prints the remembered profiles; it cannot be combined with --set. Run the two commands separately.',
+    'profile.unknown_environment' => 'There is no environment "{environment}" in arco.php. Available: {available}.',
     'profile.saved' => '"{environment}" will use the AWS profile "{profile}".',
     'secret.invalid_name' => 'Invalid secret name "{name}". Use letters, digits, ".", "_" and "-".',
     'secret.empty' => 'The secret value is empty.',

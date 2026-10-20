@@ -50,7 +50,12 @@ final class AwsDeployer implements Deployer
         $names = [];
         $resources = [];
         if ($config->role === null) {
-            $resources[] = $guard->role($names[] = ExecutionRole::roleName($config));
+            $role = $guard->role($names[] = ExecutionRole::roleName($config));
+            // Before any change (bucket, upload, policy), and even with --force: it overrides ownership, not the region.
+            if ($role !== null) {
+                ExecutionRole::refuseOtherRegion($role->name, $role->tags[ExecutionRole::REGION_TAG] ?? null, (string) $config->region);
+            }
+            $resources[] = $role;
         }
         $resources[] = $guard->webFunction($names[] = $config->functionName(), self::prefix($config));
         // Checked whether the console is on or off: a deploy updates it, or deletes it once verified.
@@ -122,7 +127,7 @@ final class AwsDeployer implements Deployer
                 array_map(fn (QueueConfig $queue) => $config->workerFunctionName($queue->name), $config->queues),
                 array_map(fn (StorageConfig $storage) => $storage->arn($config), $config->storage),
                 array_map(fn (TableConfig $table) => $table->arn($config), array_values(array_filter([$config->cacheTable, $config->failedJobsTable]))));
-            ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags, $region);
+            ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags, $region, $step);
         }
 
         $revision = RevisionFactory::revision($config, $bucket, $key, $versionId, $roleArn, $variables);

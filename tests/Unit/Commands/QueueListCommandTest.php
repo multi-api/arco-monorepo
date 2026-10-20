@@ -137,4 +137,18 @@ final class QueueListCommandTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertSame(['schema' => 1, 'environment' => 'production', 'queues' => []], json_decode($tester->getDisplay(), true));
     }
+
+    public function test_json_failure_prints_schema_and_error_and_never_prompts(): void
+    {
+        $this->project = new ProjectFixture(str_replace('->concurrency(48)', "->concurrency(48)->queue('emails')", ProjectFixture::standardConfig()));
+        $tester = $this->project->tester(new QueueListCommand(fn (?string $profile, string $region) => $this->mocks->clients($region)));
+
+        // No --profile and none remembered: interactive would ask; --json must fail instead.
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(1, $json['schema']);
+        self::assertNotSame('', $json['error']);
+    }
 }

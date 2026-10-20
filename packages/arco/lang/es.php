@@ -333,6 +333,8 @@ return [
     'remove.done' => 'Se borró {function}. Se conservaron el bucket de código y los parámetros de SSM.',
     'profile.environment' => 'Entorno',
     'profile.profile' => 'Perfil de AWS',
+    'profile.json_with_set' => '--json solo muestra los perfiles recordados; no se puede combinar con --set. Ejecuta los dos comandos por separado.',
+    'profile.unknown_environment' => 'No hay un entorno "{environment}" en arco.php. Disponibles: {available}.',
     'profile.saved' => '"{environment}" usará el perfil de AWS "{profile}".',
     'secret.invalid_name' => 'Nombre de secreto inválido "{name}". Usa letras, dígitos, ".", "_" y "-".',
     'secret.empty' => 'El valor del secreto está vacío.',
