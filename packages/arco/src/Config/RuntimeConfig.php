@@ -4,7 +4,11 @@ namespace Multiapi\Arco\Config;
 
 final readonly class RuntimeConfig
 {
-    /** @param array<string, string|int|bool> $phpIni */
+    /**
+     * @param array<string, string|int|bool> $phpIni
+     * @param string|null $php the PHP minor php() selects; null: the manifest's default
+     * @param string|null $phpBinary the PHP CLI given to binary(php: ...), next to the custom $binary
+     */
     public function __construct(
         public ?string $build,
         public ?string $frankenphp,
@@ -14,6 +18,8 @@ final readonly class RuntimeConfig
         public int $threads,
         public string $mode,
         public array $phpIni,
+        public ?string $php = null,
+        public ?string $phpBinary = null,
     ) {
     }
 }

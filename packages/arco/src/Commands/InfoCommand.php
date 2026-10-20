@@ -315,7 +315,7 @@ final class InfoCommand extends ArcoCommand
             return null;
         }
         try {
-            $build = RuntimeManifest::load()->resolve($config->runtime->build, $config->runtime->frankenphp);
+            $build = RuntimeManifest::load()->resolve($config->runtime->build, $config->runtime->frankenphp, $config->runtime->php);
         } catch (BinaryException) {
             return null;
         }
@@ -328,6 +328,7 @@ final class InfoCommand extends ArcoCommand
         return match (true) {
             $s['runtime.build'] !== 'default' => $s['runtime.build'],
             $s['runtime.frankenphp'] !== 'default' => $s['runtime.frankenphp'],
+            $s['runtime.php'] !== 'default' => $s['runtime.php'],
             default => 'default',
         };
     }

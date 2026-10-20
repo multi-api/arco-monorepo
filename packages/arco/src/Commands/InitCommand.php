@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Commands;
 
 use Multiapi\Arco\Arco;
 use Multiapi\Arco\Aws\DnsZoneFinder;
+use Multiapi\Arco\Binary\RuntimeManifest;
 use Multiapi\Arco\Aws\LocalState;
 use Multiapi\Arco\Build\AppInspector;
 use Multiapi\Arco\Build\Detection;
@@ -114,7 +115,7 @@ final class InitCommand extends ArcoCommand
         $deployCommands = $migrate ? [DeployCommands::MIGRATE] : [];
 
         $secretKeys = self::secretKeys("$dir/.env");
-        $php = self::render($app, $region, $environments, $secretKeys, $domains, $dns, $deployCommands, $choices);
+        $php = self::render($app, $region, $environments, $secretKeys, $domains, $dns, $deployCommands, $choices, RuntimeManifest::load()->defaultPhp());
         [$errors, $warnings, $raw] = $this->check($dir, $php, $environments);
         if ($errors !== []) {
             foreach ($errors as $error) {
@@ -506,11 +507,17 @@ final class InitCommand extends ArcoCommand
      * @param array<string, string|false> $dns per environment; absent means Route 53 in the deploy account
      * @param list<string> $deployCommands app-level deploy commands
      * @param InitChoices|null $choices resources written on the App chain, after the deploy commands
+     * @param string|null $phpMinor the PHP minor the app pins with runtime php(); null: none written
      */
-    public static function render(string $name, string $region, array $environments, array $secretKeys, array $domains = [], array $dns = [], array $deployCommands = [], ?InitChoices $choices = null): string
+    public static function render(string $name, string $region, array $environments, array $secretKeys, array $domains = [], array $dns = [], array $deployCommands = [], ?InitChoices $choices = null, ?string $phpMinor = null): string
     {
-        $php = "<?php\n\nuse Multiapi\\Arco\\Config\\App;\nuse Multiapi\\Arco\\Config\\Environment;\n\n";
+        $php = "<?php\n\nuse Multiapi\\Arco\\Config\\App;\nuse Multiapi\\Arco\\Config\\Environment;\n";
+        $php .= ($phpMinor === null ? '' : "use Multiapi\\Arco\\Config\\Runtime;\n") . "\n";
         $php .= 'return App::make(' . var_export($name, true) . ")\n    ->region(" . var_export($region, true) . ')';
+        if ($phpMinor !== null) {
+            // A new PHP minor is opt-in: the app stays on this one until arco.php says otherwise.
+            $php .= "\n    ->runtime(fn (Runtime \$r) => \$r->php(" . var_export($phpMinor, true) . '))';
+        }
         if ($deployCommands !== []) {
             $php .= "\n    ->deployCommands([" . implode(', ', array_map(fn (string $c) => var_export($c, true), $deployCommands)) . '])';
         }

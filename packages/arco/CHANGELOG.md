@@ -39,6 +39,20 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   (`info --resources`, the list before `remove`), and for the Resource Group `resource-groups:GetGroupQuery`,
   `resource-groups:CreateGroup`, `resource-groups:Tag`, `resource-groups:GetGroup`, `resource-groups:GetTags`,
   `resource-groups:UpdateGroupQuery`, `resource-groups:DeleteGroup`.
+- **Added:** `->runtime(fn (Runtime $r) => $r->php('8.5'))` chooses the PHP version: the newest runtime build whose
+  PHP is 8.5.x. `frankenphp('1.13')` now matches by prefix and combines with `php()`. Without `php()`, Arco uses the
+  newest build of its default PHP minor (8.5), and a 1.x release moves that default only to a new PHP patch: a new
+  PHP minor is opt-in via `php()`, also for `frankenphp()` alone. An unknown minor is a validation error listing the
+  PHP versions this Arco knows. `arco init` now writes `->runtime(fn (Runtime $r) => $r->php('8.5'))`.
+- **Changed:** runtime build ids are `php<php>-fp<frankenphp>-r<n>` (`php8.5.11-fp1.13.0-r2`); `arco info` (also
+  `runtime.build` in `--json`), the deploy output and new packages show them. The old ids `1.13.0-r1` and
+  `1.13.0-r2` stay valid forever as aliases: `build('1.13.0-r2')` and packages built with it deploy the identical
+  binaries. `build()` is an exact pin and is now an error next to `php()` too (as next to `frankenphp()`). The local
+  runtime cache moves to `~/.arco/cache/runtime/<new id>/`, so each machine downloads the build once more.
+- **Changed:** `binary(string $frankenphp, ?string $php = null)`: the parameter `$path` is now `$frankenphp`
+  (`binary(path: ...)` no longer works). With `php:` (a Linux arm64 static PHP CLI, checked at validation) the
+  console function and the queue workers carry it as `bin/php` like the official builds, instead of downloading
+  the FrankenPHP binary at cold start; without it nothing changes.
 - The E2E suite now pins Floci `nightly-10192026`, where storage writes and CloudFront to a Web Function work, so all eight Floci checks are mandatory.
 
 ## 0.8.1

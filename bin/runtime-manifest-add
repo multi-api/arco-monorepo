@@ -2,7 +2,9 @@
 <?php declare(strict_types=1);
 
 // Maintainer script: adds a published runtime build to packages/arco/resources/runtime-builds.php.
-// Usage: bin/runtime-manifest-add <build-id> [--repo=owner/name] [--from-file=build.json] [--default]
+// Usage: bin/runtime-manifest-add <release-id> [--repo=owner/name] [--from-file=build.json]
+// <release-id> is the arco-runtime release id (1.13.0-r3, tag frankenphp-1.13.0-r3); the build is added as
+// php<php>-fp<frankenphp>-r<n>. The default build is the newest build of the manifest's default_php.
 // When fetching from GitHub, the release metadata is cross-checked (immutable, asset size and digest, including php-linux-aarch64 when build.json has php_cli).
 // --from-file skips that check, since there is no release to compare against.
 
@@ -10,19 +12,16 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use Multiapi\Arco\Tools\RuntimeManifestEditor;
 
-$usage = "Usage: bin/runtime-manifest-add <build-id> [--repo=owner/name] [--from-file=build.json] [--default]\n";
+$usage = "Usage: bin/runtime-manifest-add <release-id> [--repo=owner/name] [--from-file=build.json]\n";
 
 $id = null;
 $repo = 'multi-api/arco-runtime';
 $fromFile = null;
-$default = false;
 foreach (array_slice($argv, 1) as $arg) {
     if (str_starts_with($arg, '--repo=')) {
         $repo = substr($arg, 7);
     } elseif (str_starts_with($arg, '--from-file=')) {
         $fromFile = substr($arg, 12);
-    } elseif ($arg === '--default') {
-        $default = true;
     } elseif (str_starts_with($arg, '--') || $id !== null) {
         fwrite(STDERR, $usage);
         exit(1);
@@ -72,10 +71,12 @@ try {
     if ($release !== null) {
         RuntimeManifestEditor::assertReleaseMatches($release, $build);
     }
-    RuntimeManifestEditor::add(__DIR__ . '/../packages/arco/resources/runtime-builds.php', $build, $repo, $default);
+    $manifestPath = __DIR__ . '/../packages/arco/resources/runtime-builds.php';
+    $added = RuntimeManifestEditor::add($manifestPath, $build, $repo);
+    $default = Multiapi\Arco\Binary\RuntimeManifest::load($manifestPath)->resolve(null, null)->id;
 } catch (InvalidArgumentException $e) {
     fwrite(STDERR, $e->getMessage() . "\n");
     exit(1);
 }
 
-echo "Added $id" . ($default ? ' (default)' : '') . "\n";
+echo "Added $added (release frankenphp-$id)" . ($default === $added ? '; it is the new default build' : "; the default build stays $default") . "\n";

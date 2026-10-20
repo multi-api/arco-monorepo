@@ -90,6 +90,29 @@ final class ConfigResolverTest extends TestCase
         self::assertSame('environment', $production->sources['runtime.frankenphp']);
     }
 
+    public function test_php_and_binary_with_a_php_cli_resolve_with_inheritance(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->php('8.5')->binary('bin/frankenphp', 'bin/php'))
+            ->environment('staging')
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->binary(frankenphp: 'bin/other')))
+            ->toArray();
+
+        $staging = ConfigResolver::resolve($raw, 'staging');
+        self::assertSame('8.5', $staging->runtime->php);
+        self::assertSame('app', $staging->sources['runtime.php']);
+        self::assertSame(['bin/frankenphp', 'bin/php'], [$staging->runtime->binary, $staging->runtime->phpBinary]);
+
+        // binary() sets both files: an environment's binary() without php: has no PHP CLI.
+        $production = ConfigResolver::resolve($raw, 'production');
+        self::assertSame(['bin/other', null], [$production->runtime->binary, $production->runtime->phpBinary]);
+        self::assertSame('environment', $production->sources['runtime.phpBinary']);
+
+        $default = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+        self::assertNull($default->runtime->php);
+        self::assertSame('default', $default->sources['runtime.php']);
+    }
+
     public function test_domains_default_to_none_and_deploy_account_dns(): void
     {
         $config = ConfigResolver::resolve($this->raw(), 'production');

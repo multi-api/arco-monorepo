@@ -42,6 +42,24 @@ final class InitCommandTest extends TestCase
         $project->restore();
     }
 
+    public function test_pins_the_php_minor_of_the_default_runtime_build(): void
+    {
+        $project = new ProjectFixture();
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $php = (string) file_get_contents("$project->dir/arco.php");
+        $minor = \Multiapi\Arco\Binary\RuntimeManifest::load()->defaultPhp();
+        self::assertSame('8.5', $minor);
+        self::assertStringContainsString("use Multiapi\\Arco\\Config\\Runtime;\n", $php);
+        self::assertStringContainsString("    ->region('us-east-1')\n    ->runtime(fn (Runtime \$r) => \$r->php('8.5'))\n", $php);
+        $config = ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production');
+        self::assertSame('8.5', $config->runtime->php);
+        self::assertSame('app', $config->sources['runtime.php']);
+        $project->restore();
+    }
+
     public function test_stock_laravel_env_only_references_keys_with_real_values(): void
     {
         $project = new ProjectFixture();
@@ -800,7 +818,7 @@ ENV);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString(
-            "    ->region('us-east-1')\n    ->console()\n    ->scheduler(10)\n    ->logRetention(14)\n    ->queue('default')\n    ->queue('emails')\n    ->failedJobsTable()\n    ->storage('uploads')\n    ->cache()\n    ->environment(",
+            "    ->region('us-east-1')\n    ->runtime(fn (Runtime \$r) => \$r->php('8.5'))\n    ->console()\n    ->scheduler(10)\n    ->logRetention(14)\n    ->queue('default')\n    ->queue('emails')\n    ->failedJobsTable()\n    ->storage('uploads')\n    ->cache()\n    ->environment(",
             (string) file_get_contents("$project->dir/arco.php"),
         );
         self::assertValid($project);

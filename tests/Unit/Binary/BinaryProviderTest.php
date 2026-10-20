@@ -26,8 +26,8 @@ final class BinaryProviderTest extends TestCase
     private function manifest(?string $sha = null, ?int $size = null): RuntimeManifest
     {
         return RuntimeManifest::fromArray([
-            'default' => '1.13.0-r1',
-            'builds' => ['1.13.0-r1' => [
+            'default_php' => '8.5',
+            'builds' => ['php8.5.11-fp1.13.0-r1' => [
                 'url' => 'https://example.test/frankenphp-1.13.0-r1/frankenphp-linux-aarch64',
                 'sha256' => $sha ?? hash('sha256', $this->elf),
                 'size' => $size ?? strlen($this->elf),
@@ -37,9 +37,9 @@ final class BinaryProviderTest extends TestCase
         ]);
     }
 
-    private function runtime(?string $binary = null): RuntimeConfig
+    private function runtime(?string $binary = null, ?string $phpBinary = null): RuntimeConfig
     {
-        return new RuntimeConfig(null, null, $binary, 4, 64, 8, 'direct', []);
+        return new RuntimeConfig(null, null, $binary, 4, 64, 8, 'direct', [], phpBinary: $phpBinary);
     }
 
     private function provider(RuntimeManifest $manifest, string $content): BinaryProvider
@@ -65,9 +65,9 @@ final class BinaryProviderTest extends TestCase
 
         self::assertSame($path, $again);
         self::assertSame(['https://example.test/frankenphp-1.13.0-r1/frankenphp-linux-aarch64'], $this->urls);
-        self::assertSame($this->cache . '/1.13.0-r1/frankenphp', $path);
+        self::assertSame($this->cache . '/php8.5.11-fp1.13.0-r1/frankenphp', $path);
         self::assertTrue(is_executable($path));
-        self::assertSame('1.13.0-r1', $provider->describe($this->runtime())?->id);
+        self::assertSame('php8.5.11-fp1.13.0-r1', $provider->describe($this->runtime())?->id);
     }
 
     public function test_checksum_mismatch_stops_and_caches_nothing(): void
@@ -77,10 +77,10 @@ final class BinaryProviderTest extends TestCase
             self::fail('Expected BinaryException');
         } catch (BinaryException $e) {
             self::assertSame('binary.checksum_mismatch', $e->key);
-            self::assertSame('1.13.0-r1', $e->params['build']);
+            self::assertSame('php8.5.11-fp1.13.0-r1', $e->params['build']);
         }
-        self::assertFileDoesNotExist($this->cache . '/1.13.0-r1/frankenphp');
-        self::assertSame([], glob($this->cache . '/1.13.0-r1/*.part'));
+        self::assertFileDoesNotExist($this->cache . '/php8.5.11-fp1.13.0-r1/frankenphp');
+        self::assertSame([], glob($this->cache . '/php8.5.11-fp1.13.0-r1/*.part'));
     }
 
     public function test_size_mismatch_stops_and_caches_nothing(): void
@@ -91,8 +91,8 @@ final class BinaryProviderTest extends TestCase
         } catch (BinaryException $e) {
             self::assertSame('binary.size_mismatch', $e->key);
         }
-        self::assertFileDoesNotExist($this->cache . '/1.13.0-r1/frankenphp');
-        self::assertSame([], glob($this->cache . '/1.13.0-r1/*.part'));
+        self::assertFileDoesNotExist($this->cache . '/php8.5.11-fp1.13.0-r1/frankenphp');
+        self::assertSame([], glob($this->cache . '/php8.5.11-fp1.13.0-r1/*.part'));
     }
 
     public function test_unwritable_cache_throws_and_returns_nothing(): void
@@ -113,8 +113,8 @@ final class BinaryProviderTest extends TestCase
     {
         // Review focus 2.
         // Same length, different bytes: the checksum, not the size, rejects the cached file.
-        mkdir($this->cache . '/1.13.0-r1', 0777, true);
-        file_put_contents($this->cache . '/1.13.0-r1/frankenphp', str_repeat("\0", strlen($this->elf)));
+        mkdir($this->cache . '/php8.5.11-fp1.13.0-r1', 0777, true);
+        file_put_contents($this->cache . '/php8.5.11-fp1.13.0-r1/frankenphp', str_repeat("\0", strlen($this->elf)));
 
         $path = $this->provider($this->manifest(), $this->elf)->get($this->runtime(), '/project');
 
@@ -137,16 +137,17 @@ final class BinaryProviderTest extends TestCase
     private function cliManifest(?string $sha = null): RuntimeManifest
     {
         return RuntimeManifest::fromArray([
-            'default' => '1.13.0-r2',
+            'default_php' => '8.5',
+            'aliases' => ['1.13.0-r1' => 'php8.5.11-fp1.13.0-r1', '1.13.0-r2' => 'php8.5.11-fp1.13.0-r2'],
             'builds' => [
-                '1.13.0-r1' => [
+                'php8.5.11-fp1.13.0-r1' => [
                     'url' => 'https://example.test/frankenphp-1.13.0-r1/frankenphp-linux-aarch64',
                     'sha256' => hash('sha256', $this->elf),
                     'size' => strlen($this->elf),
                     'frankenphp' => '1.13.0',
                     'php' => '8.5.11',
                 ],
-                '1.13.0-r2' => [
+                'php8.5.11-fp1.13.0-r2' => [
                     'url' => 'https://example.test/frankenphp-1.13.0-r2/frankenphp-linux-aarch64',
                     'sha256' => hash('sha256', $this->elf),
                     'size' => strlen($this->elf),
@@ -171,7 +172,7 @@ final class BinaryProviderTest extends TestCase
         $path = $provider->phpCli($build);
         $again = $provider->phpCli($build);
 
-        self::assertSame($this->cache . '/1.13.0-r2/php', $path);
+        self::assertSame($this->cache . '/php8.5.11-fp1.13.0-r2/php', $path);
         self::assertSame($path, $again);
         self::assertSame(['https://example.test/frankenphp-1.13.0-r2/php-linux-aarch64'], $this->urls);
         self::assertSame(0755, fileperms($path) & 0777);
@@ -180,8 +181,8 @@ final class BinaryProviderTest extends TestCase
     public function test_a_cached_php_cli_with_a_wrong_checksum_is_downloaded_again(): void
     {
         // Same length, different bytes: the checksum, not the size, rejects the cached file.
-        mkdir($this->cache . '/1.13.0-r2', 0777, true);
-        file_put_contents($this->cache . '/1.13.0-r2/php', 'PHP-CLI-BYTES');
+        mkdir($this->cache . '/php8.5.11-fp1.13.0-r2', 0777, true);
+        file_put_contents($this->cache . '/php8.5.11-fp1.13.0-r2/php', 'PHP-CLI-BYTES');
         $provider = $this->provider($this->cliManifest(), 'php-cli-bytes');
 
         $path = $provider->phpCli($provider->build('1.13.0-r2'));
@@ -200,8 +201,8 @@ final class BinaryProviderTest extends TestCase
         } catch (BinaryException $e) {
             self::assertSame('binary.checksum_mismatch', $e->key);
         }
-        self::assertFileDoesNotExist($this->cache . '/1.13.0-r2/php');
-        self::assertSame([], glob($this->cache . '/1.13.0-r2/*.part'));
+        self::assertFileDoesNotExist($this->cache . '/php8.5.11-fp1.13.0-r2/php');
+        self::assertSame([], glob($this->cache . '/php8.5.11-fp1.13.0-r2/*.part'));
     }
 
     public function test_no_php_cli_returns_null(): void
@@ -215,5 +216,35 @@ final class BinaryProviderTest extends TestCase
     public function test_build_returns_null_for_an_unknown_id(): void
     {
         self::assertNull($this->provider($this->cliManifest(), '')->build('9.9.9-r9'));
+    }
+
+    public function test_a_legacy_id_finds_the_same_build_and_its_cache(): void
+    {
+        $provider = $this->provider($this->cliManifest(), '');
+        self::assertSame($provider->build('php8.5.11-fp1.13.0-r2'), $provider->build('1.13.0-r2'));
+        self::assertSame('php8.5.11-fp1.13.0-r2', $provider->canonical('1.13.0-r2'));
+        self::assertNull($provider->canonical(null));
+    }
+
+    public function test_a_custom_php_cli_is_used_as_is_after_the_arch_check(): void
+    {
+        $project = TempPaths::path('arco-bin-');
+        mkdir("$project/bin", 0777, true);
+        file_put_contents("$project/bin/frankenphp", $this->elf);
+        file_put_contents("$project/bin/php", $this->elf);
+        copy(ElfInspectorTest::fakeElf(0x3E), "$project/bin/php-x86");
+        $provider = $this->provider($this->manifest(), '');
+
+        self::assertSame("$project/bin/php", $provider->customPhpCli($this->runtime('bin/frankenphp', 'bin/php'), $project));
+        self::assertSame("$project/bin/php", $provider->customPhpCli($this->runtime('bin/frankenphp', "$project/bin/php"), '/elsewhere'));
+        self::assertNull($provider->customPhpCli($this->runtime('bin/frankenphp'), $project));
+        self::assertNull($provider->customPhpCli($this->runtime(), $project));
+        try {
+            $provider->customPhpCli($this->runtime('bin/frankenphp', 'bin/php-x86'), $project);
+            self::fail('Expected binary.not_arm64');
+        } catch (BinaryException $e) {
+            self::assertSame('binary.not_arm64', $e->key);
+        }
+        self::assertSame([], $this->urls);
     }
 }

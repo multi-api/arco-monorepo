@@ -254,4 +254,16 @@ final class PackagerTest extends TestCase
             PackageReader::check($package, $this->config(), new PlainPhpPreset(), null),
         );
     }
+
+    public function test_check_compares_a_pre_0_9_build_id_by_the_build_it_names(): void
+    {
+        $package = (new Packager($this->runtimeDir))->package($this->build, $this->binary, $this->config(), new PlainPhpPreset(), '1.13.0-r2');
+        $canonical = fn (string $id): string => \Multiapi\Arco\Binary\RuntimeManifest::load()->canonical($id);
+
+        self::assertSame([], PackageReader::check($package, $this->config(), new PlainPhpPreset(), 'php8.5.11-fp1.13.0-r2', $canonical));
+        self::assertSame(
+            [['package.runtime_build_differs', ['path' => $package->path, 'package_build' => '1.13.0-r2', 'build' => 'php8.5.11-fp1.13.0-r1']]],
+            PackageReader::check($package, $this->config(), new PlainPhpPreset(), 'php8.5.11-fp1.13.0-r1', $canonical),
+        );
+    }
 }

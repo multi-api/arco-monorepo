@@ -38,19 +38,29 @@ final class RuntimeManifestEditorTest extends TestCase
         ];
     }
 
-    public function test_adds_a_build_and_optionally_makes_it_default(): void
+    public function test_adds_a_build_under_its_php_and_frankenphp_id(): void
     {
-        $default = RuntimeManifest::load($this->path)->defaultId();
-        RuntimeManifestEditor::add($this->path, self::buildJson(), 'multi-api/arco-runtime', false);
+        $before = RuntimeManifest::load($this->path);
+        $id = RuntimeManifestEditor::add($this->path, ['php' => '8.6.0'] + self::buildJson(), 'multi-api/arco-runtime');
+        self::assertSame('php8.6.0-fp1.13.0-r90', $id);
         $manifest = RuntimeManifest::load($this->path);
-        self::assertSame($default, $manifest->defaultId());
+        // The release id stays the GitHub tag (frankenphp-<release id>): only the Arco id is new.
         self::assertSame(
             'https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r90/frankenphp-linux-aarch64',
-            $manifest->get('1.13.0-r90')->url,
+            $manifest->get('php8.6.0-fp1.13.0-r90')->url,
         );
+        // A new PHP minor never becomes the default, and the aliases are kept.
+        self::assertSame($before->resolve(null, null)->id, $manifest->resolve(null, null)->id);
+        self::assertSame($before->aliases(), $manifest->aliases());
+        self::assertSame('8.5', $manifest->defaultPhp());
+    }
 
-        RuntimeManifestEditor::add($this->path, self::buildJson('1.13.0-r91'), 'multi-api/arco-runtime', true);
-        self::assertSame('1.13.0-r91', RuntimeManifest::load($this->path)->defaultId());
+    public function test_a_newer_build_of_the_default_php_minor_becomes_the_default(): void
+    {
+        RuntimeManifestEditor::add($this->path, self::buildJson(), 'multi-api/arco-runtime');
+        self::assertSame('php8.5.12-fp1.13.0-r90', RuntimeManifest::load($this->path)->resolve(null, null)->id);
+        // The pre-0.9 ids still name their own builds.
+        self::assertSame('php8.5.11-fp1.13.0-r2', RuntimeManifest::load($this->path)->get('1.13.0-r2')->id);
     }
 
     public function test_adds_the_php_cli_with_a_derived_url(): void
@@ -58,9 +68,9 @@ final class RuntimeManifestEditorTest extends TestCase
         $build = self::buildJson() + ['php_cli' => [
             'sha256' => str_repeat('c', 64), 'size' => 90000000, 'spc' => '2.7.0', 'extensions' => ['curl'],
         ]];
-        RuntimeManifestEditor::add($this->path, $build, 'multi-api/arco-runtime', false);
+        RuntimeManifestEditor::add($this->path, $build, 'multi-api/arco-runtime');
 
-        $cli = RuntimeManifest::load($this->path)->get('1.13.0-r90')->phpCli;
+        $cli = RuntimeManifest::load($this->path)->get('php8.5.12-fp1.13.0-r90')->phpCli;
         self::assertNotNull($cli);
         self::assertSame(
             ['https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r90/php-linux-aarch64', str_repeat('c', 64), 90000000],
@@ -94,7 +104,7 @@ final class RuntimeManifestEditorTest extends TestCase
         $build = self::buildJson() + ['php_cli' => 'oops'];
         $before = file_get_contents($this->path);
         foreach ([
-            fn () => RuntimeManifestEditor::add($this->path, $build, 'multi-api/arco-runtime', false),
+            fn () => RuntimeManifestEditor::add($this->path, $build, 'multi-api/arco-runtime'),
             fn () => RuntimeManifestEditor::assertReleaseMatches(self::release(), $build),
         ] as $call) {
             try {
@@ -122,6 +132,8 @@ final class RuntimeManifestEditorTest extends TestCase
         yield 'missing sha' => [array_diff_key(self::buildJson(), ['sha256' => true])];
         yield 'id/version mismatch' => [['frankenphp' => '1.12.0'] + self::buildJson()];
         yield 'bad id' => [['id' => 'latest'] + self::buildJson()];
+        yield 'new-format id' => [['id' => 'php8.5.12-fp1.13.0-r90'] + self::buildJson()];
+        yield 'php not a version' => [['php' => '8.5'] + self::buildJson()];
     }
 
     /** @param array<string, mixed> $build */
@@ -130,17 +142,25 @@ final class RuntimeManifestEditorTest extends TestCase
     {
         $before = file_get_contents($this->path);
         try {
-            RuntimeManifestEditor::add($this->path, $build, 'multi-api/arco-runtime', false);
+            RuntimeManifestEditor::add($this->path, $build, 'multi-api/arco-runtime');
             self::fail('Expected InvalidArgumentException');
         } catch (InvalidArgumentException) {
             self::assertSame($before, file_get_contents($this->path));
         }
     }
 
-    public function test_refuses_to_replace_an_existing_build(): void
+    public function test_refuses_to_replace_an_existing_build_or_release(): void
     {
-        $this->expectException(InvalidArgumentException::class);
-        RuntimeManifestEditor::add($this->path, ['sha256' => str_repeat('c', 64)] + self::buildJson('1.13.0-r1'), 'multi-api/arco-runtime', false);
+        $before = file_get_contents($this->path);
+        // The same Arco id, and the same release (tag) under another PHP version.
+        foreach (['8.5.11', '8.5.12'] as $php) {
+            try {
+                RuntimeManifestEditor::add($this->path, ['sha256' => str_repeat('c', 64), 'php' => $php] + self::buildJson('1.13.0-r1'), 'multi-api/arco-runtime');
+                self::fail('Expected InvalidArgumentException');
+            } catch (InvalidArgumentException) {
+                self::assertSame($before, file_get_contents($this->path));
+            }
+        }
     }
 
     /** @return iterable<string, array{string}> */
@@ -158,7 +178,7 @@ final class RuntimeManifestEditorTest extends TestCase
     {
         $before = file_get_contents($this->path);
         try {
-            RuntimeManifestEditor::add($this->path, self::buildJson(), $repo, false);
+            RuntimeManifestEditor::add($this->path, self::buildJson(), $repo);
             self::fail('Expected InvalidArgumentException');
         } catch (InvalidArgumentException) {
             self::assertSame($before, file_get_contents($this->path));

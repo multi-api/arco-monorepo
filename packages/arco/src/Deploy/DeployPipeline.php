@@ -49,6 +49,12 @@ final class DeployPipeline
         return $this->binaries->describe($config->runtime)?->id;
     }
 
+    /** The build id a package's runtime build id names: ids of an earlier Arco are aliases of a build. */
+    public function canonicalBuild(string $id): string
+    {
+        return (string) $this->binaries->canonical($id);
+    }
+
     /** @return array<string, string> */
     public static function variables(AppConfig $config, FrameworkPreset $preset): array
     {
@@ -298,7 +304,7 @@ final class DeployPipeline
         $removeConsole = $this->checkConsole($config, $deployer, $plan);
         [$build, $package] = $this->package($config, $preset, $projectDir, $onStep);
         try {
-            return $this->deployBuilt($config, $preset, $package, $deployer, $verifier, $onStep, $plan, $removeConsole);
+            return $this->deployBuilt($config, $preset, $package, $deployer, $verifier, $onStep, $plan, $removeConsole, $projectDir);
         } finally {
             $build->cleanup();
         }
@@ -311,12 +317,13 @@ final class DeployPipeline
      *
      * @param callable(string, array<string, string|int>): void $onStep
      * @param CommandPlan|null $plan deploy commands; a failing one stops the deploy before traffic moves
+     * @param string|null $projectDir resolves a relative binary(php: ...) path; default: the working directory
      * @throws DeployCommandFailed at the first deploy command that fails or crashes
      */
-    public function deployPackage(AppConfig $config, FrameworkPreset $preset, Package $package, Deployer $deployer, Verifier $verifier, callable $onStep, ?CommandPlan $plan = null): DeployOutcome
+    public function deployPackage(AppConfig $config, FrameworkPreset $preset, Package $package, Deployer $deployer, Verifier $verifier, callable $onStep, ?CommandPlan $plan = null, ?string $projectDir = null): DeployOutcome
     {
         $removeConsole = $this->checkConsole($config, $deployer, $plan);
-        return $this->deployBuilt($config, $preset, $package, $deployer, $verifier, $onStep, $plan, $removeConsole);
+        return $this->deployBuilt($config, $preset, $package, $deployer, $verifier, $onStep, $plan, $removeConsole, $projectDir ?? (getcwd() ?: '.'));
     }
 
     /**
@@ -351,7 +358,7 @@ final class DeployPipeline
      * @param bool $removeConsole delete the console function once the deploy is verified (checkConsole())
      * @throws DeployCommandFailed at the first deploy command that fails or crashes
      */
-    private function deployBuilt(AppConfig $config, FrameworkPreset $preset, Package $package, Deployer $deployer, Verifier $verifier, callable $onStep, ?CommandPlan $plan, bool $removeConsole): DeployOutcome
+    private function deployBuilt(AppConfig $config, FrameworkPreset $preset, Package $package, Deployer $deployer, Verifier $verifier, callable $onStep, ?CommandPlan $plan, bool $removeConsole, string $projectDir): DeployOutcome
     {
         $variables = self::variables($config, $preset);
         foreach (array_keys(self::injectedVariables($config)) as $key) {
@@ -366,7 +373,7 @@ final class DeployPipeline
         $work = sys_get_temp_dir() . '/arco-console-' . bin2hex(random_bytes(4));
         try {
             // The queue workers run the console zip too: it is built when queues exist even if the console is off.
-            $console = $config->consoleEnabled() || $config->queues !== [] ? $this->consoleArtifacts($package, $work, $plan, $onStep) : null;
+            $console = $config->consoleEnabled() || $config->queues !== [] ? $this->consoleArtifacts($config, $projectDir, $package, $work, $plan, $onStep) : null;
             if ($console === null && $config->queues !== []) {
                 // Before any AWS change: without the zip there are no workers, and the queues would never be read.
                 throw DeployException::make('deploy.workers_package_too_large', ['max' => (int) round(ConsoleFunction::MAX_UNZIPPED_BYTES / 1048576)]);
@@ -515,11 +522,12 @@ final class DeployPipeline
      *
      * @param callable(string, array<string, string|int>): void $onStep
      */
-    private function consoleArtifacts(Package $package, string $work, ?CommandPlan $plan, callable $onStep): ?ConsoleArtifacts
+    private function consoleArtifacts(AppConfig $config, string $projectDir, Package $package, string $work, ?CommandPlan $plan, callable $onStep): ?ConsoleArtifacts
     {
-        // The console runs the runtime build's PHP CLI (bin/php in its zip) when the build has one;
-        // otherwise (custom binary, unknown or older build, CLI unreachable) it downloads FrankenPHP
-        // at cold start. $note holds the reason (and its params) for that fallback.
+        // The console runs the runtime build's PHP CLI (bin/php in its zip) when the build has one, or
+        // for a custom binary the CLI given with binary(php: ...); otherwise (custom binary without one,
+        // unknown or older build, CLI unreachable) it downloads FrankenPHP at cold start. $note holds
+        // the reason (and its params) for that fallback.
         $buildId = $package->manifest?->runtimeBuild;
         $build = $buildId === null ? null : $this->binaries->build($buildId);
         $note = match (true) {
@@ -527,7 +535,7 @@ final class DeployPipeline
             $build === null => ['reason' => 'unknown_build', 'build' => $buildId],
             default => ['reason' => 'no_php_cli'],
         };
-        $phpCli = null;
+        $phpCli = $buildId === null ? $this->binaries->customPhpCli($config->runtime, $projectDir) : null;
         if ($build !== null) {
             try {
                 $phpCli = $this->binaries->phpCli($build, self::downloadProgress($build, $onStep));

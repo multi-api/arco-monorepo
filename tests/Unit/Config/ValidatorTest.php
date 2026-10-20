@@ -180,16 +180,28 @@ final class ValidatorTest extends TestCase
             ->runtime(fn (Runtime $r) => $r->binary($arm))
             ->environment('production');
         self::assertSame([], $warningKeys($only));
+
+        $php = App::make('shop')->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->binary($arm)->php('8.5'))
+            ->environment('production');
+        self::assertSame(['validation.binary_overrides_build'], $warningKeys($php));
     }
 
     private static function manifest(): \Multiapi\Arco\Binary\RuntimeManifest
     {
         return \Multiapi\Arco\Binary\RuntimeManifest::fromArray([
-            'default' => '1.13.0-r1',
-            'builds' => ['1.13.0-r1' => [
-                'url' => 'https://example.test/f', 'sha256' => str_repeat('a', 64), 'size' => 1,
-                'frankenphp' => '1.13.0', 'php' => '8.5.11',
-            ]],
+            'default_php' => '8.5',
+            'builds' => [
+                'php8.5.11-fp1.13.0-r1' => [
+                    'url' => 'https://example.test/f', 'sha256' => str_repeat('a', 64), 'size' => 1,
+                    'frankenphp' => '1.13.0', 'php' => '8.5.11',
+                ],
+                'php8.6.1-fp1.14.0-r1' => [
+                    'url' => 'https://example.test/g', 'sha256' => str_repeat('b', 64), 'size' => 1,
+                    'frankenphp' => '1.14.0', 'php' => '8.6.1',
+                ],
+            ],
+            'aliases' => ['1.13.0-r1' => 'php8.5.11-fp1.13.0-r1'],
         ]);
     }
 
@@ -210,6 +222,43 @@ final class ValidatorTest extends TestCase
         self::assertSame(['binary.build_and_version'], $keys($base()
             ->runtime(fn (Runtime $r) => $r->build('1.13.0-r1'))
             ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->frankenphp('1.13.0')))));
+    }
+
+    public function test_php_selects_a_minor_and_excludes_build(): void
+    {
+        $result = function (App $app): \Multiapi\Arco\Config\ValidationResult {
+            return (new Validator(self::manifest()))->validate(ConfigResolver::resolve($app->toArray(), 'production'), sys_get_temp_dir());
+        };
+        $keys = fn (App $app): array => array_map(fn (array $e) => $e['key'], $result($app)->errors);
+        $base = fn () => App::make('shop')->region('us-east-1');
+
+        self::assertSame([], $keys($base()->runtime(fn (Runtime $r) => $r->php('8.5'))->environment('production')));
+        self::assertSame([], $keys($base()->runtime(fn (Runtime $r) => $r->php('8.6')->frankenphp('1.14'))->environment('production')));
+        self::assertSame(['binary.unknown_version'], $keys($base()->runtime(fn (Runtime $r) => $r->php('8.6')->frankenphp('1.13'))->environment('production')));
+        self::assertSame(['binary.invalid_php'], $keys($base()->runtime(fn (Runtime $r) => $r->php('8'))->environment('production')));
+
+        // No build of that minor: the error lists the PHP minors this Arco knows.
+        $missing = $result($base()->runtime(fn (Runtime $r) => $r->php('8.4'))->environment('production'))->errors;
+        self::assertSame([['key' => 'binary.unknown_php', 'params' => ['php' => '8.4', 'minors' => '8.5, 8.6']]], $missing);
+
+        // build() is an exact pin: php() next to it, at any level, is an error.
+        self::assertSame(['binary.build_and_version'], $keys($base()->runtime(fn (Runtime $r) => $r->php('8.5')->build('1.13.0-r1'))->environment('production')));
+        self::assertSame(['binary.build_and_version'], $keys($base()
+            ->runtime(fn (Runtime $r) => $r->php('8.5'))
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->build('php8.5.11-fp1.13.0-r1')))));
+    }
+
+    public function test_binary_with_a_php_cli_checks_both_files(): void
+    {
+        $arm = ElfInspectorTest::fakeElf(0xB7);
+        $x86 = ElfInspectorTest::fakeElf(0x3E);
+        $keys = fn (string $php): array => $this->errorKeys(App::make('shop')->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->binary(frankenphp: $arm, php: $php))
+            ->environment('production'));
+
+        self::assertSame([], $keys($arm));
+        self::assertSame(['validation.php_binary_missing'], $keys('bin/no-php'));
+        self::assertSame(['validation.php_binary_arch'], $keys($x86));
     }
 
     public function test_permissions_statements_are_validated(): void

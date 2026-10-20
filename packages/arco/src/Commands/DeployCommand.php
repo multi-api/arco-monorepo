@@ -110,7 +110,7 @@ final class DeployCommand extends ArcoCommand
             $packagePath = $input->getOption('package');
             if (is_string($packagePath)) {
                 $package = PackageReader::open($packagePath);
-                foreach (PackageReader::check($package, $config, $preset, $this->pipeline->runtimeBuild($config)) as [$key, $params]) {
+                foreach (PackageReader::check($package, $config, $preset, $this->pipeline->runtimeBuild($config), $this->pipeline->canonicalBuild(...)) as [$key, $params]) {
                     $io->warning($this->t($key, $params));
                 }
             }
@@ -171,7 +171,7 @@ final class DeployCommand extends ArcoCommand
                     'created' => $package->manifest->createdAt,
                     'hash' => substr($package->hash, 0, 12),
                 ]);
-                $outcome = $this->pipeline->deployPackage($target, $preset, $package, $deployer, $verifier, $steps, $plan);
+                $outcome = $this->pipeline->deployPackage($target, $preset, $package, $deployer, $verifier, $steps, $plan, $this->projectDir());
             } else {
                 $outcome = $this->pipeline->deploy($target, $preset, $this->projectDir(), $deployer, $verifier, $steps, $plan);
             }

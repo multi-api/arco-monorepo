@@ -29,7 +29,9 @@ final class ConfigResolver
     private const RUNTIME_DEFAULTS = [
         'build' => null,
         'frankenphp' => null,
+        'php' => null,
         'binary' => null,
+        'phpBinary' => null,
         'workers' => ['min' => 4, 'max' => 64],
         'threads' => 8,
         'mode' => 'direct',
@@ -111,6 +113,8 @@ final class ConfigResolver
             threads: (int) $runtimeValue('threads'),
             mode: (string) $runtimeValue('mode'),
             phpIni: [...$appIni, ...$envIni],
+            php: self::nullableString($runtimeValue('php')),
+            phpBinary: self::nullableString($runtimeValue('phpBinary')),
         );
 
         /** @var list<string> $exclude */

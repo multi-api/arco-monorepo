@@ -158,7 +158,7 @@ final class Validator
             $result->error('validation.mode', ['value' => $runtime->mode]);
         }
         if ($runtime->binary !== null) {
-            if ($runtime->build !== null || $runtime->frankenphp !== null) {
+            if ($runtime->build !== null || $runtime->frankenphp !== null || $runtime->php !== null) {
                 $result->warning('validation.binary_overrides_build');
             }
             $path = str_starts_with($runtime->binary, '/') ? $runtime->binary : $projectDir . '/' . $runtime->binary;
@@ -167,9 +167,17 @@ final class Validator
             } elseif (! ElfInspector::isLinuxArm64($path)) {
                 $result->error('validation.binary_arch', ['path' => $runtime->binary]);
             }
+            if ($runtime->phpBinary !== null) {
+                $php = str_starts_with($runtime->phpBinary, '/') ? $runtime->phpBinary : $projectDir . '/' . $runtime->phpBinary;
+                if (! is_file($php)) {
+                    $result->error('validation.php_binary_missing', ['path' => $runtime->phpBinary]);
+                } elseif (! ElfInspector::isLinuxArm64($php)) {
+                    $result->error('validation.php_binary_arch', ['path' => $runtime->phpBinary]);
+                }
+            }
         } else {
             try {
-                ($this->manifest ?? RuntimeManifest::load())->resolve($runtime->build, $runtime->frankenphp);
+                ($this->manifest ?? RuntimeManifest::load())->resolve($runtime->build, $runtime->frankenphp, $runtime->php);
             } catch (BinaryException $e) {
                 $result->error($e->key, $e->params);
             }
