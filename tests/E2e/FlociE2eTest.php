@@ -72,7 +72,7 @@ final class FlociE2eTest extends TestCase
             return;
         }
         $began = microtime(true);
-        $remove = self::arco(['remove', '--env=' . self::ENV, '--force', '--no-interaction'], 900);
+        $remove = self::arco(['remove', '--env=' . self::ENV, '--yes', '--no-interaction'], 900);
         self::report('remove', $began, $remove->isSuccessful() ? 'ok' : 'FAILED');
         if (! $remove->isSuccessful()) {
             // Not a failure of the run: bin/test-docker discards the whole Floci anyway.

@@ -254,7 +254,7 @@ final class TinkerCommandTest extends TestCase
         self::assertStringContainsString('Add laravel/tinker', $tester->getDisplay());
     }
 
-    public function test_production_needs_force_without_a_terminal(): void
+    public function test_production_needs_yes_without_a_terminal(): void
     {
         $console = new FakeConsole();
         $tester = $this->tester($console);
@@ -262,7 +262,7 @@ final class TinkerCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--profile' => 'p', '--execute' => '1'], ['interactive' => false]);
 
         self::assertSame(1, $tester->getStatusCode());
-        self::assertStringContainsString('--force', $tester->getDisplay());
+        self::assertStringContainsString('--yes', $tester->getDisplay());
         self::assertSame([], $console->calls);
     }
 
@@ -280,13 +280,27 @@ final class TinkerCommandTest extends TestCase
         self::assertSame([], $console->calls);
     }
 
-    public function test_force_skips_the_confirmation(): void
+    public function test_yes_skips_the_confirmation(): void
     {
         $console = new FakeConsole([FakeConsole::tinkerReply(['presented' => '1'])]);
 
-        $this->tester($console)->execute(['--env' => 'production', '--profile' => 'p', '--execute' => '1', '--force' => true], ['interactive' => false]);
+        $tester = $this->tester($console);
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--execute' => '1', '--yes' => true], ['interactive' => false]);
 
         self::assertCount(1, $console->calls);
+        self::assertStringNotContainsString('deprecated', $tester->getDisplay());
+    }
+
+    public function test_force_still_works_with_one_deprecation_warning(): void
+    {
+        $console = new FakeConsole([FakeConsole::tinkerReply(['presented' => '1'])]);
+
+        $tester = $this->tester($console);
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--execute' => '1', '--force' => true], ['interactive' => false]);
+
+        self::assertCount(1, $console->calls);
+        self::assertSame(1, substr_count($tester->getDisplay(), 'tinker --force is deprecated'));
+        self::assertStringContainsString('use --yes', $tester->getDisplay());
     }
 
     public function test_without_execute_the_local_shell_starts(): void

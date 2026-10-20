@@ -105,9 +105,9 @@ Real run (`ARCO_E2E_DRY_RUN=0`):
 1. Guard; create the SecureString parameter `/<app>/e2e/app-key`.
 2. `arco deploy --env=e2e --yes`, `arco info --env=e2e --json` for the URL.
 3. Checks: `test_up`, `test_cache`, `test_storage`, `test_queue_job`, `test_scheduler`, `test_arco_command`, `test_logs` (as in the Floci table above).
-4. `arco remove --env=e2e --force`, then the cleanup prints its plan, what it leaves alone and each delete. A failed remove or a failed delete fails the run and names what is left.
+4. `arco remove --env=e2e --yes`, then the cleanup prints its plan, what it leaves alone and each delete. A failed remove or a failed delete fails the run and names what is left.
 
-Step 4 also runs when the deploy fails. If the run is killed (Ctrl-C), nothing cleans up: the app name is printed at the start (`[e2e-aws] … app arco-e2e-…`); run `AWS_PROFILE=<profile> ARCO_E2E_APP=<it> ARCO_E2E_ACCOUNT=<id> vendor/bin/arco remove --env=e2e --force` from a copy of `examples/laravel`, then delete the retained `<app>-e2e-*` queues, bucket and table and the parameter by hand.
+Step 4 also runs when the deploy fails. If the run is killed (Ctrl-C), nothing cleans up: the app name is printed at the start (`[e2e-aws] … app arco-e2e-…`); run `AWS_PROFILE=<profile> ARCO_E2E_APP=<it> ARCO_E2E_ACCOUNT=<id> vendor/bin/arco remove --env=e2e --yes` from a copy of `examples/laravel`, then delete the retained `<app>-e2e-*` queues, bucket and table and the parameter by hand.
 
 ## Permissions of the E2E profile
 

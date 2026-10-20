@@ -8,6 +8,7 @@ use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\StepPrinter;
 use Multiapi\Arco\Cli\UserError;
+use Multiapi\Arco\Commands\Concerns\ConfirmsProtected;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\AwsDeployer;
@@ -23,6 +24,7 @@ use Throwable;
 #[AsCommand(name: 'remove', description: 'Delete an environment (Web Function, endpoint and execution role)')]
 final class RemoveCommand extends ArcoCommand
 {
+    use ConfirmsProtected;
     use ResolvesTarget;
 
     /** @var Closure(AwsClients, ?AwsClients, bool): Deployer */
@@ -39,7 +41,8 @@ final class RemoveCommand extends ArcoCommand
     {
         $this->addOption('env', 'e', InputOption::VALUE_REQUIRED, 'Environment to remove')
             ->addOption('profile', 'p', InputOption::VALUE_REQUIRED, 'AWS profile to use')
-            ->addOption('force', null, InputOption::VALUE_NONE, 'Skip the typed confirmation')
+            ->addOption('yes', 'y', InputOption::VALUE_NONE, 'Answer yes to every confirmation (no typed confirmation)')
+            ->addOption('force', null, InputOption::VALUE_NONE, 'Deprecated: use --yes')
             ->addOption('dns-profile', null, InputOption::VALUE_REQUIRED, 'AWS profile whose Route 53 holds the DNS zones of the custom domains');
     }
 
@@ -47,6 +50,10 @@ final class RemoveCommand extends ArcoCommand
     {
         $io = new SymfonyStyle($input, $output);
         try {
+            if ($input->getOption('force')) {
+                $io->warning($this->t('deprecated.force_remove'));
+                $input->setOption('yes', true);
+            }
             $config = $this->loadTarget($input, $io);
             $aws = $this->awsClients($config, $input, $io);
             $dns = $this->dnsClients($config, $input);
@@ -63,9 +70,10 @@ final class RemoveCommand extends ArcoCommand
             // What the tags say belongs to the environment, before anything is asked or deleted.
             $this->listResources($deployer, $config, $io);
 
-            if (! $input->getOption('force')) {
+            // Interactive: the typed confirmation is the protected() confirmation too.
+            if (! $input->getOption('yes')) {
                 if (! $input->isInteractive()) {
-                    throw new UserError($this->t('remove.force_required'));
+                    throw $config->isProtected() ? $this->protectedNeedsYes($config, 'remove') : new UserError($this->t('remove.yes_required'));
                 }
                 $typed = $io->ask($this->t('remove.type_to_confirm', [
                     'function' => $config->functionName(),

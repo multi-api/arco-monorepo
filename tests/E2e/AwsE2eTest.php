@@ -106,7 +106,7 @@ final class AwsE2eTest extends TestCase
         // Once only (also called from a failed setUpBeforeClass).
         self::$mayHaveCreated = false;
         $began = microtime(true);
-        $remove = self::arco(['remove', '--env=' . self::ENV, '--force', '--no-interaction'], 900);
+        $remove = self::arco(['remove', '--env=' . self::ENV, '--yes', '--no-interaction'], 900);
         self::report('remove', $began, $remove->isSuccessful() ? 'ok' : 'FAILED');
         if (! $remove->isSuccessful()) {
             fwrite(STDERR, "[remove] arco remove failed:\n" . self::tail($remove->getOutput() . $remove->getErrorOutput(), 40) . "\n");

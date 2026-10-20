@@ -120,7 +120,7 @@ The main options:
 | `storage(name, ...)` | none | An S3 bucket used as a Laravel disk; named options `public`, `expire`, `cors`, `existing`, `default` |
 | `cache()` / `failedJobsTable()` | off | DynamoDB tables for Laravel's cache and failed jobs; `existing:` names your own table |
 | `console(timeout:, memory:)` | 900 s, 2048 MB | Console function timeout in seconds (3–900) and memory in MB (128–10240) |
-| `protected()` | `production` | Ask before `arco tinker` on this environment |
+| `protected()` | `production` | Ask before `arco tinker`, `arco command`, `arco remove` and `arco queue:dlq --redrive` on this environment (`--yes` answers; required without a terminal) |
 
 Every option, the packaging rules and the Laravel preset are in the
 [configuration reference](docs/configuration.md).

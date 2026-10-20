@@ -355,7 +355,7 @@ missing. Every one of them can point at a bucket or table you already have with 
 ### Commands
 
 ```bash
-vendor/bin/arco command "migrate:status" --env=production
+vendor/bin/arco command "migrate:status" --env=production   # production asks first; add --yes in scripts
 vendor/bin/arco command "cache:clear" --env=production
 vendor/bin/arco command "reports:build --month=10" --env=production --async   # returns at once
 ```
@@ -448,7 +448,7 @@ open files) are dropped, and Arco names them. A database transaction cannot span
 Only the PsySH commands `help`, `exit`, `clear`, `history` and `buffer` are available; the others (`ls`,
 `doc`, `show`, `timeit`, ...) are disabled because they would run on your machine instead of Lambda. The
 history is a separate file per app and environment. `production` and environments marked `->protected()`
-ask for confirmation first; `--force` skips it (it is required without a terminal). Every statement is
+ask for confirmation first; `--yes` answers it (it is required without a terminal; `--force` still works but is deprecated). Every statement is
 written to the console function's log, as an audit trail (with its SHA-256 and length, the code cut at
 4000 bytes); results and variables are not, since they can hold secrets. `--execute` runs one statement and exits with
 1 if it throws.
@@ -494,10 +494,10 @@ Provide AWS credentials through the environment (for example with
 ```bash
 vendor/bin/arco secret:set app-key --env=production --no-interaction < key.txt
 vendor/bin/arco deploy --env=production --yes --no-interaction
-vendor/bin/arco remove --env=production --force --no-interaction
+vendor/bin/arco remove --env=production --yes --no-interaction
 ```
 
-`--yes` confirms creating a new environment; `--force` skips the typed confirmation of `remove`.
+`--yes` answers every confirmation: creating a new environment, the typed confirmation of `remove`, and the question protected environments (`production` by default) ask before `arco command`, `arco tinker` and `queue:dlq --redrive`. `--force` overrides a safety check instead (`init`, `deploy`, `deploy --force-dns`); `remove --force` and `tinker --force` are deprecated spellings of `--yes`.
 Arco's own real-AWS end-to-end run deploys `examples/laravel` to a dedicated test account this way.
 
 ### Minimal IAM permissions

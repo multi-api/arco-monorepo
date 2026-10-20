@@ -8,6 +8,7 @@ use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Build\PresetRegistry;
 use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\UserError;
+use Multiapi\Arco\Commands\Concerns\ConfirmsProtected;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Console\Console;
@@ -27,6 +28,7 @@ use Throwable;
 #[AsCommand(name: 'tinker', description: 'Open a tinker shell whose statements run on the console function')]
 final class TinkerCommand extends ArcoCommand
 {
+    use ConfirmsProtected;
     use ResolvesTarget;
 
     /** @var Closure(AwsClients, AppConfig): Console */
@@ -52,13 +54,19 @@ final class TinkerCommand extends ArcoCommand
         $this->addOption('env', 'e', InputOption::VALUE_REQUIRED, 'Environment')
             ->addOption('profile', 'p', InputOption::VALUE_REQUIRED, 'AWS profile to use')
             ->addOption('execute', null, InputOption::VALUE_REQUIRED, 'Run one statement and exit (exit code 1 on an exception)')
-            ->addOption('force', null, InputOption::VALUE_NONE, 'Do not ask for confirmation on protected environments');
+            ->addOption('yes', 'y', InputOption::VALUE_NONE, 'Answer yes to the confirmation of a protected environment')
+            ->addOption('force', null, InputOption::VALUE_NONE, 'Deprecated: use --yes');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $io = new SymfonyStyle($input, $output);
         try {
+            if ($input->getOption('force')) {
+                // stderr: --execute prints its value on stdout.
+                $io->getErrorStyle()->warning($this->t('deprecated.force_tinker'));
+                $input->setOption('yes', true);
+            }
             $config = $this->loadTarget($input, $io);
             if (! $config->consoleEnabled()) {
                 throw new UserError($this->t('console.disabled', ['environment' => $config->environment]));
@@ -71,19 +79,11 @@ final class TinkerCommand extends ArcoCommand
                 throw new UserError($this->t('tinker.psysh_missing'));
             }
             $aws = $this->awsClients($config, $input, $io, checkCredentials: false);
-            if ($config->isProtected() && ! $input->getOption('force')) {
-                $params = ['environment' => $config->environment, 'account' => $aws->accountId(), 'function' => $config->consoleFunctionName()];
-                if (! $input->isInteractive()) {
-                    throw new UserError($this->t('tinker.force_required', $params));
-                }
-                if (! $io->confirm($this->t('tinker.confirm_protected', $params), false)) {
-                    $io->writeln($this->t('common.aborted'));
-                    return self::FAILURE;
-                }
-            }
-
             // Before anything runs: a console function another app or environment owns is never invoked.
             ($this->ownershipCheck)($aws, $config);
+            if (! $this->confirmProtected($input, $io, $config, 'tinker', $aws)) {
+                return self::FAILURE;
+            }
             $session = new TinkerSession(($this->consoleFactory)($aws, $config), $config);
             $render = function (TinkerReply $reply) use ($output): void {
                 $this->render($reply, $output);

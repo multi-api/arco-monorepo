@@ -18,6 +18,14 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `maxInstances` / `max-instances`) and `workers(min:, max:)` (use `workers(N)` and `maxThreads(N)`). They keep
   working in 0.9, print one warning per run, and are removed in 1.0. Giving both `concurrency` and `maxInstances`
   to a queue is a validation error.
+- **Changed:** `protected()` guards `arco command`, `arco remove` and `arco queue:dlq --redrive`, not only `arco tinker`
+  (default: environments named `production`). At a terminal they ask first; without one they stop and say to add
+  `--yes`. CI scripts running `arco command ... --env=production --no-interaction` or `arco remove` there must add
+  `--yes`. Deploy commands (`deployCommands()`, `--migrate`) are not asked.
+- **Changed:** `--yes` / `-y` answers every confirmation on `deploy`, `remove`, `tinker`, `command` and `queue:dlq`;
+  `--force` only overrides a safety check (`init`, `deploy`, `deploy --force-dns`).
+- **Deprecated:** `arco remove --force` and `arco tinker --force` (use `--yes`). They keep working in 0.9, print
+  one warning, and are removed in 1.0.
 - **Removed:** `maxEnvironments()` (renamed to `maxInstances()` in 0.5) and `consoleTimeout()`. An `arco.php` that
   still calls them stops with a message naming the replacement: `maxInstances(N)` and `console(timeout: N)`.
 - **Changed:** `console(bool $enabled = true, ?int $timeout = null, ?int $memory = null)`: the console function's

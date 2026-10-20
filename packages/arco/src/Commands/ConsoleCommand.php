@@ -7,6 +7,7 @@ use Multiapi\Arco\Deploy\OwnershipGuard;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\UserError;
+use Multiapi\Arco\Commands\Concerns\ConfirmsProtected;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Console\Console;
@@ -24,6 +25,7 @@ use Throwable;
 #[AsCommand(name: 'command', description: 'Run an artisan (or PHP) command on the console function')]
 final class ConsoleCommand extends ArcoCommand
 {
+    use ConfirmsProtected;
     use ResolvesTarget;
 
     /** @var Closure(AwsClients, AppConfig): Console */
@@ -45,6 +47,7 @@ final class ConsoleCommand extends ArcoCommand
             ->addOption('env', 'e', InputOption::VALUE_REQUIRED, 'Environment')
             ->addOption('profile', 'p', InputOption::VALUE_REQUIRED, 'AWS profile to use')
             ->addOption('async', null, InputOption::VALUE_NONE, 'Start the command and return at once; follow it with arco logs')
+            ->addOption('yes', 'y', InputOption::VALUE_NONE, 'Answer yes to the confirmation of a protected environment')
             ->addOption('timeout', null, InputOption::VALUE_REQUIRED, 'Time limit in seconds (up to the consoleTimeout)');
     }
 
@@ -73,6 +76,9 @@ final class ConsoleCommand extends ArcoCommand
             $aws = $this->awsClients($config, $input, $errors, checkCredentials: false);
             // Before anything runs: a console function another app or environment owns is never invoked.
             ($this->ownershipCheck)($aws, $config);
+            if (! $this->confirmProtected($input, $errors, $config, 'command', $aws, ['command' => $command])) {
+                return self::FAILURE;
+            }
             $console = ($this->consoleFactory)($aws, $config);
             if ($input->getOption('async')) {
                 $console->start($config, $command, $timeout);

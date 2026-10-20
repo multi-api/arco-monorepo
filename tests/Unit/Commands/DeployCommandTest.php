@@ -515,6 +515,21 @@ final class DeployCommandTest extends TestCase
         self::assertLessThan(strpos($display, 'scripts/warm.php'), strpos($display, 'Migrated.'), 'each output is printed before the next command starts');
     }
 
+    public function test_deploy_commands_on_a_protected_environment_are_not_gated_by_protected(): void
+    {
+        $this->withDeployCommands("['migrate --force']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+        $console = new FakeConsole([new CommandResult(0, "Migrated.\n")]);
+
+        $tester = $this->tester($deployer, console: $console);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('protected', $tester->getDisplay());
+        self::assertStringContainsString('Migrated.', $tester->getDisplay());
+    }
+
     public function test_deploy_commands_that_cannot_work_on_lambda_are_warned_about_before_the_deploy(): void
     {
         $this->withDeployCommands("['config:cache', 'migrate']");

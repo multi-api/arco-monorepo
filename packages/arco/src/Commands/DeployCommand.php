@@ -71,7 +71,7 @@ final class DeployCommand extends ArcoCommand
     {
         $this->addOption('env', 'e', InputOption::VALUE_REQUIRED, 'Environment to deploy')
             ->addOption('profile', 'p', InputOption::VALUE_REQUIRED, 'AWS profile to use')
-            ->addOption('yes', 'y', InputOption::VALUE_NONE, 'Do not ask for confirmation')
+            ->addOption('yes', 'y', InputOption::VALUE_NONE, 'Answer yes to every confirmation')
             ->addOption('dns-profile', null, InputOption::VALUE_REQUIRED, 'AWS profile whose Route 53 holds the DNS zones of the custom domains')
             ->addOption('force-dns', null, InputOption::VALUE_NONE, 'Replace existing DNS records of the custom domains that point elsewhere')
             ->addOption('force', null, InputOption::VALUE_NONE, 'Dangerous: deploy over a function, role or scheduler rule tagged for another app or environment, or carrying no Arco tags, and tag it for this one. Only when you are sure it is yours')
