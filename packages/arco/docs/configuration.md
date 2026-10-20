@@ -72,7 +72,7 @@ like the others (an environment's call replaces the app's, and `cache(false)` tu
 | `region(string)` | required | AWS region; must be one of us-east-1, us-east-2, us-west-2, ap-northeast-1, eu-west-1 |
 | `concurrency(int)` | AWS default (64) | Upper bound of requests each instance handles at once: revision `maxConcurrencyPerEnvironment` (1 to 128). Lambda applies its own dynamic limit below it |
 | `timeout(int)` | 30 | Revision `timeoutSeconds` (3 to 900) |
-| `maxInstances(int)` | unset | Maximum running instances of the function: endpoint `scalingConfig.maxEnvironments` (2 to 10000). `maxEnvironments(int)` is accepted as an alias |
+| `maxInstances(int)` | unset | Maximum running instances of the function: endpoint `scalingConfig.maxEnvironments` (2 to 10000). |
 | `rateLimit(int)` | unset | Endpoint `throttleConfig.rateLimit` (requests per second: 100 to 1000 in steps of 100, or 2000 to 10000 in steps of 1000) |
 | `auth('public'\|'iam')` | `public` | Endpoint `authType`: `public` is `ApplicationManaged`, `iam` is `IamAuth` |
 | `logLevel(string)` | `info` | Revision log level: trace, debug, info, warn, error, fatal |
@@ -80,21 +80,20 @@ like the others (an environment's call replaces the app's, and `cache(false)` tu
 | `kmsKey(arn)` | unset | Revision `kmsKeyArn` |
 | `profile(string)` | unset | AWS profile for the environment (see getting started) |
 | `account(string)` | written on first deploy | 12-digit account lock; environment level only |
-| `variables(array)` | preset defaults | Revision environment variables |
+| `variables(array)` | preset defaults | Revision environment variables. Names starting with `ARCO` are reserved for Arco and refused; Lambda's own (`AWS_REGION`, `AWS_LAMBDA_*`, ...) too |
 | `permissions(array)` | `[]` | Extra IAM statements for the managed execution role (below) |
 | `exclude(array)` / `include(array)` | preset rules | Packaging globs (below) |
 | `domain(string\|array)` | none | Custom domains served through CloudFront (below); lowercase hostnames, no wildcards, at most 10 |
-| `dns(string\|false)` | Route 53 in the deploy account | `dns('profile')`: Route 53 in the account of that AWS profile; `dns(false)`: DNS is elsewhere, Arco prints the records |
+| `dns(string\|false $dns)` | Route 53 in the deploy account | `dns('profile')`: Route 53 in the account of that AWS profile; `dns(false)`: DNS is elsewhere, Arco prints the records |
 | `deployCommands(array)` | `[]` | Commands run on the console function during every deploy, before traffic moves; an environment's list replaces the app's |
-| `console(bool = true)` | off | Deploy the console function (`arco command`, `arco tinker`, `deployCommands()`); `console(false)` deletes an existing one on the next deploy; a scheduler implies it |
+| `console(bool = true, ?int timeout, ?int memory)` | off | Deploy the console function (`arco command`, `arco tinker`, `deployCommands()`); `console(false)` deletes an existing one on the next deploy; a scheduler implies it. `timeout:` is in seconds (3 to 900, default 900), `memory:` in MB (128 to 10240, default 2048); giving either also turns the console on |
 | `scheduler(int\|false)` | off | Run Laravel's `schedule:run` every N minutes (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 or 60), aligned to the UTC clock; needs the console, which it turns on |
 | `logRetention(int\|false)` | not managed | Days CloudWatch keeps the web, console and queue worker logs (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288 or 3653); `false` = never expire; not set = Arco leaves the groups as they are |
-| `consoleTimeout(int)` | 900 | Timeout of the console function in seconds (3 to 900) |
 | `protected(bool = true)` | on for `production` | Ask for confirmation before `arco tinker`; `protected(false)` turns it off |
 | `certificate(arn)` | looked up or requested | ACM certificate ARN in `us-east-1` to use for the domains |
 | `queue(name, ...)` | none | An SQS queue and the worker function that runs its jobs (see [Queues](#queues)); `queue(name, false)` drops an app-level queue from an environment |
 | `storage(name, ...)` | none | An S3 bucket, used as a Laravel disk (see [Storage](#storage)); `storage(name, false)` drops an app-level storage from an environment |
-| `cache(bool = true, existing: ?string)` | off | A DynamoDB table for Laravel's cache (see [Cache and failed-jobs tables](#cache-and-failed-jobs-tables)) |
+| `cache(bool = true, existing: ?string, driver: 'dynamodb')` | off | A DynamoDB table for Laravel's cache (see [Cache and failed-jobs tables](#cache-and-failed-jobs-tables)) |
 | `failedJobsTable(bool = true, existing: ?string)` | off | A DynamoDB table for Laravel's failed jobs (same section) |
 
 An *environment* in Arco is an `environment()` in `arco.php` (staging, production), each deployed as
@@ -174,7 +173,7 @@ vendor/bin/arco set timeout 60 --app          # app level (all environments)
 - The value is checked with the same rules as validation before anything is written.
 - `set` adds or replaces the `->method(value)` call in the environment's `fn (Environment $env) => $env ...`
   closure (a bare `->environment('x')` becomes one), or on the `App::make(...)` chain with `--app`.
-  An existing `maxEnvironments(...)` is replaced by `maxInstances(...)`. With `--app`, Arco warns
+  `console-timeout` and `console-memory` write the `timeout:` and `memory:` options of `->console(...)`. With `--app`, Arco warns
   about environments that set their own value, since the app-level value does not apply there.
 - `unset` removes the call so the app-level or default value applies. If the setting is not set at
   that level, it says so and changes nothing.
@@ -229,8 +228,8 @@ Scheduler), and `settings.logRetention` the days, `false`
 `arco.php` has no `console()` setting for it, `arco deploy` stops before changing anything: add `->console()`
 to keep it, or `->console(false)` to delete it.
 
-When on, `arco deploy` creates or updates `<app>-<env>-console` (runtime `provided.al2023`, arm64, 2048 MB,
-1024 MB of `/tmp`, timeout `consoleTimeout()`; the name must fit Lambda's 64 characters), with the web
+When on, `arco deploy` creates or updates `<app>-<env>-console` (runtime `provided.al2023`, arm64, 2048 MB by default (`console(memory:)`),
+1024 MB of `/tmp`, timeout `console(timeout:)` (900 s by default); the name must fit Lambda's 64 characters), with the web
 revision's variables, secrets and execution role. It publishes a version and points the `live` alias at it
 once traffic has moved and the health check passed. If AWS refuses that alias move (for example a profile
 without `lambda:UpdateAlias`), the deploy still succeeds with a warning: the web revision is live, but

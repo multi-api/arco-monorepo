@@ -17,7 +17,7 @@ final class LambdaConsoleTest extends TestCase
 {
     private function config(): AppConfig
     {
-        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->consoleTimeout(600)->environment('production')->toArray(), 'production');
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->console(timeout: 600)->environment('production')->toArray(), 'production');
     }
 
     private function console(AwsMocks $mocks): LambdaConsole

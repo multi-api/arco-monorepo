@@ -43,6 +43,45 @@ final class ConfigLoaderTest extends TestCase
         );
     }
 
+    public function test_a_removed_max_environments_call_names_its_replacement(): void
+    {
+        $path = $this->write("<?php\nuse Multiapi\\Arco\\Config\\App;\nreturn App::make('shop')->region('us-east-1')->maxEnvironments(3)->environment('production');\n");
+
+        try {
+            (new ConfigLoader())->load($path);
+            self::fail('maxEnvironments() is gone');
+        } catch (ConfigException $e) {
+            self::assertSame('config.removed_max_environments', $e->key);
+            self::assertSame(['value' => '3'], $e->params);
+        }
+    }
+
+    public function test_a_removed_console_timeout_call_names_its_replacement(): void
+    {
+        $path = $this->write("<?php\nuse Multiapi\\Arco\\Config\\App;\nuse Multiapi\\Arco\\Config\\Environment;\nreturn App::make('shop')->region('us-east-1')->environment('production', fn (Environment \$e) => \$e->consoleTimeout(60));\n");
+
+        try {
+            (new ConfigLoader())->load($path);
+            self::fail('consoleTimeout() is gone');
+        } catch (ConfigException $e) {
+            self::assertSame('config.removed_console_timeout', $e->key);
+            self::assertSame(['value' => '60'], $e->params);
+        }
+    }
+
+    public function test_other_undefined_methods_keep_the_generic_error(): void
+    {
+        $path = $this->write("<?php\nuse Multiapi\\Arco\\Config\\App;\nreturn App::make('shop')->nope()->environment('production');\n");
+
+        $this->expectException(ConfigException::class);
+        try {
+            (new ConfigLoader())->load($path);
+        } catch (ConfigException $e) {
+            self::assertSame('config.failed', $e->key);
+            throw $e;
+        }
+    }
+
     public function test_loads_config_in_a_separate_process(): void
     {
         $path = $this->write(<<<'PHP'

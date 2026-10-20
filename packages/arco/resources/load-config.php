@@ -5,7 +5,16 @@
 
 require $autoload;
 
-$app = (static fn () => require $configPath)();
+try {
+    $app = (static fn () => require $configPath)();
+} catch (\Error $error) {
+    // Methods removed in 0.9: say what replaces them instead of a bare "undefined method".
+    if (preg_match('/^Call to undefined method .+::(maxEnvironments|consoleTimeout)\(\)$/', $error->getMessage(), $match) === 1) {
+        fwrite(STDERR, 'ARCO_REMOVED_METHOD:' . $match[1]);
+        exit(4);
+    }
+    throw $error;
+}
 
 if (! $app instanceof \Multiapi\Arco\Config\App) {
     fwrite(STDERR, 'ARCO_INVALID_RETURN:' . get_debug_type($app));

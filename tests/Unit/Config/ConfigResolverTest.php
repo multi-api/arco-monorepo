@@ -177,11 +177,11 @@ final class ConfigResolverTest extends TestCase
         self::assertSame('app', $production->sources['dns']);
     }
 
-    public function test_max_instances_and_its_max_environments_alias_resolve_to_the_same_setting(): void
+    public function test_max_instances_resolves_per_level(): void
     {
         $raw = App::make('shop')->region('us-east-1')
             ->maxInstances(10)
-            ->environment('staging', fn (Environment $e) => $e->maxEnvironments(2))
+            ->environment('staging', fn (Environment $e) => $e->maxInstances(2))
             ->environment('production')
             ->toArray();
 
@@ -206,7 +206,7 @@ final class ConfigResolverTest extends TestCase
     {
         $raw = App::make('shop')->region('us-east-1')
             ->deployCommands(['migrate --force'])
-            ->consoleTimeout(600)
+            ->console(timeout: 600, memory: 4096)
             ->environment('staging', fn (Environment $e) => $e->deployCommands([]))
             ->environment('production', fn (Environment $e) => $e->deployCommands(['migrate --force', 'config:cache']))
             ->environment('qa')
@@ -216,6 +216,8 @@ final class ConfigResolverTest extends TestCase
         self::assertSame(['migrate --force', 'config:cache'], $production->deployCommands);
         self::assertSame('environment', $production->sources['deployCommands']);
         self::assertSame(600, $production->consoleTimeout);
+        self::assertSame(4096, $production->consoleMemory);
+        self::assertTrue($production->consoleEnabled());
         self::assertSame('app', $production->sources['consoleTimeout']);
         self::assertSame('shop-production-console', $production->consoleFunctionName());
 
@@ -227,7 +229,7 @@ final class ConfigResolverTest extends TestCase
         self::assertSame('app', $qa->sources['deployCommands']);
 
         $defaults = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('qa')->toArray(), 'qa');
-        self::assertSame(900, $defaults->consoleTimeout);
+        self::assertSame([900, 2048], [$defaults->consoleTimeout, $defaults->consoleMemory]);
         self::assertSame([], $defaults->deployCommands);
         self::assertSame('default', $defaults->sources['deployCommands']);
     }

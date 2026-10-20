@@ -401,9 +401,34 @@ final class ValidatorTest extends TestCase
 
     public function test_console_timeout_range(): void
     {
-        self::assertSame(['validation.console_timeout'], $this->errorKeys(App::make('shop')->region('us-east-1')->consoleTimeout(901)->environment('production')));
-        self::assertSame(['validation.console_timeout'], $this->errorKeys(App::make('shop')->region('us-east-1')->consoleTimeout(2)->environment('production')));
-        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->consoleTimeout(3)->environment('production')));
+        self::assertSame(['validation.console_timeout'], $this->errorKeys(App::make('shop')->region('us-east-1')->console(timeout: 901)->environment('production')));
+        self::assertSame(['validation.console_timeout'], $this->errorKeys(App::make('shop')->region('us-east-1')->console(timeout: 2)->environment('production')));
+        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->console(timeout: 3)->environment('production')));
+    }
+
+    public function test_console_memory_range(): void
+    {
+        self::assertSame(['validation.console_memory'], $this->errorKeys(App::make('shop')->region('us-east-1')->console(memory: 127)->environment('production')));
+        self::assertSame(['validation.console_memory'], $this->errorKeys(App::make('shop')->region('us-east-1')->console(memory: 10241)->environment('production')));
+        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->console(memory: 4096)->environment('production')));
+    }
+
+    public function test_cache_driver_must_be_dynamodb(): void
+    {
+        self::assertSame(['validation.cache_driver'], $this->errorKeys(App::make('shop')->region('us-east-1')->cache(driver: 'redis')->environment('production')));
+        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->cache(driver: 'dynamodb')->environment('production')));
+    }
+
+    public function test_every_arco_variable_is_reserved_for_arco(): void
+    {
+        foreach (['ARCO', 'ARCO_X', 'ARCO_TRUST_PROXIES', 'ARCO_QUEUES', 'ARCOFOO'] as $name) {
+            $app = App::make('shop')->region('us-east-1')->variables([$name => '1'])->environment('production');
+            $errors = (new Validator())->validate(ConfigResolver::resolve($app->toArray(), 'production'), sys_get_temp_dir())->errors;
+            self::assertSame('validation.reserved_arco_variable', $errors[0]['key'] ?? null, $name);
+            self::assertSame($name, $errors[0]['params']['variable'] ?? null);
+        }
+        $app = App::make('shop')->region('us-east-1')->variables(['MY_ARCO' => '1', 'ARC' => '1'])->environment('production');
+        self::assertSame([], $this->errorKeys($app));
     }
 
     public function test_console_function_name_must_fit_64_characters(): void

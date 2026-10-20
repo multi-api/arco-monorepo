@@ -67,7 +67,7 @@ final class InfoCommandTest extends TestCase
 
     public function test_shows_console_settings_deploy_commands_and_the_live_version(): void
     {
-        $config = str_replace("->timeout(60)", "->timeout(60)->consoleTimeout(300)->deployCommands(['migrate --force'])", ProjectFixture::consoleConfig());
+        $config = str_replace("->timeout(60)", "->timeout(60)->console(timeout: 300)->deployCommands(['migrate --force'])", ProjectFixture::consoleConfig());
         $project = new ProjectFixture($config);
         putenv('AWS_PROFILE=p');
         $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', null, null, 'shop-production-console', '7');

@@ -362,7 +362,7 @@ vendor/bin/arco command "reports:build --month=10" --env=production --async   # 
 
 The whole command goes in one quoted string (it is split into arguments without a shell, so pipes
 and redirects do not work). Arco prints the output and exits with the command's exit code, so it
-works in scripts and CI. A command can run up to `consoleTimeout()` (15 minutes by default);
+works in scripts and CI. A command can run up to `console(timeout:)` (15 minutes by default);
 `--timeout=<s>` lowers it. Use `--async` for longer work and follow it with
 `arco logs --source=console --follow`. For a plain PHP app, name the script: `arco command "bin/console app:sync"`.
 The console function must be on (`->console()`) and deployed: run `arco deploy` first.

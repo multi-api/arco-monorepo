@@ -119,7 +119,7 @@ The main options:
 | `queue(name, ...)` | none | An SQS queue and its worker function; named options `timeout`, `memory`, `concurrency`, `batchSize`, `tries`, `dlq`, `fifo`, `existing`, `default` |
 | `storage(name, ...)` | none | An S3 bucket used as a Laravel disk; named options `public`, `expire`, `cors`, `existing`, `default` |
 | `cache()` / `failedJobsTable()` | off | DynamoDB tables for Laravel's cache and failed jobs; `existing:` names your own table |
-| `consoleTimeout(int)` | 900 | Seconds a console command may run (3–900) |
+| `console(timeout:, memory:)` | 900 s, 2048 MB | Console function timeout in seconds (3–900) and memory in MB (128–10240) |
 | `protected()` | `production` | Ask before `arco tinker` on this environment |
 
 Every option, the packaging rules and the Laravel preset are in the

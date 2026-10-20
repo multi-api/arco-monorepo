@@ -73,26 +73,34 @@ final class SettingCommandsTest extends TestCase
         self::assertStringContainsString('->concurrency(16)', $tester->getDisplay());
     }
 
-    public function test_max_instances_replaces_max_environments(): void
+    public function test_console_timeout_and_memory_are_written_as_the_console_call(): void
     {
-        $this->project(str_replace('->timeout(60)', '->timeout(60)->maxEnvironments(2)', ProjectFixture::standardConfig()));
+        $this->project();
 
-        $this->arco('set', ['key' => 'max-instances', 'value' => '20', '--env' => 'production'])->assertCommandIsSuccessful();
+        $tester = $this->arco('set', ['key' => 'console-timeout', 'value' => '600', '--env' => 'production']);
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->console(timeout: 600)', self::display($tester));
+        $this->arco('set', ['key' => 'console-memory', 'value' => '4096', '--env' => 'production'])->assertCommandIsSuccessful();
 
-        self::assertSame(20, $this->config()->maxInstances);
-        self::assertStringNotContainsString('maxEnvironments', $this->source());
+        self::assertStringContainsString('->console(timeout: 600, memory: 4096)', $this->source());
+        self::assertStringNotContainsString('consoleTimeout', $this->source());
+        $config = $this->config();
+        self::assertSame([true, 600, 4096], [$config->console, $config->consoleTimeout, $config->consoleMemory]);
+
+        $this->arco('unset', ['key' => 'console-timeout', '--env' => 'production'])->assertCommandIsSuccessful();
+        self::assertStringContainsString('->console(memory: 4096)', $this->source());
+        self::assertSame(900, $this->config()->consoleTimeout);
     }
 
-    public function test_max_instances_with_the_same_value_still_replaces_max_environments(): void
+    public function test_console_timeout_is_validated_before_writing(): void
     {
-        $this->project(str_replace('->timeout(60)', '->timeout(60)->maxEnvironments(2)', ProjectFixture::standardConfig()));
+        $this->project();
+        $before = $this->source();
 
-        $tester = $this->arco('set', ['key' => 'max-instances', 'value' => '2', '--env' => 'production']);
+        $tester = $this->arco('set', ['key' => 'console-timeout', 'value' => '901', '--env' => 'production']);
 
-        $tester->assertCommandIsSuccessful();
-        self::assertSame(2, $this->config()->maxInstances);
-        self::assertStringNotContainsString('maxEnvironments', $this->source());
-        self::assertStringContainsString('->maxInstances(2)', $this->source());
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertSame($before, $this->source());
     }
 
     public function test_sets_and_unsets_at_app_level_and_warns_about_environment_overrides(): void

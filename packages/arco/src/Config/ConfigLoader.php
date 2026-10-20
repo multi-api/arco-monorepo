@@ -33,6 +33,9 @@ final class ConfigLoader
                     'type' => substr($process->getErrorOutput(), strlen('ARCO_INVALID_RETURN:')),
                 ]);
             }
+            if ($process->getExitCode() === 4 && str_starts_with($process->getErrorOutput(), 'ARCO_REMOVED_METHOD:')) {
+                throw self::removedMethod(substr($process->getErrorOutput(), strlen('ARCO_REMOVED_METHOD:')), $arcoPhpPath);
+            }
             if (! $process->isSuccessful()) {
                 throw ConfigException::make('config.failed', [
                     'output' => trim($process->getOutput() . "\n" . $process->getErrorOutput()),
@@ -45,6 +48,15 @@ final class ConfigLoader
         } finally {
             @unlink($output);
         }
+    }
+
+    /** The error for a call to a method removed from the API, naming its replacement (with the value arco.php passed, when it can be read). */
+    private static function removedMethod(string $method, string $arcoPhpPath): ConfigException
+    {
+        $value = preg_match('/->\s*' . preg_quote($method, '/') . '\s*\(\s*(\d+)/', (string) @file_get_contents($arcoPhpPath), $match) === 1 ? $match[1] : 'N';
+        return $method === 'maxEnvironments'
+            ? ConfigException::make('config.removed_max_environments', ['value' => $value])
+            : ConfigException::make('config.removed_console_timeout', ['value' => $value]);
     }
 
     private static function autoloadPath(): string

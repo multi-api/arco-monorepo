@@ -5,6 +5,22 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## 0.9.0
 
+- **Removed:** `maxEnvironments()` (renamed to `maxInstances()` in 0.5) and `consoleTimeout()`. An `arco.php` that
+  still calls them stops with a message naming the replacement: `maxInstances(N)` and `console(timeout: N)`.
+- **Changed:** `console(bool $enabled = true, ?int $timeout = null, ?int $memory = null)`: the console function's
+  timeout (3 to 900 s) and memory (128 to 10240 MB, default 2048) are options of `console()`; giving one turns the
+  console on. `arco set console-timeout` / `console-memory` (and `unset`) write them there.
+- **Changed:** `variables()` refuses every name starting with `ARCO`: they are reserved for Arco (it sets `ARCO`,
+  `ARCO_APP`, `ARCO_ENV`, `ARCO_BUILD` and the ones its runtime reads). The error names the variable. A variable
+  of your own that starts with `ARCO` needs another name (a value of `ARCO_QUEUES` or `ARCO_STORAGE` no longer
+  replaces Arco's map).
+- **Changed:** `cache(bool $enabled = true, ?string $existing = null, string $driver = 'dynamodb')` and
+  `failedJobsTable(bool $enabled = true, ?string $existing = null)` no longer take `null` (it meant `true`);
+  `cache(driver:)` accepts only `dynamodb` and validation refuses anything else. `dns()`'s parameter is named
+  `$dns`.
+- **Changed:** the framework preset interfaces (`FrameworkPreset`, `CachesPaths`, `RunsCommands`,
+  `PresetRegistry`) and `App::toArray()` / `Environment::toArray()` are marked `@internal`: not part of the 1.x
+  compatibility promise.
 - **Changed:** before a deploy updates, or `arco remove` deletes, the web function, console function, queue
   workers, execution role or scheduler rule, Arco reads their `arco:app`/`arco:environment` tags and refuses,
   before changing anything, a resource tagged for another app or environment (names are `<app>-<env>`, so app

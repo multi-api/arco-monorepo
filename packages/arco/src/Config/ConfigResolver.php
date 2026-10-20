@@ -18,6 +18,8 @@ final class ConfigResolver
         'dns' => null,
         'certificate' => null,
         'consoleTimeout' => 900,
+        'consoleMemory' => 2048,
+        'cacheDriver' => null,
         'protected' => null,
         'console' => null,
         'scheduler' => null,
@@ -146,6 +148,7 @@ final class ConfigResolver
         $failedJobsTable = self::table('failed-jobs', $setting('failedJobsTable'));
         $protected = $setting('protected');
         $consoleTimeout = self::nullableInt($setting('consoleTimeout')) ?? 0;
+        $consoleMemory = self::nullableInt($setting('consoleMemory')) ?? 0;
         $console = $setting('console');
         $scheduler = $setting('scheduler');
         $logRetention = $setting('logRetention');
@@ -176,6 +179,7 @@ final class ConfigResolver
             certificate: $certificate,
             deployCommands: $envCommands ?? $appCommands ?? [],
             consoleTimeout: $consoleTimeout,
+            consoleMemory: $consoleMemory,
             protected: is_bool($protected) ? $protected : null,
             console: is_bool($console) ? $console : null,
             scheduler: $scheduler === false ? null : self::nullableInt($scheduler),
@@ -184,6 +188,7 @@ final class ConfigResolver
             storage: $storage,
             cacheTable: $cacheTable,
             failedJobsTable: $failedJobsTable,
+            cacheDriver: self::nullableString($setting('cacheDriver')),
         );
 
         return $config;

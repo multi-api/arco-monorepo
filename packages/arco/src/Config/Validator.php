@@ -36,6 +36,8 @@ final class Validator
         'AWS_SESSION_TOKEN', 'LAMBDA_TASK_ROOT', 'LAMBDA_RUNTIME_DIR',
     ];
     private const RESERVED_PREFIXES = ['AWS_LAMBDA_', 'AWS_XRAY_'];
+    /** Every variable starting with this belongs to Arco (the ones it sets, and the ones later versions may add). */
+    private const ARCO_PREFIX = 'ARCO';
     private const HOSTNAME = '/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/';
     private const CERTIFICATE = '/^arn:aws[a-z-]*:acm:us-east-1:\d{12}:certificate\/[A-Za-z0-9-]+$/';
     public const MAX_DOMAINS = 10;
@@ -123,12 +125,15 @@ final class Validator
         } elseif (! in_array($config->region, Arco::REGIONS, true)) {
             $result->error('validation.region', ['region' => $config->region, 'regions' => implode(', ', Arco::REGIONS)]);
         }
-        $limits = ['concurrency' => $config->concurrency, 'timeout' => $config->timeout, 'maxInstances' => $config->maxInstances, 'rateLimit' => $config->rateLimit, 'consoleTimeout' => $config->consoleTimeout];
+        $limits = ['concurrency' => $config->concurrency, 'timeout' => $config->timeout, 'maxInstances' => $config->maxInstances, 'rateLimit' => $config->rateLimit, 'consoleTimeout' => $config->consoleTimeout, 'consoleMemory' => $config->consoleMemory];
         foreach ($limits as $setting => $value) {
             self::addSettingError($result, $setting, $value);
         }
         if (! in_array($config->auth, ['public', 'iam'], true)) {
             $result->error('validation.auth', ['value' => $config->auth]);
+        }
+        if ($config->cacheDriver !== null) {
+            $result->error('validation.cache_driver', ['value' => $config->cacheDriver]);
         }
         self::addSettingError($result, 'logLevel', $config->logLevel);
         self::addSettingError($result, 'scheduler', $config->scheduler);
@@ -225,6 +230,10 @@ final class Validator
         }
 
         foreach ($config->variables as $name => $value) {
+            if (str_starts_with($name, self::ARCO_PREFIX)) {
+                $result->error('validation.reserved_arco_variable', ['variable' => $name]);
+                continue;
+            }
             if (self::isReserved($name)) {
                 $result->error('validation.reserved_variable', ['variable' => $name]);
                 continue;
@@ -270,6 +279,7 @@ final class Validator
             'rateLimit' => ['validation.rate_limit', is_int($value) && $value >= 100 && $value <= 10000
                 && $value % ($value <= 1000 ? 100 : 1000) === 0],
             'consoleTimeout' => ['validation.console_timeout', is_int($value) && $value >= 3 && $value <= 900],
+            'consoleMemory' => ['validation.console_memory', is_int($value) && $value >= 128 && $value <= 10240],
             'scheduler' => ['validation.scheduler_interval', is_int($value) && in_array($value, self::SCHEDULER_INTERVALS, true)],
             'logRetention' => ['validation.log_retention', is_int($value) && in_array($value, self::LOG_RETENTION_DAYS, true)],
             'logLevel' => ['validation.log_level', in_array($value, self::LOG_LEVELS, true)],
