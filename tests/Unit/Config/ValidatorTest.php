@@ -42,6 +42,9 @@ final class ValidatorTest extends TestCase
         yield 'app containing -queue-' => ['shop-queue-x', 'prod', [['key' => 'validation.app_name_queue', 'params' => ['name' => 'shop-queue-x']]]];
         // Neither name contains -queue-, but <app>-<env> is the worker of shop/prod's queue "emails".
         yield 'app and environment joined into a worker name' => ['shop-prod', 'queue-emails', [['key' => 'validation.function_name_queue', 'params' => ['app' => 'shop-prod', 'environment' => 'queue-emails', 'function' => 'shop-prod-queue-emails']]]];
+        // Neither name ends in -console, but shop-eu-console is the console function of shop/eu.
+        yield 'app and environment joined into a console name' => ['shop-eu', 'console', [['key' => 'validation.function_name_suffix', 'params' => ['app' => 'shop-eu', 'environment' => 'console', 'function' => 'shop-eu-console', 'suffix' => '-console']]]];
+        yield 'app and environment joined into a resources stack name' => ['shop-eu', 'resources', [['key' => 'validation.function_name_suffix', 'params' => ['app' => 'shop-eu', 'environment' => 'resources', 'function' => 'shop-eu-resources', 'suffix' => '-resources']]]];
         yield 'hyphens elsewhere are fine' => ['shop', 'eu-prod', []];
         yield 'a suffix inside the name is fine' => ['shop', 'console-eu', []];
         yield 'an environment named like a suffix without the hyphen is fine' => ['shop', 'console', []];

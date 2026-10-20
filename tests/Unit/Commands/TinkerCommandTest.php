@@ -33,6 +33,7 @@ final class TinkerCommandTest extends TestCase
         $mock = new MockHandler([new Result(['Account' => '111111111111'])]);
         $preset = $laravel ? new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } } : new PlainPhpPreset();
         return $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => null,
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $mock, 'credentials' => false]),
             consoleFactory: fn () => $console,
             presets: new PresetRegistry([$preset]),
@@ -67,6 +68,7 @@ final class TinkerCommandTest extends TestCase
             return \GuzzleHttp\Promise\Create::promiseFor(new Result(['Account' => '111111111111']));
         };
         $tester = $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => null,
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $handler, 'credentials' => false]),
             consoleFactory: fn () => new FakeConsole([FakeConsole::tinkerReply(['presented' => '2'])]),
             presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
@@ -79,6 +81,7 @@ final class TinkerCommandTest extends TestCase
         // An account lock is still checked before anything runs.
         file_put_contents('arco.php', str_replace("->environment('staging')", "->environment('staging', fn (Environment \$env) => \$env->account('111111111111'))", (string) file_get_contents('arco.php')));
         $tester = $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => null,
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $handler, 'credentials' => false]),
             consoleFactory: fn () => new FakeConsole([FakeConsole::tinkerReply(['presented' => '2'])]),
             presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
@@ -117,6 +120,7 @@ final class TinkerCommandTest extends TestCase
             return \GuzzleHttp\Promise\Create::promiseFor(new Result(['Account' => '111111111111']));
         };
         return $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => null,
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $handler, 'credentials' => $credentials ?? false]),
             consoleFactory: fn () => $console,
             presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
@@ -315,6 +319,7 @@ final class TinkerCommandTest extends TestCase
         file_put_contents('arco.php', ProjectFixture::standardConfig());
         $awsCalls = 0;
         $tester = $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => null,
             awsFactory: function () use (&$awsCalls): never { $awsCalls++; throw new \LogicException('No AWS expected.'); },
             consoleFactory: fn () => throw new \LogicException('No console expected.'),
             presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
@@ -326,5 +331,22 @@ final class TinkerCommandTest extends TestCase
         $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
         self::assertStringContainsString('arco console:add --env=staging', $display);
         self::assertSame(0, $awsCalls, 'the AWS factory is never called');
+    }
+
+    public function test_a_console_function_this_environment_does_not_own_is_never_invoked(): void
+    {
+        $console = new FakeConsole([FakeConsole::tinkerReply(['presented' => '2'])]);
+        $tester = $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => throw \Multiapi\Arco\Deploy\DeployException::make('ownership.not_owned', ['resource' => 'shop-staging-console', 'app' => 'shop', 'environment' => 'other']),
+            awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => new MockHandler([new Result(['Account' => '111111111111'])]), 'credentials' => false]),
+            consoleFactory: fn () => $console,
+            presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
+        ));
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => '1+1'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertSame([], $console->calls);
+        self::assertStringContainsString('Nothing was run or changed', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
     }
 }

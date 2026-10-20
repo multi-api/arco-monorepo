@@ -541,8 +541,9 @@ the tags: the deploy stops and names the permission (`--force` skips the check),
 nothing. The deploy keeps the live console version plus the 4 newest and deletes older ones on a best-effort
 basis: without `lambda:ListVersionsByFunction` or `lambda:DeleteFunction` that step becomes a warning.
 
-People who only run `arco command`, `arco tinker` or `arco logs` need `lambda:InvokeFunction` on the console
-function (`arco logs` needs the `logs:` actions above). The function's execution role is separate: for the managed role Arco
+People who only run `arco command`, `arco tinker` or `arco logs` need `lambda:InvokeFunction`,
+`lambda:GetFunctionConfiguration` and `lambda:ListTags` on the console function (`command` and `tinker`
+first check that it belongs to the app and environment, and refuse to run anything otherwise) (`arco logs` needs the `logs:` actions above). The function's execution role is separate: for the managed role Arco
 adds `logs:CreateLogGroup`, `logs:CreateLogStream` and `logs:PutLogEvents` on the web, console and queue
 worker log groups, the SQS actions the app and workers need on the queues in `arco.php` (`ArcoQueues`), read
 and write access to the buckets and tables in `arco.php` (`ArcoStorage`, `ArcoStorageList`, `ArcoTables`), `s3:GetObject` on `runtime/*` of the code bucket (the console function only reads it when it

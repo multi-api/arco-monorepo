@@ -13,9 +13,13 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   deploy tags them. `arco deploy --force` overrides a refusal (dangerous); `arco remove` never deletes another
   environment's resources. The deploy profile needs `lambda:ListTags` and `events:ListTagsForResource`
   (and `lambda:TagResource`, `iam:TagRole` to tag older resources); without them the deploy stops naming
-  the permission. `scheduler:set --apply` / `scheduler:remove --apply` check the rule the same way.
+  the permission (`events:DescribeRule` too, when the deploy puts a scheduler rule). `scheduler:set --apply`,
+  `scheduler:remove --apply`, `scheduler:pause` and `scheduler:resume` check the rule the same way, and
+  `arco command` / `arco tinker` check the console function before invoking it (they now also need
+  `lambda:GetFunctionConfiguration` and `lambda:ListTags` on it); none of these has an override.
 - **Changed:** app and environment names may not end in `-console`, `-resources`, `-scheduler` or `-host`, nor
-  contain `-queue-` (nor may `<app>-<env>` as a whole): validation names the rule.
+  contain `-queue-`, nor may `<app>-<env>` when it names another app's resource (app `shop-eu` + env
+  `console` is the console function of `shop`/`eu`): validation names the rule.
 - The E2E suite now pins Floci `nightly-10192026`, where storage writes and CloudFront to a Web Function work, so all eight Floci checks are mandatory.
 
 ## 0.8.1

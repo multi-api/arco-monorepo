@@ -49,15 +49,36 @@ final class SchedulerPauseResumeTest extends TestCase
         return (string) file_get_contents($this->project?->dir . '/arco.php');
     }
 
+    /** @param array<string, string> $tags @return list<Result> the ownership reads of the rule (DescribeRule, ListTagsForResource) */
+    private static function ownRule(array $tags = ['arco:app' => 'shop', 'arco:environment' => 'production']): array
+    {
+        return [
+            new Result(['Name' => 'arco-shop-production-scheduler', 'Arn' => 'arn:rule', 'Description' => 'Arco: schedule:run every 1 min on shop-production-console:live']),
+            new Result(['Tags' => array_map(fn (string $k, string $v) => ['Key' => $k, 'Value' => $v], array_keys($tags), array_values($tags))]),
+        ];
+    }
+
+    public function test_pause_refuses_a_rule_of_another_environment(): void
+    {
+        $this->mocks->handler->append(...[new Result(['Account' => '123456789012']), new Result(['State' => 'ENABLED']), ...self::ownRule(['arco:app' => 'shop', 'arco:environment' => 'staging'])]);
+
+        $tester = $this->run_(new SchedulerPauseCommand($this->awsFactory()));
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertNotContains('DisableRule', $this->mocks->calls);
+        self::assertStringContainsString('environment "staging"', self::display($tester));
+        self::assertStringContainsString('Nothing was run or changed', self::display($tester));
+    }
+
     public function test_pause_disables_the_rule_without_editing_arco_php(): void
     {
         $before = $this->source();
-        $this->mocks->handler->append(new Result(['Account' => '123456789012']), new Result(['State' => 'ENABLED']), new Result([]));
+        $this->mocks->handler->append(...[new Result(['Account' => '123456789012']), new Result(['State' => 'ENABLED']), ...self::ownRule(), new Result([])]);
 
         $tester = $this->run_(new SchedulerPauseCommand($this->awsFactory()));
 
         $tester->assertCommandIsSuccessful();
-        self::assertSame(['GetCallerIdentity', 'DescribeRule', 'DisableRule'], $this->mocks->calls);
+        self::assertSame(['GetCallerIdentity', 'DescribeRule', 'DescribeRule', 'ListTagsForResource', 'DisableRule'], $this->mocks->calls);
         self::assertSame('arco-shop-production-scheduler', $this->mocks->params[2]['Name']);
         self::assertStringContainsString('Scheduler of production paused', self::display($tester));
         self::assertStringContainsString('arco scheduler:resume', self::display($tester));
@@ -66,7 +87,7 @@ final class SchedulerPauseResumeTest extends TestCase
 
     public function test_pause_of_a_paused_rule_changes_nothing(): void
     {
-        $this->mocks->handler->append(new Result(['Account' => '123456789012']), new Result(['State' => 'DISABLED']));
+        $this->mocks->handler->append(...[new Result(['Account' => '123456789012']), new Result(['State' => 'DISABLED']), ...self::ownRule()]);
 
         $tester = $this->run_(new SchedulerPauseCommand($this->awsFactory()));
 
@@ -88,19 +109,19 @@ final class SchedulerPauseResumeTest extends TestCase
 
     public function test_resume_enables_the_rule(): void
     {
-        $this->mocks->handler->append(new Result(['Account' => '123456789012']), new Result(['State' => 'DISABLED']), new Result([]));
+        $this->mocks->handler->append(...[new Result(['Account' => '123456789012']), new Result(['State' => 'DISABLED']), ...self::ownRule(), new Result([])]);
 
         $tester = $this->run_(new SchedulerResumeCommand($this->awsFactory()));
 
         $tester->assertCommandIsSuccessful();
-        self::assertSame(['GetCallerIdentity', 'DescribeRule', 'EnableRule'], $this->mocks->calls);
+        self::assertSame(['GetCallerIdentity', 'DescribeRule', 'DescribeRule', 'ListTagsForResource', 'EnableRule'], $this->mocks->calls);
         self::assertSame('arco-shop-production-scheduler', $this->mocks->params[2]['Name']);
         self::assertStringContainsString('Scheduler of production resumed', self::display($tester));
     }
 
     public function test_resume_of_an_active_rule_changes_nothing(): void
     {
-        $this->mocks->handler->append(new Result(['Account' => '123456789012']), new Result(['State' => 'ENABLED']));
+        $this->mocks->handler->append(...[new Result(['Account' => '123456789012']), new Result(['State' => 'ENABLED']), ...self::ownRule()]);
 
         $tester = $this->run_(new SchedulerResumeCommand($this->awsFactory()));
 

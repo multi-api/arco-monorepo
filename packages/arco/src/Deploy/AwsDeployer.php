@@ -52,13 +52,21 @@ final class AwsDeployer implements Deployer
         if ($config->role === null) {
             $resources[] = $guard->role($names[] = ExecutionRole::roleName($config));
         }
-        $resources[] = $guard->webFunction($names[] = $config->functionName());
+        $resources[] = $guard->webFunction($names[] = $config->functionName(), self::prefix($config));
         // Checked whether the console is on or off: a deploy updates it, or deletes it once verified.
         $resources[] = $guard->lambdaFunction($names[] = $config->consoleFunctionName(), OwnershipGuard::CONSOLE_MARKER);
         foreach ($config->queues as $queue) {
             $resources[] = $guard->lambdaFunction($names[] = $config->workerFunctionName($queue->name), OwnershipGuard::WORKER_MARKER);
         }
-        $resources[] = $guard->schedulerRule($names[] = SchedulerRule::name($config));
+        $rule = $guard->schedulerRule(SchedulerRule::name($config));
+        if ($rule !== null && OwnershipGuard::isUndescribed($rule) && ! ($config->consoleEnabled() && $config->scheduler !== null)) {
+            // No rule will be put; one that may exist is only deleted once it can be described (the
+            // scheduler steps warn otherwise), and then it is checked there.
+            $rule = null;
+        } else {
+            $names[] = SchedulerRule::name($config);
+        }
+        $resources[] = $rule;
         $guard->claim($config, array_values(array_filter($resources)), $this->force, $onStep);
         foreach ($names as $name) {
             $this->verified[$name] = true;
@@ -396,12 +404,14 @@ final class AwsDeployer implements Deployer
     private function checkRemoval(AppConfig $config, array $queues): void
     {
         $guard = new OwnershipGuard($this->aws);
-        $resources = [$guard->schedulerRule(SchedulerRule::name($config))];
+        $rule = $guard->schedulerRule(SchedulerRule::name($config));
+        // A rule EventBridge refuses to describe is not deleted either (remove.scheduler_unreadable).
+        $resources = [$rule !== null && OwnershipGuard::isUndescribed($rule) ? null : $rule];
         foreach ($queues as $queue) {
             $resources[] = $guard->lambdaFunction($config->workerFunctionName($queue), OwnershipGuard::WORKER_MARKER);
         }
         $resources[] = $guard->lambdaFunction($config->consoleFunctionName(), OwnershipGuard::CONSOLE_MARKER);
-        $resources[] = $guard->webFunction($config->functionName());
+        $resources[] = $guard->webFunction($config->functionName(), self::prefix($config));
         if ($config->role === null) {
             $resources[] = $guard->role(ExecutionRole::roleName($config));
         }

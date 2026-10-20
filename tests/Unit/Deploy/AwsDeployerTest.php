@@ -2146,7 +2146,7 @@ final class AwsDeployerTest extends TestCase
             self::roleTags([]),
             ...self::webTags([]),
             new Result(['state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-old', 'weight' => 100]]]), // GetWebFunctionEndpoint
-            new Result(['revisionId' => 'rev-old', 'description' => 'Deployed by Arco 0.3.0']),                      // GetWebFunctionRevision
+            new Result(['revisionId' => 'rev-old', 'description' => 'Deployed by Arco 0.3.0', 'buildConfig' => ['codeConfig' => ['s3Object' => ['bucket' => 'arco-111111111111-us-east-1', 'key' => 'shop/production/' . str_repeat('a', 64) . '.zip']]]]), // GetWebFunctionRevision
             ...self::lambdaTags('shop-production-console', [], 'Arco console function (Arco 0.3.0)'),
             ...self::lambdaTags('shop-production-queue-emails', ['team' => 'x'], 'Arco worker for queue emails (Arco 0.5.0)'),
             new Result(['Name' => 'arco-shop-production-scheduler', 'Arn' => 'arn:rule', 'Description' => 'Arco: schedule:run every 1 min on shop-production-console:live']),
@@ -2356,11 +2356,94 @@ final class AwsDeployerTest extends TestCase
     {
         foreach (['en', 'es'] as $lang) {
             $translator = new \Multiapi\Arco\Cli\Translator($lang, \Multiapi\Arco\Arco::packageRoot() . '/lang');
-            foreach (['deploy.not_owned', 'deploy.untagged_resource', 'deploy.tags_unreadable', 'deploy.tags_added', 'deploy.tags_not_added', 'deploy.ownership_forced', 'remove.not_owned', 'remove.untagged_resource', 'remove.tags_unreadable'] as $key) {
+            foreach (['deploy.not_owned', 'deploy.untagged_resource', 'deploy.tags_unreadable', 'deploy.tags_added', 'deploy.tags_not_added', 'deploy.ownership_forced', 'remove.not_owned', 'remove.untagged_resource', 'remove.tags_unreadable', 'ownership.not_owned', 'ownership.untagged_resource', 'ownership.tags_unreadable'] as $key) {
                 $text = $translator->trans($key, ['resource' => 'shop-production', 'app' => 'shop', 'environment' => 'production', 'action' => 'lambda:ListTags', 'error' => 'denied']);
                 self::assertNotSame($key, $text, "$lang: $key");
                 self::assertStringContainsString('shop-production', $text);
             }
         }
+    }
+
+    public function test_an_untagged_web_function_deployed_by_arco_for_another_environment_is_not_adopted(): void
+    {
+        // App "shop-eu" + env "prod": its zips live under shop-eu/prod/, not shop/eu-prod/.
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('eu-prod')->toArray(), 'eu-prod');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            self::noRole(), ...self::webTags([]),
+            new Result(['state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-x', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-x', 'description' => 'Deployed by Arco 0.8.1', 'buildConfig' => ['codeConfig' => ['s3Object' => ['bucket' => 'arco-111111111111-us-east-1', 'key' => 'shop-eu/prod/' . str_repeat('a', 64) . '.zip']]]]),
+            self::lambdaMissing('GetFunctionConfiguration'), self::noRule(),
+        ]);
+
+        $this->expectExceptionObject(DeployException::make('deploy.untagged_resource', ['resource' => 'shop-eu-prod']));
+        self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep()), $config);
+    }
+
+    public function test_a_rule_eventbridge_refuses_to_describe_stops_a_deploy_that_puts_it(): void
+    {
+        $denied = fn () => AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400, 'not authorized to perform: events:DescribeRule');
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->console()->scheduler(5)->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console'), $denied()]);
+
+        $this->expectExceptionObject(DeployException::make('deploy.tags_unreadable', ['resource' => 'arco-shop-production-scheduler', 'action' => 'events:DescribeRule', 'error' => 'not authorized to perform: events:DescribeRule']));
+        self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep()), $config);
+    }
+
+    public function test_without_a_scheduler_an_undescribable_rule_is_left_to_the_scheduler_step_and_not_marked_verified(): void
+    {
+        $denied = fn () => AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400, 'not authorized');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console'), $denied(),
+            $denied(), self::lambdaMissing('GetPolicy'),                                         // syncScheduler (off): reads the rule again
+        ]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        self::assertSame([], self::ownershipSteps($deployer, $this->consoleConfig()));
+        $deployer->syncScheduler($this->consoleConfig(), fn () => null);
+
+        self::assertSame(['GetRole', 'GetWebFunction', 'ListTags', 'GetFunctionConfiguration', 'ListTags', 'DescribeRule', 'DescribeRule', 'GetPolicy'], $mocks->calls);
+        self::assertNotContains('DeleteRule', $mocks->calls);
+    }
+
+    public function test_scheduler_apply_refuses_when_the_rule_cannot_be_described(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->scheduler(5)->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '7']), AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400, 'not authorized')]);
+
+        try {
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncScheduler($config, fn () => null);
+            self::fail('expected a refusal');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.tags_unreadable', $e->key);
+            self::assertSame('events:DescribeRule', $e->params['action']);
+        }
+        self::assertSame(['GetAlias', 'DescribeRule'], $mocks->calls, 'no PutRule');
+    }
+
+    public function test_command_and_tinker_refuse_a_console_function_of_another_environment(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::lambdaTags('shop-production-console', self::tags('shop-production', 'console')),
+            ...self::lambdaTags('shop-production-console'),
+            self::lambdaMissing('GetFunctionConfiguration'),
+            ...self::lambdaTags('shop-production-console', [], 'my own function'),
+        ]);
+        $config = $this->consoleConfig();
+
+        try {
+            \Multiapi\Arco\Deploy\OwnershipGuard::checkConsoleUse($mocks->clients(), $config);
+            self::fail('expected a refusal');
+        } catch (DeployException $e) {
+            self::assertSame('ownership.not_owned', $e->key);
+            self::assertSame(['resource' => 'shop-production-console', 'app' => 'shop-production', 'environment' => 'console'], $e->params);
+        }
+        \Multiapi\Arco\Deploy\OwnershipGuard::checkConsoleUse($mocks->clients(), $config); // ours
+        \Multiapi\Arco\Deploy\OwnershipGuard::checkConsoleUse($mocks->clients(), $config); // missing: the invoke reports it
+        $this->expectExceptionObject(DeployException::make('ownership.untagged_resource', ['resource' => 'shop-production-console']));
+        \Multiapi\Arco\Deploy\OwnershipGuard::checkConsoleUse($mocks->clients(), $config);
     }
 }

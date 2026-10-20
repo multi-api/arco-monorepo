@@ -15,6 +15,13 @@ use Multiapi\Arco\Secrets\SecretReference;
 final class Validator
 {
     public const NAME = '/^[a-z][a-z0-9-]*$/';
+
+    /**
+     * Endings of the names Arco derives from <app>-<environment> for its other resources (console
+     * function, resources stack, scheduler rule, CloudFront function); `-queue-` marks a worker.
+     */
+    public const RESERVED_SUFFIXES = ['-console', '-resources', '-scheduler', '-host'];
+
     private const VARIABLE = '/^[A-Za-z_][A-Za-z0-9_]*$/';
     private const SECRET_LIKE = '/(_KEY|_SECRET|_PASSWORD|_TOKEN)$/';
     /** Disks Laravel's stock config/filesystems.php defines: a storage cannot take their names. */
@@ -62,12 +69,6 @@ final class Validator
     }
 
     /**
-     * Endings of the names Arco derives from <app>-<environment> for its other resources (console
-     * function, resources stack, scheduler rule, CloudFront function); `-queue-` marks a worker.
-     */
-    public const RESERVED_SUFFIXES = ['-console', '-resources', '-scheduler', '-host'];
-
-    /**
      * App and environment names that would collide with a name Arco gives another resource of some
      * app and environment: ending in a reserved suffix, or containing `-queue-` (also across the
      * hyphen that joins them).
@@ -75,15 +76,25 @@ final class Validator
     private static function addReservedNameErrors(AppConfig $config, ValidationResult $result): void
     {
         $queue = false;
+        $suffixed = false;
         foreach (['app' => $config->app, 'environment' => $config->environment] as $kind => $name) {
             foreach (self::RESERVED_SUFFIXES as $suffix) {
                 if (str_ends_with($name, $suffix)) {
                     $result->error("validation.{$kind}_name_suffix", ['name' => $name, 'suffix' => $suffix]);
+                    $suffixed = true;
                 }
             }
             if (str_contains($name, '-queue-')) {
                 $result->error("validation.{$kind}_name_queue", ['name' => $name]);
                 $queue = true;
+            }
+        }
+        // App `shop-eu` + environment `console` is the console function of app `shop`, environment `eu`;
+        // app `shop` + environment `console` is no one's (`shop` alone is no <app>-<environment>).
+        foreach ($suffixed ? [] : self::RESERVED_SUFFIXES as $suffix) {
+            $rest = substr($config->functionName(), 0, -strlen($suffix));
+            if (str_ends_with($config->functionName(), $suffix) && str_contains($rest, '-')) {
+                $result->error('validation.function_name_suffix', ['app' => $config->app, 'environment' => $config->environment, 'function' => $config->functionName(), 'suffix' => $suffix]);
             }
         }
         if (! $queue && str_contains($config->functionName(), '-queue-')) {

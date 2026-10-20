@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Commands;
 
 use Closure;
+use Multiapi\Arco\Deploy\OwnershipGuard;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\UserError;
@@ -27,11 +28,14 @@ final class ConsoleCommand extends ArcoCommand
 
     /** @var Closure(AwsClients, AppConfig): Console */
     private Closure $consoleFactory;
+    /** @var Closure(AwsClients, AppConfig): void refuses a console function this environment does not own */
+    private Closure $ownershipCheck;
 
-    public function __construct(?Closure $awsFactory = null, ?Closure $consoleFactory = null)
+    public function __construct(?Closure $awsFactory = null, ?Closure $consoleFactory = null, ?Closure $ownershipCheck = null)
     {
         $this->awsFactory = $awsFactory ?? fn (?string $profile, string $region) => new AwsClients($profile, $region);
         $this->consoleFactory = $consoleFactory ?? fn (AwsClients $aws, AppConfig $config) => new LambdaConsole($aws->lambda(LambdaConsole::clientOptions($config)));
+        $this->ownershipCheck = $ownershipCheck ?? OwnershipGuard::checkConsoleUse(...);
         parent::__construct();
     }
 
@@ -66,7 +70,10 @@ final class ConsoleCommand extends ArcoCommand
             }
             $timeout = $this->timeout($input->getOption('timeout'), $config);
 
-            $console = ($this->consoleFactory)($this->awsClients($config, $input, $errors, checkCredentials: false), $config);
+            $aws = $this->awsClients($config, $input, $errors, checkCredentials: false);
+            // Before anything runs: a console function another app or environment owns is never invoked.
+            ($this->ownershipCheck)($aws, $config);
+            $console = ($this->consoleFactory)($aws, $config);
             if ($input->getOption('async')) {
                 $console->start($config, $command, $timeout);
                 // stderr: stdout carries only the command's own output, for scripts.

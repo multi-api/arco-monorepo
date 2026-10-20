@@ -25,9 +25,10 @@ final class Ownership
      * overrides both refusals.
      *
      * @param array<string, string> $tags
-     * @param 'deploy'|'remove' $action the key prefix of the refusal
-     * @throws DeployException deploy.not_owned / remove.not_owned (resource, app, environment: the
-     *                         owner's tags, `-` for a missing one), deploy.untagged_resource / remove.untagged_resource
+     * @param 'deploy'|'remove'|'ownership' $action the key prefix of the refusal (ownership: a command
+     *                                          that uses the resource without deploying)
+     * @throws DeployException {action}.not_owned (resource, app, environment: the owner's tags, `-` for
+     *                         a missing one), {action}.untagged_resource
      */
     public static function check(array $tags, AppConfig $config, string $resource, bool $force, bool $arcoMade = false, string $action = 'deploy'): void
     {

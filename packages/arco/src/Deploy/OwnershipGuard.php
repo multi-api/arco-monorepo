@@ -43,7 +43,8 @@ final class OwnershipGuard
         return new NamedResource(NamedResource::ROLE, $name, $name, self::tagList($role['Tags'] ?? []), ($role['Description'] ?? null) === self::ROLE_MARKER);
     }
 
-    public function webFunction(string $name): ?NamedResource
+    /** @param string $keyPrefix the S3 prefix of the environment's web zips (`<app>/<env>/`) */
+    public function webFunction(string $name, string $keyPrefix): ?NamedResource
     {
         $web = $this->aws->lambdaWeb();
         try {
@@ -60,11 +61,15 @@ final class OwnershipGuard
         } catch (AwsException $e) {
             return self::unreadable(NamedResource::WEB, $name, $arn, 'lambda:ListTags', $e);
         }
-        return new NamedResource(NamedResource::WEB, $name, $arn, $tags, ! self::hasBothTags($tags) && $this->revisionByArco($name));
+        return new NamedResource(NamedResource::WEB, $name, $arn, $tags, ! self::hasBothTags($tags) && $this->revisionByArco($name, $keyPrefix));
     }
 
-    /** Whether the revision serving the web function's traffic was deployed by Arco. */
-    private function revisionByArco(string $name): bool
+    /**
+     * Whether the revision serving the web function's traffic was deployed by Arco for this app and
+     * environment: Arco's description, and its zip under the environment's S3 prefix (both since 0.1.0),
+     * so another environment's function stripped of its tags is never adopted.
+     */
+    private function revisionByArco(string $name, string $keyPrefix): bool
     {
         $web = $this->aws->lambdaWeb();
         try {
@@ -73,12 +78,16 @@ final class OwnershipGuard
             if ($revision === null) {
                 return false;
             }
-            $description = Aws::string(Aws::call($web, 'GetWebFunctionRevision', ['functionName' => $name, 'revisionId' => $revision])['description'] ?? null);
+            $details = Aws::call($web, 'GetWebFunctionRevision', ['functionName' => $name, 'revisionId' => $revision]);
         } catch (AwsException) {
             // No evidence: the resource is treated as untagged and not Arco's.
             return false;
         }
-        return $description !== null && str_starts_with($description, self::REVISION_MARKER);
+        $description = Aws::string($details['description'] ?? null);
+        $code = Aws::map(Aws::map(Aws::map($details['buildConfig'] ?? null)['codeConfig'] ?? null)['s3Object'] ?? null);
+        $key = Aws::string($code['key'] ?? null);
+        return $description !== null && str_starts_with($description, self::REVISION_MARKER)
+            && $key !== null && str_starts_with($key, $keyPrefix);
     }
 
     /** A classic Lambda function (console or worker); $marker is the start of the description Arco writes. */
@@ -103,17 +112,21 @@ final class OwnershipGuard
         return new NamedResource(NamedResource::LAMBDA, $name, $arn, $tags, str_starts_with($description, $marker));
     }
 
-    /** The scheduler rule; null when it does not exist or EventBridge refuses to describe it (the scheduler steps warn). */
+    /**
+     * The scheduler rule; null when it does not exist. When EventBridge refuses to describe it, the
+     * resource is unreadable (events:DescribeRule): callers that will not change the rule drop it
+     * (isUndescribed()), the others refuse.
+     */
     public function schedulerRule(string $name): ?NamedResource
     {
         $events = $this->aws->eventBridge();
         try {
             $rule = Aws::map($events->describeRule(['Name' => $name])->toArray());
         } catch (AwsException $e) {
-            if ($e->getAwsErrorCode() === 'ResourceNotFoundException' || in_array($e->getAwsErrorCode(), self::DENIED, true)) {
+            if ($e->getAwsErrorCode() === 'ResourceNotFoundException') {
                 return null;
             }
-            throw $e;
+            return self::unreadable(NamedResource::RULE, $name, '', 'events:DescribeRule', $e);
         }
         $arn = (string) Aws::string($rule['Arn'] ?? null);
         $description = (string) Aws::string($rule['Description'] ?? null);
@@ -182,6 +195,40 @@ final class OwnershipGuard
             }
             Ownership::check($resource->tags, $config, $resource->name, false, $resource->arcoMade, 'remove');
         }
+    }
+
+    /**
+     * Checks the resources a command uses without deploying (`arco command`, `arco tinker`,
+     * `scheduler:pause|resume`): no override, no tagging.
+     *
+     * @param list<NamedResource> $resources
+     * @throws DeployException ownership.not_owned, ownership.untagged_resource, ownership.tags_unreadable
+     */
+    public function checkUse(AppConfig $config, array $resources): void
+    {
+        foreach ($resources as $resource) {
+            if ($resource->unreadable !== null) {
+                throw DeployException::make('ownership.tags_unreadable', ['resource' => $resource->name, ...$resource->unreadable]);
+            }
+            Ownership::check($resource->tags, $config, $resource->name, false, $resource->arcoMade, 'ownership');
+        }
+    }
+
+    /**
+     * Before `arco command` or `arco tinker` invokes the console function: refuses one another app or
+     * environment owns. A missing function is left to the invoke to report.
+     */
+    public static function checkConsoleUse(AwsClients $aws, AppConfig $config): void
+    {
+        $guard = new self($aws);
+        $console = $guard->lambdaFunction($config->consoleFunctionName(), self::CONSOLE_MARKER);
+        $guard->checkUse($config, $console === null ? [] : [$console]);
+    }
+
+    /** Whether the rule could not even be described (no tags read, nothing known about it). */
+    public static function isUndescribed(NamedResource $resource): bool
+    {
+        return ($resource->unreadable['action'] ?? null) === 'events:DescribeRule';
     }
 
     /** @param array<string, string> $tags */

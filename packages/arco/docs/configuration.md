@@ -35,8 +35,9 @@ Arco names every resource after `<app>-<env>`: the web function `<app>-<env>`, t
 `arco-<app>-<env>-resources`. So that these names never collide across apps and environments:
 
 - app and environment names must not end in `-console`, `-resources`, `-scheduler` or `-host`, and must
-  not contain `-queue-` (nor may `<app>-<env>` as a whole, as with app `shop-prod` and environment
-  `queue-emails`). Validation names the rule that a name breaks.
+  not contain `-queue-`. The same holds for `<app>-<env>` as a whole when it would name another app's
+  resource: app `shop-prod` with environment `queue-emails` (a worker of `shop`/`prod`), app `shop-eu` with
+  environment `console` (the console function of `shop`/`eu`). Validation names the rule that a name breaks.
 - hyphens are otherwise allowed, so app `shop-eu` with environment `prod` and app `shop` with environment
   `eu-prod` share every name. Arco tells them apart by the `arco:app` and `arco:environment` tags it puts
   on everything it creates: before a deploy changes, or `arco remove` deletes, a function, role or
@@ -45,7 +46,10 @@ Arco names every resource after `<app>-<env>`: the web function `<app>-<env>`, t
   description is on it (every Arco version wrote one): then it is this environment's, and the deploy adds
   the tags. `arco deploy --force` overrides a refusal and tags the resource for this environment; it is
   dangerous, so use it only for a resource you know is yours. `arco remove` has no override: it never
-  deletes another environment's resources.
+  deletes another environment's resources `arco command`, `arco tinker` and `scheduler:pause`/`scheduler:resume`
+  check the console function or scheduler rule the same way, with no override, before they run or change
+  anything. An untagged web function counts as Arco's only when its live revision carries Arco's description
+  and its zip sits under this environment's `<app>/<env>/` prefix in the code bucket.
 
 ## Inheritance
 
