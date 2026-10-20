@@ -120,7 +120,7 @@ interface Deployer
     /**
      * Sets the retention of the web and (when the console is on) console log groups, creating them
      * when missing, and tags each for the environment (a refused tag is the note
-     * deploy.log_tags_not_added, the retention is still set). Nothing happens, no AWS call, when logRetention() is not set. Steps: deploy.log_retention, deploy.log_retention_one_day or deploy.log_retention_never (AwsDeployer::logRetentionStep()).
+     * deploy.log_tags_not_added, the retention is still set). Without a logRetention() setting the default (AwsDeployer::DEFAULT_LOG_RETENTION days) is applied and announced by deploy.log_retention_default. Steps: deploy.log_retention, deploy.log_retention_one_day, deploy.log_retention_never (AwsDeployer::logRetentionStep()) or deploy.log_retention_default.
      *
      * @param Closure(string, array<string, string|int>): void $onStep
      */

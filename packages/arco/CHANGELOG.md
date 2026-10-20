@@ -5,6 +5,14 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## 0.9.0
 
+- **Changed:** log retention defaults to 30 days. An environment without `logRetention()` (new or already deployed)
+  now gets 30 days on its web, console and queue worker log groups on the next deploy, which prints one
+  `deploy.log_retention_default` line; before, those groups kept logs forever. `logRetention(false)` keeps
+  "never expire" and an explicit value is unchanged. `arco info` shows `30 days (default)`.
+- **Changed:** a profile without `logs:TagResource` gets a plain note, once per deploy, instead of a warning.
+- **Fixed:** `arco deploy` reports `updated` (not `up to date`) for a bucket, table or queue whose definition the
+  resources stack update changed (lifecycle, CORS, bucket policy, table settings). It compares the running template
+  (`cloudformation:GetTemplate`); when that is denied it reports `updated` for every resource it updates.
 - **Added:** `arco info --profile/-p` (it ran without a profile flag before) and the account guard: `info` refuses to
   read an environment locked with `account()` through a profile of another account, like `deploy` does. This is a change in behaviour: `info` now enforces the `account()` lock for any resolved profile
   (the flag, `AWS_PROFILE`, the remembered one), where it used to read whatever account the profile pointed to.

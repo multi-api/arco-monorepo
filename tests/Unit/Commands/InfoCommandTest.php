@@ -172,7 +172,7 @@ final class InfoCommandTest extends TestCase
         $display = $tester->getDisplay();
         self::assertMatchesRegularExpression('/\bconsole\s+not set\s+default/', $display);
         self::assertMatchesRegularExpression('/scheduler\s+off\s+default/', $display);
-        self::assertMatchesRegularExpression('/logRetention\s+not managed\s+default/', $display);
+        self::assertMatchesRegularExpression('/logRetention\s+30 days \(default\)\s+default/', $display);
 
         $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true);
@@ -231,7 +231,7 @@ final class InfoCommandTest extends TestCase
         $display = $run($on, 'staging');
         self::assertMatchesRegularExpression('/\bconsole\s+sin definir\s+default/', $display);
         self::assertMatchesRegularExpression('/scheduler\s+desactivado\s+default/', $display);
-        self::assertMatchesRegularExpression('/logRetention\s+sin gestionar\s+default/', $display);
+        self::assertMatchesRegularExpression('/logRetention\s+30 días \(por defecto\)\s+default/', $display);
 
         $display = $run($off, 'production');
         self::assertMatchesRegularExpression('/\bconsole\s+desactivada\s+environment/', $display);

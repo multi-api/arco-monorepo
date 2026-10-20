@@ -38,6 +38,20 @@ final class AwsE2eCleanupTest extends TestCase
         $this->aws->parameters[self::PARAMETER] = ['arco:app' => self::APP];
     }
 
+    private const WEB_GROUP = '/aws/lambda/web/arco-e2e-0123abcd-e2e';
+    private const LOCAL_GROUP = '/aws/lambda/web/arco-e2e-0123abcd-e2e.local';
+    private const CONSOLE_GROUP = '/aws/lambda/arco-e2e-0123abcd-e2e-console';
+    private const WORKER_GROUP = '/aws/lambda/arco-e2e-0123abcd-e2e-queue-default';
+
+    /** The run's log groups: Arco-created (tagged), and Lambda-created (untagged). */
+    private function logGroups(): void
+    {
+        $this->aws->logGroups[self::WEB_GROUP] = ['arco:app' => self::APP, 'arco:environment' => 'e2e'];
+        $this->aws->logGroups[self::LOCAL_GROUP] = [];
+        $this->aws->logGroups[self::CONSOLE_GROUP] = ['arco:app' => self::APP, 'arco:environment' => 'e2e'];
+        $this->aws->logGroups[self::WORKER_GROUP] = [];
+    }
+
     private function cleanup(): AwsE2eCleanup
     {
         return AwsE2eCleanup::connect($this->aws->clients(), self::ACCOUNT, []);
@@ -268,5 +282,67 @@ final class AwsE2eCleanupTest extends TestCase
     {
         self::assertMatchesRegularExpression(AwsE2eCleanup::APP_PATTERN, AwsE2eCleanup::newAppName());
         self::assertNotSame(AwsE2eCleanup::newAppName(), AwsE2eCleanup::newAppName());
+    }
+
+    public function test_plans_the_runs_log_groups_tagged_or_made_untagged_by_lambda_and_never_others(): void
+    {
+        $this->leftovers();
+        $this->logGroups();
+        // Never: another run's, a real app's, a sibling-named group, and groups tagged for someone else.
+        $this->aws->logGroups['/aws/lambda/web/arco-e2e-ffffffff-e2e'] = [];
+        $this->aws->logGroups['/aws/lambda/web/shop-production'] = [];
+        $this->aws->logGroups['/aws/lambda/arco-e2e-0123abcd-e2e2-console'] = [];
+        $this->aws->logGroups['/aws/lambda/arco-e2e-0123abcd-e2e-other'] = ['arco:app' => 'shop', 'arco:environment' => 'production'];
+        $this->aws->logGroups['/aws/lambda/arco-e2e-0123abcd-e2e-half'] = ['arco:app' => self::APP];
+        $this->aws->logGroups['/aws/lambda/other'] = self::TAGS;
+
+        $cleanup = $this->cleanup();
+        $plan = $cleanup->plan(self::APP);
+
+        $groups = array_column(array_filter($plan, static fn (array $i): bool => $i['type'] === 'logs-log-group'), 'name');
+        self::assertEqualsCanonicalizing([self::WEB_GROUP, self::LOCAL_GROUP, self::CONSOLE_GROUP, self::WORKER_GROUP], $groups);
+        $skipped = array_column($cleanup->skipped(), 'name');
+        self::assertContains('/aws/lambda/arco-e2e-0123abcd-e2e-other', $skipped);
+        self::assertContains('/aws/lambda/arco-e2e-0123abcd-e2e-half', $skipped);
+        self::assertNotContains('/aws/lambda/web/arco-e2e-ffffffff-e2e', $skipped, 'another run\'s group is not even a candidate');
+        self::assertSame([], $this->aws->mutatingCalls(), 'plan is a dry run');
+
+        $cleanup->apply($plan);
+
+        self::assertEqualsCanonicalizing([
+            '/aws/lambda/web/arco-e2e-ffffffff-e2e', '/aws/lambda/web/shop-production', '/aws/lambda/arco-e2e-0123abcd-e2e2-console',
+            '/aws/lambda/arco-e2e-0123abcd-e2e-other', '/aws/lambda/arco-e2e-0123abcd-e2e-half', '/aws/lambda/other',
+        ], array_keys($this->aws->logGroups));
+        self::assertSame(4, count(array_keys($this->aws->calls, 'DeleteLogGroup', true)));
+    }
+
+    public function test_apply_checks_a_log_groups_tags_again_and_reports_each_delete(): void
+    {
+        $this->logGroups();
+        $said = [];
+        $cleanup = AwsE2eCleanup::connect($this->aws->clients(), self::ACCOUNT, [], function (string $line) use (&$said): void { $said[] = $line; });
+        $plan = $cleanup->plan(self::APP);
+
+        // Between plan and apply one group is retagged for another app and one disappears.
+        $this->aws->logGroups[self::WEB_GROUP] = ['arco:app' => 'shop', 'arco:environment' => 'e2e'];
+        unset($this->aws->logGroups[self::WORKER_GROUP]);
+        $cleanup->apply($plan);
+
+        self::assertSame([self::WEB_GROUP], array_keys($this->aws->logGroups));
+        self::assertContains('[cleanup] deleted logs-log-group ' . self::CONSOLE_GROUP, $said);
+        self::assertContains('[cleanup] deleted logs-log-group ' . self::LOCAL_GROUP, $said);
+        self::assertCount(2, $cleanup->skipped());
+    }
+
+    public function test_apply_refuses_a_log_group_that_is_not_this_runs(): void
+    {
+        $this->aws->logGroups['/aws/lambda/web/shop-production'] = [];
+        $cleanup = $this->cleanup();
+        $cleanup->plan(self::APP);
+
+        $cleanup->apply([['type' => 'logs-log-group', 'name' => '/aws/lambda/web/shop-production']]);
+
+        self::assertSame([], $this->aws->mutatingCalls());
+        self::assertCount(1, $cleanup->skipped());
     }
 }

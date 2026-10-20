@@ -19,6 +19,7 @@ use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Deploy\AwsDeployer;
 use Multiapi\Arco\Deploy\DeployException;
+use Multiapi\Arco\Deploy\ResourcesStack;
 use Multiapi\Arco\Deploy\SchedulerRule;
 use Multiapi\Arco\Deploy\DeployResult;
 use Multiapi\Arco\Deploy\PreparedDeploy;
@@ -794,10 +795,42 @@ final class AwsDeployerTest extends TestCase
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(1, false), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
         self::assertSame([['deploy.log_retention_one_day', ['groups' => 'web']]], $steps);
 
-        // Not managed: no AWS call at all.
+        // No setting: the 30-day default on the web, console and queue worker groups, announced once.
         $mocks = new AwsMocks();
-        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(null, true), fn () => null);
-        self::assertSame([], $mocks->calls);
+        $mocks->handler->append(...array_fill(0, 6, new Result()));
+        $steps = [];
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($with(null, true), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+        self::assertSame(['CreateLogGroup', 'PutRetentionPolicy', 'CreateLogGroup', 'PutRetentionPolicy', 'CreateLogGroup', 'PutRetentionPolicy'], $mocks->calls);
+        self::assertSame([30, 30, 30], array_column(array_filter($mocks->params, static fn (array $p): bool => isset($p['retentionInDays'])), 'retentionInDays'));
+        self::assertSame([['deploy.log_retention_default', ['groups' => 'all']]], $steps);
+    }
+
+    public function test_the_default_retention_covers_the_queue_workers_and_is_announced_once(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->console(false)->region('us-east-1')->queue('emails')->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...array_fill(0, 6, new Result()));
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($config, function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertContains('/aws/lambda/shop-production-queue-emails', array_column($mocks->params, 'logGroupName'));
+        self::assertSame([['deploy.log_retention_default', ['groups' => 'web_queues']]], $steps);
+    }
+
+    public function test_an_explicit_retention_or_false_never_prints_the_default_line(): void
+    {
+        foreach ([14, false] as $setting) {
+            $config = ConfigResolver::resolve(App::make('shop')->console(false)->region('us-east-1')->logRetention($setting)->environment('production')->toArray(), 'production');
+            $mocks = new AwsMocks();
+            $mocks->handler->append(...array_fill(0, 4, new Result()));
+            $steps = [];
+
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($config, function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+            self::assertNotContains('deploy.log_retention_default', array_column($steps, 0));
+            self::assertSame($setting === false ? ['CreateLogGroup', 'DeleteRetentionPolicy', 'CreateLogGroup', 'DeleteRetentionPolicy'] : ['CreateLogGroup', 'PutRetentionPolicy', 'CreateLogGroup', 'PutRetentionPolicy'], $mocks->calls);
+        }
     }
 
     public function test_log_retention_covers_the_queue_workers(): void
@@ -1072,6 +1105,7 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(
             self::resourcesStack(),
             self::stackResources(['QueueEmails' => 'shop-production-emails', 'QueueEmailsDlq' => 'shop-production-emails-dlq', 'QueueOld' => 'shop-production-old']),
+            self::runningTemplate($this->queueConfig()),         // GetTemplate: what the stack runs now
             self::resourcesStack(),                              // Stacks::deploy
             new Result([]),                                      // UpdateStack
             self::resourcesStack(),
@@ -1080,11 +1114,11 @@ final class AwsDeployerTest extends TestCase
 
         [$calls, $steps] = $this->deployResources($mocks, $this->queueConfig());
 
-        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'UpdateStack', 'DescribeStacks', 'GetQueueAttributes'], $calls, 'queues the stack owns need no name check');
-        $template = json_decode((string) $mocks->params[3]['TemplateBody'], true);
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'GetTemplate', 'DescribeStacks', 'UpdateStack', 'DescribeStacks', 'GetQueueAttributes'], $calls, 'queues the stack owns need no name check');
+        $template = json_decode((string) $mocks->params[4]['TemplateBody'], true);
         self::assertIsArray($template);
         self::assertSame(['QueueEmails', 'QueueEmailsDlq'], array_keys($template['Resources']));
-        self::assertSame('https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-old', $mocks->params[5]['QueueUrl']);
+        self::assertSame('https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-old', $mocks->params[6]['QueueUrl']);
         self::assertSame([
             ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
             ['deploy.queue_updated', ['queue' => 'emails', 'name' => 'shop-production-emails']],
@@ -1233,6 +1267,75 @@ final class AwsDeployerTest extends TestCase
         return ConfigResolver::resolve($app->environment('production', fn (Environment $e) => $e->account('111111111111'))->toArray(), 'production');
     }
 
+    /** GetTemplate's answer: the template the stack runs, as ResourcesStack would have deployed it for $config. */
+    private static function runningTemplate(AppConfig $config): Result
+    {
+        return new Result(['TemplateBody' => ResourcesStack::body(ResourcesStack::template($config))]);
+    }
+
+    /**
+     * Deploys $config over a stack that runs $before (null: GetTemplate is denied) and returns the keys of the
+     * per-resource steps.
+     *
+     * @param array<string, array{0: string, 1: string}> $owned
+     * @return list<string>
+     */
+    private function updateKeys(AppConfig $config, ?AppConfig $before, array $owned): array
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::ownedResources($owned),
+            $before === null ? AwsMocks::error(\Aws\CloudFormation\Exception\CloudFormationException::class, 'GetTemplate', 'AccessDenied', 403) : self::runningTemplate($before),
+            self::resourcesStack(),
+            new Result([]),
+            self::resourcesStack(),
+        );
+        [, $steps] = $this->deployResources($mocks, $config);
+        return array_values(array_filter(array_column($steps, 0), static fn (string $key): bool => ! in_array($key, ['deploy.step_resources', 'deploy.storage_public'], true)));
+    }
+
+    public function test_deploy_reports_a_bucket_whose_lifecycle_cors_or_policy_changed_as_updated(): void
+    {
+        $owned = ['StorageUploads' => ['AWS::S3::Bucket', 'shop-production-uploads-111111111111']];
+        $plain = $this->resourcesConfig(fn (App $app) => $app->storage('uploads'));
+
+        self::assertSame(['deploy.storage_updated'], $this->updateKeys($plain, $plain, $owned), 'nothing changed');
+        self::assertSame(['deploy.storage_changed'], $this->updateKeys(
+            $this->resourcesConfig(fn (App $app) => $app->storage('uploads', cors: ['https://a.test'])), $plain, $owned,
+        ), 'CORS added');
+        self::assertSame(['deploy.storage_changed'], $this->updateKeys(
+            $this->resourcesConfig(fn (App $app) => $app->storage('uploads', expire: ['tmp/' => 7])), $plain, $owned,
+        ), 'lifecycle rule added');
+
+        // The stack of 0.6, before the abort-uploads rule: the template the stack runs has no such rule.
+        $old = ResourcesStack::template($plain);
+        unset($old['Resources']['StorageUploads']['Properties']['LifecycleConfiguration']);
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::resourcesStack(), self::ownedResources($owned), new Result(['TemplateBody' => json_encode($old)]), self::resourcesStack(), new Result([]), self::resourcesStack());
+        [, $steps] = $this->deployResources($mocks, $plain);
+        self::assertSame('deploy.storage_changed', $steps[1][0]);
+    }
+
+    public function test_deploy_reports_a_changed_bucket_policy_for_its_bucket_and_a_changed_table_or_queue(): void
+    {
+        $owned = ['StorageUploads' => ['AWS::S3::Bucket', 'shop-production-uploads-111111111111'], 'TableCache' => ['AWS::DynamoDB::Table', 'shop-production-cache'], 'QueueEmails' => ['AWS::SQS::Queue', 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails'], 'QueueEmailsDlq' => ['AWS::SQS::Queue', 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails-dlq']];
+        $build = static fn (array $public, int $tries): callable => static fn (App $app) => $app->storage('uploads', public: $public)->cache()->queue('emails', tries: $tries);
+        $before = $this->resourcesConfig($build(['public/'], 3));
+
+        self::assertSame(['deploy.queue_updated', 'deploy.storage_updated', 'deploy.table_updated'], $this->updateKeys($before, $before, $owned));
+        // Another public prefix changes only the bucket policy; more tries change the queue's redrive policy.
+        self::assertSame(['deploy.queue_updated', 'deploy.storage_changed', 'deploy.table_updated'], $this->updateKeys($this->resourcesConfig($build(['public/', 'avatars/'], 3)), $before, $owned));
+        self::assertSame(['deploy.queue_changed', 'deploy.storage_updated', 'deploy.table_updated'], $this->updateKeys($this->resourcesConfig($build(['public/'], 5)), $before, $owned));
+    }
+
+    public function test_deploy_reports_updated_when_the_running_template_cannot_be_read(): void
+    {
+        $plain = $this->resourcesConfig(fn (App $app) => $app->storage('uploads'));
+
+        self::assertSame(['deploy.storage_changed'], $this->updateKeys($plain, null, ['StorageUploads' => ['AWS::S3::Bucket', 'shop-production-uploads-111111111111']]));
+    }
+
     /** @param array<string, array{0: string, 1: string}> $resources type and physical id by logical id */
     private static function ownedResources(array $resources): Result
     {
@@ -1374,6 +1477,7 @@ final class AwsDeployerTest extends TestCase
                 'StorageOld' => ['AWS::S3::Bucket', 'shop-production-old-111111111111'],
                 'StorageOldPolicy' => ['AWS::S3::BucketPolicy', 'shop-production-old-111111111111'],
             ]),
+            self::runningTemplate($this->resourcesConfig(fn (App $app) => $app->storage('uploads'))),
             self::resourcesStack(),                              // Stacks::deploy
             new Result([]),                                      // UpdateStack
             self::resourcesStack(),
@@ -1382,8 +1486,8 @@ final class AwsDeployerTest extends TestCase
 
         [$calls, $steps] = $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->storage('uploads')));
 
-        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'UpdateStack', 'DescribeStacks', 'ListObjectsV2'], $calls, 'buckets the stack owns need no name check');
-        self::assertSame('shop-production-old-111111111111', $mocks->params[5]['Bucket']);
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'GetTemplate', 'DescribeStacks', 'UpdateStack', 'DescribeStacks', 'ListObjectsV2'], $calls, 'buckets the stack owns need no name check');
+        self::assertSame('shop-production-old-111111111111', $mocks->params[6]['Bucket']);
         self::assertSame([
             ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
             ['deploy.storage_updated', ['storage' => 'uploads', 'bucket' => 'shop-production-uploads-111111111111']],
@@ -2576,7 +2680,7 @@ final class AwsDeployerTest extends TestCase
         }
     }
 
-    public function test_log_groups_get_both_tags_and_a_tag_refusal_is_a_note(): void
+    public function test_log_groups_get_both_tags_and_a_tag_refusal_is_a_plain_note_not_a_warning(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->console(false)->region('us-east-1')->logRetention(30)->environment('production')->toArray(), 'production');
         $mocks = new AwsMocks();
@@ -2599,7 +2703,7 @@ final class AwsDeployerTest extends TestCase
             ['deploy.log_tags_not_added', ['groups' => '/aws/lambda/web/shop-production.local', 'error' => 'not authorized to perform: logs:TagResource']],
             ['deploy.log_retention', ['days' => 30, 'groups' => 'web']],
         ], $steps);
-        self::assertContains('deploy.log_tags_not_added', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertNotContains('deploy.log_tags_not_added', \Multiapi\Arco\Cli\StepPrinter::WARNINGS, 'a bullet, not a yellow block: it would show on every deploy for profiles without logs:TagResource');
     }
 
     public function test_resources_lists_the_environments_tagged_resources(): void

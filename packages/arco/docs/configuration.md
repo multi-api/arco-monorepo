@@ -89,7 +89,7 @@ like the others (an environment's call replaces the app's, and `cache(false)` tu
 | `deployCommands(array)` | `[]` | Commands run on the console function during every deploy, before traffic moves; an environment's list replaces the app's |
 | `console(bool = true, ?int timeout, ?int memory)` | off | Deploy the console function (`arco command`, `arco tinker`, `deployCommands()`); `console(false)` deletes an existing one on the next deploy; a scheduler implies it. `timeout:` is in seconds (3 to 900, default 900), `memory:` in MB (128 to 10240, default 2048); giving either also turns the console on |
 | `scheduler(int\|false)` | off | Run Laravel's `schedule:run` every N minutes (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 or 60), aligned to the UTC clock; needs the console, which it turns on |
-| `logRetention(int\|false)` | not managed | Days CloudWatch keeps the web, console and queue worker logs (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288 or 3653); `false` = never expire; not set = Arco leaves the groups as they are |
+| `logRetention(int\|false)` | 30 | Days CloudWatch keeps the web, console and queue worker logs (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288 or 3653); `false` = never expire; not set = 30 days |
 | `protected(bool = true)` | on for `production` | Ask for confirmation before `arco tinker`, `arco command`, `arco remove` and `arco queue:dlq --redrive`; `--yes` answers it, and without a terminal it is required (CI: `arco command "migrate --force" --env=production --no-interaction --yes`). Deploy commands (`deployCommands()`, `arco deploy --migrate`) are not asked. `protected(false)` turns it off |
 | `certificate(arn)` | looked up or requested | ACM certificate ARN in `us-east-1` to use for the domains |
 | `queue(name, ...)` | none | An SQS queue and the worker function that runs its jobs (see [Queues](#queues)); `queue(name, false)` drops an app-level queue from an environment |
@@ -297,8 +297,9 @@ alias's invoke permission. `--apply` needs `--env` (the app level spans every en
 
 `->logRetention(30)` (or `arco logs:retention 30`) sets the CloudWatch retention of the web function's log
 group and, when the console is on, the console's, and each queue worker's; creating the groups first when they do not exist yet.
-`->logRetention(false)` (`arco logs:retention never`) makes them never expire. With no setting Arco does not
-touch retention; `arco logs:retention --remove` goes back to that. Allowed days are the ones CloudWatch
+`->logRetention(false)` (`arco logs:retention never`) makes them never expire. With no setting the groups
+keep 30 days (before 0.9 Arco left them alone, so logs never expired: set `->logRetention(false)` to keep that);
+`arco logs:retention --remove` goes back to the default. Allowed days are the ones CloudWatch
 accepts (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922,
 3288, 3653).
 

@@ -6,11 +6,12 @@ use Aws\Exception\AwsException;
 use Multiapi\Arco\Aws\AccountMismatch;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Deploy\Domains\Aws;
+use Multiapi\Arco\Logs\LogGroups;
 
 /**
  * Deletes what `arco remove` keeps after a real-AWS end-to-end run: the retained S3 buckets (emptied
- * first, every version), DynamoDB tables and SQS queues (with their dead-letter queues), plus the run's
- * APP_KEY parameter. This is the only code in the project that deletes real AWS resources, so:
+ * first, every version), DynamoDB tables and SQS queues (with their dead-letter queues), the run's CloudWatch
+ * log groups, plus the run's APP_KEY parameter. This is the only code in the project that deletes real AWS resources, so:
  *
  * - An instance exists only after connect() checked that no endpoint override is set and that the
  *   caller's account (sts:GetCallerIdentity, the first and only call before the check) is exactly
@@ -20,6 +21,12 @@ use Multiapi\Arco\Deploy\Domains\Aws;
  *   "<app>-e2e-" AND the service itself reports both tags arco:app=<app> and arco:environment=e2e.
  *   Anything else it finds (right name without those tags, tagged but named otherwise) is reported
  *   through skipped() and left alone.
+ * - A log group is planned only when its name is exactly one the run's functions write to
+ *   (/aws/lambda/<app>-e2e[-.]..., /aws/lambda/web/<app>-e2e[-.]...: <app> carries 8 random hex digits,
+ *   so no other run's, no real app's group can match) AND its tags do not contradict the run: it
+ *   carries both arco:app=<app> and arco:environment=e2e (groups Arco created, or tagged), or neither
+ *   (Lambda creates a group untagged on the first invoke, and a profile without logs:TagResource leaves
+ *   it so). A group tagged for another app or environment is skipped and reported.
  * - The APP_KEY parameter is the one exception to tags: it is deleted by its exact name,
  *   /<app>/e2e/app-key, which only this run's random app name produces.
  * - apply() deletes only items of the plan of the same instance's app and checks name and tags
@@ -33,9 +40,10 @@ final class AwsE2eCleanup
     private const BUCKET = 's3-bucket';
     private const TABLE = 'dynamodb-table';
     private const QUEUE = 'sqs-queue';
+    private const LOG_GROUP = 'logs-log-group';
     private const PARAMETER = 'ssm-parameter';
     /** apply() order: nothing depends on a queue being gone, but the bucket takes longest. */
-    private const ORDER = [self::QUEUE, self::TABLE, self::BUCKET, self::PARAMETER];
+    private const ORDER = [self::QUEUE, self::TABLE, self::BUCKET, self::LOG_GROUP, self::PARAMETER];
 
     /** The app of the last plan(); apply() works for it only. */
     private ?string $app = null;
@@ -109,6 +117,9 @@ final class AwsE2eCleanup
         foreach ($this->queuesNamed($prefix) as $name) {
             $add(self::QUEUE, $name);
         }
+        foreach ($this->logGroupsNamed() as $name) {
+            $add(self::LOG_GROUP, $name);
+        }
         foreach ($this->taggedResources($app) as $resource) {
             $add($resource['type'], $resource['name']);
         }
@@ -153,6 +164,7 @@ final class AwsE2eCleanup
                     self::QUEUE => $this->deleteQueue($name),
                     self::TABLE => Aws::call($this->aws->dynamoDb(), 'DeleteTable', ['TableName' => $name]),
                     self::BUCKET => $this->deleteBucket($name),
+                    self::LOG_GROUP => Aws::call($this->aws->logs(), 'DeleteLogGroup', ['logGroupName' => $name]),
                     self::PARAMETER => Aws::call($this->aws->ssm(), 'DeleteParameter', ['Name' => $name]),
                     default => throw new \LogicException("problem() let an unknown type through: $type"),
                 };
@@ -188,6 +200,9 @@ final class AwsE2eCleanup
         if ($type === self::PARAMETER) {
             return $name === $this->parameterName() ? null : 'not the run\'s APP_KEY parameter ' . $this->parameterName();
         }
+        if ($type === self::LOG_GROUP) {
+            return $this->logGroupProblem($name);
+        }
         if (! in_array($type, [self::BUCKET, self::TABLE, self::QUEUE], true)) {
             return 'not a resource type the cleanup deletes';
         }
@@ -203,6 +218,56 @@ final class AwsE2eCleanup
             return 'not tagged arco:app=' . $this->app . ' and arco:environment=' . self::ENVIRONMENT . " (tags: $found)";
         }
         return null;
+    }
+
+    /** @return list<string> the groups of the run's functions: web (and its .local), console and queue workers */
+    private function logGroupPrefixes(): array
+    {
+        return ['/aws/lambda/' . $this->app . '-' . self::ENVIRONMENT, '/aws/lambda/web/' . $this->app . '-' . self::ENVIRONMENT];
+    }
+
+    private function logGroupProblem(string $name): ?string
+    {
+        if (preg_match('#^/aws/lambda/(web/)?' . preg_quote((string) $this->app . '-' . self::ENVIRONMENT, '#') . '([-.].*)?$#D', $name) !== 1) {
+            return 'not a log group of the run: ' . $this->logGroupPrefixes()[0] . '* or ' . $this->logGroupPrefixes()[1] . '*';
+        }
+        try {
+            $tags = Aws::map(Aws::call($this->aws->logs(), 'ListTagsForResource', [
+                'resourceArn' => LogGroups::arn($this->aws->region, $this->account, $name),
+            ])['tags'] ?? []);
+        } catch (AwsException $e) {
+            if ($e->getAwsErrorCode() === 'ResourceNotFoundException') {
+                return 'no longer exists';
+            }
+            throw $e;
+        }
+        $app = $tags['arco:app'] ?? null;
+        $environment = $tags['arco:environment'] ?? null;
+        if (($app === null && $environment === null) || ($app === $this->app && $environment === self::ENVIRONMENT)) {
+            return null;
+        }
+        return 'tagged for another app or environment, not arco:app=' . $this->app . ' and arco:environment=' . self::ENVIRONMENT
+            . ' (arco:app=' . (is_string($app) ? $app : 'none') . ', arco:environment=' . (is_string($environment) ? $environment : 'none') . ')';
+    }
+
+    /** @return list<string> */
+    private function logGroupsNamed(): array
+    {
+        $names = [];
+        foreach ($this->logGroupPrefixes() as $prefix) {
+            $token = null;
+            do {
+                $page = Aws::call($this->aws->logs(), 'DescribeLogGroups', ['logGroupNamePrefix' => $prefix, ...($token === null ? [] : ['nextToken' => $token])]);
+                foreach (Aws::maps($page['logGroups'] ?? []) as $group) {
+                    $name = Aws::string($group['logGroupName'] ?? null);
+                    if ($name !== null && str_starts_with($name, $prefix)) {
+                        $names[] = $name;
+                    }
+                }
+                $token = Aws::string($page['nextToken'] ?? null);
+            } while ($token !== null);
+        }
+        return array_values(array_unique($names));
     }
 
     /** @return array<string, string>|null the resource's tags as its own service reports them; null when it does not exist */

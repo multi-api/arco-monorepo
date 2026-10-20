@@ -569,11 +569,13 @@ final class AwsDeployer implements Deployer
         }
     }
 
+    /** Days CloudWatch keeps the logs of an environment without a logRetention() setting. */
+    public const DEFAULT_LOG_RETENTION = 30;
+
     public function applyLogRetention(AppConfig $config, Closure $onStep): void
     {
-        if ($config->logRetention === null) {
-            return;
-        }
+        // No setting: the default applies (and is announced once), so groups never silently keep logs forever.
+        $days = $config->logRetention ?? self::DEFAULT_LOG_RETENTION;
         $scope = self::logRetentionScope($config);
         $groups = LogGroups::for($config, 'web');
         if ($config->consoleEnabled()) {
@@ -581,14 +583,16 @@ final class AwsDeployer implements Deployer
         }
         $region = (string) $config->region;
         // Lambda makes a group untagged on the first invoke: Arco adopts it and tags it for the environment.
-        $untagged = (new LogRetention($this->aws->logs()))->apply([...$groups, ...LogGroups::for($config, 'queues')], $config->logRetention, self::tags($config),
+        $untagged = (new LogRetention($this->aws->logs()))->apply([...$groups, ...LogGroups::for($config, 'queues')], $days, self::tags($config),
             fn (string $group): string => LogGroups::arn($region, $this->aws->accountId(), $group));
         if ($untagged !== []) {
             // One warning for the deploy, not one per group.
             $onStep('deploy.log_tags_not_added', ['groups' => implode(', ', array_column($untagged, 'group')), 'error' => $untagged[0]['error']]);
         }
         // {groups} is a code (web, all, web_queues, all_queues) the step printer translates: only the groups touched are named.
-        $onStep(...self::logRetentionStep($config->logRetention, $scope));
+        $onStep(...($config->logRetention === null
+            ? ['deploy.log_retention_default', ['groups' => $scope]]
+            : self::logRetentionStep($config->logRetention, $scope)));
     }
 
     /**
@@ -816,28 +820,39 @@ final class AwsDeployer implements Deployer
             // The queues, buckets and tables stay (Retain): only the empty stack goes.
             $stacks->delete($name);
         } else {
+            // What the stack runs now, to say which resources this update changes. Unknown: reported as changed.
+            $changed = $stack === null ? [] : ResourcesStack::changedResources($stacks->template($name), $template);
             try {
                 $stacks->deploy($name, ResourcesStack::body($template), self::tags($config));
             } catch (DeployException $e) {
                 throw self::publicPolicyFailure($config, $e) ?? $e;
             }
             foreach ($created as $queue) {
-                $key = isset($owned[ResourcesStack::logicalId($queue->name)]) ? 'deploy.queue_updated' : 'deploy.queue_created';
+                $id = ResourcesStack::logicalId($queue->name);
+                $key = ! isset($owned[$id]) ? 'deploy.queue_created' : (self::isChanged($changed, $id) ? 'deploy.queue_changed' : 'deploy.queue_updated');
                 $onStep($key, ['queue' => $queue->name, 'name' => $queue->physicalName($config)]);
             }
             foreach ($storage as $bucket) {
-                $key = isset($owned[ResourcesStack::bucketLogicalId($bucket->name)]) ? 'deploy.storage_updated' : 'deploy.storage_created';
+                $id = ResourcesStack::bucketLogicalId($bucket->name);
+                $key = ! isset($owned[$id]) ? 'deploy.storage_created' : (self::isChanged($changed, $id) ? 'deploy.storage_changed' : 'deploy.storage_updated');
                 $onStep($key, ['storage' => $bucket->name, 'bucket' => $bucket->bucketName($config)]);
                 if ($bucket->public !== []) {
                     $onStep('deploy.storage_public', ['storage' => $bucket->name, 'prefixes' => implode(', ', $bucket->public), 'url' => $bucket->url($config)]);
                 }
             }
             foreach ($tables as $table) {
-                $key = isset($owned[ResourcesStack::tableLogicalId($table->kind)]) ? 'deploy.table_updated' : 'deploy.table_created';
+                $id = ResourcesStack::tableLogicalId($table->kind);
+                $key = ! isset($owned[$id]) ? 'deploy.table_created' : (self::isChanged($changed, $id) ? 'deploy.table_changed' : 'deploy.table_updated');
                 $onStep($key, ['kind' => $table->kind, 'name' => $table->tableName($config)]);
             }
         }
         $this->reportKept($removed, $onStep, 'deploy.', $config);
+    }
+
+    /** @param array<string, true>|null $changed null: unknown, so any resource may have changed */
+    private static function isChanged(?array $changed, string $id): bool
+    {
+        return $changed === null || isset($changed[$id]);
     }
 
     /**

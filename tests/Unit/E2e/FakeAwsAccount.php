@@ -28,6 +28,8 @@ final class FakeAwsAccount
     public array $tables = [];
     /** @var array<string, array<string, string>> queue name => tags */
     public array $queues = [];
+    /** @var array<string, array<string, string>> log group name => tags */
+    public array $logGroups = [];
     /** @var array<string, array<string, string>> parameter name => tags */
     public array $parameters = [];
     /** @var list<array{0: string, 1: ?string}> S3 bucket operation => the ExpectedBucketOwner it sent */
@@ -152,6 +154,23 @@ final class FakeAwsAccount
                 return ['Tags' => $this->queues[basename($string('QueueUrl'))] ?? throw self::error($operation, 'AWS.SimpleQueueService.NonExistentQueue', 400)];
             case 'DeleteQueue':
                 unset($this->queues[basename($string('QueueUrl'))]);
+                return [];
+
+            case 'DescribeLogGroups':
+                $prefix = $string('logGroupNamePrefix');
+                $names = array_filter(array_keys($this->logGroups), static fn (string $g): bool => str_starts_with($g, $prefix));
+                // Two per page, to exercise the loop.
+                $offset = (int) $string('nextToken');
+                $page = array_slice(array_values($names), $offset, 2);
+                return ['logGroups' => array_map(static fn (string $g): array => ['logGroupName' => $g], $page), ...($offset + 2 < count($names) ? ['nextToken' => (string) ($offset + 2)] : [])];
+            case 'ListTagsForResource':
+                $arn = $string('resourceArn');
+                $group = substr($arn, (int) strpos($arn, ':log-group:') + 11);
+                return ['tags' => $this->logGroups[$group] ?? throw self::error($operation, 'ResourceNotFoundException', 400)];
+            case 'DeleteLogGroup':
+                $group = $string('logGroupName');
+                isset($this->logGroups[$group]) || throw self::error($operation, 'ResourceNotFoundException', 400);
+                unset($this->logGroups[$group]);
                 return [];
 
             case 'DescribeParameters':

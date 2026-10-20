@@ -434,7 +434,7 @@ final class InfoCommand extends ArcoCommand
             }),
             $key === 'scheduler' => is_int($value) ? $this->t('scheduler.every', ['minutes' => $value]) : $this->t('scheduler.off'),
             $key === 'logRetention' => match (true) {
-                $value === null => $this->t('info.retention_not_managed'),
+                $value === null => $this->t('info.retention_default'),
                 $value === false => $this->t('logs.retention_never'),
                 $value === 1 => $this->t('logs.retention_one_day'),
                 default => $this->t('logs.retention_days', ['days' => is_int($value) ? $value : 0]),

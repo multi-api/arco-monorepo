@@ -302,7 +302,7 @@ scheduler:resume --env=<env>` stop and restart the rule at once without editing 
 paused scheduler paused.
 
 `arco logs:retention 30 --env=<env>` (or `->logRetention(30)`) keeps the web, console and queue worker logs for 30 days;
-`never` stops them from expiring, `--remove` leaves retention unmanaged (the default). Each deploy also
+`never` stops them from expiring, `--remove` goes back to the default, 30 days (before 0.9 retention was unmanaged: use `never` to keep logs forever). Each deploy also
 deletes unused `runtime/*` binaries from the code bucket (older than 24 hours, none referenced by a published
 version), best effort with a warning.
 
@@ -531,7 +531,7 @@ A deploy role (like the one of Arco's own end-to-end run, in a dedicated test ac
   (it reads every tagged function's versions), and `tag:GetResources` (without it the clean-up warns on every deploy)
 - for log retention: `logs:CreateLogGroup`, `logs:PutRetentionPolicy`, `logs:DeleteRetentionPolicy`, and
   `logs:TagResource` (Arco tags each log group for the environment; without it the groups stay untagged, with
-  one warning per deploy)
+  one note per deploy)
 - for the environment's Resource Group `arco-<app>-<env>` (a view of its tagged resources in the AWS console):
   `resource-groups:GetGroupQuery`, `resource-groups:CreateGroup`, `resource-groups:Tag`,
   `resource-groups:GetGroup`, `resource-groups:GetTags`, `resource-groups:UpdateGroupQuery` and, for
@@ -566,7 +566,8 @@ With `queue()`, the deploy profile also needs:
 
 - `cloudformation:CreateStack`, `UpdateStack`, `DeleteStack`, `DescribeStacks`, `DescribeStackEvents`,
   `DescribeStackResources` on `arn:aws:cloudformation:*:*:stack/arco-*-resources/*` (the queue stack;
-  `cloudformation:*Stack*` on `stack/arco-*`, as for custom domains, covers it)
+  `cloudformation:*Stack*` on `stack/arco-*`, as for custom domains, covers it), plus `cloudformation:GetTemplate`
+  to report which buckets, tables and queues an update changed (without it every updated resource is reported as updated)
 - `sqs:CreateQueue`, `sqs:GetQueueUrl`, `sqs:GetQueueAttributes`, `sqs:SetQueueAttributes`, `sqs:TagQueue`,
   `sqs:UntagQueue`, `sqs:ListQueueTags` (CloudFormation creates and updates the queues with the profile's
   credentials), `sqs:ReceiveMessage` (the `queue:dlq` sample) and `sqs:StartMessageMoveTask` (`queue:dlq
