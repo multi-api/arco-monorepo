@@ -112,7 +112,7 @@ available yet": Floci does not report the Lambda init metric to CloudWatch Logs.
 ## Clean up
 
 ```bash
-vendor/bin/arco remove --env=local --force
+vendor/bin/arco remove --env=local --yes
 docker stop floci
 ```
 

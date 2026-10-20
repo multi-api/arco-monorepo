@@ -43,6 +43,92 @@ final class ConfigLoaderTest extends TestCase
         );
     }
 
+    public function test_a_removed_max_environments_call_names_its_replacement(): void
+    {
+        $path = $this->write("<?php\nuse Multiapi\\Arco\\Config\\App;\nreturn App::make('shop')->region('us-east-1')->maxEnvironments(3)->environment('production');\n");
+
+        try {
+            (new ConfigLoader())->load($path);
+            self::fail('maxEnvironments() is gone');
+        } catch (ConfigException $e) {
+            self::assertSame('config.removed_max_environments', $e->key);
+            self::assertSame(['value' => '3'], $e->params);
+        }
+    }
+
+    public function test_a_removed_console_timeout_call_names_its_replacement(): void
+    {
+        $path = $this->write("<?php\nuse Multiapi\\Arco\\Config\\App;\nuse Multiapi\\Arco\\Config\\Environment;\nreturn App::make('shop')->region('us-east-1')->environment('production', fn (Environment \$e) => \$e->consoleTimeout(60));\n");
+
+        try {
+            (new ConfigLoader())->load($path);
+            self::fail('consoleTimeout() is gone');
+        } catch (ConfigException $e) {
+            self::assertSame('config.removed_console_timeout', $e->key);
+            self::assertSame(['value' => '60'], $e->params);
+        }
+    }
+
+    /** @return iterable<string, array{0: string, 1: string, 2: array<string, string>}> */
+    public static function changedSignatures(): iterable
+    {
+        yield 'binary(path:)' => ["App::make('shop')->region('us-east-1')->runtime(fn (\\Multiapi\\Arco\\Config\\Runtime \$r) => \$r->binary(path: 'bin/frankenphp'))", 'config.changed_binary_path', []];
+        yield 'dns(profile:)' => ["App::make('shop')->region('us-east-1')->dns(profile: 'dns')", 'config.changed_dns_profile', []];
+        yield 'cache(null)' => ["App::make('shop')->region('us-east-1')->cache(null)", 'config.changed_null_table', ['method' => 'cache']];
+        yield 'failedJobsTable(null)' => ["App::make('shop')->region('us-east-1')->failedJobsTable(null)", 'config.changed_null_table', ['method' => 'failedJobsTable']];
+    }
+
+    /** @param array<string, string> $params */
+    #[\PHPUnit\Framework\Attributes\DataProvider('changedSignatures')]
+    public function test_a_signature_changed_in_0_9_says_what_to_write_now(string $chain, string $key, array $params): void
+    {
+        $path = $this->write("<?php\nuse Multiapi\\Arco\\Config\\App;\nreturn {$chain}->environment('production');\n");
+
+        try {
+            (new ConfigLoader())->load($path);
+            self::fail('the old signature no longer works');
+        } catch (ConfigException $e) {
+            self::assertSame($key, $e->key);
+            self::assertSame($params, $e->params);
+        }
+        foreach (['en', 'es'] as $lang) {
+            $text = (new \Multiapi\Arco\Cli\Translator($lang, \Multiapi\Arco\Arco::packageRoot() . '/lang'))->trans($key, $params);
+            self::assertNotSame($key, $text, $lang);
+        }
+        $en = (new \Multiapi\Arco\Cli\Translator('en', \Multiapi\Arco\Arco::packageRoot() . '/lang'))->trans($key, $params);
+        self::assertStringContainsString(match ($key) {
+            'config.changed_binary_path' => 'binary(frankenphp: ..., php: ...) since 0.9',
+            'config.changed_dns_profile' => 'dns(dns: ...)',
+            default => 'false to turn it off',
+        }, $en);
+    }
+
+    public function test_other_unknown_named_parameters_and_type_errors_keep_php_s_text(): void
+    {
+        foreach (["App::make('shop')->region('us-east-1')->timeout(secs: 3)", "App::make('shop')->region('us-east-1')->console(null)"] as $chain) {
+            $path = $this->write("<?php\nuse Multiapi\\Arco\\Config\\App;\nreturn {$chain}->environment('production');\n");
+            try {
+                (new ConfigLoader())->load($path);
+                self::fail('expected an error');
+            } catch (ConfigException $e) {
+                self::assertSame('config.failed', $e->key);
+            }
+        }
+    }
+
+    public function test_other_undefined_methods_keep_the_generic_error(): void
+    {
+        $path = $this->write("<?php\nuse Multiapi\\Arco\\Config\\App;\nreturn App::make('shop')->nope()->environment('production');\n");
+
+        $this->expectException(ConfigException::class);
+        try {
+            (new ConfigLoader())->load($path);
+        } catch (ConfigException $e) {
+            self::assertSame('config.failed', $e->key);
+            throw $e;
+        }
+    }
+
     public function test_loads_config_in_a_separate_process(): void
     {
         $path = $this->write(<<<'PHP'

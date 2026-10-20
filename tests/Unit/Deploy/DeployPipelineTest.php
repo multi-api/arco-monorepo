@@ -200,6 +200,20 @@ final class DeployPipelineTest extends TestCase
         return ConfigResolver::resolve($app->environment('production', fn (Environment $e) => $e->account('123456789012'))->toArray(), 'production');
     }
 
+    public function test_storage_without_a_default_adds_only_the_bucket_map(): void
+    {
+        $variables = DeployPipeline::variables($this->resourcesConfig(fn (App $app) => $app->storage('uploads', default: false)->storage('backups', default: false)), new PlainPhpPreset());
+
+        self::assertArrayNotHasKey('FILESYSTEM_DISK', $variables);
+        self::assertArrayNotHasKey('AWS_BUCKET', $variables);
+        self::assertArrayNotHasKey('AWS_URL', $variables);
+        self::assertSame(['uploads', 'backups'], array_keys(json_decode($variables['ARCO_STORAGE'], true)));
+
+        $one = DeployPipeline::variables($this->resourcesConfig(fn (App $app) => $app->storage('uploads')), new PlainPhpPreset());
+        self::assertSame('s3', $one['FILESYSTEM_DISK']);
+        self::assertSame('shop-production-uploads-123456789012', $one['AWS_BUCKET']);
+    }
+
     public function test_storage_adds_the_default_disk_and_every_bucket(): void
     {
         $variables = DeployPipeline::variables($this->resourcesConfig(fn (App $app) => $app->storage('uploads')->storage('media', existing: 'legacy.bucket', default: true)), new PlainPhpPreset());
@@ -463,7 +477,8 @@ final class DeployPipelineTest extends TestCase
     }
 
     /**
-     * A pipeline whose manifest has 1.13.0-r1 (no PHP CLI) and 1.13.0-r2 (with one); downloads write
+     * A pipeline whose manifest has php8.5.11-fp1.13.0-r1 (no PHP CLI) and php8.5.11-fp1.13.0-r2 (with one),
+     * also known by their pre-0.9 ids 1.13.0-r1 and 1.13.0-r2 (aliases); downloads write
      * $content, or throw $failure when it is given.
      */
     private function cliPipeline(string $content = 'php-cli-bytes', ?\Throwable $failure = null): DeployPipeline
@@ -477,10 +492,11 @@ final class DeployPipelineTest extends TestCase
             'php' => '8.5.11',
         ];
         $manifest = \Multiapi\Arco\Binary\RuntimeManifest::fromArray([
-            'default' => '1.13.0-r2',
+            'default_php' => '8.5',
+            'aliases' => ['1.13.0-r1' => 'php8.5.11-fp1.13.0-r1', '1.13.0-r2' => 'php8.5.11-fp1.13.0-r2'],
             'builds' => [
-                '1.13.0-r1' => $build('1.13.0-r1'),
-                '1.13.0-r2' => [...$build('1.13.0-r2'), 'php_cli' => [
+                'php8.5.11-fp1.13.0-r1' => $build('1.13.0-r1'),
+                'php8.5.11-fp1.13.0-r2' => [...$build('1.13.0-r2'), 'php_cli' => [
                     'url' => 'https://example.test/frankenphp-1.13.0-r2/php-linux-aarch64',
                     'sha256' => hash('sha256', 'php-cli-bytes'),
                     'size' => strlen('php-cli-bytes'),
@@ -550,6 +566,35 @@ final class DeployPipelineTest extends TestCase
         self::assertArrayNotHasKey('deploy.console_downloads_binary', $steps);
     }
 
+    public function test_a_package_of_a_new_build_id_puts_its_php_cli_in_the_console_zip(): void
+    {
+        [$deployer, $steps] = $this->deployWeb($this->cliPipeline(), 'php8.5.11-fp1.13.0-r2');
+
+        self::assertNotNull($deployer->console);
+        self::assertNull($deployer->console->download);
+        self::assertArrayNotHasKey('deploy.console_downloads_binary', $steps);
+    }
+
+    public function test_a_custom_binary_with_a_php_cli_puts_that_cli_in_the_console_zip(): void
+    {
+        $php = TempPaths::path('arco-php-');
+        file_put_contents($php, (string) file_get_contents(ElfInspectorTest::fakeElf(0xB7)) . 'custom-php');
+        $config = ConfigResolver::resolve(App::make('shop')->console()->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->binary(frankenphp: ElfInspectorTest::fakeElf(0xB7), php: $php))
+            ->environment('production')
+            ->toArray(), 'production');
+        $deployer = new FakeDeployer('rev-1');
+        $steps = [];
+
+        $this->cliPipeline()->deployPackage($config, new PlainPhpPreset(), self::webPackage(null), $deployer, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertNotNull($deployer->console);
+        self::assertNull($deployer->console->download, 'the console runs bin/php and downloads nothing at cold start');
+        self::assertArrayNotHasKey('deploy.console_downloads_binary', $steps);
+        // The web zip claims 8 bytes; its console drops the 3-byte bin/frankenphp and adds this CLI as bin/php.
+        self::assertSame(8 - 3 + (int) filesize($php), $deployer->console->package->bytes);
+    }
+
     public function test_the_first_php_cli_download_reports_progress_and_the_cached_one_does_not(): void
     {
         $pipeline = $this->cliPipeline();
@@ -563,7 +608,7 @@ final class DeployPipelineTest extends TestCase
         $second = $deploy();
 
         self::assertSame([
-            ['deploy.php_cli_downloading', ['build' => '1.13.0-r2', 'size' => 0]],
+            ['deploy.php_cli_downloading', ['build' => 'php8.5.11-fp1.13.0-r2', 'size' => 0]],
             ['package.progress', ['percent' => 46]],
             ['package.progress', ['percent' => 100]],
         ], array_slice($first, 0, 3));
@@ -1102,6 +1147,28 @@ final class DeployPipelineTest extends TestCase
         self::assertContains('prune', $denied->calls);
     }
 
+    public function test_the_resource_group_is_ensured_once_the_deploy_is_verified_and_a_failure_is_a_note(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $this->pipeline()->deploy($this->retentionConfig(null), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+        self::assertSame([['prepare', 'release']], $deployer->groupSyncs, 'once, after the release; not recorded in calls');
+        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls);
+
+        // Not verified: no group.
+        $failed = new FakeDeployer('rev-1');
+        $this->pipeline()->deploy($this->retentionConfig(null), new PlainPhpPreset(), $this->project, $failed, new FakeVerifier(false), fn () => null);
+        self::assertSame([], $failed->groupSyncs);
+
+        // Anything thrown (AwsDeployer turns refusals into notes itself): a note, the deploy still succeeds.
+        $broken = new FakeDeployer('rev-1');
+        $broken->groupError = new \RuntimeException('boom');
+        $steps = [];
+        $outcome = $this->pipeline()->deploy($this->retentionConfig(null), new PlainPhpPreset(), $this->project, $broken, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+        self::assertTrue($outcome->verification->ok);
+        self::assertSame(['group' => 'arco-shop-production', 'error' => 'boom'], $steps['deploy.group_failed'] ?? null);
+        self::assertContains('prune', $broken->calls);
+    }
+
     public function test_scheduler_removed_when_turned_off(): void
     {
         $deployer = new FakeDeployer('rev-1', consoleVersion: '7');
@@ -1194,6 +1261,23 @@ final class DeployPipelineTest extends TestCase
         self::assertSame(['resources', 'prepare', 'release', 'scheduler:off', 'workers:emails', 'prune'], $deployer->calls);
         self::assertContains('deploy.queue_created', $steps);
         self::assertLessThan(array_search('deploy.queue_created', $steps, true), array_search('package.ready', $steps, true));
+    }
+
+    public function test_ownership_is_checked_before_any_aws_change_and_a_refusal_stops_the_deploy(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+        self::assertSame(1, $deployer->ownershipChecks);
+
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->ownershipError = DeployException::make('deploy.not_owned', ['resource' => 'shop-production', 'app' => 'shop-eu', 'environment' => 'prod']);
+        try {
+            $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+            self::fail('expected deploy.not_owned');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.not_owned', $e->key);
+        }
+        self::assertSame([], $deployer->calls, 'no resources stack, no prepare, no traffic');
     }
 
     public function test_a_failed_resources_deploy_stops_before_any_traffic_moves(): void
@@ -1296,9 +1380,9 @@ final class DeployPipelineTest extends TestCase
     public function test_queues_need_a_package_with_arco_laravel_and_the_aws_sdk_before_any_change(): void
     {
         foreach ([
-            [[self::QUEUE_FILES[0]], 'multiapi/arco-laravel:^0.5'],
+            [[self::QUEUE_FILES[0]], 'multiapi/arco-laravel:^0.9'],
             [[self::QUEUE_FILES[1]], 'aws/aws-sdk-php'],
-            [self::QUEUE_FILES, 'multiapi/arco-laravel:^0.5 aws/aws-sdk-php'],
+            [self::QUEUE_FILES, 'multiapi/arco-laravel:^0.9 aws/aws-sdk-php'],
         ] as [$without, $packages]) {
             $deployer = new FakeDeployer('rev-1');
             try {
@@ -1338,17 +1422,17 @@ final class DeployPipelineTest extends TestCase
         foreach ([
             [$storage, [self::FLYSYSTEM_S3], self::PROVIDER_06, 'league/flysystem-aws-s3-v3:^3.0', '- league/flysystem-aws-s3-v3:^3.0 (storage())'],
             [$storage, [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (storage())'],
-            [$storage, [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (storage())'],
+            [$storage, [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.9', '- multiapi/arco-laravel:^0.9 (storage())'],
             [$cache, [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (cache())'],
             [fn (App $app) => $app->cache(existing: 'Legacy'), [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (cache())'],
             [$failed, [self::QUEUE_FILES[1]], self::PROVIDER_06, 'aws/aws-sdk-php', '- aws/aws-sdk-php (failedJobsTable())'],
-            [$failed, [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (failedJobsTable())'],
-            [$failed, [self::PROVIDER], self::PROVIDER_06, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (failedJobsTable())'],
-            [$all, self::VENDOR_FILES, self::PROVIDER_06, 'league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.6',
-                "- league/flysystem-aws-s3-v3:^3.0 (storage())\n- aws/aws-sdk-php (storage(), cache(), failedJobsTable())\n- multiapi/arco-laravel:^0.6 (storage(), failedJobsTable())"],
-            // arco-laravel 0.6 covers the queues too: one requirement, not ^0.5 and ^0.6.
-            [fn (App $app) => $app->queue('emails')->storage('uploads'), [self::QUEUE_FILES[0], self::PROVIDER], self::PROVIDER_06, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (queue(), storage())'],
-            [fn (App $app) => $app->queue('emails')->storage('uploads'), [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.6', '- multiapi/arco-laravel:^0.6 (storage())'],
+            [$failed, [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.9', '- multiapi/arco-laravel:^0.9 (failedJobsTable())'],
+            [$failed, [self::PROVIDER], self::PROVIDER_06, 'multiapi/arco-laravel:^0.9', '- multiapi/arco-laravel:^0.9 (failedJobsTable())'],
+            [$all, self::VENDOR_FILES, self::PROVIDER_06, 'league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.9',
+                "- league/flysystem-aws-s3-v3:^3.0 (storage())\n- aws/aws-sdk-php (storage(), cache(), failedJobsTable())\n- multiapi/arco-laravel:^0.9 (storage(), failedJobsTable())"],
+            // one arco-laravel requirement for every feature that needs it.
+            [fn (App $app) => $app->queue('emails')->storage('uploads'), [self::QUEUE_FILES[0], self::PROVIDER], self::PROVIDER_06, 'multiapi/arco-laravel:^0.9', '- multiapi/arco-laravel:^0.9 (queue(), storage())'],
+            [fn (App $app) => $app->queue('emails')->storage('uploads'), [], self::PROVIDER_05, 'multiapi/arco-laravel:^0.9', '- multiapi/arco-laravel:^0.9 (storage())'],
         ] as $i => [$build, $without, $provider, $packages, $list]) {
             $deployer = new FakeDeployer('rev-1');
             try {

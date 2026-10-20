@@ -377,15 +377,14 @@ final class ArcoFileEditorTest extends TestCase
         self::assertSame(3, self::resolve($path)->maxInstances);
     }
 
-    public function test_max_environments_is_replaced_by_max_instances(): void
+    public function test_max_instances_is_set_and_removed_per_level(): void
     {
-        $path = $this->file(self::head() . "return App::make('shop')->region('us-east-1')->maxEnvironments(4)\n"
-            . "    ->environment('production', fn (Environment \$env) => \$env->maxEnvironments(2)->timeout(9));\n");
+        $path = $this->file(self::head() . "return App::make('shop')->region('us-east-1')->maxInstances(4)\n"
+            . "    ->environment('production', fn (Environment \$env) => \$env->maxInstances(2)->timeout(9));\n");
 
         self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'maxInstances', 20));
         self::assertTrue(ArcoFileEditor::setSetting($path, null, 'maxInstances', 5));
         $source = (string) file_get_contents($path);
-        self::assertStringNotContainsString('maxEnvironments', $source);
         self::assertStringContainsString("\$env->maxInstances(20)->timeout(9)", $source);
         self::assertSame(20, self::resolve($path)->maxInstances);
 
@@ -393,13 +392,48 @@ final class ArcoFileEditorTest extends TestCase
         self::assertSame([5, 'app'], [self::resolve($path)->maxInstances, self::resolve($path)->sources['maxInstances']]);
     }
 
+    public function test_console_options_round_trip_through_one_console_call(): void
+    {
+        $path = $this->file(self::head() . "return App::make('shop')->region('us-east-1')\n"
+            . "    ->environment('production', fn (Environment \$env) => \$env->console()->timeout(9));\n");
+
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'consoleTimeout', 600));
+        self::assertStringContainsString("\$env->console(timeout: 600)->timeout(9)", (string) file_get_contents($path));
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'consoleMemory', 4096));
+        self::assertStringContainsString('->console(timeout: 600, memory: 4096)', (string) file_get_contents($path));
+        $config = self::resolve($path);
+        self::assertSame([true, 600, 4096], [$config->console, $config->consoleTimeout, $config->consoleMemory]);
+
+        // turning the console off keeps the options in the call
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'console', false));
+        self::assertStringContainsString('->console(false, timeout: 600, memory: 4096)', (string) file_get_contents($path));
+        self::assertFalse(self::resolve($path)->consoleEnabled());
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'console', true));
+        self::assertSame(600, self::resolve($path)->consoleTimeout);
+
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'consoleTimeout', null));
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'consoleMemory', null));
+        self::assertStringContainsString("\$env->console()->timeout(9)", (string) file_get_contents($path));
+    }
+
+    public function test_a_console_option_with_no_console_call_adds_one_that_turns_it_on(): void
+    {
+        $path = $this->file(self::head() . "return App::make('shop')->region('us-east-1')->environment('production');\n");
+
+        self::assertTrue(ArcoFileEditor::setSetting($path, null, 'consoleTimeout', 120));
+
+        self::assertStringContainsString('->console(timeout: 120)', (string) file_get_contents($path));
+        self::assertTrue(self::resolve($path)->consoleEnabled());
+        self::assertSame('->console(timeout: 120)', ArcoFileEditor::settingLine('consoleTimeout', 120));
+    }
+
     public function test_refuses_unknown_setting_shapes(): void
     {
         $cases = [
             // value not a literal
             ['production', 'timeout', self::head() . "return App::make('shop')->environment('production', fn (Environment \$env) => \$env->timeout((int) getenv('T')));\n"],
-            // the setting twice (alias counts)
-            ['production', 'maxInstances', self::head() . "return App::make('shop')->environment('production', fn (Environment \$env) => \$env->maxEnvironments(2)->maxInstances(3));\n"],
+            // the setting twice
+            ['production', 'maxInstances', self::head() . "return App::make('shop')->environment('production', fn (Environment \$env) => \$env->maxInstances(2)->maxInstances(3));\n"],
             // app built in steps
             [null, 'timeout', self::head() . "\$app = App::make('shop');\n\$app->timeout(5);\nreturn \$app->environment('production');\n"],
             // app-level call outside the App::make() chain
@@ -607,10 +641,10 @@ final class ArcoFileEditorTest extends TestCase
         self::assertTrue(ArcoFileEditor::setQueue($path, null, 'jobs', ['memory' => 2048]));
         self::assertTrue(ArcoFileEditor::setQueue($path, null, 'emails', ['fifo' => true, 'batchSize' => 10, 'concurrency' => 4]));
         self::assertStringContainsString(
-            "    ->region('us-east-1')\n    ->queue('jobs', memory: 2048)\n    ->queue('emails', concurrency: 4, batchSize: 10, fifo: true)\n    ->concurrency(48)\n",
+            "    ->region('us-east-1')\n    ->queue('jobs', memory: 2048)\n    ->queue('emails', maxInstances: 4, batchSize: 10, fifo: true)\n    ->concurrency(48)\n",
             (string) file_get_contents($path),
         );
-        self::assertSame(['jobs' => ['memory' => 2048], 'emails' => ['concurrency' => 4, 'batchSize' => 10, 'fifo' => true]], self::rawQueues($path, null));
+        self::assertSame(['jobs' => ['memory' => 2048], 'emails' => ['maxInstances' => 4, 'batchSize' => 10, 'fifo' => true]], self::rawQueues($path, null));
         self::assertSame(['jobs', 'emails'], self::queueNames($path, 'staging'));
         self::assertSame([], self::rawQueues($path));
     }

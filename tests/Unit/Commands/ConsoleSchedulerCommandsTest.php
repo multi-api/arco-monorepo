@@ -376,26 +376,36 @@ final class ConsoleSchedulerCommandsTest extends TestCase
         return $this->project = new ProjectFixture(str_replace('->timeout(60)', '->timeout(60)' . $production, ProjectFixture::consoleConfig()));
     }
 
+    /** @return list<Result> the ownership reads of the scheduler rule of shop/production (DescribeRule, ListTagsForResource) */
+    private static function ownRule(): array
+    {
+        return [
+            new Result(['Name' => 'arco-shop-production-scheduler', 'Arn' => 'arn:rule', 'Description' => 'Arco: schedule:run every 1 min on shop-production-console:live']),
+            new Result(['Tags' => [['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']]]),
+        ];
+    }
+
     public function test_scheduler_set_apply_puts_the_rule_on_the_live_alias(): void
     {
         $this->consoleProject();
         $mocks = new AwsMocks();
-        $mocks->handler->append(
+        $mocks->handler->append(...[
             new Result(['Account' => '123456789012']),
             new Result(['AliasArn' => 'arn:aws:lambda:us-east-1:123456789012:function:shop-production-console:live', 'FunctionVersion' => '3']),
+            ...self::ownRule(),
             new Result(['State' => 'ENABLED']),
             new Result(['RuleArn' => 'arn:rule']),
             new Result(['FailedEntryCount' => 0]),
             new Result([]),
-        );
+        ]);
 
         $tester = $this->run_(new SchedulerSetCommand(awsFactory: fn () => $mocks->clients()), ['minutes' => '5', '--env' => 'production', '--profile' => 'p', '--apply' => true]);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('->scheduler(5)', $this->source());
-        self::assertSame(['GetCallerIdentity', 'GetAlias', 'DescribeRule', 'PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
-        self::assertSame('cron(0/5 * * * ? *)', $mocks->params[3]['ScheduleExpression']);
-        self::assertSame('ENABLED', $mocks->params[3]['State']);
+        self::assertSame(['GetCallerIdentity', 'GetAlias', 'DescribeRule', 'ListTagsForResource', 'DescribeRule', 'PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
+        self::assertSame('cron(0/5 * * * ? *)', $mocks->params[5]['ScheduleExpression']);
+        self::assertSame('ENABLED', $mocks->params[5]['State']);
         self::assertStringContainsString('Applied in AWS: the scheduler of production runs every 5 min.', self::display($tester));
         self::assertStringNotContainsString('arco deploy --env=production', self::display($tester));
     }
@@ -404,19 +414,20 @@ final class ConsoleSchedulerCommandsTest extends TestCase
     {
         $this->consoleProject();
         $mocks = new AwsMocks();
-        $mocks->handler->append(
+        $mocks->handler->append(...[
             new Result(['Account' => '123456789012']),
             new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '3']),
+            ...self::ownRule(),
             new Result(['State' => 'DISABLED']),
             new Result(['RuleArn' => 'arn:rule']),
             new Result(['FailedEntryCount' => 0]),
             new Result([]),
-        );
+        ]);
 
         $tester = $this->run_(new SchedulerSetCommand(awsFactory: fn () => $mocks->clients()), ['minutes' => '5', '--env' => 'production', '--profile' => 'p', '--apply' => true]);
 
         $tester->assertCommandIsSuccessful();
-        self::assertSame('DISABLED', $mocks->params[3]['State']);
+        self::assertSame('DISABLED', $mocks->params[5]['State']);
         self::assertStringContainsString('scheduler:resume --env=production', self::display($tester));
         self::assertStringContainsString('Applied in AWS: the scheduler of production is set to every 5 min and is still paused.', self::display($tester));
         self::assertStringNotContainsString('runs every 5 min', self::display($tester));
@@ -455,14 +466,15 @@ final class ConsoleSchedulerCommandsTest extends TestCase
     {
         $this->consoleProject();
         $mocks = new AwsMocks();
-        $mocks->handler->append(
+        $mocks->handler->append(...[
             new Result(['Account' => '123456789012']),
             new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '3']),
+            ...self::ownRule(),
             new Result(['State' => 'ENABLED']),
             new Result(['RuleArn' => 'arn:rule']),
             new Result(['FailedEntryCount' => 0]),
             new Result([]),
-        );
+        ]);
 
         $tester = $this->run_(new SchedulerSetCommand(awsFactory: fn () => $mocks->clients()), ['minutes' => '5', '--env' => 'production', '--profile' => 'p'], ['yes']);
 
@@ -498,6 +510,7 @@ final class ConsoleSchedulerCommandsTest extends TestCase
         $mocks->handler->append(
             new Result(['Account' => '123456789012']),
             new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '3']),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'ResourceNotFoundException', 400), // ownership: no rule yet
             AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'ResourceNotFoundException', 400),
             new Result(['RuleArn' => 'arn:rule']),
             new Result(['FailedEntryCount' => 0]),
@@ -515,19 +528,20 @@ final class ConsoleSchedulerCommandsTest extends TestCase
     {
         $this->consoleProject('->scheduler(5)');
         $mocks = new AwsMocks();
-        $mocks->handler->append(
+        $mocks->handler->append(...[
             new Result(['Account' => '123456789012']),
             new Result(['Name' => 'arco-shop-production-scheduler', 'State' => 'ENABLED']),
+            ...self::ownRule(),
             new Result(['FailedEntryCount' => 0]),
             new Result([]),
             new Result([]),
-        );
+        ]);
 
         $tester = $this->run_(new SchedulerRemoveCommand(awsFactory: fn () => $mocks->clients()), ['--env' => 'production', '--profile' => 'p', '--apply' => true]);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('->scheduler(false)', $this->source());
-        self::assertSame(['GetCallerIdentity', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission'], $mocks->calls);
+        self::assertSame(['GetCallerIdentity', 'DescribeRule', 'DescribeRule', 'ListTagsForResource', 'RemoveTargets', 'DeleteRule', 'RemovePermission'], $mocks->calls);
         self::assertStringContainsString('Applied in AWS: the scheduler of production is off.', self::display($tester));
     }
 
@@ -564,19 +578,20 @@ final class ConsoleSchedulerCommandsTest extends TestCase
     {
         $this->consoleProject('->scheduler(false)');
         $mocks = new AwsMocks();
-        $mocks->handler->append(
+        $mocks->handler->append(...[
             new Result(['Account' => '123456789012']),
             new Result(['Name' => 'arco-shop-production-scheduler', 'State' => 'ENABLED']),
+            ...self::ownRule(),
             new Result(['FailedEntryCount' => 0]),
             new Result([]),
             new Result([]),
-        );
+        ]);
 
         $tester = $this->run_(new SchedulerRemoveCommand(awsFactory: fn () => $mocks->clients()), ['--env' => 'production', '--profile' => 'p', '--apply' => true]);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('already has this value', self::display($tester));
-        self::assertSame(['GetCallerIdentity', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission'], $mocks->calls);
+        self::assertSame(['GetCallerIdentity', 'DescribeRule', 'DescribeRule', 'ListTagsForResource', 'RemoveTargets', 'DeleteRule', 'RemovePermission'], $mocks->calls);
     }
 
     public function test_an_aws_error_while_applying_fails_and_still_names_the_deploy(): void
@@ -586,6 +601,7 @@ final class ConsoleSchedulerCommandsTest extends TestCase
         $mocks->handler->append(
             new Result(['Account' => '123456789012']),
             new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '3']),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400, 'not authorized'), // ownership: unreadable, the scheduler step says so
             AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400, 'not authorized'),
         );
 

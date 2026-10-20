@@ -49,7 +49,7 @@ final class QueueListCommandTest extends TestCase
             AwsMocks::error(LambdaException::class, 'GetAlias', 'ResourceNotFoundException', 404),
         );
 
-        $tester = $this->run_("->queue('emails', timeout: 120, concurrency: 5)->queue('legacy', existing: 'legacy-jobs', dlq: false)");
+        $tester = $this->run_("->queue('emails', timeout: 120, maxInstances: 5)->queue('legacy', existing: 'legacy-jobs', dlq: false)");
 
         $tester->assertCommandIsSuccessful();
         self::assertSame(['GetCallerIdentity', 'GetQueueAttributes', 'GetQueueAttributes', 'GetAlias', 'GetQueueAttributes', 'GetAlias'], $this->mocks->calls);
@@ -66,10 +66,10 @@ final class QueueListCommandTest extends TestCase
         self::assertStringContainsString('Messages 12 waiting, 3 in flight', $display);
         self::assertStringContainsString('Dead-letter queue shop-production-emails-dlq (2 messages)', $display);
         self::assertStringContainsString('Worker shop-production-queue-emails (version 4)', $display);
-        self::assertStringContainsString('Settings timeout 120 s, memory 1024 MB, batch size 1, concurrency 5, tries 3', $display);
+        self::assertStringContainsString('Settings timeout 120 s, memory 1024 MB, batch size 1, max instances 5, tries 3', $display);
         self::assertStringContainsString('Queue existing (not managed by Arco)', $display);
         self::assertStringContainsString('Dead-letter queue none', $display);
-        self::assertStringContainsString('concurrency no limit', $display);
+        self::assertStringContainsString('max instances no limit', $display);
         self::assertStringContainsString('Worker not deployed yet (run arco deploy)', $display);
     }
 
@@ -97,5 +97,58 @@ final class QueueListCommandTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('No queues in arco.php for production', self::display($tester));
         self::assertSame([], $this->mocks->calls);
+    }
+
+    public function test_json_lists_the_queues_with_schema_1(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result(['Attributes' => ['ApproximateNumberOfMessages' => '12', 'ApproximateNumberOfMessagesNotVisible' => '3']]),
+            new Result(['Attributes' => ['ApproximateNumberOfMessages' => '2']]),
+            new Result(['FunctionVersion' => '4']),
+        );
+        $this->project = new ProjectFixture(str_replace('->concurrency(48)', "->concurrency(48)->queue('emails', maxInstances: 5)", ProjectFixture::standardConfig()));
+        $tester = $this->project->tester(new QueueListCommand(fn (?string $profile, string $region) => $this->mocks->clients($region)));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--json' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(1, $json['schema']);
+        self::assertSame('schema', array_key_first($json));
+        self::assertSame('production', $json['environment']);
+        $queue = $json['queues'][0];
+        self::assertSame('emails', $queue['name']);
+        self::assertSame('https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', $queue['url']);
+        self::assertFalse($queue['existing']);
+        self::assertSame(['state' => 'ok', 'visible' => 12, 'inFlight' => 3], $queue['messages']);
+        self::assertSame(['name' => 'shop-production-emails-dlq', 'state' => 'ok', 'messages' => 2], $queue['dlq']);
+        self::assertSame(['function' => 'shop-production-queue-emails', 'state' => 'ok', 'version' => '4'], $queue['worker']);
+        self::assertSame(5, $queue['settings']['maxInstances']);
+    }
+
+    public function test_json_without_queues_is_an_empty_list(): void
+    {
+        $this->project = new ProjectFixture(ProjectFixture::standardConfig());
+        $tester = $this->project->tester(new QueueListCommand(fn (?string $profile, string $region) => $this->mocks->clients($region)));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['schema' => 1, 'environment' => 'production', 'queues' => []], json_decode($tester->getDisplay(), true));
+    }
+
+    public function test_json_failure_prints_schema_and_error_and_never_prompts(): void
+    {
+        $this->project = new ProjectFixture(str_replace('->concurrency(48)', "->concurrency(48)->queue('emails')", ProjectFixture::standardConfig()));
+        $tester = $this->project->tester(new QueueListCommand(fn (?string $profile, string $region) => $this->mocks->clients($region)));
+
+        // No --profile and none remembered: interactive would ask; --json must fail instead.
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(1, $json['schema']);
+        self::assertNotSame('', $json['error']);
     }
 }

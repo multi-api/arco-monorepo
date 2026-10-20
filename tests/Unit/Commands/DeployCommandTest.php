@@ -79,14 +79,17 @@ final class DeployCommandTest extends TestCase
 
     /** @var list<array{0: ?string, 1: ?string, 2: bool}> deploy profile, DNS profile, force */
     private array $factoryCalls = [];
+    /** @var list<bool> --force (ownership override) per deployer built */
+    private array $ownershipForced = [];
 
     private function tester(FakeDeployer $deployer, bool $verifies = true, ?int $initMs = 800, ?FakeConsole $console = null, ?PresetRegistry $presets = null): CommandTester
     {
         $command = new DeployCommand(
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $this->aws, 'credentials' => false]),
             pipeline: new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager()),
-            deployerFactory: function (AwsClients $aws, ?AwsClients $dns, bool $force) use ($deployer) {
+            deployerFactory: function (AwsClients $aws, ?AwsClients $dns, bool $force, bool $forceOwnership = false) use ($deployer) {
                 $this->factoryCalls[] = [$aws->profile, $dns?->profile, $force];
+                $this->ownershipForced[] = $forceOwnership;
                 return $deployer;
             },
             verifierFactory: fn () => new FakeVerifier($verifies, $initMs),
@@ -226,6 +229,32 @@ final class DeployCommandTest extends TestCase
         self::assertStringContainsString('Application.InitCodeError', $tester->getDisplay());
         self::assertStringContainsString('{"arco":"fatal","error":"boom"}', $tester->getDisplay());
         self::assertContains('rollback:rev-1', $deployer->calls);
+    }
+
+    public function test_force_overrides_the_ownership_checks_and_is_off_by_default(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']), new Result(['Account' => '222222222222']));
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1');
+
+        $this->tester(new FakeDeployer('rev-1', $status))->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+        $this->tester(new FakeDeployer('rev-1', $status))->execute(['--env' => 'production', '--profile' => 'acme-prod', '--force' => true], ['interactive' => false]);
+
+        self::assertSame([false, true], $this->ownershipForced);
+        self::assertStringContainsString('Dangerous', (new DeployCommand())->getDefinition()->getOption('force')->getDescription());
+    }
+
+    public function test_an_ownership_refusal_fails_the_deploy_with_its_message(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = new FakeDeployer('rev-1', new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'));
+        $deployer->ownershipError = \Multiapi\Arco\Deploy\DeployException::make('deploy.not_owned', ['resource' => 'shop-production', 'app' => 'shop', 'environment' => 'staging']);
+
+        $tester = $this->tester($deployer);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('tagged for app "shop", environment "staging"', preg_replace('/\s+/', ' ', $tester->getDisplay()) ?? '');
+        self::assertNotContains('prepare', $deployer->calls);
     }
 
     public function test_custom_domains_use_the_dns_profile_and_are_listed_in_the_summary(): void
@@ -486,6 +515,21 @@ final class DeployCommandTest extends TestCase
         self::assertLessThan(strpos($display, 'scripts/warm.php'), strpos($display, 'Migrated.'), 'each output is printed before the next command starts');
     }
 
+    public function test_deploy_commands_on_a_protected_environment_are_not_gated_by_protected(): void
+    {
+        $this->withDeployCommands("['migrate --force']");
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+        $console = new FakeConsole([new CommandResult(0, "Migrated.\n")]);
+
+        $tester = $this->tester($deployer, console: $console);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('Migrated.', $tester->getDisplay());
+        self::assertSame(['run', 'migrate --force'], array_slice($console->calls[0], 0, 2), 'the deploy command ran on the console');
+    }
+
     public function test_deploy_commands_that_cannot_work_on_lambda_are_warned_about_before_the_deploy(): void
     {
         $this->withDeployCommands("['config:cache', 'migrate']");
@@ -535,7 +579,7 @@ final class DeployCommandTest extends TestCase
         $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
         self::assertStringContainsString('Deploy command "config:cache" failed with exit code 1', $display);
         self::assertStringContainsString('not undone: migrate --force.', $display, 'only the commands that succeeded');
-        self::assertStringContainsString('arco command "migrate:rollback --force" --env=production', $display);
+        self::assertStringContainsString('arco command "migrate:rollback --force" --env=production --yes', $display, 'production is protected: the hint works in CI');
         self::assertSame(1, substr_count($display, 'not undone'));
     }
 

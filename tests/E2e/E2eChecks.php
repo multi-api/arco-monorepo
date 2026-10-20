@@ -17,7 +17,8 @@ trait E2eChecks
     private static ?string $app = null;
     /** The function URL from arco info --json, without a trailing slash. */
     private static ?string $url = null;
-    private static float $started = 0.0;
+    /** When the running check began; null when none is running (a skipped check never starts one). */
+    private static ?float $started = null;
 
     private E2eHttp $http;
 
@@ -37,7 +38,9 @@ trait E2eChecks
 
     protected function tearDown(): void
     {
-        self::report($this->name(), self::$started, $this->status()->asString());
+        $began = self::$started;
+        self::$started = null;
+        self::report($this->name(), $began, $this->status()->asString());
     }
 
     public function test_up(): void
@@ -187,9 +190,9 @@ trait E2eChecks
         return self::$url . $path;
     }
 
-    private static function report(string $check, float $began, string $result): void
+    private static function report(string $check, ?float $began, string $result): void
     {
-        fwrite(STDERR, sprintf("[e2e] %-40s %-10s %7.1f s\n", $check, $result, microtime(true) - $began));
+        fwrite(STDERR, E2eReport::line($check, $began === null ? null : microtime(true) - $began, $result));
     }
 
     private static function tail(string $text, int $lines): string

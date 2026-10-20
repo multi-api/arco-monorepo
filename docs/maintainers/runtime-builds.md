@@ -2,6 +2,15 @@
 
 Runtime builds are immutable mirrors of the official FrankenPHP `linux-aarch64` binary, published as releases of `multi-api/arco-runtime` and listed in `packages/arco/resources/runtime-builds.php`.
 
+## Build ids and the default build
+
+- **Release id** (in `multi-api/arco-runtime`): `<frankenphp>-r<n>`, such as `1.13.0-r2`; the release tag is `frankenphp-<release id>` and `build.json` `id` holds it. The revision counts per FrankenPHP version.
+- **Arco build id** (in the manifest, `build()`, `arco info`, package manifests): `php<php>-fp<frankenphp>-r<n>`, such as `php8.5.11-fp1.13.0-r2`, derived from `build.json` (`php`, `frankenphp`) and the release revision. `bin/runtime-manifest-add` derives it; never type it by hand.
+- **Aliases:** before Arco 0.9 the build id was the release id. The manifest's `aliases` map keeps `1.13.0-r1` and `1.13.0-r2` naming their builds forever, so an `arco.php` pinning `build('1.13.0-r2')` deploys the identical binaries (same URLs and checksums). Never remove or retarget an alias; new builds get no alias.
+- **Default build:** the newest build whose PHP minor is the manifest's `default_php` (newest = highest PHP version, then FrankenPHP version, then revision). `default_php` is the only place the default PHP minor is pinned. Owner decision 2: a 1.x release may move the default only to a new PHP patch (or a new FrankenPHP version or revision of the same PHP minor); a new PHP minor is opt-in through `->runtime(fn (Runtime $r) => $r->php('8.6'))`. Changing `default_php` is a major-release change.
+- Adding a build of the `default_php` minor that is newer than the current default **moves the default** in that Arco release; adding a build of another minor never does. The script says which build is the default after the change.
+- **Owner sign-off:** when a newly added build would move the default to another FrankenPHP major (1.x to 2.x), `bin/runtime-manifest-add` prints a warning. Do not release that manifest without the owner's explicit sign-off; until then, revert the manifest change.
+
 A build also publishes a static PHP CLI (`php-linux-aarch64`) with the same PHP version and extensions as the FrankenPHP binary. The console function carries it as `bin/php`, so it does not download FrankenPHP at cold start. Builds without it (such as `1.13.0-r1`) still work: the console falls back to the download.
 
 ## Steps
@@ -9,13 +18,13 @@ A build also publishes a static PHP CLI (`php-linux-aarch64`) with the same PHP 
 1. **Dry run.** In `arco-runtime`, run the `Publish runtime build` workflow with `frankenphp_version=<x.y.z>`, `revision=<n>`, `spc_tag=<static-php-cli release tag>`, `extensions=<list>`, `publish=false`. The `build-php` and `verify` jobs run; `publish` does not.
    - `spc_tag`: a static-php-cli release (2.8.5 for `1.13.0-r2`). Its release binary is checked against the digest GitHub reports before it runs.
    - `extensions`: copy `defaultExtensions` from FrankenPHP's `build-static.sh` at the tag `v<x.y.z>`. The parity check below fails if the list drifts from the FrankenPHP binary.
-2. **Inspect the artifact.** Download the `frankenphp-<id>` workflow artifact. Check `build.json` (id, PHP version, extensions, sha256, size, `origin.asset_digest`, and `php_cli` with `sha256`, `size`, `spc` and `extensions`) and `SHA256SUMS`.
+2. **Inspect the artifact.** Download the `frankenphp-<release id>` workflow artifact. Check `build.json` (id, PHP version, extensions, sha256, size, `origin.asset_digest`, and `php_cli` with `sha256`, `size`, `spc` and `extensions`) and `SHA256SUMS`.
 3. **Publish.** Re-run with `publish=true`. The `publish` job re-verifies the upstream attestation and cross-checks `build.json` before attesting both binaries and creating the release.
-4. **Verify the release.** Confirm the release `frankenphp-<id>` is immutable (`gh api repos/multi-api/arco-runtime/releases/tags/frankenphp-<id> --jq .immutable`) and that both attestations verify:
+4. **Verify the release.** Confirm the release `frankenphp-<release id>` is immutable (`gh api repos/multi-api/arco-runtime/releases/tags/frankenphp-<release id> --jq .immutable`) and that both attestations verify:
    `gh attestation verify frankenphp-linux-aarch64 --repo multi-api/arco-runtime --signer-workflow multi-api/arco-runtime/.github/workflows/publish.yml`
    `gh attestation verify php-linux-aarch64 --repo multi-api/arco-runtime --signer-workflow multi-api/arco-runtime/.github/workflows/publish.yml`
-5. **Add it to the manifest.** In this repo: `bin/runtime-manifest-add <id> [--default]`. It fetches `build.json` and the release metadata and refuses unless the release is immutable and the asset size and digest match `build.json`. `--from-file=build.json` skips the release cross-check; use it only for offline work.
-6. **Test.** Run `composer test` and `vendor/bin/phpstan`, plus the integration test (`vendor/bin/phpunit tests/Integration`).
+5. **Add it to the manifest.** In this repo: `bin/runtime-manifest-add <release id>` (for example `1.13.0-r3`). It fetches `build.json` and the release metadata and refuses unless the release is immutable and the asset size and digest match `build.json`, then adds the build as `php<php>-fp<frankenphp>-r<n>` and prints the resulting default build. `--from-file=build.json` skips the release cross-check; use it only for offline work. There is no `--default` flag: the default follows from `default_php` (see above).
+6. **Test.** Run `composer test:docker` (unit tests, runtime tests and PHPStan in a container) and `composer test:integration`.
 7. **Release Arco** with the updated manifest.
 
 ## The PHP CLI build
@@ -31,9 +40,11 @@ Never delete or replace a published build; publish a new revision instead.
 
 ## Release notes items
 
+- Arco 0.9: build ids are `php<php>-fp<frankenphp>-r<n>`; `1.13.0-r1` and `1.13.0-r2` keep working as aliases. `arco info` and `binary.using` show the new id. The runtime cache moves to `~/.arco/cache/runtime/<new id>/`, so each machine downloads the builds once more (same bytes); `~/.arco/cache/runtime/1.13.0-r*` can be deleted.
+
 - `arco info --json`: the key describing the runtime build is now `runtime.build` (renamed).
 - The old cache directory `~/.arco/cache/frankenphp` is orphaned and can be deleted.
-- `arco deploy` and `arco deploy --package` fetch the PHP CLI from GitHub releases once per runtime build and machine, and cache it in `~/.arco/cache/runtime/<build>/php`. If GitHub cannot be reached, the deploy goes on and that console downloads FrankenPHP at cold start (warning `php_cli_unavailable`); a size or checksum mismatch stops the deploy before any AWS change.
+- `arco deploy` and `arco deploy --package` fetch the PHP CLI from GitHub releases once per runtime build and machine, and cache it in `~/.arco/cache/runtime/<build id>/php`. If GitHub cannot be reached, the deploy goes on and that console downloads FrankenPHP at cold start (warning `php_cli_unavailable`); a size or checksum mismatch stops the deploy before any AWS change.
 - Stale `*.part` files in `~/.arco/cache/runtime/` can be deleted.
 
 ## Future hardening (not done)

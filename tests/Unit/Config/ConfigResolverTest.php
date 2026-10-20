@@ -18,14 +18,50 @@ final class ConfigResolverTest extends TestCase
             ->region('us-east-1')
             ->concurrency(48)
             ->variables(['APP_ENV' => 'production', 'LOG_LEVEL' => 'info'])
-            ->runtime(fn (Runtime $r) => $r->workers(min: 4, max: 32)->phpIni(['memory_limit' => '256M']))
+            ->runtime(fn (Runtime $r) => $r->workers(4)->maxThreads(32)->phpIni(['memory_limit' => '256M']))
             ->exclude(['tests/**'])
             ->environment('staging', fn (Environment $e) => $e->variables(['APP_ENV' => 'staging']))
             ->environment('production', fn (Environment $e) => $e
                 ->concurrency(64)
                 ->account('222222222222')
-                ->runtime(fn (Runtime $r) => $r->workers(min: 8, max: 64)->phpIni(['opcache.jit' => 'tracing'])))
+                ->runtime(fn (Runtime $r) => $r->workers(8)->maxThreads(64)->phpIni(['opcache.jit' => 'tracing'])))
             ->toArray();
+    }
+
+    public function test_queue_max_instances_and_its_deprecated_name_resolve_alike(): void
+    {
+        $resolve = fn (App $app) => ConfigResolver::resolve($app->region('us-east-1')->environment('production')->toArray(), 'production')->queues[0];
+
+        $new = $resolve(App::make('shop')->queue('a', maxInstances: 5));
+        $old = $resolve(App::make('shop')->queue('a', concurrency: 5));
+
+        self::assertSame([5, false], [$new->maxInstances, $new->deprecatedConcurrency]);
+        self::assertSame([5, true], [$old->maxInstances, $old->deprecatedConcurrency]);
+    }
+
+    public function test_workers_and_max_threads_resolve_like_the_deprecated_min_max(): void
+    {
+        $resolve = fn (callable $runtime) => ConfigResolver::resolve(App::make('shop')->region('us-east-1')->runtime($runtime)->environment('production')->toArray(), 'production')->runtime;
+
+        $new = $resolve(fn (Runtime $r) => $r->workers(6)->maxThreads(48));
+        $old = $resolve(fn (Runtime $r) => $r->workers(min: 6, max: 48));
+
+        self::assertSame([6, 48, false], [$new->workers, $new->maxThreads, $new->deprecatedWorkers]);
+        self::assertSame([6, 48, true], [$old->workers, $old->maxThreads, $old->deprecatedWorkers]);
+        $defaults = $resolve(fn (Runtime $r) => $r->threads(8));
+        self::assertSame([4, 64], [$defaults->workers, $defaults->maxThreads]);
+    }
+
+    public function test_an_environment_overriding_workers_ends_the_deprecation(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->workers(min: 4, max: 64))
+            ->environment('staging')
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->workers(8)->maxThreads(32)))
+            ->toArray();
+
+        self::assertTrue(ConfigResolver::resolve($raw, 'staging')->runtime->deprecatedWorkers);
+        self::assertFalse(ConfigResolver::resolve($raw, 'production')->runtime->deprecatedWorkers);
     }
 
     public function test_lists_environments(): void
@@ -43,8 +79,8 @@ final class ConfigResolverTest extends TestCase
         self::assertSame(30, $config->timeout);
         self::assertSame('default', $config->sources['timeout']);
         self::assertSame('222222222222', $config->account);
-        self::assertSame(8, $config->runtime->workersMin);
-        self::assertSame(64, $config->runtime->workersMax);
+        self::assertSame(8, $config->runtime->workers);
+        self::assertSame(64, $config->runtime->maxThreads);
         self::assertSame('environment', $config->sources['runtime.workers']);
         self::assertSame(8, $config->runtime->threads);
         self::assertNull($config->runtime->build);
@@ -84,10 +120,60 @@ final class ConfigResolverTest extends TestCase
         self::assertSame('1.13.0-r1', $staging->runtime->build);
         self::assertSame('app', $staging->sources['runtime.build']);
 
+        // The environment's frankenphp() replaces the app's build(): selectors resolve per level.
         $production = ConfigResolver::resolve($raw, 'production');
-        self::assertSame('1.13.0-r1', $production->runtime->build);
+        self::assertNull($production->runtime->build);
+        self::assertSame('default', $production->sources['runtime.build']);
         self::assertSame('1.13.0', $production->runtime->frankenphp);
         self::assertSame('environment', $production->sources['runtime.frankenphp']);
+    }
+
+    public function test_runtime_selectors_resolve_per_level(): void
+    {
+        $resolve = fn (callable $app, callable $env) => ConfigResolver::resolve(App::make('shop')->region('us-east-1')
+            ->runtime($app)
+            ->environment('production', fn (Environment $e) => $e->runtime($env))
+            ->toArray(), 'production')->runtime;
+
+        // An environment build() drops the app's php()/frankenphp().
+        $pinned = $resolve(fn (Runtime $r) => $r->php('8.5')->frankenphp('1.13'), fn (Runtime $r) => $r->build('php8.5.11-fp1.13.0-r2'));
+        self::assertSame(['php8.5.11-fp1.13.0-r2', null, null], [$pinned->build, $pinned->php, $pinned->frankenphp]);
+        // An environment php() or frankenphp() drops the app's build(); the app's other selector of that group stays.
+        $chosen = $resolve(fn (Runtime $r) => $r->build('1.13.0-r2'), fn (Runtime $r) => $r->php('8.5'));
+        self::assertSame([null, '8.5', null], [$chosen->build, $chosen->php, $chosen->frankenphp]);
+        $combined = $resolve(fn (Runtime $r) => $r->php('8.5'), fn (Runtime $r) => $r->frankenphp('1.13'));
+        self::assertSame([null, '8.5', '1.13'], [$combined->build, $combined->php, $combined->frankenphp]);
+        // Same level: both kept, so validation rejects them.
+        $same = $resolve(fn (Runtime $r) => $r->threads(4), fn (Runtime $r) => $r->php('8.5')->build('1.13.0-r2'));
+        self::assertSame(['1.13.0-r2', '8.5'], [$same->build, $same->php]);
+        // An environment binary() drops the app's selectors (they would be ignored), not the other way round.
+        $custom = $resolve(fn (Runtime $r) => $r->php('8.5'), fn (Runtime $r) => $r->binary('bin/frankenphp'));
+        self::assertSame(['bin/frankenphp', null], [$custom->binary, $custom->php]);
+        $kept = $resolve(fn (Runtime $r) => $r->binary('bin/frankenphp'), fn (Runtime $r) => $r->php('8.5'));
+        self::assertSame(['bin/frankenphp', '8.5'], [$kept->binary, $kept->php]);
+    }
+
+    public function test_php_and_binary_with_a_php_cli_resolve_with_inheritance(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->php('8.5')->binary('bin/frankenphp', 'bin/php'))
+            ->environment('staging')
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->binary(frankenphp: 'bin/other')))
+            ->toArray();
+
+        $staging = ConfigResolver::resolve($raw, 'staging');
+        self::assertSame('8.5', $staging->runtime->php);
+        self::assertSame('app', $staging->sources['runtime.php']);
+        self::assertSame(['bin/frankenphp', 'bin/php'], [$staging->runtime->binary, $staging->runtime->phpBinary]);
+
+        // binary() sets both files: an environment's binary() without php: has no PHP CLI.
+        $production = ConfigResolver::resolve($raw, 'production');
+        self::assertSame(['bin/other', null], [$production->runtime->binary, $production->runtime->phpBinary]);
+        self::assertSame('environment', $production->sources['runtime.phpBinary']);
+
+        $default = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+        self::assertNull($default->runtime->php);
+        self::assertSame('default', $default->sources['runtime.php']);
     }
 
     public function test_domains_default_to_none_and_deploy_account_dns(): void
@@ -127,11 +213,11 @@ final class ConfigResolverTest extends TestCase
         self::assertSame('app', $production->sources['dns']);
     }
 
-    public function test_max_instances_and_its_max_environments_alias_resolve_to_the_same_setting(): void
+    public function test_max_instances_resolves_per_level(): void
     {
         $raw = App::make('shop')->region('us-east-1')
             ->maxInstances(10)
-            ->environment('staging', fn (Environment $e) => $e->maxEnvironments(2))
+            ->environment('staging', fn (Environment $e) => $e->maxInstances(2))
             ->environment('production')
             ->toArray();
 
@@ -156,7 +242,7 @@ final class ConfigResolverTest extends TestCase
     {
         $raw = App::make('shop')->region('us-east-1')
             ->deployCommands(['migrate --force'])
-            ->consoleTimeout(600)
+            ->console(timeout: 600, memory: 4096)
             ->environment('staging', fn (Environment $e) => $e->deployCommands([]))
             ->environment('production', fn (Environment $e) => $e->deployCommands(['migrate --force', 'config:cache']))
             ->environment('qa')
@@ -166,6 +252,8 @@ final class ConfigResolverTest extends TestCase
         self::assertSame(['migrate --force', 'config:cache'], $production->deployCommands);
         self::assertSame('environment', $production->sources['deployCommands']);
         self::assertSame(600, $production->consoleTimeout);
+        self::assertSame(4096, $production->consoleMemory);
+        self::assertTrue($production->consoleEnabled());
         self::assertSame('app', $production->sources['consoleTimeout']);
         self::assertSame('shop-production-console', $production->consoleFunctionName());
 
@@ -177,7 +265,7 @@ final class ConfigResolverTest extends TestCase
         self::assertSame('app', $qa->sources['deployCommands']);
 
         $defaults = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('qa')->toArray(), 'qa');
-        self::assertSame(900, $defaults->consoleTimeout);
+        self::assertSame([900, 2048], [$defaults->consoleTimeout, $defaults->consoleMemory]);
         self::assertSame([], $defaults->deployCommands);
         self::assertSame('default', $defaults->sources['deployCommands']);
     }
@@ -329,6 +417,21 @@ final class ConfigResolverTest extends TestCase
         self::assertFalse($marked->storage[0]->default);
 
         self::assertNull(ConfigResolver::resolve(App::make('shop')->environment('production')->toArray(), 'production')->defaultStorage());
+    }
+
+    public function test_no_default_storage_when_every_entry_opts_out(): void
+    {
+        $resolve = fn (App $app) => ConfigResolver::resolve($app->environment('production')->toArray(), 'production');
+
+        $none = $resolve(App::make('shop')->storage('files', default: false)->storage('media', default: false));
+        self::assertNull($none->defaultStorage());
+        self::assertCount(2, $none->storage);
+
+        // One entry that says nothing keeps the usual rule: the first is the default.
+        $mixed = $resolve(App::make('shop')->storage('files', default: false)->storage('media'));
+        self::assertSame('files', $mixed->defaultStorage()?->name);
+        $single = $resolve(App::make('shop')->storage('files'));
+        self::assertSame('files', $single->defaultStorage()?->name);
     }
 
     public function test_storage_existing_and_cors(): void

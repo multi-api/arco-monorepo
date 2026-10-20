@@ -21,7 +21,7 @@ final class InfoCommandTest extends TestCase
         self::assertMatchesRegularExpression('/auth\s+public\s+default/', $display);
         self::assertMatchesRegularExpression('/maxInstances\s+-\s+default/', $display);
         self::assertStringNotContainsString('maxEnvironments', $display);
-        self::assertMatchesRegularExpression('/runtime\.build\s+1\.13\.0-r2 \(FrankenPHP 1\.13\.0, PHP 8\.5\.11\)\s+default/', $display);
+        self::assertMatchesRegularExpression('/runtime\.build\s+php8\.5\.11-fp1\.13\.0-r2 \(FrankenPHP 1\.13\.0, PHP 8\.5\.11\)\s+default/', $display);
         self::assertStringContainsString('arco-ssm:/shop/production/app-key', $display);
         self::assertStringNotContainsString('plain-token', $display);
         $project->restore();
@@ -40,7 +40,21 @@ final class InfoCommandTest extends TestCase
         self::assertSame(60, $json['settings']['timeout']);
         self::assertArrayHasKey('maxInstances', $json['settings']);
         self::assertArrayNotHasKey('maxEnvironments', $json['settings']);
-        self::assertSame('1.13.0-r2 (FrankenPHP 1.13.0, PHP 8.5.11)', $json['settings']['runtime.build']);
+        self::assertSame('php8.5.11-fp1.13.0-r2 (FrankenPHP 1.13.0, PHP 8.5.11)', $json['settings']['runtime.build']);
+        self::assertSame(4, $json['settings']['runtime.workers'], 'an integer since 0.9 (it was "4-64")');
+        self::assertSame(64, $json['settings']['runtime.maxThreads']);
+        $project->restore();
+    }
+
+    public function test_a_deprecated_queue_spelling_is_warned_once_with_several_environments(): void
+    {
+        $config = str_replace('->concurrency(48)', "->concurrency(48)->queue('emails', concurrency: 5)->queue('jobs', concurrency: 3)", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+
+        self::assertSame(1, substr_count($tester->getDisplay(), 'is deprecated'));
         $project->restore();
     }
 
@@ -67,7 +81,7 @@ final class InfoCommandTest extends TestCase
 
     public function test_shows_console_settings_deploy_commands_and_the_live_version(): void
     {
-        $config = str_replace("->timeout(60)", "->timeout(60)->consoleTimeout(300)->deployCommands(['migrate --force'])", ProjectFixture::consoleConfig());
+        $config = str_replace("->timeout(60)", "->timeout(60)->console(timeout: 300)->deployCommands(['migrate --force'])", ProjectFixture::consoleConfig());
         $project = new ProjectFixture($config);
         putenv('AWS_PROFILE=p');
         $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', null, null, 'shop-production-console', '7');
@@ -158,7 +172,7 @@ final class InfoCommandTest extends TestCase
         $display = $tester->getDisplay();
         self::assertMatchesRegularExpression('/\bconsole\s+not set\s+default/', $display);
         self::assertMatchesRegularExpression('/scheduler\s+off\s+default/', $display);
-        self::assertMatchesRegularExpression('/logRetention\s+not managed\s+default/', $display);
+        self::assertMatchesRegularExpression('/logRetention\s+30 days \(default\)\s+default/', $display);
 
         $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true);
@@ -217,7 +231,7 @@ final class InfoCommandTest extends TestCase
         $display = $run($on, 'staging');
         self::assertMatchesRegularExpression('/\bconsole\s+sin definir\s+default/', $display);
         self::assertMatchesRegularExpression('/scheduler\s+desactivado\s+default/', $display);
-        self::assertMatchesRegularExpression('/logRetention\s+sin gestionar\s+default/', $display);
+        self::assertMatchesRegularExpression('/logRetention\s+30 días \(por defecto\)\s+default/', $display);
 
         $display = $run($off, 'production');
         self::assertMatchesRegularExpression('/\bconsole\s+desactivada\s+environment/', $display);
@@ -392,5 +406,163 @@ final class InfoCommandTest extends TestCase
         self::assertNull($json['cache']);
         self::assertNull($json['failedJobsTable']);
         $project->restore();
+    }
+
+    /** @return list<array{type: string, name: string, arn: string, retained: bool}> */
+    private static function tagged(): array
+    {
+        return [
+            ['type' => 'lambda:function', 'name' => 'shop-production-console', 'arn' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console', 'retained' => false],
+            ['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true],
+        ];
+    }
+
+    public function test_resources_lists_the_tagged_resources_of_the_environment(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer();
+        $deployer->tagged = self::tagged();
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--resources' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        self::assertMatchesRegularExpression('/lambda:function\s+shop-production-console\s+deleted/', $display);
+        self::assertMatchesRegularExpression('/sqs\s+shop-production-emails\s+kept/', $display);
+        self::assertStringContainsString('arco-shop-production', $display, 'names the Resource Group');
+        self::assertStringNotContainsString('concurrency', $display, 'only the resources');
+        self::assertNotContains('describe', $deployer->calls);
+
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        self::assertSame([
+            'schema' => 1,
+            'app' => 'shop',
+            'environment' => 'production',
+            'group' => 'arco-shop-production',
+            'resources' => self::tagged(),
+        ], json_decode($tester->getDisplay(), true));
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_resources_that_cannot_be_listed_fail_with_the_reason(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer();
+        $deployer->taggedError = new \Aws\Exception\AwsException('denied', new \Aws\Command('GetResources'), ['code' => 'AccessDeniedException', 'message' => 'not authorized to perform: tag:GetResources']);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--resources' => true], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('tag:GetResources', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame(1, $json['schema']);
+        self::assertSame([], $json['resources']);
+        self::assertStringContainsString('tag:GetResources', $json['error']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_resources_without_a_profile_say_how_to_choose_one(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE');
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production', '--resources' => true], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('AWS_PROFILE', $tester->getDisplay());
+        $project->restore();
+    }
+
+    public function test_json_gains_schema_1_and_keeps_every_existing_key(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame(1, $json['schema']);
+        self::assertSame('schema', array_key_first($json), 'first key, as in info --resources');
+        unset($json['schema']);
+        self::assertSame(
+            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings'],
+            array_keys($json),
+        );
+        $project->restore();
+    }
+
+    public function test_profile_flag_is_used_and_runs_the_account_guard(): void
+    {
+        $config = str_replace("->timeout(60)", "->timeout(60)->account('999999999999')", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $profiles = [];
+        $mocks = new \Multiapi\Arco\Tests\Unit\Deploy\AwsMocks();
+        $mocks->handler->append(new \Aws\Result(['Account' => '111111111111']));
+        $deployer = new FakeDeployer();
+        $tester = $project->tester(new InfoCommand(
+            awsFactory: function (?string $profile, string $region) use ($mocks, &$profiles) {
+                $profiles[] = $profile;
+                return $mocks->clients($region);
+            },
+            deployerFactory: fn () => $deployer,
+        ));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(['acme-prod'], $profiles);
+        self::assertSame(['GetCallerIdentity'], $mocks->calls);
+        self::assertNotContains('describe', $deployer->calls, 'the wrong account is never read');
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('locked to account 999999999999', preg_replace('/\s+/', ' ', $tester->getDisplay()));
+
+        $mocks->handler->append(new \Aws\Result(['Account' => '111111111111']));
+        $tester->execute(['--env' => 'production', '-p' => 'acme-prod', '--json' => true], ['interactive' => false]);
+        self::assertSame(1, json_decode($tester->getDisplay(), true)['schema']);
+        self::assertStringContainsString('locked to account', json_decode($tester->getDisplay(), true)['error']);
+        $project->restore();
+    }
+
+    public function test_profile_flag_on_the_right_account_describes_the_environment(): void
+    {
+        $config = str_replace("->timeout(60)", "->timeout(60)->account('111111111111')", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $mocks = new \Multiapi\Arco\Tests\Unit\Deploy\AwsMocks();
+        $mocks->handler->append(new \Aws\Result(['Account' => '111111111111']));
+        $deployer = new FakeDeployer();
+        $tester = $project->tester(new InfoCommand(awsFactory: fn (?string $p, string $r) => $mocks->clients($r), deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertContains('describe', $deployer->calls);
+        $project->restore();
+    }
+
+    public function test_json_config_errors_print_schema_and_error_with_exit_1(): void
+    {
+        foreach ([[], ['--resources' => true]] as $extra) {
+            // An environment arco.php does not define: a config error, before any AWS call.
+            $project = new ProjectFixture(ProjectFixture::standardConfig());
+            $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+            $tester->execute(['--env' => 'nowhere', '--json' => true, ...$extra], ['interactive' => false]);
+
+            self::assertSame(1, $tester->getStatusCode());
+            $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+            self::assertSame(['schema', 'error'], array_keys($json));
+            self::assertSame(1, $json['schema']);
+            self::assertStringContainsString('nowhere', $json['error']);
+            $project->restore();
+        }
     }
 }

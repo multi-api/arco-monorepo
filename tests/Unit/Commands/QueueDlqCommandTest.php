@@ -69,7 +69,7 @@ final class QueueDlqCommandTest extends TestCase
         self::assertStringContainsString('received 4 times', $display);
         self::assertStringContainsString(str_repeat('x', 500) . '…', $display);
         self::assertStringNotContainsString(str_repeat('x', 501), $display);
-        self::assertStringContainsString('arco queue:dlq emails --redrive', self::display($tester));
+        self::assertStringContainsString('arco queue:dlq emails --redrive --env=production --yes', self::display($tester));
     }
 
     public function test_control_characters_in_a_body_never_reach_the_terminal(): void
@@ -114,13 +114,27 @@ final class QueueDlqCommandTest extends TestCase
             new Result(['TaskHandle' => 'task-abc']),
         );
 
-        $tester = $this->run_('emails', ['--redrive' => true]);
+        $tester = $this->run_('emails', ['--redrive' => true, '--yes' => true]);
 
         $tester->assertCommandIsSuccessful();
         self::assertSame(['GetCallerIdentity', 'GetQueueAttributes', 'StartMessageMoveTask'], $this->mocks->calls);
         self::assertSame('arn:aws:sqs:us-east-1:111111111111:shop-production-emails-dlq', $this->mocks->params[2]['SourceArn']);
         self::assertSame('arn:aws:sqs:us-east-1:111111111111:shop-production-emails', $this->mocks->params[2]['DestinationArn']);
         self::assertStringContainsString('Moving about 7 messages from shop-production-emails-dlq back to shop-production-emails (task task-abc)', self::display($tester));
+    }
+
+    public function test_redrive_on_a_protected_environment_needs_yes_without_a_terminal(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result(['Attributes' => ['ApproximateNumberOfMessages' => '7']]),
+        );
+
+        $tester = $this->run_('emails', ['--redrive' => true]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Add --yes', self::display($tester));
+        self::assertNotContains('StartMessageMoveTask', $this->mocks->calls);
     }
 
     public function test_redrive_of_an_empty_dlq_starts_nothing(): void

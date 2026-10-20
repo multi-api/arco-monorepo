@@ -16,9 +16,9 @@ final class ConsoleFunctionTest extends TestCase
 {
     private const TAGS = ['arco:app' => 'shop', 'arco:environment' => 'production'];
 
-    private function config(int $consoleTimeout = 900): AppConfig
+    private function config(int $consoleTimeout = 900, ?int $consoleMemory = null): AppConfig
     {
-        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->consoleTimeout($consoleTimeout)->kmsKey('arn:aws:kms:us-east-1:1:key/k')->environment('production')->toArray(), 'production');
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->console(timeout: $consoleTimeout, memory: $consoleMemory)->kmsKey('arn:aws:kms:us-east-1:1:key/k')->environment('production')->toArray(), 'production');
     }
 
     private static function missing(string $operation): LambdaException
@@ -61,6 +61,12 @@ final class ConsoleFunctionTest extends TestCase
         self::assertSame('arn:aws:kms:us-east-1:1:key/k', $create['KMSKeyArn']);
         self::assertSame(['Size' => 1024], $create['EphemeralStorage'], 'room in /tmp for the downloaded binary');
         self::assertSame('shop-production-console', $mocks->params[5]['FunctionName']);
+    }
+
+    public function test_memory_comes_from_the_console_setting_and_defaults_to_2048(): void
+    {
+        self::assertSame(2048, ConsoleFunction::settings($this->config(), 'arn:role', [])['MemorySize']);
+        self::assertSame(4096, ConsoleFunction::settings($this->config(300, 4096), 'arn:role', [])['MemorySize']);
     }
 
     public function test_updates_code_then_configuration_and_publishes(): void

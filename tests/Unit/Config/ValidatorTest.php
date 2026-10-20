@@ -31,6 +31,33 @@ final class ValidatorTest extends TestCase
         self::assertTrue($result->isValid());
     }
 
+    /** @return iterable<string, array{string, string, list<array{key: string, params: array<string, string>}>}> */
+    public static function reservedNames(): iterable
+    {
+        foreach (['-console', '-resources', '-scheduler', '-host'] as $suffix) {
+            yield "environment ending in $suffix" => ['shop', "prod$suffix", [['key' => 'validation.environment_name_suffix', 'params' => ['name' => "prod$suffix", 'suffix' => $suffix]]]];
+            yield "app ending in $suffix" => ["shop$suffix", 'prod', [['key' => 'validation.app_name_suffix', 'params' => ['name' => "shop$suffix", 'suffix' => $suffix]]]];
+        }
+        yield 'environment containing -queue-' => ['shop', 'prod-queue-emails', [['key' => 'validation.environment_name_queue', 'params' => ['name' => 'prod-queue-emails']]]];
+        yield 'app containing -queue-' => ['shop-queue-x', 'prod', [['key' => 'validation.app_name_queue', 'params' => ['name' => 'shop-queue-x']]]];
+        // Neither name contains -queue-, but <app>-<env> is the worker of shop/prod's queue "emails".
+        yield 'app and environment joined into a worker name' => ['shop-prod', 'queue-emails', [['key' => 'validation.function_name_queue', 'params' => ['app' => 'shop-prod', 'environment' => 'queue-emails', 'function' => 'shop-prod-queue-emails']]]];
+        // Neither name ends in -console, but shop-eu-console is the console function of shop/eu.
+        yield 'app and environment joined into a console name' => ['shop-eu', 'console', [['key' => 'validation.function_name_suffix', 'params' => ['app' => 'shop-eu', 'environment' => 'console', 'function' => 'shop-eu-console', 'suffix' => '-console']]]];
+        yield 'app and environment joined into a resources stack name' => ['shop-eu', 'resources', [['key' => 'validation.function_name_suffix', 'params' => ['app' => 'shop-eu', 'environment' => 'resources', 'function' => 'shop-eu-resources', 'suffix' => '-resources']]]];
+        yield 'hyphens elsewhere are fine' => ['shop', 'eu-prod', []];
+        yield 'a suffix inside the name is fine' => ['shop', 'console-eu', []];
+        yield 'an environment named like a suffix without the hyphen is fine' => ['shop', 'console', []];
+    }
+
+    /** @param list<array{key: string, params: array<string, string>}> $errors */
+    #[\PHPUnit\Framework\Attributes\DataProvider('reservedNames')]
+    public function test_names_that_collide_with_arcos_own_resource_names_are_rejected(string $app, string $environment, array $errors): void
+    {
+        $result = (new Validator())->validate(ConfigResolver::resolve(App::make($app)->region('us-east-1')->environment($environment)->toArray(), $environment), sys_get_temp_dir());
+        self::assertSame($errors, $result->errors);
+    }
+
     public function test_names_region_and_ranges(): void
     {
         $app = App::make('Shop_App')
@@ -39,7 +66,7 @@ final class ValidatorTest extends TestCase
             ->timeout(2)
             ->auth('everyone')
             ->logLevel('loud')
-            ->runtime(fn (Runtime $r) => $r->workers(min: 10, max: 5)->mode('magic')->threads(0))
+            ->runtime(fn (Runtime $r) => $r->workers(10)->maxThreads(5)->mode('magic')->threads(0))
             ->environment('production', fn (Environment $e) => $e->account('123'));
 
         self::assertSame([
@@ -130,6 +157,56 @@ final class ValidatorTest extends TestCase
         self::assertSame(['validation.binary_missing'], $this->errorKeys($missing));
     }
 
+    public function test_queue_concurrency_is_deprecated_in_favour_of_max_instances(): void
+    {
+        $validate = fn (App $app) => (new Validator())->validate(ConfigResolver::resolve($app->region('us-east-1')->environment('production')->toArray(), 'production'), sys_get_temp_dir());
+
+        $new = $validate(App::make('shop')->queue('a', maxInstances: 5));
+        self::assertSame([], $new->warnings);
+
+        $old = $validate(App::make('shop')->queue('a', concurrency: 5)->queue('b', concurrency: 3));
+        self::assertSame([['key' => 'deprecated.queue_concurrency', 'params' => ['queues' => 'a, b']]], $old->warnings, 'one warning for the run');
+        self::assertSame([], $old->errors);
+
+        $both = $validate(App::make('shop')->queue('a', maxInstances: 5, concurrency: 5));
+        self::assertSame('validation.queue_both_concurrency', $both->errors[0]['key']);
+    }
+
+    public function test_queue_spellings_override_across_levels_and_warn_once(): void
+    {
+        $validate = fn (App $app, string $env) => (new Validator())->validate(ConfigResolver::resolve($app->region('us-east-1')->toArray(), $env), sys_get_temp_dir());
+        $oldApp = fn () => App::make('shop')->queue('a', concurrency: 5)
+            ->environment('staging')
+            ->environment('production', fn (Environment $e) => $e->queue('a', maxInstances: 10));
+        $result = $validate($oldApp(), 'production');
+        self::assertSame([], $result->errors);
+        self::assertCount(1, $result->warnings);
+        self::assertSame('deprecated.queue_concurrency', $result->warnings[0]['key']);
+        self::assertSame(10, ConfigResolver::resolve($oldApp()->region('us-east-1')->toArray(), 'production')->queues[0]->maxInstances);
+        self::assertCount(1, $validate($oldApp(), 'staging')->warnings);
+
+        $oldEnv = fn () => App::make('shop')->queue('a', maxInstances: 10)
+            ->environment('production', fn (Environment $e) => $e->queue('a', concurrency: 3));
+        $result = $validate($oldEnv(), 'production');
+        self::assertSame([], $result->errors);
+        self::assertCount(1, $result->warnings);
+        self::assertSame(3, ConfigResolver::resolve($oldEnv()->region('us-east-1')->toArray(), 'production')->queues[0]->maxInstances);
+
+        $same = App::make('shop')->queue('a', maxInstances: 10, concurrency: 3)->environment('production');
+        self::assertSame('validation.queue_both_concurrency', $validate($same, 'production')->errors[0]['key']);
+    }
+
+    public function test_workers_min_max_is_deprecated_in_favour_of_workers_and_max_threads(): void
+    {
+        $validate = fn (callable $runtime) => (new Validator())->validate(ConfigResolver::resolve(App::make('shop')->region('us-east-1')->runtime($runtime)->environment('production')->toArray(), 'production'), sys_get_temp_dir());
+
+        self::assertSame([], $validate(fn (Runtime $r) => $r->workers(4)->maxThreads(64))->warnings);
+        $old = $validate(fn (Runtime $r) => $r->workers(min: 4, max: 64));
+        self::assertSame([['key' => 'deprecated.workers_min_max', 'params' => []]], $old->warnings);
+        self::assertSame([['key' => 'deprecated.workers_min_max', 'params' => []]], $validate(fn (Runtime $r) => $r->workers(4, 64))->warnings, 'the old positional form');
+        self::assertSame([], $old->errors);
+    }
+
     public function test_binary_alongside_build_or_frankenphp_warns(): void
     {
         $arm = ElfInspectorTest::fakeElf(0xB7);
@@ -153,16 +230,35 @@ final class ValidatorTest extends TestCase
             ->runtime(fn (Runtime $r) => $r->binary($arm))
             ->environment('production');
         self::assertSame([], $warningKeys($only));
+
+        $php = App::make('shop')->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->binary($arm)->php('8.5'))
+            ->environment('production');
+        self::assertSame(['validation.binary_overrides_build'], $warningKeys($php));
+
+        // An environment's binary() over selectors inherited from the app (arco init's php()) does not warn.
+        $inherited = App::make('shop')->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->php('8.5'))
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->binary($arm)));
+        self::assertSame([], $warningKeys($inherited));
+        self::assertSame([], $this->errorKeys($inherited));
     }
 
     private static function manifest(): \Multiapi\Arco\Binary\RuntimeManifest
     {
         return \Multiapi\Arco\Binary\RuntimeManifest::fromArray([
-            'default' => '1.13.0-r1',
-            'builds' => ['1.13.0-r1' => [
-                'url' => 'https://example.test/f', 'sha256' => str_repeat('a', 64), 'size' => 1,
-                'frankenphp' => '1.13.0', 'php' => '8.5.11',
-            ]],
+            'default_php' => '8.5',
+            'builds' => [
+                'php8.5.11-fp1.13.0-r1' => [
+                    'url' => 'https://example.test/f', 'sha256' => str_repeat('a', 64), 'size' => 1,
+                    'frankenphp' => '1.13.0', 'php' => '8.5.11',
+                ],
+                'php8.6.1-fp1.14.0-r1' => [
+                    'url' => 'https://example.test/g', 'sha256' => str_repeat('b', 64), 'size' => 1,
+                    'frankenphp' => '1.14.0', 'php' => '8.6.1',
+                ],
+            ],
+            'aliases' => ['1.13.0-r1' => 'php8.5.11-fp1.13.0-r1'],
         ]);
     }
 
@@ -179,10 +275,56 @@ final class ValidatorTest extends TestCase
         self::assertSame(['binary.unknown_build'], $keys($base()->runtime(fn (Runtime $r) => $r->build('1.13.0-r9'))->environment('production')));
         // Review focus 4: unknown version fails at validation.
         self::assertSame(['binary.unknown_version'], $keys($base()->runtime(fn (Runtime $r) => $r->frankenphp('1.12.0'))->environment('production')));
-        // Review focus 3: mixed levels are still rejected.
-        self::assertSame(['binary.build_and_version'], $keys($base()
+        // Selectors resolve per level: an environment's frankenphp() replaces an inherited build().
+        self::assertSame([], $keys($base()
             ->runtime(fn (Runtime $r) => $r->build('1.13.0-r1'))
             ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->frankenphp('1.13.0')))));
+        // At the same level they are still rejected.
+        self::assertSame(['binary.build_and_version'], $keys($base()
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->build('1.13.0-r1')->frankenphp('1.13.0')))));
+    }
+
+    public function test_php_selects_a_minor_and_excludes_build(): void
+    {
+        $result = function (App $app): \Multiapi\Arco\Config\ValidationResult {
+            return (new Validator(self::manifest()))->validate(ConfigResolver::resolve($app->toArray(), 'production'), sys_get_temp_dir());
+        };
+        $keys = fn (App $app): array => array_map(fn (array $e) => $e['key'], $result($app)->errors);
+        $base = fn () => App::make('shop')->region('us-east-1');
+
+        self::assertSame([], $keys($base()->runtime(fn (Runtime $r) => $r->php('8.5'))->environment('production')));
+        self::assertSame([], $keys($base()->runtime(fn (Runtime $r) => $r->php('8.6')->frankenphp('1.14'))->environment('production')));
+        self::assertSame(['binary.unknown_version'], $keys($base()->runtime(fn (Runtime $r) => $r->php('8.6')->frankenphp('1.13'))->environment('production')));
+        self::assertSame(['binary.invalid_php'], $keys($base()->runtime(fn (Runtime $r) => $r->php('8'))->environment('production')));
+
+        // No build of that minor: the error lists the PHP minors this Arco knows.
+        $missing = $result($base()->runtime(fn (Runtime $r) => $r->php('8.4'))->environment('production'))->errors;
+        self::assertSame([['key' => 'binary.unknown_php', 'params' => ['php' => '8.4', 'minors' => '8.5, 8.6']]], $missing);
+
+        // build() is an exact pin: php() next to it at the same level is an error.
+        self::assertSame(['binary.build_and_version'], $keys($base()->runtime(fn (Runtime $r) => $r->php('8.5')->build('1.13.0-r1'))->environment('production')));
+        self::assertSame(['binary.build_and_version'], $keys($base()
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->php('8.5')->build('1.13.0-r1')))));
+        // Across levels the environment's selector wins (arco init writes php() at app level).
+        self::assertSame([], $keys($base()
+            ->runtime(fn (Runtime $r) => $r->php('8.5'))
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->build('php8.5.11-fp1.13.0-r1')))));
+        self::assertSame([], $keys($base()
+            ->runtime(fn (Runtime $r) => $r->build('1.13.0-r1'))
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->php('8.5')))));
+    }
+
+    public function test_binary_with_a_php_cli_checks_both_files(): void
+    {
+        $arm = ElfInspectorTest::fakeElf(0xB7);
+        $x86 = ElfInspectorTest::fakeElf(0x3E);
+        $keys = fn (string $php): array => $this->errorKeys(App::make('shop')->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->binary(frankenphp: $arm, php: $php))
+            ->environment('production'));
+
+        self::assertSame([], $keys($arm));
+        self::assertSame(['validation.php_binary_missing'], $keys('bin/no-php'));
+        self::assertSame(['validation.php_binary_arch'], $keys($x86));
     }
 
     public function test_permissions_statements_are_validated(): void
@@ -309,9 +451,34 @@ final class ValidatorTest extends TestCase
 
     public function test_console_timeout_range(): void
     {
-        self::assertSame(['validation.console_timeout'], $this->errorKeys(App::make('shop')->region('us-east-1')->consoleTimeout(901)->environment('production')));
-        self::assertSame(['validation.console_timeout'], $this->errorKeys(App::make('shop')->region('us-east-1')->consoleTimeout(2)->environment('production')));
-        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->consoleTimeout(3)->environment('production')));
+        self::assertSame(['validation.console_timeout'], $this->errorKeys(App::make('shop')->region('us-east-1')->console(timeout: 901)->environment('production')));
+        self::assertSame(['validation.console_timeout'], $this->errorKeys(App::make('shop')->region('us-east-1')->console(timeout: 2)->environment('production')));
+        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->console(timeout: 3)->environment('production')));
+    }
+
+    public function test_console_memory_range(): void
+    {
+        self::assertSame(['validation.console_memory'], $this->errorKeys(App::make('shop')->region('us-east-1')->console(memory: 127)->environment('production')));
+        self::assertSame(['validation.console_memory'], $this->errorKeys(App::make('shop')->region('us-east-1')->console(memory: 10241)->environment('production')));
+        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->console(memory: 4096)->environment('production')));
+    }
+
+    public function test_cache_driver_must_be_dynamodb(): void
+    {
+        self::assertSame(['validation.cache_driver'], $this->errorKeys(App::make('shop')->region('us-east-1')->cache(driver: 'redis')->environment('production')));
+        self::assertSame([], $this->errorKeys(App::make('shop')->region('us-east-1')->cache(driver: 'dynamodb')->environment('production')));
+    }
+
+    public function test_every_arco_variable_is_reserved_for_arco(): void
+    {
+        foreach (['ARCO', 'ARCO_X', 'ARCO_TRUST_PROXIES', 'ARCO_QUEUES', 'ARCOFOO'] as $name) {
+            $app = App::make('shop')->region('us-east-1')->variables([$name => '1'])->environment('production');
+            $errors = (new Validator())->validate(ConfigResolver::resolve($app->toArray(), 'production'), sys_get_temp_dir())->errors;
+            self::assertSame('validation.reserved_arco_variable', $errors[0]['key'] ?? null, $name);
+            self::assertSame($name, $errors[0]['params']['variable'] ?? null);
+        }
+        $app = App::make('shop')->region('us-east-1')->variables(['MY_ARCO' => '1', 'ARC' => '1'])->environment('production');
+        self::assertSame([], $this->errorKeys($app));
     }
 
     public function test_console_function_name_must_fit_64_characters(): void
@@ -465,7 +632,7 @@ final class ValidatorTest extends TestCase
 
     public function test_valid_queues(): void
     {
-        $app = App::make('shop')->queue('jobs')->queue('emails', timeout: 900, memory: 128, concurrency: 2, batchSize: 10000, tries: 1)
+        $app = App::make('shop')->queue('jobs')->queue('emails', timeout: 900, memory: 128, maxInstances: 2, batchSize: 10000, tries: 1)
             ->queue('f', fifo: true, batchSize: 10)->queue('e', existing: 'arn:aws:sqs:us-east-1:123456789012:legacy');
         self::assertSame([], $this->queueErrors($app));
     }
@@ -482,7 +649,7 @@ final class ValidatorTest extends TestCase
         $cases = [
             'validation.queue_timeout' => [['timeout' => 0], ['timeout' => 9], ['timeout' => 901]],
             'validation.queue_memory' => [['memory' => 127], ['memory' => 10241]],
-            'validation.queue_concurrency' => [['concurrency' => 1]],
+            'validation.queue_max_instances' => [['maxInstances' => 1]],
             'validation.queue_batch_size' => [['batchSize' => 0], ['batchSize' => 10001], ['batchSize' => 11, 'fifo' => true]],
             'validation.queue_tries' => [['tries' => 0]],
         ];
@@ -593,5 +760,18 @@ final class ValidatorTest extends TestCase
     {
         self::assertContains('validation.table_existing', $this->queueErrors(App::make('shop')->cache(existing: 'a b')));
         self::assertContains('validation.table_existing', $this->queueErrors(App::make('shop')->failedJobsTable(existing: 'x')));
+    }
+
+    public function test_the_suffix_message_names_each_suffix_resource_not_only_the_console(): void
+    {
+        foreach (['en' => ['the console function', 'the resources stack', 'the scheduler rule', 'the CloudFront host function'], 'es' => ['la función de consola', 'el stack de recursos', 'la regla del scheduler', 'la función host de CloudFront']] as $lang => $kinds) {
+            $text = (new \Multiapi\Arco\Cli\Translator($lang, \Multiapi\Arco\Arco::packageRoot() . '/lang'))
+                ->trans('validation.function_name_suffix', ['app' => 'shop-eu', 'environment' => 'scheduler', 'function' => 'shop-eu-scheduler', 'suffix' => '-scheduler']);
+            foreach ($kinds as $kind) {
+                self::assertStringContainsString($kind, $text, $lang);
+            }
+            self::assertStringNotContainsString('is also the console function', $text);
+            self::assertStringNotContainsString('también es la función de consola', $text);
+        }
     }
 }

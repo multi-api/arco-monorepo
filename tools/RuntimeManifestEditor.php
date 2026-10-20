@@ -85,44 +85,60 @@ final class RuntimeManifestEditor
         throw new InvalidArgumentException("The release has no $name asset.");
     }
 
-    /** @param array<string, mixed> $buildJson */
-    public static function add(string $manifestPath, array $buildJson, string $repository, bool $setDefault): void
+    /**
+     * Adds the build of a published release, under its Arco id php<php>-fp<frankenphp>-r<n> (the release
+     * id `<frankenphp>-r<n>` stays the GitHub tag `frankenphp-<release id>`). The default build is then
+     * the newest build of the manifest's default_php: a newer build of that PHP minor becomes the default,
+     * a build of another minor never does. Aliases are kept as they are.
+     *
+     * @param array<string, mixed> $buildJson
+     * @return string the Arco build id
+     */
+    public static function add(string $manifestPath, array $buildJson, string $repository): string
     {
         self::assertValidRepository($repository);
-        $id = $buildJson['id'] ?? null;
-        if (! is_string($id) || ! preg_match(RuntimeManifest::ID_PATTERN, $id)) {
-            throw new InvalidArgumentException('build.json has no valid "id".');
+        $release = $buildJson['id'] ?? null;
+        if (! is_string($release) || ! preg_match(RuntimeManifest::RELEASE_ID_PATTERN, $release, $m)) {
+            throw new InvalidArgumentException('build.json has no valid "id" (a release id such as 1.13.0-r3).');
         }
         if (($buildJson['arch'] ?? null) !== 'linux-aarch64') {
             throw new InvalidArgumentException('build.json arch must be linux-aarch64.');
         }
+        $php = $buildJson['php'] ?? null;
+        if (! is_string($php) || ! preg_match('/^\d+\.\d+\.\d+$/D', $php)) {
+            throw new InvalidArgumentException('build.json php must be a full PHP version such as 8.5.11.');
+        }
+        $id = RuntimeManifest::id($php, $m[1], (int) $m[2]);
 
         $data = require $manifestPath;
         if (! is_array($data) || ! is_array($data['builds'] ?? null)) {
             throw new InvalidArgumentException("$manifestPath is not a runtime manifest.");
         }
-        /** @var array{builds: array<string, mixed>, default?: string, ...} $data */
+        /** @var array{builds: array<string, array<string, mixed>>, default_php?: string, aliases?: array<string, string>} $data */
         if (isset($data['builds'][$id])) {
             throw new InvalidArgumentException("Build $id is already in the manifest; publish a new revision instead.");
         }
+        $base = "https://github.com/$repository/releases/download/frankenphp-$release";
+        foreach ($data['builds'] as $existing => $entry) {
+            if (($entry['url'] ?? null) === "$base/frankenphp-linux-aarch64") {
+                throw new InvalidArgumentException("Release frankenphp-$release is already in the manifest as $existing.");
+            }
+        }
 
         $data['builds'][$id] = [
-            'url' => "https://github.com/$repository/releases/download/frankenphp-$id/frankenphp-linux-aarch64",
+            'url' => "$base/frankenphp-linux-aarch64",
             'sha256' => $buildJson['sha256'] ?? null,
             'size' => $buildJson['size'] ?? null,
             'frankenphp' => $buildJson['frankenphp'] ?? null,
-            'php' => $buildJson['php'] ?? null,
+            'php' => $php,
         ];
         $phpCli = self::phpCli($buildJson);
         if ($phpCli !== null) {
             $data['builds'][$id]['php_cli'] = [
-                'url' => "https://github.com/$repository/releases/download/frankenphp-$id/php-linux-aarch64",
+                'url' => "$base/php-linux-aarch64",
                 'sha256' => $phpCli['sha256'] ?? null,
                 'size' => $phpCli['size'] ?? null,
             ];
-        }
-        if ($setDefault) {
-            $data['default'] = $id;
         }
 
         try {
@@ -132,13 +148,17 @@ final class RuntimeManifestEditor
         }
 
         ksort($data['builds'], SORT_NATURAL);
-        $php = "<?php\n\n"
+        // Keys in a fixed order, so regenerated diffs stay small.
+        $data = ['default_php' => $data['default_php'] ?? null, 'builds' => $data['builds'], 'aliases' => $data['aliases'] ?? []];
+        $out = "<?php\n\n"
             . "// Runtime builds known to this Arco release. Generated with bin/runtime-manifest-add; do not edit by hand.\n"
             . "// Each build is an immutable release of github.com/$repository.\n"
+            . "// The default build is the newest build of default_php; see docs/maintainers/runtime-builds.md.\n"
             . 'return ' . self::export($data) . ";\n";
-        if (file_put_contents($manifestPath, $php) === false) {
+        if (file_put_contents($manifestPath, $out) === false) {
             throw new RuntimeException("Could not write $manifestPath.");
         }
+        return $id;
     }
 
     /**

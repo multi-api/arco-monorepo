@@ -42,6 +42,35 @@ final class InitCommandTest extends TestCase
         $project->restore();
     }
 
+    public function test_pins_the_php_minor_of_the_default_runtime_build(): void
+    {
+        $project = new ProjectFixture();
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $php = (string) file_get_contents("$project->dir/arco.php");
+        $minor = \Multiapi\Arco\Binary\RuntimeManifest::load()->defaultPhp();
+        self::assertSame('8.5', $minor);
+        self::assertStringContainsString("use Multiapi\\Arco\\Config\\Runtime;\n", $php);
+        self::assertStringContainsString("    ->region('us-east-1')\n    ->runtime(fn (Runtime \$r) => \$r->php('8.5'))\n", $php);
+        $config = ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production');
+        self::assertSame('8.5', $config->runtime->php);
+        self::assertSame('app', $config->sources['runtime.php']);
+
+        // The php() init writes does not get in the way of an environment pinning an exact build.
+        file_put_contents("$project->dir/arco.php", str_replace(
+            "->environment('production', fn (Environment \$env) => \$env\n",
+            "->environment('production', fn (Environment \$env) => \$env\n        ->runtime(fn (Runtime \$r) => \$r->build('1.13.0-r2'))\n",
+            $php,
+        ));
+        $pinned = ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production');
+        self::assertSame(['1.13.0-r2', null], [$pinned->runtime->build, $pinned->runtime->php]);
+        $result = (new Validator())->validate($pinned, $project->dir);
+        self::assertSame([], array_map(fn (array $e) => $e['key'], $result->errors));
+        $project->restore();
+    }
+
     public function test_stock_laravel_env_only_references_keys_with_real_values(): void
     {
         $project = new ProjectFixture();
@@ -134,6 +163,24 @@ ENV);
 
         $production = ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production');
         self::assertSame(['APP_ENV' => 'production', 'PUSHER_APP_SECRET' => 'arco-ssm:/shop/production/pusher-app-secret'], $production->variables);
+        $project->restore();
+    }
+
+    public function test_arco_prefixed_secrets_in_dot_env_are_left_out(): void
+    {
+        // ARCO* names are reserved for Arco: variables() would refuse them, so arco.php would not validate.
+        $project = new ProjectFixture();
+        file_put_contents("$project->dir/.env", "ARCO_API_SECRET=x\nARCOTOKEN_KEY=y\nDB_PASSWORD=secret\n");
+
+        $tester = $project->tester(new InitCommand(new PresetRegistry([])));
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $production = ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production');
+        self::assertSame(['APP_ENV' => 'production', 'DB_PASSWORD' => 'arco-ssm:/shop/production/db-password'], $production->variables);
+        self::assertTrue((new Validator())->validate($production, $project->dir)->isValid());
+        self::assertStringNotContainsString('ARCO_API_SECRET', (string) file_get_contents("$project->dir/arco.php"));
+        self::assertStringNotContainsString('arco-api-secret', $tester->getDisplay());
         $project->restore();
     }
 
@@ -755,7 +802,7 @@ ENV);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString(
-            'composer require league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.6',
+            'composer require league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.9',
             $tester->getDisplay(),
         );
         $project->restore();
@@ -800,7 +847,7 @@ ENV);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString(
-            "    ->region('us-east-1')\n    ->console()\n    ->scheduler(10)\n    ->logRetention(14)\n    ->queue('default')\n    ->queue('emails')\n    ->failedJobsTable()\n    ->storage('uploads')\n    ->cache()\n    ->environment(",
+            "    ->region('us-east-1')\n    ->runtime(fn (Runtime \$r) => \$r->php('8.5'))\n    ->console()\n    ->scheduler(10)\n    ->logRetention(14)\n    ->queue('default')\n    ->queue('emails')\n    ->failedJobsTable()\n    ->storage('uploads')\n    ->cache()\n    ->environment(",
             (string) file_get_contents("$project->dir/arco.php"),
         );
         self::assertValid($project);

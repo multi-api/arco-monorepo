@@ -33,6 +33,7 @@ final class TinkerCommandTest extends TestCase
         $mock = new MockHandler([new Result(['Account' => '111111111111'])]);
         $preset = $laravel ? new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } } : new PlainPhpPreset();
         return $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => null,
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $mock, 'credentials' => false]),
             consoleFactory: fn () => $console,
             presets: new PresetRegistry([$preset]),
@@ -67,6 +68,7 @@ final class TinkerCommandTest extends TestCase
             return \GuzzleHttp\Promise\Create::promiseFor(new Result(['Account' => '111111111111']));
         };
         $tester = $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => null,
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $handler, 'credentials' => false]),
             consoleFactory: fn () => new FakeConsole([FakeConsole::tinkerReply(['presented' => '2'])]),
             presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
@@ -79,6 +81,7 @@ final class TinkerCommandTest extends TestCase
         // An account lock is still checked before anything runs.
         file_put_contents('arco.php', str_replace("->environment('staging')", "->environment('staging', fn (Environment \$env) => \$env->account('111111111111'))", (string) file_get_contents('arco.php')));
         $tester = $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => null,
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $handler, 'credentials' => false]),
             consoleFactory: fn () => new FakeConsole([FakeConsole::tinkerReply(['presented' => '2'])]),
             presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
@@ -117,6 +120,7 @@ final class TinkerCommandTest extends TestCase
             return \GuzzleHttp\Promise\Create::promiseFor(new Result(['Account' => '111111111111']));
         };
         return $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => null,
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $handler, 'credentials' => $credentials ?? false]),
             consoleFactory: fn () => $console,
             presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
@@ -250,7 +254,7 @@ final class TinkerCommandTest extends TestCase
         self::assertStringContainsString('Add laravel/tinker', $tester->getDisplay());
     }
 
-    public function test_production_needs_force_without_a_terminal(): void
+    public function test_production_needs_yes_without_a_terminal(): void
     {
         $console = new FakeConsole();
         $tester = $this->tester($console);
@@ -258,7 +262,7 @@ final class TinkerCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--profile' => 'p', '--execute' => '1'], ['interactive' => false]);
 
         self::assertSame(1, $tester->getStatusCode());
-        self::assertStringContainsString('--force', $tester->getDisplay());
+        self::assertStringContainsString('--yes', $tester->getDisplay());
         self::assertSame([], $console->calls);
     }
 
@@ -276,13 +280,27 @@ final class TinkerCommandTest extends TestCase
         self::assertSame([], $console->calls);
     }
 
-    public function test_force_skips_the_confirmation(): void
+    public function test_yes_skips_the_confirmation(): void
     {
         $console = new FakeConsole([FakeConsole::tinkerReply(['presented' => '1'])]);
 
-        $this->tester($console)->execute(['--env' => 'production', '--profile' => 'p', '--execute' => '1', '--force' => true], ['interactive' => false]);
+        $tester = $this->tester($console);
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--execute' => '1', '--yes' => true], ['interactive' => false]);
 
         self::assertCount(1, $console->calls);
+        self::assertStringNotContainsString('deprecated', $tester->getDisplay());
+    }
+
+    public function test_force_still_works_with_one_deprecation_warning(): void
+    {
+        $console = new FakeConsole([FakeConsole::tinkerReply(['presented' => '1'])]);
+
+        $tester = $this->tester($console);
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--execute' => '1', '--force' => true], ['interactive' => false]);
+
+        self::assertCount(1, $console->calls);
+        self::assertSame(1, substr_count($tester->getDisplay(), 'tinker --force is deprecated'));
+        self::assertStringContainsString('use --yes', $tester->getDisplay());
     }
 
     public function test_without_execute_the_local_shell_starts(): void
@@ -315,6 +333,7 @@ final class TinkerCommandTest extends TestCase
         file_put_contents('arco.php', ProjectFixture::standardConfig());
         $awsCalls = 0;
         $tester = $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => null,
             awsFactory: function () use (&$awsCalls): never { $awsCalls++; throw new \LogicException('No AWS expected.'); },
             consoleFactory: fn () => throw new \LogicException('No console expected.'),
             presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
@@ -326,5 +345,37 @@ final class TinkerCommandTest extends TestCase
         $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
         self::assertStringContainsString('arco console:add --env=staging', $display);
         self::assertSame(0, $awsCalls, 'the AWS factory is never called');
+    }
+
+    public function test_a_console_function_this_environment_does_not_own_is_never_invoked(): void
+    {
+        $console = new FakeConsole([FakeConsole::tinkerReply(['presented' => '2'])]);
+        $tester = $this->project->tester(new TinkerCommand(
+            ownershipCheck: fn () => throw \Multiapi\Arco\Deploy\DeployException::make('ownership.not_owned', ['resource' => 'shop-staging-console', 'app' => 'shop', 'environment' => 'other']),
+            awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => new MockHandler([new Result(['Account' => '111111111111'])]), 'credentials' => false]),
+            consoleFactory: fn () => $console,
+            presets: new PresetRegistry([new class extends PlainPhpPreset { public function name(): string { return 'laravel'; } }]),
+        ));
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => '1+1'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertSame([], $console->calls);
+        self::assertStringContainsString('Nothing was run or changed', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+    }
+
+    public function test_config_warnings_go_to_stderr_not_to_the_value_execute_prints(): void
+    {
+        $this->project->restore();
+        $this->project = new ProjectFixture(str_replace('->console()', "->console()\n    ->runtime(fn (\\Multiapi\\Arco\\Config\\Runtime \$r) => \$r->workers(min: 2, max: 8))", ProjectFixture::consoleConfig()));
+        $console = new FakeConsole([FakeConsole::tinkerReply(['presented' => '3'])]);
+
+        $tester = $this->tester($console);
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--execute' => '1 + 2'], ['interactive' => false, 'capture_stderr_separately' => true]);
+
+        self::assertSame(0, $tester->getStatusCode(), $tester->getDisplay() . $tester->getErrorOutput());
+        self::assertStringNotContainsString('deprecated', $tester->getDisplay());
+        self::assertStringContainsString('= 3', $tester->getDisplay());
+        self::assertStringContainsString('workers(min:, max:) is deprecated', preg_replace('/\s+/', ' ', $tester->getErrorOutput()));
     }
 }

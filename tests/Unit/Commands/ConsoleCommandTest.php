@@ -29,6 +29,7 @@ final class ConsoleCommandTest extends TestCase
     {
         $mock = new MockHandler([new Result(['Account' => '111111111111'])]);
         return $this->project->tester(new ConsoleCommand(
+            ownershipCheck: fn () => null,
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $mock, 'credentials' => false]),
             consoleFactory: $consoleFactory ?? fn () => $console,
         ));
@@ -50,6 +51,7 @@ final class ConsoleCommandTest extends TestCase
     {
         $mock = new MockHandler([new Result(['Account' => '111111111111'])]);
         $tester = $this->project->tester(new ConsoleCommand(
+            ownershipCheck: fn () => null,
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $mock, 'credentials' => false]),
             consoleFactory: fn () => new FakeConsole([new CommandResult(0, "ok\n")]),
         ));
@@ -162,6 +164,7 @@ final class ConsoleCommandTest extends TestCase
         file_put_contents('arco.php', ProjectFixture::standardConfig());
         $awsCalls = 0;
         $tester = $this->project->tester(new ConsoleCommand(
+            ownershipCheck: fn () => null,
             awsFactory: function () use (&$awsCalls): never { $awsCalls++; throw new \LogicException('No AWS expected.'); },
             consoleFactory: fn () => throw new \LogicException('No console expected.'),
         ));
@@ -172,5 +175,67 @@ final class ConsoleCommandTest extends TestCase
         $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
         self::assertStringContainsString('arco console:add --env=staging', $display);
         self::assertSame(0, $awsCalls, 'the AWS factory is never called');
+    }
+
+    public function test_a_console_function_this_environment_does_not_own_is_never_invoked(): void
+    {
+        $console = new FakeConsole([new CommandResult(0, "ok\n")]);
+        $tester = $this->project->tester(new ConsoleCommand(
+            ownershipCheck: fn () => throw \Multiapi\Arco\Deploy\DeployException::make('ownership.not_owned', ['resource' => 'shop-staging-console', 'app' => 'shop', 'environment' => 'other']),
+            awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => new MockHandler([new Result(['Account' => '111111111111'])]), 'credentials' => false]),
+            consoleFactory: fn () => $console,
+        ));
+
+        $tester->execute(['args' => 'migrate --force', '--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertSame([], $console->calls);
+        self::assertStringContainsString('Nothing was run or changed', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+    }
+
+    public function test_a_protected_environment_without_a_terminal_needs_yes(): void
+    {
+        $console = new FakeConsole([new CommandResult(0, "migrated\n")]);
+        $tester = $this->tester($console);
+
+        $tester->execute(['args' => 'migrate --force', '--env' => 'production', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('production is protected', $display);
+        self::assertStringContainsString('Add --yes', $display);
+        self::assertSame([], $console->calls);
+    }
+
+    public function test_yes_runs_the_command_on_a_protected_environment(): void
+    {
+        $console = new FakeConsole([new CommandResult(0, "migrated\n")]);
+        $tester = $this->tester($console);
+
+        $tester->execute(['args' => 'migrate --force', '--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("migrated\n", $tester->getDisplay());
+        self::assertSame([['run', 'migrate --force', null, 'live']], $console->calls);
+    }
+
+    public function test_a_protected_environment_asks_at_a_terminal(): void
+    {
+        $console = new FakeConsole([new CommandResult(0, "ok\n")]);
+        $tester = $this->tester($console);
+        $tester->setInputs(['no']);
+
+        $tester->execute(['args' => 'about', '--env' => 'production', '--profile' => 'p']);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('Run "about" on production', $tester->getDisplay());
+        self::assertSame([], $console->calls);
+
+        $console = new FakeConsole([new CommandResult(0, "ok\n")]);
+        $tester = $this->tester($console);
+        $tester->setInputs(['yes']);
+        $tester->execute(['args' => 'about', '--env' => 'production', '--profile' => 'p']);
+        self::assertSame(0, $tester->getStatusCode());
+        self::assertCount(1, $console->calls);
     }
 }

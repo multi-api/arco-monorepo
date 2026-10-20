@@ -9,12 +9,20 @@ use PHPUnit\Framework\TestCase;
 
 final class BuildersTest extends TestCase
 {
+    public function test_runtime_php_frankenphp_and_binary_serialize(): void
+    {
+        self::assertSame(['php' => '8.5', 'frankenphp' => '1.13'], (new Runtime())->php('8.5')->frankenphp('1.13')->toArray());
+        self::assertSame(['build' => '1.13.0-r2'], (new Runtime())->build('1.13.0-r2')->toArray());
+        self::assertSame(['binary' => 'bin/frankenphp', 'phpBinary' => 'bin/php'], (new Runtime())->binary(frankenphp: 'bin/frankenphp', php: 'bin/php')->toArray());
+        self::assertSame(['binary' => 'bin/frankenphp', 'phpBinary' => null], (new Runtime())->binary('bin/frankenphp')->toArray());
+    }
+
     public function test_serializes_only_explicit_values(): void
     {
         $app = App::make('shop')
             ->region('us-east-1')
             ->concurrency(48)
-            ->runtime(fn (Runtime $r) => $r->workers(min: 4, max: 32)->phpIni(['memory_limit' => '512M']))
+            ->runtime(fn (Runtime $r) => $r->workers(4)->maxThreads(32)->phpIni(['memory_limit' => '512M']))
             ->variables(['APP_ENV' => 'production'])
             ->exclude(['tests/**'])
             ->environment('staging')
@@ -32,7 +40,7 @@ final class BuildersTest extends TestCase
             'include' => [],
             'settings' => ['concurrency' => 48],
             'variables' => ['APP_ENV' => 'production'],
-            'runtime' => ['workers' => ['min' => 4, 'max' => 32], 'phpIni' => ['memory_limit' => '512M']],
+            'runtime' => ['workers' => 4, 'maxThreads' => 32, 'phpIni' => ['memory_limit' => '512M']],
             'permissions' => [],
             'domains' => null,
             'deployCommands' => null,

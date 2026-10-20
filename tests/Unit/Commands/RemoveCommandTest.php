@@ -48,7 +48,7 @@ final class RemoveCommandTest extends TestCase
         $project->restore();
     }
 
-    public function test_non_interactive_needs_force(): void
+    public function test_non_interactive_needs_yes(): void
     {
         $project = new ProjectFixture(ProjectFixture::standardConfig());
         $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
@@ -56,11 +56,43 @@ final class RemoveCommandTest extends TestCase
         $tester = $project->tester($this->command($deployer));
         $tester->execute(['--env' => 'production', '--profile' => 'p'], ['interactive' => false]);
         self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('Add --yes', preg_replace('/\s+/', ' ', $tester->getDisplay()));
+        self::assertNotContains('remove', $deployer->calls);
 
         $tester = $project->tester($this->command($deployer));
-        $tester->execute(['--env' => 'production', '--profile' => 'p', '--force' => true], ['interactive' => false]);
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
         $tester->assertCommandIsSuccessful();
         self::assertContains('remove', $deployer->calls);
+        $project->restore();
+    }
+
+    public function test_a_non_protected_environment_without_a_terminal_needs_yes(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-staging', 'Active', 'x.on.aws', 'rev-1'));
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'staging', '--profile' => 'p'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('needs --yes without a terminal', $display);
+        self::assertStringNotContainsString('protected', $display);
+        self::assertNotContains('remove', $deployer->calls);
+        $project->restore();
+    }
+
+    public function test_force_still_works_with_one_deprecation_warning(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--force' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertContains('remove', $deployer->calls);
+        self::assertSame(1, substr_count(preg_replace('/\s+/', ' ', $tester->getDisplay()), 'remove --force is deprecated'));
         $project->restore();
     }
 
@@ -81,7 +113,7 @@ final class RemoveCommandTest extends TestCase
         );
 
         $tester = $project->tester($command);
-        $tester->execute(['--env' => 'production', '--profile' => 'p', '--force' => true], ['interactive' => false]);
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
 
         $tester->assertCommandIsSuccessful();
         self::assertSame(['acme-prod'], $dnsProfiles);
@@ -97,7 +129,7 @@ final class RemoveCommandTest extends TestCase
         $deployer = new FakeDeployer(status: null, domainResources: false);
 
         $tester = $project->tester($this->command($deployer));
-        $tester->execute(['--env' => 'production', '--profile' => 'p', '--force' => true], ['interactive' => false]);
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
 
         $tester->assertCommandIsSuccessful();
         self::assertSame(['describe'], $deployer->calls);
@@ -122,6 +154,66 @@ final class RemoveCommandTest extends TestCase
         self::assertStringContainsString('[WARNING] The scheduler rule arco-shop-production-scheduler', $display);
         self::assertStringContainsString('events:DescribeRule', $display);
         self::assertStringContainsString('• Deleting console function shop-production-console', $display);
+        $project->restore();
+    }
+
+    public function test_lists_the_tagged_resources_before_asking_for_confirmation(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->tagged = [
+            ['type' => 'lambda:function', 'name' => 'shop-production', 'arn' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production', 'retained' => false],
+            ['type' => 's3', 'name' => 'shop-production-uploads', 'arn' => 'arn:aws:s3:::shop-production-uploads', 'retained' => true],
+        ];
+        $tester = $project->tester($this->command($deployer));
+        $tester->setInputs(['nope']);
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p']);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = $tester->getDisplay();
+        $list = strpos($display, 'shop-production-uploads');
+        $question = strpos($display, 'Type "production" to confirm');
+        self::assertNotFalse($list);
+        self::assertNotFalse($question);
+        self::assertLessThan($question, $list, 'the list comes before the confirmation');
+        self::assertMatchesRegularExpression('/lambda:function shop-production .*deleted/', $display);
+        self::assertMatchesRegularExpression('/s3 shop-production-uploads .*kept/', $display);
+        self::assertNotContains('remove', $deployer->calls);
+        $project->restore();
+    }
+
+    public function test_force_still_lists_the_tagged_resources(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->tagged = [['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true]];
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        $list = strpos($display, 'shop-production-emails');
+        $done = strpos($display, 'was removed');
+        self::assertNotFalse($list);
+        self::assertNotFalse($done);
+        self::assertLessThan($done, $list);
+        $project->restore();
+    }
+
+    public function test_a_list_that_cannot_be_read_is_a_note_and_the_remove_goes_on(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->taggedError = new \Aws\Exception\AwsException('denied', new \Aws\Command('GetResources'), ['code' => 'AccessDeniedException', 'message' => 'not authorized to perform: tag:GetResources']);
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('tag:GetResources', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+        self::assertContains('remove', $deployer->calls);
         $project->restore();
     }
 }
