@@ -55,7 +55,7 @@ final class QueueAddCommand extends ArcoCommand
                 $deprecated = $input->getOption('concurrency');
                 if ($deprecated !== null) {
                     if ($input->getOption('max-instances') !== null) {
-                        throw new UserError($this->t('queue.both_concurrency'));
+                        throw new UserError($this->t('deprecated.queue_both_option'));
                     }
                     $io->warning($this->t('deprecated.queue_concurrency_option'));
                     $input->setOption('max-instances', $deprecated);

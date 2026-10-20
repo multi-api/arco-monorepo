@@ -560,7 +560,7 @@ return [
     'deprecated.queue_concurrency' => 'queue(concurrency:) is deprecated and will be removed in 1.0: use queue(maxInstances:) (queues: {queues}). It still works.',
     'deprecated.queue_concurrency_option' => 'The concurrency option of a queue is deprecated and will be removed in 1.0: use max-instances. It still works.',
     'deprecated.workers_min_max' => 'workers(min:, max:) is deprecated and will be removed in 1.0: use workers(count) and maxThreads(threads). It still works.',
-    'queue.both_concurrency' => 'Give --max-instances only; --concurrency is its deprecated name.',
+    'deprecated.queue_both_option' => 'Give --max-instances only; --concurrency is its deprecated name.',
     'queue.unknown_option' => 'Unknown queue option "{option}". Options: {options}.',
     'queue.not_a_number' => 'The {option} option needs a whole number, got "{value}".',
     'queue.not_a_bool' => 'The {option} option needs on or off, got "{value}".',

@@ -560,7 +560,7 @@ return [
     'deprecated.queue_concurrency' => 'queue(concurrency:) está en desuso y se eliminará en 1.0: usa queue(maxInstances:) (colas: {queues}). Sigue funcionando.',
     'deprecated.queue_concurrency_option' => 'La opción concurrency de una cola está en desuso y se eliminará en 1.0: usa max-instances. Sigue funcionando.',
     'deprecated.workers_min_max' => 'workers(min:, max:) está en desuso y se eliminará en 1.0: usa workers(cantidad) y maxThreads(hilos). Sigue funcionando.',
-    'queue.both_concurrency' => 'Indica solo --max-instances; --concurrency es su nombre en desuso.',
+    'deprecated.queue_both_option' => 'Indica solo --max-instances; --concurrency es su nombre en desuso.',
     'queue.unknown_option' => 'Opción de cola desconocida "{option}". Opciones: {options}.',
     'queue.not_a_number' => 'La opción {option} necesita un número entero, recibí "{value}".',
     'queue.not_a_bool' => 'La opción {option} necesita on u off, recibí "{value}".',

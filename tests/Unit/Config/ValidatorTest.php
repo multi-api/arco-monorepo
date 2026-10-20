@@ -172,6 +172,30 @@ final class ValidatorTest extends TestCase
         self::assertSame('validation.queue_both_concurrency', $both->errors[0]['key']);
     }
 
+    public function test_queue_spellings_override_across_levels_and_warn_once(): void
+    {
+        $validate = fn (App $app, string $env) => (new Validator())->validate(ConfigResolver::resolve($app->region('us-east-1')->toArray(), $env), sys_get_temp_dir());
+        $oldApp = fn () => App::make('shop')->queue('a', concurrency: 5)
+            ->environment('staging')
+            ->environment('production', fn (Environment $e) => $e->queue('a', maxInstances: 10));
+        $result = $validate($oldApp(), 'production');
+        self::assertSame([], $result->errors);
+        self::assertCount(1, $result->warnings);
+        self::assertSame('deprecated.queue_concurrency', $result->warnings[0]['key']);
+        self::assertSame(10, ConfigResolver::resolve($oldApp()->region('us-east-1')->toArray(), 'production')->queues[0]->maxInstances);
+        self::assertCount(1, $validate($oldApp(), 'staging')->warnings);
+
+        $oldEnv = fn () => App::make('shop')->queue('a', maxInstances: 10)
+            ->environment('production', fn (Environment $e) => $e->queue('a', concurrency: 3));
+        $result = $validate($oldEnv(), 'production');
+        self::assertSame([], $result->errors);
+        self::assertCount(1, $result->warnings);
+        self::assertSame(3, ConfigResolver::resolve($oldEnv()->region('us-east-1')->toArray(), 'production')->queues[0]->maxInstances);
+
+        $same = App::make('shop')->queue('a', maxInstances: 10, concurrency: 3)->environment('production');
+        self::assertSame('validation.queue_both_concurrency', $validate($same, 'production')->errors[0]['key']);
+    }
+
     public function test_workers_min_max_is_deprecated_in_favour_of_workers_and_max_threads(): void
     {
         $validate = fn (callable $runtime) => (new Validator())->validate(ConfigResolver::resolve(App::make('shop')->region('us-east-1')->runtime($runtime)->environment('production')->toArray(), 'production'), sys_get_temp_dir());

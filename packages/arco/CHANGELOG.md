@@ -12,6 +12,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 - **Changed:** `workers(int $count)` is the Octane worker count and the new `maxThreads(int $threads)` is FrankenPHP's
   `max_threads` (defaults 4 and 64, as before). `arco info` shows `runtime.maxThreads` next to `runtime.workers`.
   `mode()` is marked `@internal` and left out of the docs.
+- **Changed:** `arco info --json` reports `settings."runtime.workers"` as an integer (the Octane worker count; it was
+  the string `"4-64"`) and the new `settings."runtime.maxThreads"` (FrankenPHP `max_threads`).
 - **Deprecated:** `queue(concurrency:)`, `queue:add --concurrency` and `queue:set <queue> concurrency` (use
   `maxInstances` / `max-instances`) and `workers(min:, max:)` (use `workers(N)` and `maxThreads(N)`). They keep
   working in 0.9, print one warning per run, and are removed in 1.0. Giving both `concurrency` and `maxInstances`

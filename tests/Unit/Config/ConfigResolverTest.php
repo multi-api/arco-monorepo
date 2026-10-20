@@ -52,6 +52,18 @@ final class ConfigResolverTest extends TestCase
         self::assertSame([4, 64], [$defaults->workers, $defaults->maxThreads]);
     }
 
+    public function test_an_environment_overriding_workers_ends_the_deprecation(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->workers(min: 4, max: 64))
+            ->environment('staging')
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->workers(8)->maxThreads(32)))
+            ->toArray();
+
+        self::assertTrue(ConfigResolver::resolve($raw, 'staging')->runtime->deprecatedWorkers);
+        self::assertFalse(ConfigResolver::resolve($raw, 'production')->runtime->deprecatedWorkers);
+    }
+
     public function test_lists_environments(): void
     {
         self::assertSame(['staging', 'production'], ConfigResolver::environments($this->raw()));

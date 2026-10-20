@@ -117,7 +117,8 @@ final class ConfigResolver
             phpIni: [...$appIni, ...$envIni],
             php: self::nullableString($runtimeValue('php')),
             phpBinary: self::nullableString($runtimeValue('phpBinary')),
-            deprecatedWorkers: ($env['runtime']['deprecatedWorkers'] ?? false) === true || ($appRuntime['deprecatedWorkers'] ?? false) === true,
+            deprecatedWorkers: ($env['runtime']['deprecatedWorkers'] ?? false) === true
+                || (! array_key_exists('workers', $env['runtime']) && ($appRuntime['deprecatedWorkers'] ?? false) === true),
         );
 
         /** @var list<string> $exclude */
@@ -216,6 +217,32 @@ final class ConfigResolver
     }
 
     /**
+     * One level's queue options with the deprecated `concurrency` renamed to `maxInstances`, so a value at
+     * the environment level overrides the app's whichever spelling each uses. `_deprecated` and `_conflict`
+     * mark the entries that used the old name, or both names, at this level.
+     *
+     * @param array<string, array<string, mixed>|false> $level
+     * @return array<string, array<string, mixed>|false>
+     */
+    private static function normalizedQueues(array $level): array
+    {
+        foreach ($level as $name => $options) {
+            if (! is_array($options) || ! array_key_exists('concurrency', $options)) {
+                continue;
+            }
+            $options['_deprecated'] = true;
+            if (array_key_exists('maxInstances', $options)) {
+                $options['_conflict'] = true;
+            } else {
+                $options['maxInstances'] = $options['concurrency'];
+            }
+            unset($options['concurrency']);
+            $level[$name] = $options;
+        }
+        return $level;
+    }
+
+    /**
      * Whether no entry asks to be the default, in which case the first one is.
      *
      * @param array<string, array<string, mixed>> $merged
@@ -234,7 +261,7 @@ final class ConfigResolver
      */
     private static function queues(array $app, array $env): array
     {
-        $merged = self::mergeNamed($app, $env);
+        $merged = self::mergeNamed(self::normalizedQueues($app), self::normalizedQueues($env));
         $firstIsDefault = self::firstIsDefault($merged);
         $queues = [];
         foreach ($merged as $name => $o) {
@@ -243,15 +270,15 @@ final class ConfigResolver
                 name: (string) $name,
                 timeout: self::nullableInt($o['timeout'] ?? null) ?? 60,
                 memory: self::nullableInt($o['memory'] ?? null) ?? 1024,
-                maxInstances: self::nullableInt($o['maxInstances'] ?? $o['concurrency'] ?? null),
+                maxInstances: self::nullableInt($o['maxInstances'] ?? null),
                 batchSize: self::nullableInt($o['batchSize'] ?? null) ?? 1,
                 tries: self::nullableInt($o['tries'] ?? null) ?? 3,
                 dlq: (bool) ($o['dlq'] ?? $existing === null),
                 fifo: (bool) ($o['fifo'] ?? false),
                 existing: $existing,
                 default: $firstIsDefault ? $queues === [] : ($o['default'] ?? false) === true,
-                deprecatedConcurrency: isset($o['concurrency']),
-                conflictingConcurrency: isset($o['concurrency'], $o['maxInstances']),
+                deprecatedConcurrency: isset($o['_deprecated']),
+                conflictingConcurrency: isset($o['_conflict']),
             );
         }
         return $queues;

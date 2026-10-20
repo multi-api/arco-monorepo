@@ -41,6 +41,20 @@ final class InfoCommandTest extends TestCase
         self::assertArrayHasKey('maxInstances', $json['settings']);
         self::assertArrayNotHasKey('maxEnvironments', $json['settings']);
         self::assertSame('php8.5.11-fp1.13.0-r2 (FrankenPHP 1.13.0, PHP 8.5.11)', $json['settings']['runtime.build']);
+        self::assertSame(4, $json['settings']['runtime.workers'], 'an integer since 0.9 (it was "4-64")');
+        self::assertSame(64, $json['settings']['runtime.maxThreads']);
+        $project->restore();
+    }
+
+    public function test_a_deprecated_queue_spelling_is_warned_once_with_several_environments(): void
+    {
+        $config = str_replace('->concurrency(48)', "->concurrency(48)->queue('emails', concurrency: 5)->queue('jobs', concurrency: 3)", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+
+        self::assertSame(1, substr_count($tester->getDisplay(), 'is deprecated'));
         $project->restore();
     }
 

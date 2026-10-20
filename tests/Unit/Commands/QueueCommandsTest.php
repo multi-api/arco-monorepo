@@ -94,6 +94,40 @@ final class QueueCommandsTest extends TestCase
         self::assertSame(1, substr_count(self::display($tester), 'is deprecated'));
     }
 
+    public function test_set_max_instances_for_an_environment_over_an_app_level_concurrency(): void
+    {
+        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails', concurrency: 2)");
+
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'max-instances', 'value' => '10', '--env' => 'production']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->queue('emails', maxInstances: 10)", $this->source());
+        $config = \Multiapi\Arco\Config\ConfigResolver::resolve((new \Multiapi\Arco\Config\ConfigLoader())->load($this->project?->dir . '/arco.php'), 'production');
+        self::assertSame(10, $config->queues[0]->maxInstances);
+    }
+
+    public function test_editing_a_queue_with_both_spellings_is_refused(): void
+    {
+        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails', concurrency: 2, maxInstances: 3)");
+        $before = $this->source();
+
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'timeout', 'value' => '30', '--app' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('give maxInstances only', self::display($tester));
+        self::assertSame($before, $this->source());
+    }
+
+    public function test_set_concurrency_with_a_bad_value_does_not_warn(): void
+    {
+        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails')");
+
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'concurrency', 'value' => 'lots', '--app' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringNotContainsString('is deprecated', self::display($tester));
+    }
+
     public function test_set_max_instances_rewrites_a_deprecated_argument(): void
     {
         $this->project("->concurrency(48)", "->concurrency(48)->queue('emails', concurrency: 2)");

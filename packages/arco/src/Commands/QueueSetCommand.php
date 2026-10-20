@@ -46,8 +46,8 @@ final class QueueSetCommand extends ArcoCommand
             if (in_array($option, ['fifo', 'existing'], true)) {
                 throw new UserError($this->t('queue.option_fixed', ['option' => $option, 'queue' => $name]));
             }
-            if (isset(self::DEPRECATED[$option])) {
-                $io->warning($this->t('deprecated.queue_concurrency_option'));
+            $deprecated = isset(self::DEPRECATED[$option]);
+            if ($deprecated) {
                 $option = self::DEPRECATED[$option];
             }
             $key = self::OPTIONS[$option] ?? throw new UserError($this->t('queue.unknown_option', ['option' => $option, 'options' => implode(', ', array_keys(self::OPTIONS))]));
@@ -76,6 +76,9 @@ final class QueueSetCommand extends ArcoCommand
             }
             $this->assertValid($changed, $environment);
             $this->writeQueue($environment, $name, $options);
+            if ($deprecated) {
+                $io->warning($this->t('deprecated.queue_concurrency_option'));
+            }
             $io->success($this->t('queue.changed', ['queue' => $name, 'environment' => $this->levelLabel($environment), 'option' => $option, 'from' => $from, 'to' => $to]));
             $io->writeln($this->t('settings.result', ['where' => $this->where($environment)]));
             $io->writeln('    ' . ArcoFileEditor::queueLine($name, $options));

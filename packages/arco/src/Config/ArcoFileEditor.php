@@ -297,7 +297,10 @@ final class ArcoFileEditor
         foreach ($changes['queues'] ?? [] as $queue => $options) {
             if (is_array($options) && array_key_exists('concurrency', $options)) {
                 // The deprecated spelling is rewritten when a queue is edited.
-                $options['maxInstances'] ??= $options['concurrency'];
+                if (array_key_exists('maxInstances', $options)) {
+                    throw ConfigException::make('validation.queue_both_concurrency', ['queue' => (string) $queue]);
+                }
+                $options['maxInstances'] = $options['concurrency'];
                 unset($options['concurrency']);
                 $changes['queues'][$queue] = $options;
             }

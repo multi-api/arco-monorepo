@@ -106,6 +106,7 @@ final class PackagerTest extends TestCase
 
         $old = $json(fn (Runtime $r) => $r->workers(min: 4, max: 64));
         self::assertSame($old, $json(fn (Runtime $r) => $r->workers(4)->maxThreads(64)));
+        self::assertSame($old, $json(fn (Runtime $r) => $r->workers(4, 64)), 'the old positional form');
         self::assertSame($old, $json(fn (Runtime $r) => $r->threads(8)), 'the defaults are 4 workers and max_threads 64');
         self::assertStringContainsString('"workers":{"min":4,"max":64}', $old);
         self::assertStringContainsString('"workers":{"min":6,"max":32}', $json(fn (Runtime $r) => $r->workers(6)->maxThreads(32)));
