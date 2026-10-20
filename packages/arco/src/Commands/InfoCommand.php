@@ -360,7 +360,8 @@ final class InfoCommand extends ArcoCommand
             'certificate' => [$config->certificate, $s['certificate']],
             'runtime.build' => [$this->runtimeBuildLabel($config), $this->runtimeBuildSource($config)],
             'runtime.binary' => [$config->runtime->binary, $s['runtime.binary']],
-            'runtime.workers' => ["{$config->runtime->workersMin}-{$config->runtime->workersMax}", $s['runtime.workers']],
+            'runtime.workers' => [$config->runtime->workers, $s['runtime.workers']],
+            'runtime.maxThreads' => [$config->runtime->maxThreads, $s['runtime.maxThreads']],
             'runtime.threads' => [$config->runtime->threads, $s['runtime.threads']],
             'runtime.mode' => [$config->runtime->mode, $s['runtime.mode']],
         ];

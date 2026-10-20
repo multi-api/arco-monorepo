@@ -49,6 +49,62 @@ final class QueueCommandsTest extends TestCase
         self::assertSame('Attempts of a job without its own $tries (the dead-letter queue receives it after tries + 2 deliveries)', $help);
     }
 
+    public function test_add_max_instances_writes_it(): void
+    {
+        $this->project();
+
+        $tester = $this->run_(new QueueAddCommand(), ['name' => 'emails', '--env' => 'production', '--max-instances' => '5']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->queue('emails', maxInstances: 5)", $this->source());
+        self::assertStringNotContainsString('deprecated', self::display($tester));
+    }
+
+    public function test_add_concurrency_still_works_with_a_deprecation_warning(): void
+    {
+        $this->project();
+
+        $tester = $this->run_(new QueueAddCommand(), ['name' => 'emails', '--env' => 'production', '--concurrency' => '5']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->queue('emails', maxInstances: 5)", $this->source());
+        self::assertSame(1, substr_count(self::display($tester), 'is deprecated'));
+        self::assertStringContainsString('use max-instances', self::display($tester));
+    }
+
+    public function test_add_refuses_both_spellings(): void
+    {
+        $this->project();
+
+        $tester = $this->run_(new QueueAddCommand(), ['name' => 'emails', '--env' => 'production', '--concurrency' => '5', '--max-instances' => '6']);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringNotContainsString('emails', $this->source());
+    }
+
+    public function test_set_concurrency_warns_and_writes_max_instances(): void
+    {
+        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails', concurrency: 2, timeout: 30)");
+
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'concurrency', 'value' => '5', '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->queue('emails', timeout: 30, maxInstances: 5)", $this->source());
+        self::assertStringNotContainsString('concurrency: ', $this->source());
+        self::assertSame(1, substr_count(self::display($tester), 'is deprecated'));
+    }
+
+    public function test_set_max_instances_rewrites_a_deprecated_argument(): void
+    {
+        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails', concurrency: 2)");
+
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'max-instances', 'value' => '7', '--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->queue('emails', maxInstances: 7)", $this->source());
+        self::assertStringNotContainsString('deprecated', self::display($tester));
+    }
+
     public function test_add_writes_queue_with_options(): void
     {
         $this->project();
@@ -160,15 +216,15 @@ final class QueueCommandsTest extends TestCase
         self::assertSame($before, $this->source());
     }
 
-    public function test_set_concurrency_none_clears_it(): void
+    public function test_set_max_instances_none_clears_it(): void
     {
-        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails', concurrency: 5, timeout: 30)");
+        $this->project("->concurrency(48)", "->concurrency(48)->queue('emails', maxInstances: 5, timeout: 30)");
 
-        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'concurrency', 'value' => 'none', '--app' => true]);
+        $tester = $this->run_(new QueueSetCommand(), ['name' => 'emails', 'option' => 'max-instances', 'value' => 'none', '--app' => true]);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString("->queue('emails', timeout: 30)", $this->source());
-        self::assertStringNotContainsString('concurrency: 5', $this->source());
+        self::assertStringNotContainsString('maxInstances: 5', $this->source());
     }
 
     public function test_set_dlq_false(): void

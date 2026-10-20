@@ -13,13 +13,17 @@ final readonly class RuntimeConfig
         public ?string $build,
         public ?string $frankenphp,
         public ?string $binary,
-        public int $workersMin,
-        public int $workersMax,
+        /** Octane workers */
+        public int $workers,
+        /** FrankenPHP max_threads */
+        public int $maxThreads,
         public int $threads,
         public string $mode,
         public array $phpIni,
         public ?string $php = null,
         public ?string $phpBinary = null,
+        /** arco.php still spells workers(min:, max:) */
+        public bool $deprecatedWorkers = false,
     ) {
     }
 }

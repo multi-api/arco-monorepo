@@ -111,12 +111,12 @@ The main options:
 | `domain(...)` / `dns(...)` | — | Custom domains and where their DNS zone is |
 | `profile()` / `account()` | asked on first deploy | AWS profile, and an account lock so a wrong profile can't deploy |
 | `auth('public'\|'iam')` | `public` | `iam` requires signed requests |
-| `runtime(fn ...)` | | FrankenPHP/Octane: `workers()`, `threads()`, `phpIni()`, `build()` |
+| `runtime(fn ...)` | | FrankenPHP/Octane: `workers()`, `maxThreads()`, `threads()`, `phpIni()`, `build()` |
 | `deployCommands([...])` | — | Commands run on every deploy before traffic moves, e.g. `['migrate --force']` |
 | `console(bool = true)` | off | Deploy the console function (`arco command`, `arco tinker`, deploy commands); `console(false)` deletes it |
 | `scheduler(int\|false)` | off | Run `schedule:run` every N minutes (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60), clock-aligned in UTC; needs the console |
 | `logRetention(int\|false)` | not managed | Days CloudWatch keeps the logs; `false` = never expire |
-| `queue(name, ...)` | none | An SQS queue and its worker function; named options `timeout`, `memory`, `concurrency`, `batchSize`, `tries`, `dlq`, `fifo`, `existing`, `default` |
+| `queue(name, ...)` | none | An SQS queue and its worker function; named options `timeout`, `memory`, `maxInstances`, `batchSize`, `tries`, `dlq`, `fifo`, `existing`, `default` |
 | `storage(name, ...)` | none | An S3 bucket used as a Laravel disk; named options `public`, `expire`, `cors`, `existing`, `default` |
 | `cache()` / `failedJobsTable()` | off | DynamoDB tables for Laravel's cache and failed jobs; `existing:` names your own table |
 | `console(timeout:, memory:)` | 900 s, 2048 MB | Console function timeout in seconds (3–900) and memory in MB (128–10240) |

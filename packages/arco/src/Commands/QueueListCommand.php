@@ -62,7 +62,7 @@ final class QueueListCommand extends ArcoCommand
                         'timeout' => $queue->timeout,
                         'memory' => $queue->memory,
                         'batch' => $queue->batchSize,
-                        'concurrency' => $queue->concurrency ?? $this->t('queue.no_limit'),
+                        'instances' => $queue->maxInstances ?? $this->t('queue.no_limit'),
                         'tries' => $queue->tries,
                     ])],
                 );

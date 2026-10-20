@@ -18,14 +18,38 @@ final class ConfigResolverTest extends TestCase
             ->region('us-east-1')
             ->concurrency(48)
             ->variables(['APP_ENV' => 'production', 'LOG_LEVEL' => 'info'])
-            ->runtime(fn (Runtime $r) => $r->workers(min: 4, max: 32)->phpIni(['memory_limit' => '256M']))
+            ->runtime(fn (Runtime $r) => $r->workers(4)->maxThreads(32)->phpIni(['memory_limit' => '256M']))
             ->exclude(['tests/**'])
             ->environment('staging', fn (Environment $e) => $e->variables(['APP_ENV' => 'staging']))
             ->environment('production', fn (Environment $e) => $e
                 ->concurrency(64)
                 ->account('222222222222')
-                ->runtime(fn (Runtime $r) => $r->workers(min: 8, max: 64)->phpIni(['opcache.jit' => 'tracing'])))
+                ->runtime(fn (Runtime $r) => $r->workers(8)->maxThreads(64)->phpIni(['opcache.jit' => 'tracing'])))
             ->toArray();
+    }
+
+    public function test_queue_max_instances_and_its_deprecated_name_resolve_alike(): void
+    {
+        $resolve = fn (App $app) => ConfigResolver::resolve($app->region('us-east-1')->environment('production')->toArray(), 'production')->queues[0];
+
+        $new = $resolve(App::make('shop')->queue('a', maxInstances: 5));
+        $old = $resolve(App::make('shop')->queue('a', concurrency: 5));
+
+        self::assertSame([5, false], [$new->maxInstances, $new->deprecatedConcurrency]);
+        self::assertSame([5, true], [$old->maxInstances, $old->deprecatedConcurrency]);
+    }
+
+    public function test_workers_and_max_threads_resolve_like_the_deprecated_min_max(): void
+    {
+        $resolve = fn (callable $runtime) => ConfigResolver::resolve(App::make('shop')->region('us-east-1')->runtime($runtime)->environment('production')->toArray(), 'production')->runtime;
+
+        $new = $resolve(fn (Runtime $r) => $r->workers(6)->maxThreads(48));
+        $old = $resolve(fn (Runtime $r) => $r->workers(min: 6, max: 48));
+
+        self::assertSame([6, 48, false], [$new->workers, $new->maxThreads, $new->deprecatedWorkers]);
+        self::assertSame([6, 48, true], [$old->workers, $old->maxThreads, $old->deprecatedWorkers]);
+        $defaults = $resolve(fn (Runtime $r) => $r->threads(8));
+        self::assertSame([4, 64], [$defaults->workers, $defaults->maxThreads]);
     }
 
     public function test_lists_environments(): void
@@ -43,8 +67,8 @@ final class ConfigResolverTest extends TestCase
         self::assertSame(30, $config->timeout);
         self::assertSame('default', $config->sources['timeout']);
         self::assertSame('222222222222', $config->account);
-        self::assertSame(8, $config->runtime->workersMin);
-        self::assertSame(64, $config->runtime->workersMax);
+        self::assertSame(8, $config->runtime->workers);
+        self::assertSame(64, $config->runtime->maxThreads);
         self::assertSame('environment', $config->sources['runtime.workers']);
         self::assertSame(8, $config->runtime->threads);
         self::assertNull($config->runtime->build);

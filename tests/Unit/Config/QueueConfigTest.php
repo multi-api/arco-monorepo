@@ -19,7 +19,7 @@ final class QueueConfigTest extends TestCase
     {
         $q = new QueueConfig('emails');
 
-        self::assertSame([60, 1024, null, 1, 3, true, false, null, false], [$q->timeout, $q->memory, $q->concurrency, $q->batchSize, $q->tries, $q->dlq, $q->fifo, $q->existing, $q->default]);
+        self::assertSame([60, 1024, null, 1, 3, true, false, null, false], [$q->timeout, $q->memory, $q->maxInstances, $q->batchSize, $q->tries, $q->dlq, $q->fifo, $q->existing, $q->default]);
     }
 
     public function test_physical_names_url_and_arn(): void

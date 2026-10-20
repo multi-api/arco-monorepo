@@ -101,27 +101,30 @@ trait ConfiguresDeployment
      * (timeout 60, memory 1024, batchSize 1, tries 3, dlq on); repeated calls for a name accumulate.
      * An environment's entry merges over the app's; `queue('name', false)` drops the queue there.
      *
+     * @param int|null $maxInstances most concurrent worker invocations (the event source mapping's MaximumConcurrency, at least 2)
      * @param string|null $existing name, URL or ARN of a queue Arco does not manage
+     * @param int|null $concurrency deprecated: the old name of $maxInstances; removed in 1.0
      */
     public function queue(
         string $name,
         false|null $remove = null,
         ?int $timeout = null,
         ?int $memory = null,
-        ?int $concurrency = null,
+        ?int $maxInstances = null,
         ?int $batchSize = null,
         ?int $tries = null,
         ?bool $dlq = null,
         ?bool $fifo = null,
         ?string $existing = null,
         ?bool $default = null,
+        ?int $concurrency = null,
     ): static {
         if ($remove === false) {
             $this->queues[$name] = false;
             return $this;
         }
         $options = array_filter(
-            ['timeout' => $timeout, 'memory' => $memory, 'concurrency' => $concurrency, 'batchSize' => $batchSize,
+            ['timeout' => $timeout, 'memory' => $memory, 'maxInstances' => $maxInstances, 'concurrency' => $concurrency, 'batchSize' => $batchSize,
                 'tries' => $tries, 'dlq' => $dlq, 'fifo' => $fifo, 'existing' => $existing, 'default' => $default],
             fn (mixed $value): bool => $value !== null,
         );

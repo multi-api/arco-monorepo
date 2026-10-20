@@ -97,6 +97,20 @@ final class PackagerTest extends TestCase
         self::assertGreaterThan(4096, $package->bytes);
     }
 
+    public function test_workers_and_max_threads_write_the_same_runtime_json_as_the_deprecated_form(): void
+    {
+        $json = fn (callable $runtime): string => json_encode(Packager::runtimeConfig(ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')->runtime($runtime)->environment('production')->toArray(),
+            'production',
+        ), new PlainPhpPreset()), JSON_THROW_ON_ERROR);
+
+        $old = $json(fn (Runtime $r) => $r->workers(min: 4, max: 64));
+        self::assertSame($old, $json(fn (Runtime $r) => $r->workers(4)->maxThreads(64)));
+        self::assertSame($old, $json(fn (Runtime $r) => $r->threads(8)), 'the defaults are 4 workers and max_threads 64');
+        self::assertStringContainsString('"workers":{"min":4,"max":64}', $old);
+        self::assertStringContainsString('"workers":{"min":6,"max":32}', $json(fn (Runtime $r) => $r->workers(6)->maxThreads(32)));
+    }
+
     public function test_laravel_commands_go_through_artisan(): void
     {
         self::assertSame(['entry' => 'artisan'], Packager::runtimeConfig($this->config(), new \Multiapi\Arco\Laravel\LaravelPreset())['console']);

@@ -641,10 +641,10 @@ final class ArcoFileEditorTest extends TestCase
         self::assertTrue(ArcoFileEditor::setQueue($path, null, 'jobs', ['memory' => 2048]));
         self::assertTrue(ArcoFileEditor::setQueue($path, null, 'emails', ['fifo' => true, 'batchSize' => 10, 'concurrency' => 4]));
         self::assertStringContainsString(
-            "    ->region('us-east-1')\n    ->queue('jobs', memory: 2048)\n    ->queue('emails', concurrency: 4, batchSize: 10, fifo: true)\n    ->concurrency(48)\n",
+            "    ->region('us-east-1')\n    ->queue('jobs', memory: 2048)\n    ->queue('emails', maxInstances: 4, batchSize: 10, fifo: true)\n    ->concurrency(48)\n",
             (string) file_get_contents($path),
         );
-        self::assertSame(['jobs' => ['memory' => 2048], 'emails' => ['concurrency' => 4, 'batchSize' => 10, 'fifo' => true]], self::rawQueues($path, null));
+        self::assertSame(['jobs' => ['memory' => 2048], 'emails' => ['maxInstances' => 4, 'batchSize' => 10, 'fifo' => true]], self::rawQueues($path, null));
         self::assertSame(['jobs', 'emails'], self::queueNames($path, 'staging'));
         self::assertSame([], self::rawQueues($path));
     }

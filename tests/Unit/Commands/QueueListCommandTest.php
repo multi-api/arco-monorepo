@@ -49,7 +49,7 @@ final class QueueListCommandTest extends TestCase
             AwsMocks::error(LambdaException::class, 'GetAlias', 'ResourceNotFoundException', 404),
         );
 
-        $tester = $this->run_("->queue('emails', timeout: 120, concurrency: 5)->queue('legacy', existing: 'legacy-jobs', dlq: false)");
+        $tester = $this->run_("->queue('emails', timeout: 120, maxInstances: 5)->queue('legacy', existing: 'legacy-jobs', dlq: false)");
 
         $tester->assertCommandIsSuccessful();
         self::assertSame(['GetCallerIdentity', 'GetQueueAttributes', 'GetQueueAttributes', 'GetAlias', 'GetQueueAttributes', 'GetAlias'], $this->mocks->calls);
@@ -66,10 +66,10 @@ final class QueueListCommandTest extends TestCase
         self::assertStringContainsString('Messages 12 waiting, 3 in flight', $display);
         self::assertStringContainsString('Dead-letter queue shop-production-emails-dlq (2 messages)', $display);
         self::assertStringContainsString('Worker shop-production-queue-emails (version 4)', $display);
-        self::assertStringContainsString('Settings timeout 120 s, memory 1024 MB, batch size 1, concurrency 5, tries 3', $display);
+        self::assertStringContainsString('Settings timeout 120 s, memory 1024 MB, batch size 1, max instances 5, tries 3', $display);
         self::assertStringContainsString('Queue existing (not managed by Arco)', $display);
         self::assertStringContainsString('Dead-letter queue none', $display);
-        self::assertStringContainsString('concurrency no limit', $display);
+        self::assertStringContainsString('max instances no limit', $display);
         self::assertStringContainsString('Worker not deployed yet (run arco deploy)', $display);
     }
 

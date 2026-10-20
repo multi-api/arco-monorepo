@@ -32,7 +32,18 @@ trait EditsQueues
     private static function levelQueues(array $raw, ?string $environment): array
     {
         return array_map(
-            static fn (array|false $options): array|false => $options === false ? false : array_filter($options, static fn (mixed $v): bool => ! is_array($v)),
+            static function (array|false $options): array|false {
+                if ($options === false) {
+                    return false;
+                }
+                $options = array_filter($options, static fn (mixed $v): bool => ! is_array($v));
+                // The deprecated concurrency is rewritten as maxInstances when a queue is edited.
+                if (array_key_exists('concurrency', $options)) {
+                    $options['maxInstances'] ??= $options['concurrency'];
+                    unset($options['concurrency']);
+                }
+                return $options;
+            },
             self::levelNamed($raw, $environment),
         );
     }

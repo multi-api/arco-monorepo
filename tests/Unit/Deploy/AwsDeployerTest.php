@@ -1604,7 +1604,7 @@ final class AwsDeployerTest extends TestCase
     {
         return ConfigResolver::resolve(
             App::make('shop')->region('us-east-1')
-                ->queue('emails', timeout: 120, memory: 512, concurrency: 5, batchSize: 10, tries: 4)
+                ->queue('emails', timeout: 120, memory: 512, maxInstances: 5, batchSize: 10, tries: 4)
                 ->queue('reports', existing: 'arn:aws:sqs:us-east-1:222222222222:legacy-reports', dlq: false)
                 ->environment('production', fn (Environment $e) => $e->account('111111111111'))
                 ->toArray(),

@@ -22,7 +22,7 @@ final class BuildersTest extends TestCase
         $app = App::make('shop')
             ->region('us-east-1')
             ->concurrency(48)
-            ->runtime(fn (Runtime $r) => $r->workers(min: 4, max: 32)->phpIni(['memory_limit' => '512M']))
+            ->runtime(fn (Runtime $r) => $r->workers(4)->maxThreads(32)->phpIni(['memory_limit' => '512M']))
             ->variables(['APP_ENV' => 'production'])
             ->exclude(['tests/**'])
             ->environment('staging')
@@ -40,7 +40,7 @@ final class BuildersTest extends TestCase
             'include' => [],
             'settings' => ['concurrency' => 48],
             'variables' => ['APP_ENV' => 'production'],
-            'runtime' => ['workers' => ['min' => 4, 'max' => 32], 'phpIni' => ['memory_limit' => '512M']],
+            'runtime' => ['workers' => 4, 'maxThreads' => 32, 'phpIni' => ['memory_limit' => '512M']],
             'permissions' => [],
             'domains' => null,
             'deployCommands' => null,

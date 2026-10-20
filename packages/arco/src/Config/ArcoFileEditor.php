@@ -17,7 +17,7 @@ final class ArcoFileEditor
      */
     private const CONSOLE_KEYS = ['console', 'consoleTimeout', 'consoleMemory'];
     /** The order queue() options are written in. */
-    private const QUEUE_OPTIONS = ['existing', 'default', 'timeout', 'memory', 'concurrency', 'batchSize', 'tries', 'dlq', 'fifo'];
+    private const QUEUE_OPTIONS = ['existing', 'default', 'timeout', 'memory', 'maxInstances', 'batchSize', 'tries', 'dlq', 'fifo'];
     /**
      * Calls keyed by a name in their first argument, such as ->queue('jobs', ...): the raw config key
      * they load into and the order their named options are written in.
@@ -293,6 +293,14 @@ final class ArcoFileEditor
     {
         if ($environment === null && (array_key_exists('domains', $changes) || array_key_exists('dns', $changes))) {
             return false;
+        }
+        foreach ($changes['queues'] ?? [] as $queue => $options) {
+            if (is_array($options) && array_key_exists('concurrency', $options)) {
+                // The deprecated spelling is rewritten when a queue is edited.
+                $options['maxInstances'] ??= $options['concurrency'];
+                unset($options['concurrency']);
+                $changes['queues'][$queue] = $options;
+            }
         }
         $source = (string) file_get_contents($arcoPhpPath);
         $updated = $source;

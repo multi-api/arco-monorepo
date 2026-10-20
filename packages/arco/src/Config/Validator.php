@@ -146,8 +146,11 @@ final class Validator
         }
 
         $runtime = $config->runtime;
-        if ($runtime->workersMin < 1 || $runtime->workersMax < $runtime->workersMin) {
-            $result->error('validation.workers', ['min' => $runtime->workersMin, 'max' => $runtime->workersMax]);
+        if ($runtime->workers < 1 || $runtime->maxThreads < $runtime->workers) {
+            $result->error('validation.workers', ['workers' => $runtime->workers, 'maxThreads' => $runtime->maxThreads]);
+        }
+        if ($runtime->deprecatedWorkers) {
+            $result->warning('deprecated.workers_min_max');
         }
         if ($runtime->threads < 1) {
             $result->error('validation.threads', ['value' => $runtime->threads]);
@@ -334,8 +337,12 @@ final class Validator
     private static function validateQueues(AppConfig $config, ValidationResult $result): void
     {
         $defaults = 0;
+        $deprecated = [];
         foreach ($config->queues as $queue) {
             $name = $queue->name;
+            if ($queue->deprecatedConcurrency) {
+                $deprecated[] = $name;
+            }
             if (! preg_match(self::NAME, $name)) {
                 $result->error('validation.queue_name', ['name' => $name]);
                 continue;
@@ -351,8 +358,11 @@ final class Validator
             if ($queue->memory < 128 || $queue->memory > 10240) {
                 $result->error('validation.queue_memory', ['queue' => $name, 'value' => $queue->memory]);
             }
-            if ($queue->concurrency !== null && $queue->concurrency < 2) {
-                $result->error('validation.queue_concurrency', ['queue' => $name, 'value' => $queue->concurrency]);
+            if ($queue->conflictingConcurrency) {
+                $result->error('validation.queue_both_concurrency', ['queue' => $name]);
+            }
+            if ($queue->maxInstances !== null && $queue->maxInstances < 2) {
+                $result->error('validation.queue_max_instances', ['queue' => $name, 'value' => $queue->maxInstances]);
             }
             $maxBatch = $queue->fifo ? 10 : 10000;
             if ($queue->batchSize < 1 || $queue->batchSize > $maxBatch) {
@@ -372,6 +382,9 @@ final class Validator
                     $result->error('validation.queue_existing_fifo', ['queue' => $name, 'value' => $queue->existing]);
                 }
             }
+        }
+        if ($deprecated !== []) {
+            $result->warning('deprecated.queue_concurrency', ['queues' => implode(', ', $deprecated)]);
         }
         if ($defaults > 1) {
             $result->error('validation.queue_default_twice');

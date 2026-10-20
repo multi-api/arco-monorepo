@@ -31,8 +31,33 @@ final class Runtime
         return $this;
     }
 
-    public function workers(int $min, int $max): static { $this->values['workers'] = ['min' => $min, 'max' => $max]; return $this; }
+    /**
+     * The Octane workers (default 4): each keeps the application booted and serves one request at a time.
+     *
+     * @param int|null $max deprecated: use maxThreads(); removed in 1.0
+     * @param int|null $min deprecated: the old name of $count; removed in 1.0
+     */
+    public function workers(?int $count = null, ?int $max = null, ?int $min = null): static
+    {
+        $count ??= $min;
+        if ($count === null) {
+            throw new \InvalidArgumentException('workers() needs the number of Octane workers: workers(4).');
+        }
+        $this->values['workers'] = $count;
+        if ($max !== null || $min !== null) {
+            $this->values['deprecatedWorkers'] = true;
+        }
+        if ($max !== null) {
+            $this->values['maxThreads'] = $max;
+        }
+        return $this;
+    }
+
+    /** FrankenPHP `max_threads` (default 64): the ceiling the thread pool can grow to under load. */
+    public function maxThreads(int $threads): static { $this->values['maxThreads'] = $threads; return $this; }
     public function threads(int $threads): static { $this->values['threads'] = $threads; return $this; }
+
+    /** @internal The Node wrapper's way of starting FrankenPHP ('direct' or 'proxy'); not part of the 1.x promise. */
     public function mode(string $mode): static { $this->values['mode'] = $mode; return $this; }
 
     /** @param array<string, string|int|bool> $ini */

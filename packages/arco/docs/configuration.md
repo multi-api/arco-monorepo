@@ -13,7 +13,8 @@ return App::make('myapp')
     ->region('us-east-1')
     ->concurrency(48)
     ->runtime(fn (Runtime $r) => $r
-        ->workers(min: 4, max: 64)
+        ->workers(4)
+        ->maxThreads(64)
         ->phpIni(['memory_limit' => '512M']))
     ->exclude(['docs/**'])
     ->environment('staging', fn (Environment $env) => $env
@@ -319,7 +320,7 @@ App::make('shop')
     ->queue('default')                                  // the default queue (the first one)
     ->queue('emails', timeout: 120, memory: 512, tries: 5)
     ->environment('staging', fn (Environment $env) => $env
-        ->queue('emails', concurrency: 2))              // merged over the app's options
+        ->queue('emails', maxInstances: 2))              // merged over the app's options
     ->environment('production', fn (Environment $env) => $env
         ->queue('reports', timeout: 900, batchSize: 1)
         ->queue('legacy', existing: 'arn:aws:sqs:us-east-1:123456789012:legacy-jobs'));
@@ -379,7 +380,7 @@ name add to each other.
 |---|---|---|
 | `timeout` | 60 | Worker function timeout in seconds (10 to 900; the worker keeps 3 of them to answer for the batch): the longest a batch may run. The queue's visibility timeout is 6 times this |
 | `memory` | 1024 | Worker memory in MB (128 to 10240) |
-| `concurrency` | unset | Maximum concurrent worker invocations (event source mapping `MaximumConcurrency`, at least 2); unset means no limit beyond the account's |
+| `maxInstances` | unset | Maximum concurrent worker invocations (event source mapping `MaximumConcurrency`, at least 2); unset means no limit beyond the account's |
 | `batchSize` | 1 | Messages per invocation: 1 to 10000 on a standard queue, 1 to 10 on FIFO. Above 10 the event source mapping waits up to 1 second to gather a batch (AWS requires a batching window there) |
 | `tries` | 3 | Attempts of a job without its own `$tries`; the dead-letter queue's `maxReceiveCount` is `tries` + 2 |
 | `dlq` | `true` | Create a dead-letter queue (never for an `existing` queue) |
@@ -485,17 +486,17 @@ version plus the 4 newest, like the console.
 ```bash
 vendor/bin/arco queue:add emails --env=production --timeout=120 --tries=5
 vendor/bin/arco queue:add legacy --app --existing=arn:aws:sqs:us-east-1:123456789012:legacy-jobs
-vendor/bin/arco queue:set emails concurrency 10 --env=production
-vendor/bin/arco queue:set emails concurrency none --env=production   # no limit
+vendor/bin/arco queue:set emails max-instances 10 --env=production
+vendor/bin/arco queue:set emails max-instances none --env=production   # no limit
 vendor/bin/arco queue:remove emails --env=production
 vendor/bin/arco queue:list --env=production
 vendor/bin/arco queue:dlq emails --env=production
 vendor/bin/arco queue:dlq emails --env=production --redrive
 ```
 
-- `queue:add <name>` takes `--timeout`, `--memory`, `--concurrency`, `--batch-size`, `--tries`, `--no-dlq`,
+- `queue:add <name>` takes `--timeout`, `--memory`, `--max-instances`, `--batch-size`, `--tries`, `--no-dlq`,
   `--fifo`, `--existing=<name, URL or ARN>` and `--default`; `queue:set <name> <option> <value>` changes
-  `timeout`, `memory`, `concurrency` (`none` clears it), `batch-size`, `tries`, `dlq` or `default` (`on` or
+  `timeout`, `memory`, `max-instances` (`none` clears it), `batch-size`, `tries`, `dlq` or `default` (`on` or
   `off`). `fifo` and `existing` cannot change once the queue exists: add a new queue instead.
   `queue:remove <name>` takes the queue out (on an environment, a queue defined at app level is dropped with
   `->queue('<name>', false)`). All three take `--env=<env>` or `--app`, edit `arco.php` only (checked like
@@ -903,9 +904,9 @@ Set with `->runtime(fn (Runtime $r) => ...)`.
 | `build(string)` | the default build of your Arco version (`1.13.0-r1`) | Exact runtime build to deploy; builds are immutable releases of `multi-api/arco-runtime` |
 | `frankenphp(string)` | unset | Shortcut: the highest revision of that FrankenPHP version known to your Arco version. Cannot be combined with `build()` |
 | `binary(path)` | unset | Your own Linux arm64 FrankenPHP binary; must exist and be an arm64 ELF |
-| `workers(min, max)` | min 4, max 64 | Octane worker count / FrankenPHP `max_threads` (`min >= 1`, `max >= min`) |
+| `workers(int)` | 4 | Octane worker count (>= 1) |
+| `maxThreads(int)` | 64 | FrankenPHP `max_threads`, the ceiling the thread pool grows to (>= `workers`) |
 | `threads(int)` | 8 | FrankenPHP `num_threads` for non-worker requests (>= 1) |
-| `mode('direct'\|'proxy')` | `direct` | How the runtime hands requests to FrankenPHP |
 | `phpIni(array)` | `[]` | `php.ini` overrides, merged by key; applied to web requests and to commands on the console function (`arco command`, deploy commands, tinker) |
 
 ### Runtime builds

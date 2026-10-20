@@ -34,7 +34,8 @@ final class ConfigResolver
         'php' => null,
         'binary' => null,
         'phpBinary' => null,
-        'workers' => ['min' => 4, 'max' => 64],
+        'workers' => 4,
+        'maxThreads' => 64,
         'threads' => 8,
         'mode' => 'direct',
     ];
@@ -100,8 +101,6 @@ final class ConfigResolver
             return self::RUNTIME_DEFAULTS[$key];
         };
 
-        /** @var array{min: int, max: int} $workers */
-        $workers = $runtimeValue('workers');
         /** @var array<string, string|int|bool> $appIni */
         $appIni = $appRuntime['phpIni'] ?? [];
         /** @var array<string, string|int|bool> $envIni */
@@ -111,13 +110,14 @@ final class ConfigResolver
             build: self::nullableString($runtimeValue('build')),
             frankenphp: self::nullableString($runtimeValue('frankenphp')),
             binary: self::nullableString($runtimeValue('binary')),
-            workersMin: $workers['min'],
-            workersMax: $workers['max'],
+            workers: (int) $runtimeValue('workers'),
+            maxThreads: (int) $runtimeValue('maxThreads'),
             threads: (int) $runtimeValue('threads'),
             mode: (string) $runtimeValue('mode'),
             phpIni: [...$appIni, ...$envIni],
             php: self::nullableString($runtimeValue('php')),
             phpBinary: self::nullableString($runtimeValue('phpBinary')),
+            deprecatedWorkers: ($env['runtime']['deprecatedWorkers'] ?? false) === true || ($appRuntime['deprecatedWorkers'] ?? false) === true,
         );
 
         /** @var list<string> $exclude */
@@ -243,13 +243,15 @@ final class ConfigResolver
                 name: (string) $name,
                 timeout: self::nullableInt($o['timeout'] ?? null) ?? 60,
                 memory: self::nullableInt($o['memory'] ?? null) ?? 1024,
-                concurrency: self::nullableInt($o['concurrency'] ?? null),
+                maxInstances: self::nullableInt($o['maxInstances'] ?? $o['concurrency'] ?? null),
                 batchSize: self::nullableInt($o['batchSize'] ?? null) ?? 1,
                 tries: self::nullableInt($o['tries'] ?? null) ?? 3,
                 dlq: (bool) ($o['dlq'] ?? $existing === null),
                 fifo: (bool) ($o['fifo'] ?? false),
                 existing: $existing,
                 default: $firstIsDefault ? $queues === [] : ($o['default'] ?? false) === true,
+                deprecatedConcurrency: isset($o['concurrency']),
+                conflictingConcurrency: isset($o['concurrency'], $o['maxInstances']),
             );
         }
         return $queues;

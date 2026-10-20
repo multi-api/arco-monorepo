@@ -5,6 +5,17 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## 0.9.0
 
+- **Changed:** `queue(maxInstances: N)` is the most concurrent worker invocations of a queue (the event source
+  mapping's `MaximumConcurrency`), the same name `maxInstances()` has for the web function. `queue:add
+  --max-instances` and `queue:set <queue> max-instances` replace `--concurrency` / `concurrency`; editing a queue
+  rewrites `concurrency:` as `maxInstances:`.
+- **Changed:** `workers(int $count)` is the Octane worker count and the new `maxThreads(int $threads)` is FrankenPHP's
+  `max_threads` (defaults 4 and 64, as before). `arco info` shows `runtime.maxThreads` next to `runtime.workers`.
+  `mode()` is marked `@internal` and left out of the docs.
+- **Deprecated:** `queue(concurrency:)`, `queue:add --concurrency` and `queue:set <queue> concurrency` (use
+  `maxInstances` / `max-instances`) and `workers(min:, max:)` (use `workers(N)` and `maxThreads(N)`). They keep
+  working in 0.9, print one warning per run, and are removed in 1.0. Giving both `concurrency` and `maxInstances`
+  to a queue is a validation error.
 - **Removed:** `maxEnvironments()` (renamed to `maxInstances()` in 0.5) and `consoleTimeout()`. An `arco.php` that
   still calls them stops with a message naming the replacement: `maxInstances(N)` and `console(timeout: N)`.
 - **Changed:** `console(bool $enabled = true, ?int $timeout = null, ?int $memory = null)`: the console function's
