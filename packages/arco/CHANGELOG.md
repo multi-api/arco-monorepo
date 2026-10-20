@@ -44,11 +44,16 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   newest build of its default PHP minor (8.5), and a 1.x release moves that default only to a new PHP patch: a new
   PHP minor is opt-in via `php()`, also for `frankenphp()` alone. An unknown minor is a validation error listing the
   PHP versions this Arco knows. `arco init` now writes `->runtime(fn (Runtime $r) => $r->php('8.5'))`.
+  The selectors resolve per level: an environment's `build()` (or `binary()`) replaces the app's `php()`/`frankenphp()`,
+  and an environment's `php()`/`frankenphp()` replaces the app's `build()`; mixing them at one level is an error.
 - **Changed:** runtime build ids are `php<php>-fp<frankenphp>-r<n>` (`php8.5.11-fp1.13.0-r2`); `arco info` (also
   `runtime.build` in `--json`), the deploy output and new packages show them. The old ids `1.13.0-r1` and
   `1.13.0-r2` stay valid forever as aliases: `build('1.13.0-r2')` and packages built with it deploy the identical
   binaries. `build()` is an exact pin and is now an error next to `php()` too (as next to `frankenphp()`). The local
-  runtime cache moves to `~/.arco/cache/runtime/<new id>/`, so each machine downloads the build once more.
+  runtime cache moves to `~/.arco/cache/runtime/<new id>/`, so each machine downloads the build once more. When the
+  console downloads FrankenPHP at cold start (a build without a PHP CLI, such as `1.13.0-r1`), its S3 key becomes
+  `runtime/<new id>/frankenphp`: the binary is uploaded once more (same bytes), and the old key is kept while any
+  published function version references it.
 - **Changed:** `binary(string $frankenphp, ?string $php = null)`: the parameter `$path` is now `$frankenphp`
   (`binary(path: ...)` no longer works). With `php:` (a Linux arm64 static PHP CLI, checked at validation) the
   console function and the queue workers carry it as `bin/php` like the official builds, instead of downloading

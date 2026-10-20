@@ -84,10 +84,37 @@ final class ConfigResolverTest extends TestCase
         self::assertSame('1.13.0-r1', $staging->runtime->build);
         self::assertSame('app', $staging->sources['runtime.build']);
 
+        // The environment's frankenphp() replaces the app's build(): selectors resolve per level.
         $production = ConfigResolver::resolve($raw, 'production');
-        self::assertSame('1.13.0-r1', $production->runtime->build);
+        self::assertNull($production->runtime->build);
+        self::assertSame('default', $production->sources['runtime.build']);
         self::assertSame('1.13.0', $production->runtime->frankenphp);
         self::assertSame('environment', $production->sources['runtime.frankenphp']);
+    }
+
+    public function test_runtime_selectors_resolve_per_level(): void
+    {
+        $resolve = fn (callable $app, callable $env) => ConfigResolver::resolve(App::make('shop')->region('us-east-1')
+            ->runtime($app)
+            ->environment('production', fn (Environment $e) => $e->runtime($env))
+            ->toArray(), 'production')->runtime;
+
+        // An environment build() drops the app's php()/frankenphp().
+        $pinned = $resolve(fn (Runtime $r) => $r->php('8.5')->frankenphp('1.13'), fn (Runtime $r) => $r->build('php8.5.11-fp1.13.0-r2'));
+        self::assertSame(['php8.5.11-fp1.13.0-r2', null, null], [$pinned->build, $pinned->php, $pinned->frankenphp]);
+        // An environment php() or frankenphp() drops the app's build(); the app's other selector of that group stays.
+        $chosen = $resolve(fn (Runtime $r) => $r->build('1.13.0-r2'), fn (Runtime $r) => $r->php('8.5'));
+        self::assertSame([null, '8.5', null], [$chosen->build, $chosen->php, $chosen->frankenphp]);
+        $combined = $resolve(fn (Runtime $r) => $r->php('8.5'), fn (Runtime $r) => $r->frankenphp('1.13'));
+        self::assertSame([null, '8.5', '1.13'], [$combined->build, $combined->php, $combined->frankenphp]);
+        // Same level: both kept, so validation rejects them.
+        $same = $resolve(fn (Runtime $r) => $r->threads(4), fn (Runtime $r) => $r->php('8.5')->build('1.13.0-r2'));
+        self::assertSame(['1.13.0-r2', '8.5'], [$same->build, $same->php]);
+        // An environment binary() drops the app's selectors (they would be ignored), not the other way round.
+        $custom = $resolve(fn (Runtime $r) => $r->php('8.5'), fn (Runtime $r) => $r->binary('bin/frankenphp'));
+        self::assertSame(['bin/frankenphp', null], [$custom->binary, $custom->php]);
+        $kept = $resolve(fn (Runtime $r) => $r->binary('bin/frankenphp'), fn (Runtime $r) => $r->php('8.5'));
+        self::assertSame(['bin/frankenphp', '8.5'], [$kept->binary, $kept->php]);
     }
 
     public function test_php_and_binary_with_a_php_cli_resolve_with_inheritance(): void

@@ -72,8 +72,14 @@ try {
         RuntimeManifestEditor::assertReleaseMatches($release, $build);
     }
     $manifestPath = __DIR__ . '/../packages/arco/resources/runtime-builds.php';
+    $before = Multiapi\Arco\Binary\RuntimeManifest::load($manifestPath)->resolve(null, null);
     $added = RuntimeManifestEditor::add($manifestPath, $build, $repo);
-    $default = Multiapi\Arco\Binary\RuntimeManifest::load($manifestPath)->resolve(null, null)->id;
+    $after = Multiapi\Arco\Binary\RuntimeManifest::load($manifestPath)->resolve(null, null);
+    $default = $after->id;
+    $major = static fn (string $version): string => explode('.', $version)[0];
+    if ($major($before->frankenphp) !== $major($after->frankenphp)) {
+        fwrite(STDERR, "Warning: the default build moves from FrankenPHP {$before->frankenphp} to {$after->frankenphp}, a new FrankenPHP major. This needs the owner's sign-off before the release (docs/maintainers/runtime-builds.md).\n");
+    }
 } catch (InvalidArgumentException $e) {
     fwrite(STDERR, $e->getMessage() . "\n");
     exit(1);

@@ -62,8 +62,9 @@ final class ConfigResolver
 
         /** @var array<string, mixed> $appSettings */
         $appSettings = $raw['settings'] ?? [];
-        /** @var array<string, mixed> $appRuntime */
-        $appRuntime = $raw['runtime'] ?? [];
+        /** @var array<string, mixed> $declaredRuntime */
+        $declaredRuntime = $raw['runtime'] ?? [];
+        $appRuntime = self::inheritedRuntime($declaredRuntime, $env['runtime']);
         /** @var array<string, string> $appVariables */
         $appVariables = $raw['variables'] ?? [];
         /** @var list<array<string, mixed>> $appPermissions */
@@ -298,6 +299,28 @@ final class ConfigResolver
     private static function stringList(mixed $value): array
     {
         return is_array($value) ? array_values(array_map(fn (mixed $v): string => is_scalar($v) ? (string) $v : '', $value)) : [];
+    }
+
+    /**
+     * The app-level runtime values an environment inherits. The build selectors resolve per level, as
+     * groups: an environment build() drops the app's php()/frankenphp(); an environment php() or
+     * frankenphp() drops the app's build(); an environment binary() drops all three (binary() ignores
+     * them). Within one level a mix stays, so validation rejects it.
+     *
+     * @param array<string, mixed> $app
+     * @param array<string, mixed> $env
+     * @return array<string, mixed>
+     */
+    private static function inheritedRuntime(array $app, array $env): array
+    {
+        $set = static fn (string $key): bool => ($env[$key] ?? null) !== null;
+        if ($set('build') || $set('binary')) {
+            unset($app['php'], $app['frankenphp']);
+        }
+        if ($set('php') || $set('frankenphp') || $set('binary')) {
+            unset($app['build']);
+        }
+        return $app;
     }
 
     private static function nullableString(mixed $value): ?string

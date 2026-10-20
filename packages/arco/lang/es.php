@@ -47,7 +47,7 @@ return [
     'validation.binary_missing' => 'El binario propio {path} no existe.',
     'validation.binary_arch' => 'El binario propio {path} no es un ejecutable Linux arm64. Lambda Web Functions corre en arm64.',
     'validation.php_binary_missing' => 'El PHP CLI {path} indicado en binary() no existe.',
-    'validation.php_binary_arch' => 'El PHP CLI {path} indicado en binary() no es un ejecutable Linux arm64. Las Lambda Web Functions corren en arm64.',
+    'validation.php_binary_arch' => 'El PHP CLI {path} indicado en binary() no es un ejecutable Linux arm64. Lambda Web Functions corre en arm64.',
     'validation.reserved_variable' => 'La variable {variable} está reservada por AWS Lambda y no se puede definir; Lambda la proporciona en tiempo de ejecución.',
     'validation.variable_name' => 'El nombre de variable {variable} no es válido. Usa letras, dígitos y guiones bajos, sin empezar con un dígito.',
     'validation.invalid_reference' => 'Variable {variable}: {reason}',

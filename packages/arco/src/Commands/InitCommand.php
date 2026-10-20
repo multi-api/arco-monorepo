@@ -4,8 +4,8 @@ namespace Multiapi\Arco\Commands;
 
 use Multiapi\Arco\Arco;
 use Multiapi\Arco\Aws\DnsZoneFinder;
-use Multiapi\Arco\Binary\RuntimeManifest;
 use Multiapi\Arco\Aws\LocalState;
+use Multiapi\Arco\Binary\RuntimeManifest;
 use Multiapi\Arco\Build\AppInspector;
 use Multiapi\Arco\Build\Detection;
 use Multiapi\Arco\Build\PresetRegistry;

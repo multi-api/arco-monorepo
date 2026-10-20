@@ -57,6 +57,17 @@ final class InitCommandTest extends TestCase
         $config = ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production');
         self::assertSame('8.5', $config->runtime->php);
         self::assertSame('app', $config->sources['runtime.php']);
+
+        // The php() init writes does not get in the way of an environment pinning an exact build.
+        file_put_contents("$project->dir/arco.php", str_replace(
+            "->environment('production', fn (Environment \$env) => \$env\n",
+            "->environment('production', fn (Environment \$env) => \$env\n        ->runtime(fn (Runtime \$r) => \$r->build('1.13.0-r2'))\n",
+            $php,
+        ));
+        $pinned = ConfigResolver::resolve((new ConfigLoader())->load("$project->dir/arco.php"), 'production');
+        self::assertSame(['1.13.0-r2', null], [$pinned->runtime->build, $pinned->runtime->php]);
+        $result = (new Validator())->validate($pinned, $project->dir);
+        self::assertSame([], array_map(fn (array $e) => $e['key'], $result->errors));
         $project->restore();
     }
 

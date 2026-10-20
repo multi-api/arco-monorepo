@@ -185,6 +185,13 @@ final class ValidatorTest extends TestCase
             ->runtime(fn (Runtime $r) => $r->binary($arm)->php('8.5'))
             ->environment('production');
         self::assertSame(['validation.binary_overrides_build'], $warningKeys($php));
+
+        // An environment's binary() over selectors inherited from the app (arco init's php()) does not warn.
+        $inherited = App::make('shop')->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->php('8.5'))
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->binary($arm)));
+        self::assertSame([], $warningKeys($inherited));
+        self::assertSame([], $this->errorKeys($inherited));
     }
 
     private static function manifest(): \Multiapi\Arco\Binary\RuntimeManifest
@@ -218,10 +225,13 @@ final class ValidatorTest extends TestCase
         self::assertSame(['binary.unknown_build'], $keys($base()->runtime(fn (Runtime $r) => $r->build('1.13.0-r9'))->environment('production')));
         // Review focus 4: unknown version fails at validation.
         self::assertSame(['binary.unknown_version'], $keys($base()->runtime(fn (Runtime $r) => $r->frankenphp('1.12.0'))->environment('production')));
-        // Review focus 3: mixed levels are still rejected.
-        self::assertSame(['binary.build_and_version'], $keys($base()
+        // Selectors resolve per level: an environment's frankenphp() replaces an inherited build().
+        self::assertSame([], $keys($base()
             ->runtime(fn (Runtime $r) => $r->build('1.13.0-r1'))
             ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->frankenphp('1.13.0')))));
+        // At the same level they are still rejected.
+        self::assertSame(['binary.build_and_version'], $keys($base()
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->build('1.13.0-r1')->frankenphp('1.13.0')))));
     }
 
     public function test_php_selects_a_minor_and_excludes_build(): void
@@ -241,11 +251,17 @@ final class ValidatorTest extends TestCase
         $missing = $result($base()->runtime(fn (Runtime $r) => $r->php('8.4'))->environment('production'))->errors;
         self::assertSame([['key' => 'binary.unknown_php', 'params' => ['php' => '8.4', 'minors' => '8.5, 8.6']]], $missing);
 
-        // build() is an exact pin: php() next to it, at any level, is an error.
+        // build() is an exact pin: php() next to it at the same level is an error.
         self::assertSame(['binary.build_and_version'], $keys($base()->runtime(fn (Runtime $r) => $r->php('8.5')->build('1.13.0-r1'))->environment('production')));
         self::assertSame(['binary.build_and_version'], $keys($base()
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->php('8.5')->build('1.13.0-r1')))));
+        // Across levels the environment's selector wins (arco init writes php() at app level).
+        self::assertSame([], $keys($base()
             ->runtime(fn (Runtime $r) => $r->php('8.5'))
             ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->build('php8.5.11-fp1.13.0-r1')))));
+        self::assertSame([], $keys($base()
+            ->runtime(fn (Runtime $r) => $r->build('1.13.0-r1'))
+            ->environment('production', fn (Environment $e) => $e->runtime(fn (Runtime $r) => $r->php('8.5')))));
     }
 
     public function test_binary_with_a_php_cli_checks_both_files(): void
