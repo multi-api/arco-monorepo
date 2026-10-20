@@ -3,10 +3,12 @@
 namespace Multiapi\Arco\Tests\Unit\Deploy;
 
 use Aws\ResourceGroupsTaggingAPI\Exception\ResourceGroupsTaggingAPIException;
+use Aws\Iam\Exception\IamException;
 use Aws\Result;
 use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Deploy\OwnershipGuard;
 use Multiapi\Arco\Deploy\TaggedResources;
 use PHPUnit\Framework\TestCase;
 
@@ -15,6 +17,22 @@ final class TaggedResourcesTest extends TestCase
     private function config(): AppConfig
     {
         return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+    }
+
+    private static function subject(AwsMocks $mocks): TaggedResources
+    {
+        $clients = $mocks->clients();
+        return new TaggedResources($clients->taggingApi(), new OwnershipGuard($clients));
+    }
+
+    /** @param array<string, string> $tags */
+    private static function role(array $tags): Result
+    {
+        $list = [];
+        foreach ($tags as $key => $value) {
+            $list[] = ['Key' => $key, 'Value' => $value];
+        }
+        return new Result(['Role' => ['RoleName' => 'arco-shop-production', 'Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production', 'Tags' => $list]]);
     }
 
     /**
@@ -50,32 +68,41 @@ final class TaggedResourcesTest extends TestCase
                 self::mapping('arn:aws:acm:us-east-1:111111111111:certificate/abc', extra: ['arco:managed' => 'true']),
                 self::mapping('arn:aws:resource-groups:us-east-1:111111111111:group/arco-shop-production'),
                 self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production'),
+                self::mapping('arn:aws:cloudfront::111111111111:function/arco-shop-production-host'),
+                self::mapping('arn:aws:cloudfront::111111111111:function/someone-elses-function'),
+                self::mapping('arn:aws:acm:us-east-1:111111111111:certificate/reused'),
             ]]),
+            self::role(['arco:app' => 'shop', 'arco:environment' => 'production']),
         );
 
-        $resources = (new TaggedResources($mocks->clients()->taggingApi()))->list($this->config());
+        $resources = (self::subject($mocks))->list($this->config());
 
-        self::assertSame(['GetResources', 'GetResources'], $mocks->calls);
+        self::assertSame(['GetResources', 'GetResources', 'GetRole'], $mocks->calls);
+        self::assertSame('arco-shop-production', $mocks->params[2]['RoleName']);
         self::assertSame([['Key' => 'arco:app', 'Values' => ['shop']], ['Key' => 'arco:environment', 'Values' => ['production']]], $mocks->params[0]['TagFilters']);
         self::assertSame('next', $mocks->params[1]['PaginationToken']);
         $byName = [];
         foreach ($resources as $resource) {
-            $byName[$resource['name']] = [$resource['type'], $resource['retained']];
+            $byName[$resource['type'] . ' ' . $resource['name']] = $resource['retained'];
         }
         $expected = [
-            'shop-production-console' => ['lambda:function', false],
-            'shop-production-queue-emails' => ['lambda:function', false],
-            'shop-production-emails' => ['sqs', true],
-            'shop-production-uploads-111111111111' => ['s3', true],
-            'shop-production-cache' => ['dynamodb:table', true],
-            '/shop/production/app-key' => ['ssm:parameter', true],
-            '/aws/lambda/web/shop-production' => ['logs:log-group', true],
-            'arco-shop-production-scheduler' => ['events:rule', false],
-            'arco-shop-production-resources' => ['cloudformation:stack', false],
-            'E1ABC' => ['cloudfront:distribution', false],
-            'abc' => ['acm:certificate', false],
-            'arco-shop-production' => ['resource-groups:group', false],
-            'shop-production' => ['lambda:function', false],
+            'lambda:function shop-production-console' => false,
+            'lambda:function shop-production-queue-emails' => false,
+            'sqs shop-production-emails' => true,
+            's3 shop-production-uploads-111111111111' => true,
+            'dynamodb:table shop-production-cache' => true,
+            'ssm:parameter /shop/production/app-key' => true,
+            'logs:log-group /aws/lambda/web/shop-production' => true,
+            'events:rule arco-shop-production-scheduler' => false,
+            'cloudformation:stack arco-shop-production-resources' => false,
+            'cloudfront:distribution E1ABC' => false,
+            'acm:certificate abc' => false,
+            'resource-groups:group arco-shop-production' => false,
+            'lambda:function shop-production' => false,
+            'cloudfront:function arco-shop-production-host' => false,
+            'cloudfront:function someone-elses-function' => true,
+            'acm:certificate reused' => true,
+            'iam:role arco-shop-production' => false,
         ];
         ksort($expected);
         ksort($byName);
@@ -95,11 +122,47 @@ final class TaggedResourcesTest extends TestCase
             self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production-console', 'shop', 'staging'),
             self::mapping('arn:aws:sqs:us-east-1:111111111111:shop-eu-production-jobs', 'shop-eu'),
             ['ResourceARN' => 'arn:aws:s3:::half-tagged', 'Tags' => [['Key' => 'arco:app', 'Value' => 'shop']]],
-        ]]));
+        ]]), self::role(['arco:app' => 'shop', 'arco:environment' => 'staging']));
 
-        $resources = (new TaggedResources($mocks->clients()->taggingApi()))->list($this->config());
+        $resources = (self::subject($mocks))->list($this->config());
 
         self::assertSame(['shop-production'], array_column($resources, 'name'));
+    }
+
+    public function test_lists_the_execution_role_read_by_name_with_its_real_arn(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['ResourceTagMappingList' => []]), self::role(['arco:app' => 'shop', 'arco:environment' => 'production']));
+
+        $resources = self::subject($mocks)->list($this->config());
+
+        self::assertSame([['type' => 'iam:role', 'name' => 'arco-shop-production', 'arn' => 'arn:aws:iam::111111111111:role/arco-shop-production', 'retained' => false]], $resources);
+    }
+
+    public function test_a_missing_or_denied_role_is_not_listed_and_does_not_fail(): void
+    {
+        foreach (['NoSuchEntity' => 404, 'AccessDenied' => 403] as $code => $status) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(
+                new Result(['ResourceTagMappingList' => [self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production')]]),
+                AwsMocks::error(IamException::class, 'GetRole', $code, $status),
+            );
+
+            self::assertSame(['shop-production'], array_column(self::subject($mocks)->list($this->config()), 'name'), $code);
+        }
+    }
+
+    public function test_a_role_without_this_environments_tags_is_not_listed_and_a_custom_role_is_not_read(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['ResourceTagMappingList' => []]), self::role(['arco:app' => 'shop']));
+        self::assertSame([], self::subject($mocks)->list($this->config()));
+
+        $custom = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e->role('arn:aws:iam::111111111111:role/mine'))->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['ResourceTagMappingList' => []]));
+        self::assertSame([], self::subject($mocks)->list($custom));
+        self::assertSame(['GetResources'], $mocks->calls);
     }
 
     public function test_a_refused_listing_propagates(): void
@@ -108,6 +171,6 @@ final class TaggedResourcesTest extends TestCase
         $mocks->handler->append(AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'AccessDeniedException', 400));
 
         $this->expectException(ResourceGroupsTaggingAPIException::class);
-        (new TaggedResources($mocks->clients()->taggingApi()))->list($this->config());
+        (self::subject($mocks))->list($this->config());
     }
 }

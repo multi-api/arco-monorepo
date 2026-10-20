@@ -2866,12 +2866,12 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(new Result(['ResourceTagMappingList' => [
             ['ResourceARN' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'Tags' => [['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']]],
-        ]]));
+        ]]), self::noRole());
 
         $resources = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->resources($this->config());
 
         self::assertSame([['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true]], $resources);
-        self::assertSame(['GetResources'], $mocks->calls);
+        self::assertSame(['GetResources', 'GetRole'], $mocks->calls);
     }
 
     public function test_tag_audit_a_first_deploy_tags_the_role_and_the_web_function(): void
