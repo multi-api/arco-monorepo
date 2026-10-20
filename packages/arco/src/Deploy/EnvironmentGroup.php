@@ -54,7 +54,7 @@ final class EnvironmentGroup
         if ($current === false) {
             Aws::call($this->groups, 'CreateGroup', [
                 'Name' => $name,
-                'Description' => "Arco: resources of {$config->app}/{$config->environment}",
+                'Description' => "Arco resources of app {$config->app} environment {$config->environment}",
                 'ResourceQuery' => ['Type' => self::TYPE, 'Query' => self::query($config)],
                 'Tags' => Ownership::tags($config),
             ]);

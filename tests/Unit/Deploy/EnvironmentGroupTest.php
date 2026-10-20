@@ -49,6 +49,8 @@ final class EnvironmentGroupTest extends TestCase
         self::assertSame('TAG_FILTERS_1_0', $mocks->params[1]['ResourceQuery']['Type']);
         self::assertSame(json_decode(self::QUERY, true), json_decode($mocks->params[1]['ResourceQuery']['Query'], true));
         self::assertSame(['arco:app' => 'shop', 'arco:environment' => 'production'], $mocks->params[1]['Tags']);
+        // Resource Groups accepts only [\sa-zA-Z0-9_.-] in a description (CreateGroup rejected ':' and '/').
+        self::assertMatchesRegularExpression('/^[\sa-zA-Z0-9_.-]*$/', $mocks->params[1]['Description']);
     }
 
     public function test_ensure_leaves_a_group_with_the_same_query_alone(): void
