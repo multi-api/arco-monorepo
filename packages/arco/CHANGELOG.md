@@ -20,6 +20,25 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 - **Changed:** app and environment names may not end in `-console`, `-resources`, `-scheduler` or `-host`, nor
   contain `-queue-`, nor may `<app>-<env>` when it names another app's resource (app `shop-eu` + env
   `console` is the console function of `shop`/`eu`): validation names the rule.
+- **Added:** tags are Arco's record of what belongs to an app and environment (no state file: local and CI runs
+  see the same). Every resource Arco creates for an environment carries `arco:app` and `arco:environment`: the
+  functions, the execution role, the scheduler rule, both stacks and what they make (queues, buckets, tables,
+  CloudFront), the managed certificate, and now also the log groups (created tagged, or adopted and tagged when
+  Lambda made them first) and the SSM parameters `arco secret:set` writes (tagged after every write, new or
+  overwritten).
+- **Added:** `arco deploy` keeps an AWS Resource Group `arco-<app>-<env>` (a tag query on both tags), so the AWS
+  console shows the environment's resources together; it creates the group or updates its query, and leaves a
+  group with that name that is not the environment's alone. `arco remove` deletes it last, only when its query
+  is the environment's. The group is a convenience: without permission the deploy and the remove print a note.
+- **Added:** `arco info --resources` lists every resource tagged for the environment in its region (type, name,
+  whether `arco remove` deletes or keeps it), also as `--json` (`schema: 1`, `app`, `environment`, `group`,
+  `resources[]` with `type`, `name`, `arn`, `retained`). `arco remove` prints the same list before it asks for
+  confirmation (and with `--force`).
+- **Changed:** new deploy-profile permissions, all optional (a warning or note without them):
+  `logs:TagResource` (log group tags), `ssm:AddTagsToResource` (`secret:set`), `tag:GetResources`
+  (`info --resources`, the list before `remove`), and for the Resource Group `resource-groups:GetGroupQuery`,
+  `resource-groups:CreateGroup`, `resource-groups:Tag`, `resource-groups:GetGroup`, `resource-groups:GetTags`,
+  `resource-groups:UpdateGroupQuery`, `resource-groups:DeleteGroup`.
 - The E2E suite now pins Floci `nightly-10192026`, where storage writes and CloudFront to a Web Function work, so all eight Floci checks are mandatory.
 
 ## 0.8.1

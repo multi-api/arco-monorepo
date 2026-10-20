@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Commands;
 
+use Aws\Exception\AwsException;
 use Closure;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Aws\Endpoint;
@@ -18,6 +19,7 @@ use Multiapi\Arco\Deploy\AppStatus;
 use Multiapi\Arco\Deploy\AwsDeployer;
 use Multiapi\Arco\Deploy\Deployer;
 use Multiapi\Arco\Deploy\DeployPipeline;
+use Multiapi\Arco\Deploy\EnvironmentGroup;
 use Multiapi\Arco\Secrets\SecretReference;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
@@ -45,7 +47,8 @@ final class InfoCommand extends ArcoCommand
     protected function configure(): void
     {
         $this->addOption('env', 'e', InputOption::VALUE_REQUIRED, 'Environment')
-            ->addOption('json', null, InputOption::VALUE_NONE, 'Print JSON');
+            ->addOption('json', null, InputOption::VALUE_NONE, 'Print JSON')
+            ->addOption('resources', null, InputOption::VALUE_NONE, 'List every AWS resource tagged for the environment');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -57,6 +60,10 @@ final class InfoCommand extends ArcoCommand
         } catch (Throwable $e) {
             $io->error($this->describeError($e) ?? throw $e);
             return self::FAILURE;
+        }
+
+        if ($input->getOption('resources')) {
+            return $this->showResources($config, (bool) $input->getOption('json'), $output, $io);
         }
 
         [$status, $remoteError] = $this->remoteStatus($config);
@@ -120,6 +127,64 @@ final class InfoCommand extends ArcoCommand
             );
         }
         return self::SUCCESS;
+    }
+
+    /**
+     * `--resources`: what the `arco:app`/`arco:environment` tags say belongs to the environment, and
+     * whether `arco remove` keeps each (also as `--json`, schema 1).
+     */
+    private function showResources(AppConfig $config, bool $json, OutputInterface $output, SymfonyStyle $io): int
+    {
+        $group = EnvironmentGroup::name($config);
+        [$resources, $error] = $this->taggedResources($config);
+        if ($json) {
+            $output->writeln((string) json_encode([
+                'schema' => 1,
+                'app' => $config->app,
+                'environment' => $config->environment,
+                'group' => $group,
+                'resources' => $resources,
+            ] + ($error !== null ? ['error' => $error] : []), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return $error === null ? self::SUCCESS : self::FAILURE;
+        }
+        if ($error !== null) {
+            $io->error($error);
+            return self::FAILURE;
+        }
+        $io->title($this->t('info.resources_title', ['app' => $config->app, 'environment' => $config->environment]));
+        if ($resources === []) {
+            $io->note($this->t('info.resources_none'));
+        } else {
+            $io->table(
+                [$this->t('info.resource_type'), $this->t('info.resource_name'), $this->t('info.resource_on_remove')],
+                array_map(fn (array $resource) => [$resource['type'], $resource['name'], $this->t($resource['retained'] ? 'info.resource_kept' : 'info.resource_deleted')], $resources),
+            );
+        }
+        $io->writeln($this->t('info.resources_group', ['group' => $group]));
+        return self::SUCCESS;
+    }
+
+    /**
+     * The tagged resources, or the error to show: no profile resolves without prompting, the
+     * credentials are missing or expired, or AWS refused the lookup (tag:GetResources).
+     *
+     * @return array{0: list<array{type: string, name: string, arn: string, retained: bool}>, 1: ?string}
+     */
+    private function taggedResources(AppConfig $config): array
+    {
+        /** @var array<string, string> $env */
+        $env = getenv();
+        $choice = ProfileResolver::resolve(null, $env, $config, new LocalState($this->projectDir()));
+        if ($choice === null) {
+            return [[], $this->t('info.resources_no_profile', ['environment' => $config->environment])];
+        }
+        try {
+            return [($this->deployerFactory)(($this->awsFactory)($choice->profile, (string) $config->region))->resources($config), null];
+        } catch (Throwable $e) {
+            $message = $e instanceof AwsException ? $e->getAwsErrorMessage() : null;
+            return [[], $this->credentialProblem($e, $choice->profile)
+                ?? $this->t('info.resources_failed', ['error' => is_string($message) && $message !== '' ? $message : $e->getMessage()])];
+        }
     }
 
     /** @param array{url: ?string, version: ?string, error: ?string}|null $queue */

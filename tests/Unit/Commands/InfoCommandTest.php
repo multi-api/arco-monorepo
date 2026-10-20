@@ -393,4 +393,79 @@ final class InfoCommandTest extends TestCase
         self::assertNull($json['failedJobsTable']);
         $project->restore();
     }
+
+    /** @return list<array{type: string, name: string, arn: string, retained: bool}> */
+    private static function tagged(): array
+    {
+        return [
+            ['type' => 'lambda:function', 'name' => 'shop-production-console', 'arn' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console', 'retained' => false],
+            ['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true],
+        ];
+    }
+
+    public function test_resources_lists_the_tagged_resources_of_the_environment(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer();
+        $deployer->tagged = self::tagged();
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--resources' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        self::assertMatchesRegularExpression('/lambda:function\s+shop-production-console\s+deleted/', $display);
+        self::assertMatchesRegularExpression('/sqs\s+shop-production-emails\s+kept/', $display);
+        self::assertStringContainsString('arco-shop-production', $display, 'names the Resource Group');
+        self::assertStringNotContainsString('concurrency', $display, 'only the resources');
+        self::assertNotContains('describe', $deployer->calls);
+
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        self::assertSame([
+            'schema' => 1,
+            'app' => 'shop',
+            'environment' => 'production',
+            'group' => 'arco-shop-production',
+            'resources' => self::tagged(),
+        ], json_decode($tester->getDisplay(), true));
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_resources_that_cannot_be_listed_fail_with_the_reason(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer();
+        $deployer->taggedError = new \Aws\Exception\AwsException('denied', new \Aws\Command('GetResources'), ['code' => 'AccessDeniedException', 'message' => 'not authorized to perform: tag:GetResources']);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--resources' => true], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('tag:GetResources', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame(1, $json['schema']);
+        self::assertSame([], $json['resources']);
+        self::assertStringContainsString('tag:GetResources', $json['error']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_resources_without_a_profile_say_how_to_choose_one(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE');
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production', '--resources' => true], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('AWS_PROFILE', $tester->getDisplay());
+        $project->restore();
+    }
 }

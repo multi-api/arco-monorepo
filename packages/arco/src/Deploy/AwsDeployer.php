@@ -370,6 +370,49 @@ final class AwsDeployer implements Deployer
         if ($config->role === null) {
             (new ExecutionRole($this->aws->iam()))->delete(ExecutionRole::roleName($config));
         }
+        $this->removeGroup($config, $step);
+    }
+
+    /**
+     * Last in a remove: the Resource Group, when its query is this environment's. A convenience view, so
+     * nothing here fails the remove: a refusal or another owner's group is a note.
+     *
+     * @param callable(string, array<string, string|int>): void $step
+     */
+    private function removeGroup(AppConfig $config, callable $step): void
+    {
+        $name = EnvironmentGroup::name($config);
+        try {
+            if ((new EnvironmentGroup($this->aws->resourceGroups()))->delete($config)) {
+                $step('remove.step_group', ['group' => $name]);
+            }
+        } catch (DeployException $e) {
+            $step($e->key, $e->params);
+        } catch (AwsException $e) {
+            $denied = in_array($e->getAwsErrorCode(), EnvironmentGroup::DENIED, true);
+            $step($denied ? 'remove.group_denied' : 'remove.group_failed', ['group' => $name, 'error' => self::awsError($e)]);
+        }
+    }
+
+    public function syncGroup(AppConfig $config, Closure $onStep): void
+    {
+        $name = EnvironmentGroup::name($config);
+        try {
+            (new EnvironmentGroup($this->aws->resourceGroups()))->ensure($config);
+        } catch (DeployException $e) {
+            $onStep($e->key, $e->params);
+            return;
+        } catch (AwsException $e) {
+            $denied = in_array($e->getAwsErrorCode(), EnvironmentGroup::DENIED, true);
+            $onStep($denied ? 'deploy.group_denied' : 'deploy.group_failed', ['group' => $name, 'error' => self::awsError($e)]);
+            return;
+        }
+        $onStep('deploy.group_ready', ['group' => $name]);
+    }
+
+    public function resources(AppConfig $config): array
+    {
+        return (new TaggedResources($this->aws->taggingApi()))->list($config);
     }
 
     /**
@@ -531,7 +574,14 @@ final class AwsDeployer implements Deployer
         if ($config->consoleEnabled()) {
             $groups = [...$groups, ...LogGroups::for($config, 'console')];
         }
-        (new LogRetention($this->aws->logs()))->apply([...$groups, ...LogGroups::for($config, 'queues')], $config->logRetention);
+        $region = (string) $config->region;
+        // Lambda makes a group untagged on the first invoke: Arco adopts it and tags it for the environment.
+        $untagged = (new LogRetention($this->aws->logs()))->apply([...$groups, ...LogGroups::for($config, 'queues')], $config->logRetention, self::tags($config),
+            fn (string $group): string => LogGroups::arn($region, $this->aws->accountId(), $group));
+        if ($untagged !== []) {
+            // One warning for the deploy, not one per group.
+            $onStep('deploy.log_tags_not_added', ['groups' => implode(', ', array_column($untagged, 'group')), 'error' => $untagged[0]['error']]);
+        }
         // {groups} is a code (web, all, web_queues, all_queues) the step printer translates: only the groups touched are named.
         $onStep(...self::logRetentionStep($config->logRetention, $scope));
     }

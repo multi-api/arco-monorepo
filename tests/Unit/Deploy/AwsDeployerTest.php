@@ -8,6 +8,7 @@ use Aws\EventBridge\Exception\EventBridgeException;
 use Aws\Iam\Exception\IamException;
 use Aws\Lambda\Exception\LambdaException;
 use Aws\LambdaWeb\Exception\LambdaWebException;
+use Aws\ResourceGroups\Exception\ResourceGroupsException;
 use Aws\ResourceGroupsTaggingAPI\Exception\ResourceGroupsTaggingAPIException;
 use Aws\Result;
 use Aws\S3\Exception\S3Exception;
@@ -491,10 +492,11 @@ final class AwsDeployerTest extends TestCase
         ]);
         $steps = [];
 
+        $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
 
         self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole',
-            'DescribeStacks', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
+            'DescribeStacks', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery'], $mocks->calls);
         self::assertSame('shop-production-console', $mocks->params[9]['FunctionName']);
         self::assertSame(['remove.scheduler_unreadable', 'remove.step_console', 'remove.step_function'], $steps, 'an unreadable rule is a warning, and the remove goes on');
         self::assertContains('remove.scheduler_unreadable', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
@@ -522,10 +524,11 @@ final class AwsDeployerTest extends TestCase
         ]);
         $steps = [];
 
+        $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($config, function (string $key) use (&$steps): void { $steps[] = $key; });
 
         self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole',
-            'DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListCertificates', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
+            'DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListCertificates', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery'], $mocks->calls);
         self::assertSame(['remove.step_distribution', 'remove.step_console', 'remove.step_function'], $steps);
     }
 
@@ -605,6 +608,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['ChangeInfo' => ['Id' => '/change/R', 'Status' => 'INSYNC']]),
         );
 
+        $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), $dns->clients()))->remove($config);
 
         self::assertSame(['ListHostedZonesByName', 'ListResourceRecordSets', 'ChangeResourceRecordSets', 'GetChange'], $dns->calls);
@@ -676,10 +680,11 @@ final class AwsDeployerTest extends TestCase
         ]);
         $steps = [];
 
+        $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
 
         self::assertSame(['GetResources', 'DescribeRule', 'ListTagsForResource', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole',
-            'DescribeStacks', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole'], $mocks->calls);
+            'DescribeStacks', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery'], $mocks->calls);
         self::assertSame('arco-shop-production-scheduler', $mocks->params[11]['Name']);
         self::assertSame('shop-production-console', $mocks->params[14]['FunctionName']);
         self::assertSame(['remove.step_scheduler', 'remove.step_console', 'remove.step_function'], $steps);
@@ -1575,13 +1580,14 @@ final class AwsDeployerTest extends TestCase
         ]);
         $steps = [];
 
+        $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
 
         self::assertSame([
             'GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole',
             'DescribeStacks', 'DescribeRule',
             'DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListObjectsV2', 'DescribeTable',
-            'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole',
+            'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery',
         ], $mocks->calls);
         self::assertSame([
             ['remove.step_resources', ['stack' => 'arco-shop-production-resources']],
@@ -2019,6 +2025,7 @@ final class AwsDeployerTest extends TestCase
         ]);
         $steps = [];
 
+        $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($config, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
 
         self::assertSame([
@@ -2030,7 +2037,7 @@ final class AwsDeployerTest extends TestCase
             'ListEventSourceMappings', 'DeleteFunction',
             'ListEventSourceMappings', 'DeleteFunction',
             'DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'GetQueueAttributes',
-            'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole',
+            'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery',
         ], $mocks->calls);
         self::assertSame('shop-production-console', $mocks->params[27]['FunctionName'], 'the console goes after the workers and the stack');
         self::assertSame([
@@ -2062,6 +2069,7 @@ final class AwsDeployerTest extends TestCase
         ]);
         $steps = [];
 
+        $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($config, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
 
         self::assertContains(['remove.worker_scan_failed', ['error' => 'Rate exceeded']], $steps);
@@ -2297,6 +2305,7 @@ final class AwsDeployerTest extends TestCase
             AwsMocks::error(IamException::class, 'DeleteRole', 'NoSuchEntity', 404),
         ]);
 
+        $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
 
         self::assertContains('DeleteFunction', $mocks->calls);
@@ -2445,5 +2454,186 @@ final class AwsDeployerTest extends TestCase
         \Multiapi\Arco\Deploy\OwnershipGuard::checkConsoleUse($mocks->clients(), $config); // missing: the invoke reports it
         $this->expectExceptionObject(DeployException::make('ownership.untagged_resource', ['resource' => 'shop-production-console']));
         \Multiapi\Arco\Deploy\OwnershipGuard::checkConsoleUse($mocks->clients(), $config);
+    }
+
+    private static function noGroup(): ResourceGroupsException
+    {
+        return AwsMocks::error(ResourceGroupsException::class, 'GetGroupQuery', 'NotFoundException', 404);
+    }
+
+    public function test_sync_group_creates_the_resource_group_of_the_environment(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::noGroup(), new Result(['Group' => ['GroupArn' => 'arn:aws:resource-groups:us-east-1:111111111111:group/arco-shop-production']]));
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncGroup($this->config(), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['GetGroupQuery', 'CreateGroup'], $mocks->calls);
+        self::assertSame([['deploy.group_ready', ['group' => 'arco-shop-production']]], $steps);
+    }
+
+    /** @return iterable<string, array{0: \Throwable, 1: string, 2: array<string, string>}> */
+    public static function groupFailures(): iterable
+    {
+        yield 'no resource-groups permission' => [
+            AwsMocks::error(ResourceGroupsException::class, 'GetGroupQuery', 'ForbiddenException', 403, 'not authorized to perform: resource-groups:GetGroupQuery'),
+            'deploy.group_denied', ['group' => 'arco-shop-production', 'error' => 'not authorized to perform: resource-groups:GetGroupQuery'],
+        ];
+        yield 'AccessDeniedException' => [
+            AwsMocks::error(ResourceGroupsException::class, 'GetGroupQuery', 'AccessDeniedException', 400, 'denied'),
+            'deploy.group_denied', ['group' => 'arco-shop-production', 'error' => 'denied'],
+        ];
+        yield 'another failure' => [
+            AwsMocks::error(ResourceGroupsException::class, 'GetGroupQuery', 'BadRequestException', 400, 'oops'),
+            'deploy.group_failed', ['group' => 'arco-shop-production', 'error' => 'oops'],
+        ];
+    }
+
+    /**
+     * @param array<string, string> $params
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('groupFailures')]
+    public function test_a_group_that_cannot_be_ensured_is_a_note_never_a_failure(\Throwable $error, string $key, array $params): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append($error);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncGroup($this->config(), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame([[$key, $params]], $steps);
+        self::assertNotContains($key, \Multiapi\Arco\Cli\StepPrinter::WARNINGS, 'a note (bullet), not a warning block');
+    }
+
+    public function test_a_group_with_the_name_someone_else_made_is_left_alone_with_a_note(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['GroupQuery' => ['ResourceQuery' => ['Type' => 'TAG_FILTERS_1_0', 'Query' => '{"ResourceTypeFilters":["AWS::AllSupported"],"TagFilters":[{"Key":"team","Values":["x"]}]}']]]),
+            new Result(['Group' => ['GroupArn' => 'arn:aws:resource-groups:us-east-1:111111111111:group/arco-shop-production']]),
+            new Result(['Tags' => []]),
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncGroup($this->config(), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame([['deploy.group_not_ours', ['group' => 'arco-shop-production']]], $steps);
+        self::assertNotContains('UpdateGroupQuery', $mocks->calls);
+    }
+
+    public function test_remove_deletes_the_resource_group_after_everything_else(): void
+    {
+        $query = '{"ResourceTypeFilters":["AWS::AllSupported"],"TagFilters":[{"Key":"arco:app","Values":["shop"]},{"Key":"arco:environment","Values":["production"]}]}';
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            new Result(['ResourceTagMappingList' => []]), self::noRule(),
+            ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(),
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // domains stack
+            self::noRule(),
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // resources stack
+            new Result([]),                                                                     // DeleteFunction (console)
+            new Result([]),                                                                     // DeleteWebFunction
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
+            new Result([]), new Result([]),                                                     // DeleteRolePolicy, DeleteRole
+            new Result(['GroupQuery' => ['ResourceQuery' => ['Type' => 'TAG_FILTERS_1_0', 'Query' => $query]]]),
+            new Result([]),                                                                     // DeleteGroup
+        ]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame(['DeleteRole', 'GetGroupQuery', 'DeleteGroup'], array_slice($mocks->calls, -3), 'the group goes last');
+        self::assertSame('remove.step_group', end($steps));
+        self::assertCount(0, $mocks->handler);
+    }
+
+    public function test_remove_notes_a_group_it_may_not_delete_or_that_is_not_ours_and_still_succeeds(): void
+    {
+        foreach ([
+            [AwsMocks::error(ResourceGroupsException::class, 'GetGroupQuery', 'ForbiddenException', 403, 'denied'), 'remove.group_denied'],
+            [new Result(['GroupQuery' => ['ResourceQuery' => ['Type' => 'TAG_FILTERS_1_0', 'Query' => '{"TagFilters":[{"Key":"team","Values":["x"]}]}']]]), 'remove.group_not_ours'],
+        ] as [$group, $key]) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(...[
+                new Result(['ResourceTagMappingList' => []]), self::noRule(),
+                self::lambdaMissing('GetFunctionConfiguration'), self::noWeb(), self::noRole(),
+                AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+                self::noRule(),
+                AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+                self::lambdaMissing('DeleteFunction'),
+                AwsMocks::error(LambdaWebException::class, 'DeleteWebFunction', 'ResourceNotFoundException', 404),
+                AwsMocks::error(IamException::class, 'DeleteRolePolicy', 'NoSuchEntity', 404),
+                AwsMocks::error(IamException::class, 'DeleteRole', 'NoSuchEntity', 404),
+                $group,
+            ]);
+            $steps = [];
+
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $step) use (&$steps): void { $steps[] = $step; });
+
+            self::assertSame($key, end($steps));
+            self::assertNotContains('DeleteGroup', $mocks->calls);
+        }
+    }
+
+    public function test_log_groups_get_both_tags_and_a_tag_refusal_is_a_note(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->console(false)->region('us-east-1')->logRetention(30)->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(),                                                                        // CreateLogGroup (web, tagged)
+            new Result(),
+            AwsMocks::error(\Aws\CloudWatchLogs\Exception\CloudWatchLogsException::class, 'CreateLogGroup', 'ResourceAlreadyExistsException', 400),
+            new Result(['Account' => '111111111111']),                                           // GetCallerIdentity, for the group ARN
+            AwsMocks::error(\Aws\CloudWatchLogs\Exception\CloudWatchLogsException::class, 'TagResource', 'AccessDeniedException', 400, 'not authorized to perform: logs:TagResource'),
+            new Result(),
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention($config, function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['CreateLogGroup', 'PutRetentionPolicy', 'CreateLogGroup', 'GetCallerIdentity', 'TagResource', 'PutRetentionPolicy'], $mocks->calls);
+        self::assertSame(['arco:app' => 'shop', 'arco:environment' => 'production'], $mocks->params[0]['tags']);
+        self::assertSame('arn:aws:logs:us-east-1:111111111111:log-group:/aws/lambda/web/shop-production.local', $mocks->params[4]['resourceArn']);
+        self::assertSame([
+            ['deploy.log_tags_not_added', ['groups' => '/aws/lambda/web/shop-production.local', 'error' => 'not authorized to perform: logs:TagResource']],
+            ['deploy.log_retention', ['days' => 30, 'groups' => 'web']],
+        ], $steps);
+        self::assertContains('deploy.log_tags_not_added', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
+    public function test_resources_lists_the_environments_tagged_resources(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['ResourceTagMappingList' => [
+            ['ResourceARN' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'Tags' => [['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']]],
+        ]]));
+
+        $resources = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->resources($this->config());
+
+        self::assertSame([['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true]], $resources);
+        self::assertSame(['GetResources'], $mocks->calls);
+    }
+
+    public function test_tag_audit_a_first_deploy_tags_the_role_and_the_web_function(): void
+    {
+        // The console function's tags are asserted in test_first_deploy; the scheduler rule, stacks,
+        // certificates, log groups and secrets in their own tests.
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '111111111111']), new Result([]), new Result([]), new Result([]), new Result([]), new Result([]),
+            AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404), new Result(['VersionId' => 'v1']),
+            self::noRole(), new Result(['Role' => ['Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production']]), new Result([]),
+            self::noWeb(), new Result(['revision' => ['revisionId' => 'rev-1']]), new Result(['state' => 'Active']),
+        );
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prepare($this->config(), $this->package(), null, []);
+
+        $byOperation = [];
+        foreach ($mocks->calls as $i => $call) {
+            $byOperation[$call] = $mocks->params[$i];
+        }
+        self::assertSame([['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']], $byOperation['CreateRole']['Tags']);
+        self::assertSame(['arco:app' => 'shop', 'arco:environment' => 'production'], $byOperation['CreateWebFunction']['tags']);
     }
 }

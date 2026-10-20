@@ -266,6 +266,7 @@ vendor/bin/arco set timeout 60 --app          # app level (all environments)
 ```bash
 vendor/bin/arco info --env=production          # resolved settings and their source, URL, active revision
 vendor/bin/arco info --env=production --json   # machine-readable output
+vendor/bin/arco info --env=production --resources  # every AWS resource tagged for the environment
 vendor/bin/arco remove --env=production        # asks you to type the environment name
 ```
 
@@ -511,7 +512,8 @@ A deploy role (like the one of Arco's own end-to-end run, in a dedicated test ac
 - `iam:GetRole`, `iam:CreateRole`, `iam:PutRolePolicy`, `iam:DeleteRolePolicy`, `iam:DeleteRole`,
   `iam:PassRole` on `arn:aws:iam::*:role/arco-*`
 - `s3:*` on `arn:aws:s3:::arco-*` (and its objects)
-- `ssm:PutParameter`, `ssm:GetParameters` on your app's parameters (`parameter/<app>/*`)
+- `ssm:PutParameter`, `ssm:GetParameters`, `ssm:AddTagsToResource` (`secret:set` tags the parameter for the
+  environment) on your app's parameters (`parameter/<app>/*`)
 - `logs:FilterLogEvents`, `logs:GetLogEvents`
 - `sts:GetCallerIdentity`
 - for the console function (`arn:aws:lambda:*:*:function:*-console` and `...:*-console:*`):
@@ -527,7 +529,14 @@ A deploy role (like the one of Arco's own end-to-end run, in a dedicated test ac
   function: `lambda:AddPermission`, `lambda:RemovePermission`, `lambda:GetPolicy`
 - for the version check of the runtime clean-up: `lambda:ListVersionsByFunction` on the Arco functions
   (it reads every tagged function's versions), and `tag:GetResources` (without it the clean-up warns on every deploy)
-- for log retention: `logs:CreateLogGroup`, `logs:PutRetentionPolicy`, `logs:DeleteRetentionPolicy`
+- for log retention: `logs:CreateLogGroup`, `logs:PutRetentionPolicy`, `logs:DeleteRetentionPolicy`, and
+  `logs:TagResource` (Arco tags each log group for the environment; without it the groups stay untagged, with
+  one warning per deploy)
+- for the environment's Resource Group `arco-<app>-<env>` (a view of its tagged resources in the AWS console):
+  `resource-groups:GetGroupQuery`, `resource-groups:CreateGroup`, `resource-groups:Tag`,
+  `resource-groups:GetGroup`, `resource-groups:GetTags`, `resource-groups:UpdateGroupQuery` and, for
+  `arco remove`, `resource-groups:DeleteGroup`. Optional: without them the deploy and the remove print a note
+- for `arco info --resources` and the list `arco remove` prints before it asks: `tag:GetResources`
 - for the runtime clean-up: `s3:ListBucket` on the code bucket and `s3:GetObject`, `s3:PutObject`,
   `s3:DeleteObject` on `runtime/*`
 - for queues (only when `arco.php` has `queue()`; see [Permissions for queues](#permissions-for-queues))

@@ -459,6 +459,14 @@ final class DeployPipeline
                     $onStep('deploy.log_retention_failed', ['error' => self::errorMessage($e)]);
                 }
             }
+            if ($verification->ok) {
+                try {
+                    $deployer->syncGroup($config, $onStep(...));
+                } catch (Throwable $e) {
+                    // A convenience view of the environment: never a failed deploy.
+                    $onStep('deploy.group_failed', ['group' => EnvironmentGroup::name($config), 'error' => self::errorMessage($e)]);
+                }
+            }
             // Custom domains only once the endpoint is known to work; the origin is the endpoint domain.
             if ($verification->ok && $config->domains !== []) {
                 $result = $deployer->attachDomains($config, $result, $preset instanceof CachesPaths ? $preset->cachedPaths() : [], $onStep);

@@ -1102,6 +1102,28 @@ final class DeployPipelineTest extends TestCase
         self::assertContains('prune', $denied->calls);
     }
 
+    public function test_the_resource_group_is_ensured_once_the_deploy_is_verified_and_a_failure_is_a_note(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $this->pipeline()->deploy($this->retentionConfig(null), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+        self::assertSame([['prepare', 'release']], $deployer->groupSyncs, 'once, after the release; not recorded in calls');
+        self::assertSame(['prepare', 'release', 'prune'], $deployer->calls);
+
+        // Not verified: no group.
+        $failed = new FakeDeployer('rev-1');
+        $this->pipeline()->deploy($this->retentionConfig(null), new PlainPhpPreset(), $this->project, $failed, new FakeVerifier(false), fn () => null);
+        self::assertSame([], $failed->groupSyncs);
+
+        // Anything thrown (AwsDeployer turns refusals into notes itself): a note, the deploy still succeeds.
+        $broken = new FakeDeployer('rev-1');
+        $broken->groupError = new \RuntimeException('boom');
+        $steps = [];
+        $outcome = $this->pipeline()->deploy($this->retentionConfig(null), new PlainPhpPreset(), $this->project, $broken, new FakeVerifier(true), function (string $key, array $params) use (&$steps): void { $steps[$key] = $params; });
+        self::assertTrue($outcome->verification->ok);
+        self::assertSame(['group' => 'arco-shop-production', 'error' => 'boom'], $steps['deploy.group_failed'] ?? null);
+        self::assertContains('prune', $broken->calls);
+    }
+
     public function test_scheduler_removed_when_turned_off(): void
     {
         $deployer = new FakeDeployer('rev-1', consoleVersion: '7');

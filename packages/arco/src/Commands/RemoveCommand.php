@@ -2,12 +2,14 @@
 
 namespace Multiapi\Arco\Commands;
 
+use Aws\Exception\AwsException;
 use Closure;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\StepPrinter;
 use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
+use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\AwsDeployer;
 use Multiapi\Arco\Deploy\Deployer;
 use Multiapi\Arco\Deploy\Sleeper;
@@ -58,6 +60,9 @@ final class RemoveCommand extends ArcoCommand
                 return self::SUCCESS;
             }
 
+            // What the tags say belongs to the environment, before anything is asked or deleted.
+            $this->listResources($deployer, $config, $io);
+
             if (! $input->getOption('force')) {
                 if (! $input->isInteractive()) {
                     throw new UserError($this->t('remove.force_required'));
@@ -90,5 +95,30 @@ final class RemoveCommand extends ArcoCommand
             $io->error($this->describeError($e) ?? throw $e);
             return self::FAILURE;
         }
+    }
+
+    private function listResources(Deployer $deployer, AppConfig $config, SymfonyStyle $io): void
+    {
+        try {
+            $resources = $deployer->resources($config);
+        } catch (Throwable $e) {
+            // Only a list: without tag:GetResources the remove still goes on.
+            $io->note($this->t('remove.resources_unlisted', ['error' => self::awsMessage($e)]));
+            return;
+        }
+        if ($resources === []) {
+            return;
+        }
+        $io->writeln($this->t('remove.resources', ['app' => $config->app, 'environment' => $config->environment, 'count' => count($resources)]));
+        foreach ($resources as $resource) {
+            $io->writeln('  • ' . $this->t($resource['retained'] ? 'remove.resource_kept' : 'remove.resource_deleted', ['type' => $resource['type'], 'name' => $resource['name']]));
+        }
+        $io->newLine();
+    }
+
+    private static function awsMessage(Throwable $e): string
+    {
+        $message = $e instanceof AwsException ? $e->getAwsErrorMessage() : null;
+        return is_string($message) && $message !== '' ? $message : $e->getMessage();
     }
 }

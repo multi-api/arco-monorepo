@@ -54,6 +54,14 @@ final class FakeDeployer implements Deployer
     public ?\Throwable $ownershipError = null;
     /** how many times checkOwnership() ran */
     public int $ownershipChecks = 0;
+    /** @var list<array{type: string, name: string, arn: string, retained: bool}> returned by resources() */
+    public array $tagged = [];
+    /** thrown by resources(), e.g. AWS refusing tag:GetResources */
+    public ?\Throwable $taggedError = null;
+    /** @var list<list<string>> the calls made before each syncGroup() (kept out of $calls) */
+    public array $groupSyncs = [];
+    /** thrown by syncGroup() */
+    public ?\Throwable $groupError = null;
     /** @var list<array{0: string, 1: array<string, string|int>}> steps reported by remove() */
     public array $removeSteps = [];
 
@@ -202,6 +210,17 @@ final class FakeDeployer implements Deployer
         foreach (\Multiapi\Arco\Deploy\ResourcesStack::createdTables($config) as $table) {
             $onStep('deploy.table_created', ['kind' => $table->kind, 'name' => $table->tableName($config)]);
         }
+    }
+    public function syncGroup(AppConfig $config, \Closure $onStep): void
+    {
+        $this->groupSyncs[] = $this->calls;
+        if ($this->groupError !== null) {
+            throw $this->groupError;
+        }
+    }
+    public function resources(AppConfig $config): array
+    {
+        return $this->taggedError !== null ? throw $this->taggedError : $this->tagged;
     }
     public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->describeError !== null ? throw $this->describeError : $this->status; }
 }
