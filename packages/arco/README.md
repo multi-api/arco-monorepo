@@ -140,7 +140,7 @@ Every option, the packaging rules and the Laravel preset are in the
 | `arco queue:add <name> --env=<env>` / `queue:set` / `queue:remove` | Add, change or remove a queue in `arco.php` (removed queues stay in AWS with their messages) |
 | `arco queue:list --env=<env>` | Each queue's messages, dead-letter queue and worker version |
 | `arco queue:dlq <name> --env=<env>` | Show the messages in a queue's dead-letter queue; `--redrive` moves them back |
-| `arco queue:failed-table --env=<env>` | Turn the DynamoDB failed-jobs table on (`--existing=<table>`) or off (`--remove`) in `arco.php` |
+| `arco failed-jobs:add --env=<env>` / `failed-jobs:remove` | Turn the DynamoDB failed-jobs table on (`--existing=<table>`) or off in `arco.php` |
 | `arco storage:add <name> --env=<env>` / `storage:remove` | Add or remove a storage in `arco.php` (`--existing=<bucket>`, `--default`; removed buckets stay in AWS with their files) |
 | `arco storage:public` / `storage:expire` / `storage:cors` | Public prefixes, expiry rules and CORS origins of a storage (`--remove` takes one out) |
 | `arco storage:list --env=<env>` | Each storage's bucket, URL and options, and the retained buckets no longer in `arco.php` |

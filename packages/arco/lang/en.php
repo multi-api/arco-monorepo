@@ -606,5 +606,6 @@ return [
     'protected.confirm.command' => 'Run "{command}" on {environment} (account {account}, function {function})? It runs against its real data.',
     'protected.confirm.redrive' => 'Move the messages of {dlq} back to {queue} on {environment} (account {account})? The worker runs them again.',
     'deprecated.force_remove' => 'remove --force is deprecated and will be removed in 1.0: use --yes. It still works.',
+    'deprecated.queue_failed_table' => 'queue:failed-table is deprecated and will be removed in 1.0: use failed-jobs:add (or failed-jobs:remove). It still works.',
     'deprecated.force_tinker' => 'tinker --force is deprecated and will be removed in 1.0: use --yes. It still works.',
 ];

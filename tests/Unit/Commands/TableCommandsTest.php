@@ -4,6 +4,8 @@ namespace Multiapi\Arco\Tests\Unit\Commands;
 
 use Multiapi\Arco\Commands\CacheAddCommand;
 use Multiapi\Arco\Commands\CacheRemoveCommand;
+use Multiapi\Arco\Commands\FailedJobsAddCommand;
+use Multiapi\Arco\Commands\FailedJobsRemoveCommand;
 use Multiapi\Arco\Commands\QueueFailedTableCommand;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Command\Command;
@@ -122,6 +124,73 @@ final class TableCommandsTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString('already has this value', self::display($tester));
         self::assertSame($before, $this->source());
+    }
+
+    public function test_failed_jobs_add_and_remove(): void
+    {
+        $this->project();
+
+        $tester = $this->run_(new FailedJobsAddCommand(), ['--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->failedJobsTable()', $this->source());
+        self::assertStringContainsString('Failed-jobs table (app): off → on', self::display($tester));
+        self::assertStringNotContainsString('deprecated', self::display($tester));
+
+        $tester = $this->run_(new FailedJobsRemoveCommand(), ['--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('failedJobsTable', $this->source());
+    }
+
+    public function test_failed_jobs_add_existing(): void
+    {
+        $this->project();
+
+        $tester = $this->run_(new FailedJobsAddCommand(), ['--existing' => 'shop-failed', '--env' => 'production']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->failedJobsTable(existing: 'shop-failed')", $this->source());
+    }
+
+    public function test_queue_failed_table_is_a_hidden_deprecated_alias(): void
+    {
+        $this->project();
+        self::assertTrue((new QueueFailedTableCommand())->isHidden());
+
+        $tester = $this->run_(new QueueFailedTableCommand(), ['--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('->failedJobsTable()', $this->source());
+        self::assertSame(1, substr_count(self::display($tester), 'queue:failed-table is deprecated'));
+        self::assertStringContainsString('failed-jobs:add', self::display($tester));
+    }
+
+    public function test_cache_driver_dynamodb_round_trips_through_the_editor(): void
+    {
+        $this->project('->concurrency(48)', "->concurrency(48)->cache(driver: 'dynamodb')");
+
+        // Already on: nothing to change.
+        $before = $this->source();
+        $tester = $this->run_(new CacheAddCommand(), ['--app' => true]);
+        $tester->assertCommandIsSuccessful();
+        self::assertSame($before, $this->source());
+
+        // Rewriting the call drops the default driver; nothing else changes.
+        $tester = $this->run_(new CacheAddCommand(), ['--existing' => 'shop-cache', '--app' => true]);
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->cache(existing: 'shop-cache')", $this->source());
+        self::assertStringNotContainsString('driver:', $this->source());
+    }
+
+    public function test_cache_remove_with_an_explicit_driver(): void
+    {
+        $this->project('->concurrency(48)', "->concurrency(48)->cache(driver: 'dynamodb')");
+
+        $tester = $this->run_(new CacheRemoveCommand(), ['--app' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('->cache(', $this->source());
     }
 
     public function test_failed_table_add_and_remove(): void

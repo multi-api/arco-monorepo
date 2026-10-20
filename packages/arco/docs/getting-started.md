@@ -332,7 +332,7 @@ messages. Options, FIFO, existing queues and permissions: [Queues](configuration
 vendor/bin/arco storage:add uploads --env=production      # writes ->storage('uploads') in arco.php
 vendor/bin/arco storage:public uploads avatars/ --env=production
 vendor/bin/arco cache:add --env=production                # writes ->cache()
-vendor/bin/arco queue:failed-table --env=production       # writes ->failedJobsTable()
+vendor/bin/arco failed-jobs:add --env=production          # writes ->failedJobsTable()
 vendor/bin/arco deploy --env=production
 vendor/bin/arco storage:list --env=production
 ```

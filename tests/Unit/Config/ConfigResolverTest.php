@@ -419,6 +419,21 @@ final class ConfigResolverTest extends TestCase
         self::assertNull(ConfigResolver::resolve(App::make('shop')->environment('production')->toArray(), 'production')->defaultStorage());
     }
 
+    public function test_no_default_storage_when_every_entry_opts_out(): void
+    {
+        $resolve = fn (App $app) => ConfigResolver::resolve($app->environment('production')->toArray(), 'production');
+
+        $none = $resolve(App::make('shop')->storage('files', default: false)->storage('media', default: false));
+        self::assertNull($none->defaultStorage());
+        self::assertCount(2, $none->storage);
+
+        // One entry that says nothing keeps the usual rule: the first is the default.
+        $mixed = $resolve(App::make('shop')->storage('files', default: false)->storage('media'));
+        self::assertSame('files', $mixed->defaultStorage()?->name);
+        $single = $resolve(App::make('shop')->storage('files'));
+        self::assertSame('files', $single->defaultStorage()?->name);
+    }
+
     public function test_storage_existing_and_cors(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->storage('files', existing: 'legacy-bucket', cors: ['*'])->environment('production')->toArray(), 'production');

@@ -96,19 +96,24 @@ final class DeployPipeline
      */
     public static function storageVariables(AppConfig $config): array
     {
-        $default = $config->defaultStorage();
-        if ($default === null) {
+        if ($config->storage === []) {
             return [];
         }
         $buckets = [];
         foreach ($config->storage as $storage) {
             $buckets[$storage->name] = ['bucket' => $storage->bucketName($config), 'url' => $storage->url($config)];
         }
+        $variables = ['ARCO_STORAGE' => json_encode($buckets, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)];
+        // Without a default disk (every storage says default: false) Laravel's own default stays.
+        $default = $config->defaultStorage();
+        if ($default === null) {
+            return $variables;
+        }
         return [
             'FILESYSTEM_DISK' => 's3',
             'AWS_BUCKET' => $default->bucketName($config),
             'AWS_URL' => $default->url($config),
-            'ARCO_STORAGE' => json_encode($buckets, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
+            ...$variables,
         ];
     }
 

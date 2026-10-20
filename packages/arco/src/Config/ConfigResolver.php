@@ -253,6 +253,17 @@ final class ConfigResolver
     }
 
     /**
+     * Whether every entry says `default: false` explicitly: then none is the default (storage only; an
+     * entry that does not say, or says true, keeps the usual rule).
+     *
+     * @param array<string, array<string, mixed>> $merged
+     */
+    private static function allOptOutOfDefault(array $merged): bool
+    {
+        return $merged !== [] && array_filter($merged, fn (array $o): bool => ($o['default'] ?? null) !== false) === [];
+    }
+
+    /**
      * App queues with the environment's merged over them by name. The first queue is the default unless one asks for it.
      *
      * @param array<string, array<string, mixed>|false> $app
@@ -285,7 +296,8 @@ final class ConfigResolver
     }
 
     /**
-     * App buckets with the environment's merged over them by name. The first bucket is the default unless one asks for it.
+     * App buckets with the environment's merged over them by name. The first bucket is the default unless one asks for it
+     * or every bucket sets `default: false`, which leaves the app without a default disk.
      *
      * @param array<string, array<string, mixed>|false> $app
      * @param array<string, array<string, mixed>|false> $env
@@ -294,7 +306,7 @@ final class ConfigResolver
     private static function storage(array $app, array $env): array
     {
         $merged = self::mergeNamed($app, $env);
-        $firstIsDefault = self::firstIsDefault($merged);
+        $firstIsDefault = self::firstIsDefault($merged) && ! self::allOptOutOfDefault($merged);
         $storage = [];
         foreach ($merged as $name => $o) {
             $expire = [];

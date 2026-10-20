@@ -577,7 +577,7 @@ name add to each other.
 - App and environment storage merge by name: the environment's options go over the app's for that storage
   (an environment's `public` list replaces the app's list as a whole), new names are added, and
   `->storage('uploads', false)` on an environment drops an app-level storage there.
-- The **default storage** is the first one (app-level storage comes first) unless one says `default: true`.
+- The **default storage** is the first one (app-level storage comes first) unless one says `default: true`. If every storage says `default: false`, there is no default storage: Arco injects only `ARCO_STORAGE` and Laravel keeps its own default disk.
 - `public`, `expire` and `cors` apply only to buckets Arco creates. On an `existing` bucket they are
   ignored, with a validation warning (also from `storage:public`, `storage:expire` and `storage:cors`):
   configure that bucket yourself.
@@ -802,13 +802,15 @@ Setting `QUEUE_FAILED_DRIVER` in your own `variables()` overrides Arco's, with a
 vendor/bin/arco cache:add --env=production
 vendor/bin/arco cache:add --env=production --existing=shop-cache
 vendor/bin/arco cache:remove --env=staging
-vendor/bin/arco queue:failed-table --app
-vendor/bin/arco queue:failed-table --env=production --existing=shop-failed-jobs
-vendor/bin/arco queue:failed-table --env=staging --remove
+vendor/bin/arco failed-jobs:add --app
+vendor/bin/arco failed-jobs:add --env=production --existing=shop-failed-jobs
+vendor/bin/arco failed-jobs:remove --env=staging
 ```
 
-- `cache:add` and `queue:failed-table` turn the table on (Arco's, or `--existing=<table>`); `cache:remove`
-  and `queue:failed-table --remove` turn it off. On an environment that inherits the table from the app
+- `cache:add` and `failed-jobs:add` turn the table on (Arco's, or `--existing=<table>`); `cache:remove`
+  and `failed-jobs:remove` turn it off. `queue:failed-table` is the deprecated spelling of both (hidden from
+  the command list, with a warning; removed in 1.0). The editor never writes `cache(driver: 'dynamodb')`,
+  since `dynamodb` is the default and only driver; an existing `driver: 'dynamodb'` is dropped when the call is rewritten. On an environment that inherits the table from the app
   level, turning it off writes `->cache(false)` (or `->failedJobsTable(false)`); otherwise the call is
   removed. The table stays in AWS.
 - They take `--env=<env>` or `--app`, edit `arco.php` only and need `arco deploy` to apply.

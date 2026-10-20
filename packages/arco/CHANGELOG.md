@@ -5,6 +5,15 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## 0.9.0
 
+- **Added:** `arco failed-jobs:add [--existing=<table>]` and `arco failed-jobs:remove` turn the failed-jobs table on or
+  off in `arco.php`, matching `cache:add` / `cache:remove`.
+- **Deprecated:** `arco queue:failed-table` (use `failed-jobs:add` / `failed-jobs:remove`). It is hidden from the command
+  list, keeps working, prints one warning per run, and is removed in 1.0.
+- **Changed:** when every `storage()` sets `default: false` explicitly, the app has no default disk: only
+  `ARCO_STORAGE` is injected (no `FILESYSTEM_DISK`, `AWS_BUCKET` or `AWS_URL`). A storage without the option is still
+  the default, as before.
+- **Added:** `cache(driver: 'dynamodb')` is accepted (the only value; others are a validation error), so another cache
+  backend can be added later without renaming. The `arco.php` editor does not write the default driver.
 - **Changed:** `queue(maxInstances: N)` is the most concurrent worker invocations of a queue (the event source
   mapping's `MaximumConcurrency`), the same name `maxInstances()` has for the web function. `queue:add
   --max-instances` and `queue:set <queue> max-instances` replace `--concurrency` / `concurrency`; editing a queue

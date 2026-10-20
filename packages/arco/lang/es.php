@@ -606,5 +606,6 @@ return [
     'protected.confirm.command' => '¿Ejecutar "{command}" en {environment} (cuenta {account}, función {function})? Se ejecuta sobre sus datos reales.',
     'protected.confirm.redrive' => '¿Devolver los mensajes de {dlq} a {queue} en {environment} (cuenta {account})? El worker los ejecutará de nuevo.',
     'deprecated.force_remove' => 'remove --force está en desuso y se eliminará en 1.0: usa --yes. Sigue funcionando.',
+    'deprecated.queue_failed_table' => 'queue:failed-table está en desuso y se eliminará en 1.0: usa failed-jobs:add (o failed-jobs:remove). Sigue funcionando.',
     'deprecated.force_tinker' => 'tinker --force está en desuso y se eliminará en 1.0: usa --yes. Sigue funcionando.',
 ];

@@ -200,6 +200,20 @@ final class DeployPipelineTest extends TestCase
         return ConfigResolver::resolve($app->environment('production', fn (Environment $e) => $e->account('123456789012'))->toArray(), 'production');
     }
 
+    public function test_storage_without_a_default_adds_only_the_bucket_map(): void
+    {
+        $variables = DeployPipeline::variables($this->resourcesConfig(fn (App $app) => $app->storage('uploads', default: false)->storage('backups', default: false)), new PlainPhpPreset());
+
+        self::assertArrayNotHasKey('FILESYSTEM_DISK', $variables);
+        self::assertArrayNotHasKey('AWS_BUCKET', $variables);
+        self::assertArrayNotHasKey('AWS_URL', $variables);
+        self::assertSame(['uploads', 'backups'], array_keys(json_decode($variables['ARCO_STORAGE'], true)));
+
+        $one = DeployPipeline::variables($this->resourcesConfig(fn (App $app) => $app->storage('uploads')), new PlainPhpPreset());
+        self::assertSame('s3', $one['FILESYSTEM_DISK']);
+        self::assertSame('shop-production-uploads-123456789012', $one['AWS_BUCKET']);
+    }
+
     public function test_storage_adds_the_default_disk_and_every_bucket(): void
     {
         $variables = DeployPipeline::variables($this->resourcesConfig(fn (App $app) => $app->storage('uploads')->storage('media', existing: 'legacy.bucket', default: true)), new PlainPhpPreset());
