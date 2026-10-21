@@ -38,6 +38,9 @@ now gets the note `deploy.boundary_kept` on every deploy.
   role (IAM Access Analyzer, SCPs), the permissions that would bypass it, the denial and a recommended boundary policy
   derived from the managed policy, with the partition to change for `aws-cn` and `aws-us-gov`; the 0.11 upgrade notes and the new entries of the 1.x promise. The end-to-end suites set the
   AWS-managed boundary `PowerUserAccess` on the `floci` and `e2e` environments and read it back with `iam:GetRole`.
+- **Fixed:** PHP warnings and notices (for example the AWS SDK failing to cache a refreshed SSO token in a
+  read-only `~/.aws`) now go to stderr in every command, so they never corrupt a `--json` document on stdout.
+
 
 ## 0.10.2
 
