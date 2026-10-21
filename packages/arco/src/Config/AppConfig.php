@@ -61,6 +61,8 @@ final readonly class AppConfig
         public ?TableConfig $failedJobsTable = null,
         /** cache(driver:) when it is not 'dynamodb' (the validator refuses it); null: dynamodb */
         public ?string $cacheDriver = null,
+        /** dns('cloudflare'): the custom domains' zones are on Cloudflare ($dnsProfile is then null) */
+        public bool $dnsCloudflare = false,
     ) {
     }
 
@@ -103,6 +105,7 @@ final readonly class AppConfig
             cacheTable: $this->cacheTable,
             failedJobsTable: $this->failedJobsTable,
             cacheDriver: $this->cacheDriver,
+            dnsCloudflare: $this->dnsCloudflare,
         );
     }
 

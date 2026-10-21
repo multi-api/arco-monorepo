@@ -146,8 +146,10 @@ final class FakeMarkedDns implements DnsProvider
 
     public function plan(array $records, string $domain, ?string $distributionDomain, bool $force, AppConfig $owner): array
     {
-        $conflicts = array_values(array_filter($records, fn (array $r) => ! self::owned($r, $owner)));
-        $deletes = array_values(array_filter($records, fn (array $r) => $force || self::owned($r, $owner)));
+        // Only address records can stand in the way of the serving CNAME: TXT, MX and the like stay.
+        $address = array_values(array_filter($records, fn (array $r) => in_array($r['type'] ?? null, ['A', 'AAAA', 'CNAME'], true)));
+        $conflicts = array_values(array_filter($address, fn (array $r) => ! self::owned($r, $owner)));
+        $deletes = array_values(array_filter($address, fn (array $r) => $force || self::owned($r, $owner)));
         return ['conflicts' => $conflicts, 'deletes' => $deletes];
     }
 

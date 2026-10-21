@@ -96,15 +96,22 @@ final class InfoCommand extends ArcoCommand
                 'failedJobsTable' => self::jsonTable($config, $config->failedJobsTable),
                 'deployCommands' => $config->deployCommands,
                 'settings' => $this->jsonSettings($settings, $status),
+                // Additive (0.10), last so the earlier keys keep their order: cloudflare, route53 (<profile>)
+                // or manual; null without domains.
+                'dns' => self::dnsProvider($config),
             ] + ($remoteError !== null ? ['error' => $remoteError] : []), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             return $remoteError === null ? self::SUCCESS : self::FAILURE;
         }
 
         $io->title($config->functionName());
-        $io->table(
-            [$this->t('info.setting'), $this->t('info.value'), $this->t('info.source')],
-            array_map(fn (string $key, array $row) => [$key, $this->display($key, $row[0], $status), $row[1]], array_keys($settings), $settings),
-        );
+        $rows = [];
+        foreach ($settings as $key => $row) {
+            $rows[] = [$key, $this->display($key, $row[0], $status), $row[1]];
+            if ($key === 'dns' && ($provider = self::dnsProvider($config)) !== null) {
+                $rows[] = ['dns.provider', $provider, $row[1]];
+            }
+        }
+        $io->table([$this->t('info.setting'), $this->t('info.value'), $this->t('info.source')], $rows);
 
         $io->section($this->t('info.variables'));
         $rows = [];
@@ -401,9 +408,21 @@ final class InfoCommand extends ArcoCommand
         ];
     }
 
+    /** Where the domains' DNS records go, as a machine value: cloudflare, route53 (<profile>) or manual. */
+    private static function dnsProvider(AppConfig $config): ?string
+    {
+        return match (true) {
+            $config->domains === [] => null,
+            $config->dnsCloudflare => 'cloudflare',
+            $config->dnsManual => 'manual',
+            default => 'route53 (' . ($config->dnsProfile ?? 'deploy account') . ')',
+        };
+    }
+
     private function dnsLabel(AppConfig $config): string
     {
         return match (true) {
+            $config->dnsCloudflare => 'cloudflare',
             $config->dnsManual => $this->t('info.dns_manual'),
             $config->dnsProfile !== null => $config->dnsProfile,
             default => $this->t('info.dns_deploy_account'),

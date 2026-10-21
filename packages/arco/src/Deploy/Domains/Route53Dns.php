@@ -16,6 +16,9 @@ final class Route53Dns implements DnsProvider
     /** The Route 53 operations made here: an error on one of them comes from the DNS profile's clients. */
     public const OPERATIONS = ['ListResourceRecordSets', 'ChangeResourceRecordSets', 'GetChange', 'ListHostedZonesByName'];
 
+    /** Hosted zone id Route 53 uses for every CloudFront alias target. */
+    private const CLOUDFRONT_ZONE = 'Z2FDTNDATAQYW2';
+    private const TTL = 300;
     private const POLL = 5;
 
     /** @var list<HostedZone>|null */
@@ -61,7 +64,7 @@ final class Route53Dns implements DnsProvider
 
     public function isSatisfied(DnsRecord $record, array $existing, AppConfig $owner): bool
     {
-        return $record->isSatisfiedBy($existing);
+        return self::satisfies($record, $existing);
     }
 
     public function describe(array $record): string
@@ -74,7 +77,7 @@ final class Route53Dns implements DnsProvider
     {
         $this->change($zone, [
             ...array_map(fn (array $set) => ['DELETE', $set], $deletes),
-            ...array_map(fn (DnsRecord $record) => ['UPSERT', $record->recordSet()], $upserts),
+            ...array_map(fn (DnsRecord $record) => ['UPSERT', self::recordSet($record)], $upserts),
         ]);
     }
 
@@ -129,5 +132,40 @@ final class Route53Dns implements DnsProvider
             $args = ['DNSName' => Aws::string($page['NextDNSName'] ?? null), 'HostedZoneId' => Aws::string($page['NextHostedZoneId'] ?? null)];
         } while ($truncated && $args['DNSName'] !== null);
         return $zones;
+    }
+
+    /** @return array<string, mixed> a Route 53 ResourceRecordSet */
+    private static function recordSet(DnsRecord $record): array
+    {
+        if ($record->alias) {
+            return [
+                'Name' => $record->name,
+                'Type' => $record->type,
+                'AliasTarget' => ['HostedZoneId' => self::CLOUDFRONT_ZONE, 'DNSName' => $record->value, 'EvaluateTargetHealth' => false],
+            ];
+        }
+        return ['Name' => $record->name, 'Type' => $record->type, 'TTL' => self::TTL, 'ResourceRecords' => [['Value' => $record->value]]];
+    }
+
+    /**
+     * True when an existing Route 53 record set already is $record, so writing it would change nothing.
+     *
+     * @param array<mixed> $set
+     */
+    private static function satisfies(DnsRecord $record, array $set): bool
+    {
+        $name = $set['Name'] ?? null;
+        if (($set['Type'] ?? null) !== $record->type || ! is_string($name) || ! Hostname::same($name, $record->name)) {
+            return false;
+        }
+        if ($record->alias) {
+            $target = $set['AliasTarget'] ?? null;
+            return is_array($target)
+                && ($target['HostedZoneId'] ?? null) === self::CLOUDFRONT_ZONE
+                && is_string($target['DNSName'] ?? null)
+                && Hostname::same($target['DNSName'], $record->value);
+        }
+        $values = array_map(fn ($r) => is_array($r) && is_string($r['Value'] ?? null) ? $r['Value'] : '', (array) ($set['ResourceRecords'] ?? []));
+        return count($values) === 1 && Hostname::same($values[0], $record->value);
     }
 }

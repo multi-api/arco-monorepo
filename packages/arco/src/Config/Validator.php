@@ -528,7 +528,7 @@ final class Validator
     private static function validateDomains(AppConfig $config, ValidationResult $result): void
     {
         if ($config->domains === []) {
-            if ($config->dnsProfile !== null || $config->dnsManual || $config->certificate !== null) {
+            if ($config->dnsProfile !== null || $config->dnsManual || $config->dnsCloudflare || $config->certificate !== null) {
                 $result->warning('validation.domain_settings_unused');
             }
             return;

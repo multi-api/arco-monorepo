@@ -12,6 +12,7 @@ use Multiapi\Arco\Config\StorageConfig;
 use Multiapi\Arco\Config\TableConfig;
 use Multiapi\Arco\Deploy\Domains\Certificates;
 use Multiapi\Arco\Deploy\Domains\CustomDomains;
+use Multiapi\Arco\Deploy\Domains\DnsProvider;
 use Multiapi\Arco\Deploy\Domains\DomainStack;
 use Multiapi\Arco\Deploy\Domains\Stacks;
 use Multiapi\Arco\Logs\LogGroups;
@@ -31,6 +32,7 @@ final class AwsDeployer implements Deployer
      * @param bool $forceDns replace existing DNS records that point elsewhere (--force-dns)
      * @param bool $force change name-addressed resources another app or environment owns, or that carry
      *                    no Arco tags (deploy --force); never used by remove
+     * @param DnsProvider|null $dnsProvider the DNS provider when it is not Route 53 (dns('cloudflare'))
      */
     public function __construct(
         private readonly AwsClients $aws,
@@ -38,6 +40,7 @@ final class AwsDeployer implements Deployer
         private readonly ?AwsClients $dns = null,
         private readonly bool $forceDns = false,
         private readonly bool $force = false,
+        private readonly ?DnsProvider $dnsProvider = null,
     ) {
     }
 
@@ -1131,7 +1134,7 @@ final class AwsDeployer implements Deployer
 
     private function customDomains(AppConfig $config): CustomDomains
     {
-        return CustomDomains::create($config, $this->aws, $this->dns, $this->sleeper, $this->forceDns);
+        return CustomDomains::create($config, $this->aws, $this->dns, $this->sleeper, $this->forceDns, $this->dnsProvider);
     }
 
     /**

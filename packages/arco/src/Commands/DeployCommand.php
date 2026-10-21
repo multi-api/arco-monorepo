@@ -11,6 +11,7 @@ use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\StepPrinter;
 use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
+use Multiapi\Arco\Commands\Concerns\UsesCloudflare;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ArcoFileEditor;
 use Multiapi\Arco\Console\CommandResult;
@@ -23,6 +24,8 @@ use Multiapi\Arco\Deploy\DeployCommandFailed;
 use Multiapi\Arco\Deploy\DeployCommands;
 use Multiapi\Arco\Deploy\DeployException;
 use Multiapi\Arco\Deploy\Deployer;
+use Multiapi\Arco\Deploy\Domains\CloudflareDns;
+use Multiapi\Arco\Deploy\Domains\DnsProvider;
 use Multiapi\Arco\Deploy\DeployPipeline;
 use Multiapi\Arco\Deploy\Sleeper;
 use Multiapi\Arco\Deploy\Verifier;
@@ -40,9 +43,10 @@ use Throwable;
 final class DeployCommand extends ArcoCommand
 {
     use ResolvesTarget;
+    use UsesCloudflare;
 
     private DeployPipeline $pipeline;
-    /** @var Closure(AwsClients, ?AwsClients, bool, bool): Deployer */
+    /** @var Closure(AwsClients, ?AwsClients, bool, bool, ?DnsProvider): Deployer */
     private Closure $deployerFactory;
     /** @var Closure(AwsClients): Verifier */
     private Closure $verifierFactory;
@@ -57,13 +61,15 @@ final class DeployCommand extends ArcoCommand
         ?Closure $verifierFactory = null,
         ?PresetRegistry $presets = null,
         ?Closure $consoleFactory = null,
+        ?Closure $cloudflareFactory = null,
     ) {
         $this->awsFactory = $awsFactory ?? fn (?string $profile, string $region) => new AwsClients($profile, $region);
         $this->pipeline = $pipeline ?? DeployPipeline::default();
-        $this->deployerFactory = $deployerFactory ?? fn (AwsClients $aws, ?AwsClients $dns = null, bool $forceDns = false, bool $force = false) => new AwsDeployer($aws, new Sleeper(), $dns, $forceDns, $force);
+        $this->deployerFactory = $deployerFactory ?? fn (AwsClients $aws, ?AwsClients $dns = null, bool $forceDns = false, bool $force = false, ?DnsProvider $dnsProvider = null) => new AwsDeployer($aws, new Sleeper(), $dns, $forceDns, $force, $dnsProvider);
         $this->verifierFactory = $verifierFactory ?? fn (AwsClients $aws) => new AwsVerifier($aws->logs(), new Client(), new Sleeper());
         $this->presets = $presets ?? PresetRegistry::default();
         $this->consoleFactory = $consoleFactory ?? fn (AwsClients $aws, AppConfig $config) => new LambdaConsole($aws->lambda(LambdaConsole::clientOptions($config)));
+        $this->cloudflareFactory = $cloudflareFactory;
         parent::__construct();
     }
 
@@ -78,6 +84,7 @@ final class DeployCommand extends ArcoCommand
             ->addOption('package', null, InputOption::VALUE_REQUIRED, 'Deploy a zip written by "arco package" instead of building')
             ->addOption('migrate', null, InputOption::VALUE_NONE, 'Run "migrate --force" before traffic moves (added to the deploy commands)')
             ->addOption('no-deploy-commands', null, InputOption::VALUE_NONE, 'Skip the deploy commands of arco.php');
+        $this->addCloudflareTokenOption();
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -122,6 +129,9 @@ final class DeployCommand extends ArcoCommand
                 $io->warning($this->t('deploy.endpoint_unrecognised', ['value' => $raw]));
             }
 
+            // Before any AWS call: dns('cloudflare') without a token fails here, and never falls back to Route 53.
+            $cloudflare = $this->cloudflareDns($config, $input);
+
             $aws = $this->awsClients($config, $input, $io);
 
             $io->writeln($this->t('deploy.target', [
@@ -132,12 +142,16 @@ final class DeployCommand extends ArcoCommand
                 'region' => (string) $config->region,
             ]));
 
-            $dns = $config->domains === [] ? null : $this->dnsClients($config, $input);
+            $dns = $config->domains === [] || $cloudflare !== null ? null : $this->dnsClients($config, $input);
             if ($dns !== null) {
                 $io->writeln($this->t('deploy.dns_target', ['account' => $this->checkDnsCredentials($dns), 'profile' => (string) $dns->profile]));
             }
+            if ($cloudflare !== null) {
+                // Token, permissions and zones, before anything in AWS changes.
+                $io->writeln($this->t('deploy.dns_cloudflare', ['zones' => implode(', ', $cloudflare->verify($config->domains))]));
+            }
 
-            $deployer = ($this->deployerFactory)($aws, $dns, (bool) $input->getOption('force-dns'), (bool) $input->getOption('force'));
+            $deployer = ($this->deployerFactory)($aws, $dns, (bool) $input->getOption('force-dns'), (bool) $input->getOption('force'), $cloudflare);
             if ($deployer->describe($config) === null && ! $input->getOption('yes')) {
                 if (! $input->isInteractive()) {
                     throw new UserError($this->t('deploy.confirm_required'));
@@ -252,6 +266,23 @@ final class DeployCommand extends ArcoCommand
             }
             return $message === null ? throw $e : self::FAILURE;
         }
+    }
+
+    /**
+     * The Cloudflare provider of a dns('cloudflare') environment with domains; null otherwise.
+     *
+     * @throws DeployException cloudflare.token_missing
+     */
+    private function cloudflareDns(AppConfig $config, InputInterface $input): ?CloudflareDns
+    {
+        if (! $config->dnsCloudflare || $config->domains === []) {
+            return null;
+        }
+        $profile = $input->getOption('dns-profile');
+        if (is_string($profile) && $profile !== '') {
+            throw new UserError($this->t('cloudflare.dns_profile_conflict'));
+        }
+        return new CloudflareDns($this->cloudflareApi($input), (bool) $input->getOption('force-dns'));
     }
 
     /**

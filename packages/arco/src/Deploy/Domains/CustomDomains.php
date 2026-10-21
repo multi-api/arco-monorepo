@@ -27,10 +27,17 @@ final class CustomDomains
     /**
      * @param AwsClients $aws deploy account
      * @param AwsClients|null $dnsAws account of the dns() profile; null to use the deploy account
+     * @param DnsProvider|null $provider the provider when it is not Route 53 (dns('cloudflare')); without
+     *     one, a Cloudflare environment fails on its first DNS operation and never touches Route 53
      */
-    public static function create(AppConfig $config, AwsClients $aws, ?AwsClients $dnsAws, Sleeper $sleeper, bool $forceDns = false): self
+    public static function create(AppConfig $config, AwsClients $aws, ?AwsClients $dnsAws, Sleeper $sleeper, bool $forceDns = false, ?DnsProvider $provider = null): self
     {
-        $dns = $config->dnsManual && $dnsAws === null ? null : new Route53Dns(($dnsAws ?? $aws)->route53(), $sleeper);
+        $dns = match (true) {
+            $provider !== null => $provider,
+            $config->dnsCloudflare => UnavailableDns::cloudflareTokenMissing(),
+            $config->dnsManual && $dnsAws === null => null,
+            default => new Route53Dns(($dnsAws ?? $aws)->route53(), $sleeper),
+        };
         return new self(new Certificates($aws->acm(), $sleeper), new Stacks($aws->cloudFormation(), $sleeper, 'domains.stack_'), $dns, $forceDns);
     }
 

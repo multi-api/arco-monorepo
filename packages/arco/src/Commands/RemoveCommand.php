@@ -10,9 +10,14 @@ use Multiapi\Arco\Cli\StepPrinter;
 use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\ConfirmsProtected;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
+use Multiapi\Arco\Commands\Concerns\UsesCloudflare;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\AwsDeployer;
 use Multiapi\Arco\Deploy\Deployer;
+use Multiapi\Arco\Deploy\DeployException;
+use Multiapi\Arco\Deploy\Domains\CloudflareApi;
+use Multiapi\Arco\Deploy\Domains\CloudflareDns;
+use Multiapi\Arco\Deploy\Domains\DnsProvider;
 use Multiapi\Arco\Deploy\Sleeper;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
@@ -26,14 +31,16 @@ final class RemoveCommand extends ArcoCommand
 {
     use ConfirmsProtected;
     use ResolvesTarget;
+    use UsesCloudflare;
 
-    /** @var Closure(AwsClients, ?AwsClients, bool): Deployer */
+    /** @var Closure(AwsClients, ?AwsClients, bool, ?DnsProvider): Deployer */
     private Closure $deployerFactory;
 
-    public function __construct(?Closure $awsFactory = null, ?Closure $deployerFactory = null)
+    public function __construct(?Closure $awsFactory = null, ?Closure $deployerFactory = null, ?Closure $cloudflareFactory = null)
     {
         $this->awsFactory = $awsFactory ?? fn (?string $profile, string $region) => new AwsClients($profile, $region);
-        $this->deployerFactory = $deployerFactory ?? fn (AwsClients $aws, ?AwsClients $dns = null, bool $forceDns = false) => new AwsDeployer($aws, new Sleeper(), $dns, $forceDns);
+        $this->deployerFactory = $deployerFactory ?? fn (AwsClients $aws, ?AwsClients $dns = null, bool $forceDns = false, ?DnsProvider $dnsProvider = null) => new AwsDeployer($aws, new Sleeper(), $dns, $forceDns, false, $dnsProvider);
+        $this->cloudflareFactory = $cloudflareFactory;
         parent::__construct();
     }
 
@@ -44,6 +51,7 @@ final class RemoveCommand extends ArcoCommand
             ->addOption('yes', 'y', InputOption::VALUE_NONE, 'Answer yes to every confirmation (no typed confirmation)')
             ->addOption('force', null, InputOption::VALUE_NONE, 'Deprecated: use --yes')
             ->addOption('dns-profile', null, InputOption::VALUE_REQUIRED, 'AWS profile whose Route 53 holds the DNS zones of the custom domains');
+        $this->addCloudflareTokenOption();
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -55,9 +63,19 @@ final class RemoveCommand extends ArcoCommand
                 $input->setOption('yes', true);
             }
             $config = $this->loadTarget($input, $io);
+            $cloudflare = null;
+            if ($config->dnsCloudflare) {
+                $profile = $input->getOption('dns-profile');
+                if (is_string($profile) && $profile !== '') {
+                    throw new UserError($this->t('cloudflare.dns_profile_conflict'));
+                }
+                $api = $this->cloudflareApiOrNull($input);
+                $cloudflare = $api === null ? null : new CloudflareDns($api);
+            }
             $aws = $this->awsClients($config, $input, $io);
-            $dns = $this->dnsClients($config, $input);
-            $deployer = ($this->deployerFactory)($aws, $dns, false);
+            // A Cloudflare environment never builds Route 53 clients, whatever it used before.
+            $dns = $config->dnsCloudflare ? null : $this->dnsClients($config, $input);
+            $deployer = ($this->deployerFactory)($aws, $dns, false, $cloudflare);
 
             // The CloudFront stack (or a certificate) may outlive the function, e.g. after a
             // half-finished remove or after domain() was deleted from arco.php.
@@ -65,6 +83,14 @@ final class RemoveCommand extends ArcoCommand
             if ($deployer->describe($config) === null && ! $domainResources) {
                 $io->note($this->t('remove.nothing', ['function' => $config->functionName()]));
                 return self::SUCCESS;
+            }
+
+            // The DNS records go first in a remove: without a working token nothing is deleted.
+            if ($config->dnsCloudflare && $domainResources) {
+                if ($cloudflare === null) {
+                    throw DeployException::make('cloudflare.token_missing', ['env' => CloudflareApi::TOKEN_ENV, 'permissions' => CloudflareApi::PERMISSIONS]);
+                }
+                $cloudflare->verify([]);
             }
 
             // What the tags say belongs to the environment, before anything is asked or deleted.

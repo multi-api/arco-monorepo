@@ -495,7 +495,7 @@ final class InfoCommandTest extends TestCase
         self::assertSame('schema', array_key_first($json), 'first key, as in info --resources');
         unset($json['schema']);
         self::assertSame(
-            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings'],
+            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns'],
             array_keys($json),
         );
         $project->restore();

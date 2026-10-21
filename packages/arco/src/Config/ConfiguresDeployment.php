@@ -45,8 +45,10 @@ trait ConfiguresDeployment
     }
 
     /**
-     * Where the DNS records go: the name of an AWS profile whose Route 53 holds the zones, or false when DNS is
-     * not in Route 53 (Arco prints the records to create). Default: Route 53 in the deploy account.
+     * Where the DNS records go: the name of an AWS profile whose Route 53 holds the zones, 'cloudflare' when
+     * the zones are on Cloudflare (token in CLOUDFLARE_API_TOKEN or --cloudflare-token; a profile named
+     * "cloudflare" cannot be used here), or false when DNS is elsewhere (Arco prints the records to create).
+     * Default: Route 53 in the deploy account.
      */
     public function dns(string|false $dns): static { $this->settings['dns'] = $dns; return $this; }
 

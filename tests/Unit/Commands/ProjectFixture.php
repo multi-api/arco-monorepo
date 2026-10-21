@@ -25,6 +25,7 @@ final class ProjectFixture
         chdir($this->dir);
         putenv('AWS_PROFILE');
         putenv('AWS_ACCESS_KEY_ID');
+        putenv('CLOUDFLARE_API_TOKEN');
         $this->credentialsFile = $this->dir . '/aws-credentials';
         $this->configFile = $this->dir . '/aws-config';
         $keys = "aws_access_key_id = AKIATEST\naws_secret_access_key = secret\n";

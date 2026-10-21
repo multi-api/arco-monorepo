@@ -4,6 +4,9 @@ namespace Multiapi\Arco\Config;
 
 final class ConfigResolver
 {
+    /** The dns() value that means Cloudflare (a profile with this name is not reachable through dns()). */
+    public const CLOUDFLARE = 'cloudflare';
+
     private const DEFAULTS = [
         'concurrency' => null,
         'timeout' => 30,
@@ -175,7 +178,7 @@ final class ConfigResolver
             sources: $sources,
             permissions: [...$appPermissions, ...($env['permissions'] ?? [])],
             domains: $envDomains ?? $appDomains ?? [],
-            dnsProfile: is_string($dns) && $dns !== '' ? $dns : null,
+            dnsProfile: is_string($dns) && $dns !== '' && $dns !== self::CLOUDFLARE ? $dns : null,
             dnsManual: $dns === false,
             certificate: $certificate,
             deployCommands: $envCommands ?? $appCommands ?? [],
@@ -190,6 +193,7 @@ final class ConfigResolver
             cacheTable: $cacheTable,
             failedJobsTable: $failedJobsTable,
             cacheDriver: self::nullableString($setting('cacheDriver')),
+            dnsCloudflare: $dns === self::CLOUDFLARE,
         );
 
         return $config;

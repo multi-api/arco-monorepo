@@ -35,8 +35,8 @@ interface DnsProvider
     public function servingRecords(string $domain, string $distributionDomain): array;
 
     /**
-     * conflicts: address records of $domain the environment does not own (all of them while the
-     * distribution does not exist yet); deploy refuses while there are any, unless $force.
+     * conflicts: address records (A/AAAA/CNAME) of $domain the environment does not own, by the
+     * provider's ownership rule; deploy refuses while there are any, unless $force.
      * deletes: records that must go in the same change as the serving records; a foreign one only
      * when $force is set.
      *
