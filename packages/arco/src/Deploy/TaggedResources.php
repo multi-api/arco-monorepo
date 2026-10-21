@@ -5,6 +5,7 @@ namespace Multiapi\Arco\Deploy;
 use Aws\Exception\AwsException;
 use Aws\ResourceGroupsTaggingAPI\ResourceGroupsTaggingAPIClient;
 use Multiapi\Arco\Config\AppConfig;
+use Multiapi\Arco\Config\QueueConfig;
 use Multiapi\Arco\Deploy\Domains\Aws;
 use Multiapi\Arco\Deploy\Domains\DomainStack;
 
@@ -27,7 +28,7 @@ final class TaggedResources
      * Sorted by type, then name. `retained` is true for what `arco remove` keeps (queues, buckets,
      * tables, SSM parameters, log groups, anything Arco does not delete).
      *
-     * @return list<array{type: string, name: string, arn: string, retained: bool}>
+     * @return list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>}>
      * @throws \Aws\Exception\AwsException a refused or failed lookup
      */
     public function list(AppConfig $config): array
@@ -57,7 +58,7 @@ final class TaggedResources
                     continue;
                 }
                 [$type, $name] = self::parse($arn);
-                $resources[] = ['type' => $type, 'name' => $name, 'arn' => $arn, 'retained' => ! self::removed($config, $type, $name, $tags)];
+                $resources[] = ['type' => $type, 'name' => $name, 'arn' => $arn, 'retained' => ! self::removed($config, $type, $name, $tags), 'relations' => []];
             }
             $token = Aws::string($page['PaginationToken'] ?? null);
             $token = $token === '' ? null : $token;
@@ -66,6 +67,7 @@ final class TaggedResources
         if ($role !== null) {
             $resources[] = $role;
         }
+        $resources = self::withRelations($config, $resources);
         usort($resources, static fn (array $a, array $b): int => [$a['type'], $a['name']] <=> [$b['type'], $b['name']]);
         return $resources;
     }
@@ -74,7 +76,7 @@ final class TaggedResources
      * The execution role Arco manages, when it exists and is this environment's. Informational: a role
      * that is missing, unreadable or denied is simply not listed.
      *
-     * @return array{type: string, name: string, arn: string, retained: bool}|null
+     * @return array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>}|null
      */
     private function executionRole(AppConfig $config): ?array
     {
@@ -90,7 +92,67 @@ final class TaggedResources
         if ($role === null || ! Ownership::tagged($role->tags, $config)) {
             return null;
         }
-        return ['type' => 'iam:role', 'name' => $name, 'arn' => $role->fullArn ?? $name, 'retained' => false];
+        return ['type' => 'iam:role', 'name' => $name, 'arn' => $role->fullArn ?? $name, 'retained' => false, 'relations' => []];
+    }
+
+    /**
+     * Fills each resource's outgoing relations from the resolved config and the listing alone (no extra
+     * AWS calls): a queue's worker function `worker_of` its queue, a dead-letter queue `dlq_of` its queue,
+     * the scheduler rule `invokes` the console function, the distribution `serves` and a certificate
+     * `validates` each configured domain. A target that cannot be resolved is left out, never guessed.
+     *
+     * @param list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>}> $resources
+     * @return list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>}>
+     */
+    private static function withRelations(AppConfig $config, array $resources): array
+    {
+        $arns = [];
+        foreach ($resources as $resource) {
+            $arns[$resource['type'] . ' ' . $resource['name']] = $resource['arn'];
+        }
+        // The queue ARN: the listed one for a queue Arco made, else the one the config spells (existing).
+        $queueArn = static function (QueueConfig $queue) use ($config, $arns): ?string {
+            $arn = $arns['sqs ' . $queue->physicalName($config)] ?? $queue->arn($config);
+            return str_contains($arn, '::') || str_ends_with($arn, ':') ? null : $arn;
+        };
+        $workers = [];
+        $dlqs = [];
+        foreach ($config->queues as $queue) {
+            $arn = $queueArn($queue);
+            if ($arn === null) {
+                continue;
+            }
+            $workers[$config->workerFunctionName($queue->name)] = $arn;
+            $dlq = $queue->dlqName($config);
+            if ($dlq !== null) {
+                $dlqs[$dlq] = $arn;
+            }
+        }
+        $console = $arns['lambda:function ' . $config->consoleFunctionName()] ?? null;
+        foreach ($resources as &$resource) {
+            $resource['relations'] = match ($resource['type']) {
+                'lambda:function' => self::relations('worker_of', array_filter([$workers[$resource['name']] ?? null])),
+                'sqs' => self::relations('dlq_of', array_filter([$dlqs[$resource['name']] ?? null])),
+                'events:rule' => $resource['name'] === SchedulerRule::name($config) ? self::relations('invokes', array_filter([$console])) : [],
+                'cloudfront:distribution' => self::relations('serves', $config->domains),
+                'acm:certificate' => self::relations('validates', $config->domains),
+                default => [],
+            };
+        }
+        return $resources;
+    }
+
+    /**
+     * @param array<array-key, string> $targets
+     * @return list<array{type: string, target: string}>
+     */
+    private static function relations(string $type, array $targets): array
+    {
+        $out = [];
+        foreach ($targets as $target) {
+            $out[] = ['type' => $type, 'target' => $target];
+        }
+        return $out;
     }
 
     /**

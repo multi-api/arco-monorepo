@@ -113,6 +113,65 @@ final class TaggedResourcesTest extends TestCase
         self::assertSame($sorted, $resources, 'sorted by type, then name');
     }
 
+    /** @return array<string, list<array{type: string, target: string}>> relations by "type name" */
+    private static function relations(AppConfig $config, array $mappings): array
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['ResourceTagMappingList' => $mappings]), AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404));
+        $out = [];
+        foreach (self::subject($mocks)->list($config) as $resource) {
+            $out[$resource['type'] . ' ' . $resource['name']] = $resource['relations'];
+        }
+        return $out;
+    }
+
+    public function test_lists_each_resources_outgoing_relations(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e
+            ->domain(['shop.example.com', 'www.example.com'])
+            ->queue('emails')
+            ->queue('legacy', existing: 'arn:aws:sqs:us-east-1:222222222222:legacy-jobs'))->toArray(), 'production');
+        $queue = 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails';
+        $console = 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console';
+
+        $relations = self::relations($config, [
+            self::mapping($console),
+            self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production'),
+            self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production-queue-emails'),
+            self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production-queue-legacy'),
+            self::mapping($queue),
+            self::mapping('arn:aws:sqs:us-east-1:111111111111:shop-production-emails-dlq'),
+            self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-scheduler'),
+            self::mapping('arn:aws:cloudfront::111111111111:distribution/E1ABC'),
+            self::mapping('arn:aws:acm:us-east-1:111111111111:certificate/abc'),
+            self::mapping('arn:aws:s3:::shop-production-uploads-111111111111'),
+        ]);
+
+        self::assertSame([['type' => 'worker_of', 'target' => $queue]], $relations['lambda:function shop-production-queue-emails']);
+        self::assertSame([['type' => 'worker_of', 'target' => 'arn:aws:sqs:us-east-1:222222222222:legacy-jobs']], $relations['lambda:function shop-production-queue-legacy']);
+        self::assertSame([['type' => 'dlq_of', 'target' => $queue]], $relations['sqs shop-production-emails-dlq']);
+        self::assertSame([['type' => 'invokes', 'target' => $console]], $relations['events:rule arco-shop-production-scheduler']);
+        $domains = [['type' => 'serves', 'target' => 'shop.example.com'], ['type' => 'serves', 'target' => 'www.example.com']];
+        self::assertSame($domains, $relations['cloudfront:distribution E1ABC']);
+        self::assertSame(array_map(static fn (array $r): array => ['type' => 'validates'] + $r, array_map(static fn (array $r): array => ['target' => $r['target']], $domains)), $relations['acm:certificate abc']);
+        foreach (['lambda:function shop-production-console', 'lambda:function shop-production', 'sqs shop-production-emails', 's3 shop-production-uploads-111111111111'] as $other) {
+            self::assertSame([], $relations[$other], $other);
+        }
+    }
+
+    public function test_unresolvable_relations_are_left_out(): void
+    {
+        // No console function listed, no domains configured, the worker's queue is not configured.
+        $relations = self::relations($this->config(), [
+            self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-scheduler'),
+            self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production-queue-ghost'),
+            self::mapping('arn:aws:cloudfront::111111111111:distribution/E1ABC'),
+            self::mapping('arn:aws:acm:us-east-1:111111111111:certificate/abc'),
+        ]);
+
+        self::assertSame(['acm:certificate abc' => [], 'cloudfront:distribution E1ABC' => [], 'events:rule arco-shop-production-scheduler' => [], 'lambda:function shop-production-queue-ghost' => []], $relations);
+    }
+
     public function test_never_lists_a_resource_whose_tags_differ(): void
     {
         // AWS filters by tag; a mapping with other values (or one tag missing) is still never listed.
@@ -136,7 +195,7 @@ final class TaggedResourcesTest extends TestCase
 
         $resources = self::subject($mocks)->list($this->config());
 
-        self::assertSame([['type' => 'iam:role', 'name' => 'arco-shop-production', 'arn' => 'arn:aws:iam::111111111111:role/arco-shop-production', 'retained' => false]], $resources);
+        self::assertSame([['type' => 'iam:role', 'name' => 'arco-shop-production', 'arn' => 'arn:aws:iam::111111111111:role/arco-shop-production', 'retained' => false, 'relations' => []]], $resources);
     }
 
     public function test_a_missing_or_denied_role_is_not_listed_and_does_not_fail(): void

@@ -54,7 +54,7 @@ final class FakeDeployer implements Deployer
     public ?\Throwable $ownershipError = null;
     /** how many times checkOwnership() ran */
     public int $ownershipChecks = 0;
-    /** @var list<array{type: string, name: string, arn: string, retained: bool}> returned by resources() */
+    /** @var list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>}> returned by resources() */
     public array $tagged = [];
     /** thrown by resources(), e.g. AWS refusing tag:GetResources */
     public ?\Throwable $taggedError = null;

@@ -184,7 +184,7 @@ final class InfoCommand extends ArcoCommand
      * The tagged resources, or the error to show: no profile resolves without prompting, the
      * credentials are missing or expired, or AWS refused the lookup (tag:GetResources).
      *
-     * @return array{0: list<array{type: string, name: string, arn: string, retained: bool}>, 1: ?string}
+     * @return array{0: list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>}>, 1: ?string}
      */
     private function taggedResources(AppConfig $config, ?string $profileFlag): array
     {
