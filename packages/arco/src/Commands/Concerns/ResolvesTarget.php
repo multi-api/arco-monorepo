@@ -22,7 +22,7 @@ use Multiapi\Arco\Config\ConfigLoader;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Validator;
 use Multiapi\Arco\Deploy\DeployException;
-use Multiapi\Arco\Deploy\Domains\Dns;
+use Multiapi\Arco\Deploy\Domains\Route53Dns;
 use Multiapi\Arco\Package\PackageTooLarge;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Question\ChoiceQuestion;
@@ -174,7 +174,7 @@ trait ResolvesTarget
         }
         for ($current = $e; $current !== null; $current = $current->getPrevious()) {
             if ($current instanceof AwsException) {
-                return $this->credentialProblem($e, in_array($current->getCommand()->getName(), Dns::OPERATIONS, true) ? $dns : $deploy);
+                return $this->credentialProblem($e, in_array($current->getCommand()->getName(), Route53Dns::OPERATIONS, true) ? $dns : $deploy);
             }
         }
         if (! CredentialError::matches($e) && SsoHint::command($e, $deploy) === null) {

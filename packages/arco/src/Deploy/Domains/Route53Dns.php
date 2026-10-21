@@ -3,11 +3,15 @@
 namespace Multiapi\Arco\Deploy\Domains;
 
 use Aws\Route53\Route53Client;
+use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\DeployException;
 use Multiapi\Arco\Deploy\Sleeper;
 
-/** Route 53 in the account that holds the zones (the deploy account or the dns() profile's). */
-final class Dns
+/**
+ * Route 53 in the account that holds the zones (the deploy account or the dns() profile's). Domains are
+ * served by A/AAAA aliases to the distribution; a record is this environment's when it points at it.
+ */
+final class Route53Dns implements DnsProvider
 {
     /** The Route 53 operations made here: an error on one of them comes from the DNS profile's clients. */
     public const OPERATIONS = ['ListResourceRecordSets', 'ChangeResourceRecordSets', 'GetChange', 'ListHostedZonesByName'];
@@ -31,7 +35,7 @@ final class Dns
      *
      * @return list<array<string, mixed>>
      */
-    public function recordSets(HostedZone $zone, string $name): array
+    public function records(HostedZone $zone, string $name): array
     {
         $page = Aws::call($this->route53, 'ListResourceRecordSets', ['HostedZoneId' => $zone->id, 'StartRecordName' => $name, 'MaxItems' => '100']);
         return array_values(array_filter(
@@ -40,12 +44,46 @@ final class Dns
         ));
     }
 
+    public function servingRecords(string $domain, string $distributionDomain): array
+    {
+        return DnsRecord::aliases($domain, $distributionDomain);
+    }
+
+    public function plan(array $records, string $domain, ?string $distributionDomain, bool $force, AppConfig $owner): array
+    {
+        return RecordGuard::plan($records, $domain, $distributionDomain, $force);
+    }
+
+    public function removable(array $records, string $domain, string $distributionDomain, AppConfig $owner): array
+    {
+        return RecordGuard::ourAliases($records, $domain, $distributionDomain);
+    }
+
+    public function isSatisfied(DnsRecord $record, array $existing, AppConfig $owner): bool
+    {
+        return $record->isSatisfiedBy($existing);
+    }
+
+    public function describe(array $record): string
+    {
+        return RecordGuard::describe($record);
+    }
+
+    /** One change batch, deletes first, then the INSYNC wait. */
+    public function apply(HostedZone $zone, array $deletes, array $upserts, AppConfig $owner): void
+    {
+        $this->change($zone, [
+            ...array_map(fn (array $set) => ['DELETE', $set], $deletes),
+            ...array_map(fn (DnsRecord $record) => ['UPSERT', $record->recordSet()], $upserts),
+        ]);
+    }
+
     /**
      * Applies the changes in one batch and waits until Route 53 has propagated them.
      *
      * @param list<array{0: 'UPSERT'|'DELETE', 1: array<string, mixed>}> $changes action and ResourceRecordSet
      */
-    public function change(HostedZone $zone, array $changes, int $timeout = 600): void
+    private function change(HostedZone $zone, array $changes, int $timeout = 600): void
     {
         if ($changes === []) {
             return;
