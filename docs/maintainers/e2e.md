@@ -48,6 +48,7 @@ The example app is copied without `vendor/` to `build/tmp/integration/e2e-app-<r
 | `test_scheduler` | `/e2e/schedule` for up to 150 s: the EventBridge rule ran `schedule:run` on the console function |
 | `test_arco_command` | `arco command --env=floci 'about --only=environment'` exits 0 and shows `production` |
 | `test_logs` | `arco logs --env=floci --since=10m` exits 0 and prints events |
+| `test_permissions_boundary` | the environment's `permissionsBoundary('arn:aws:iam::aws:policy/PowerUserAccess')` is on the execution role (`iam:GetRole`) and in `arco info --json` (`permissions_boundary`); `test_deploy_json` also checks it in the `deploy.step_role` params. The real-AWS run sets the same AWS-managed boundary and runs the same check |
 
 ## Known Floci gaps
 
@@ -105,13 +106,13 @@ Real run (`ARCO_E2E_DRY_RUN=0`):
 
 1. Guard; create the SecureString parameter `/<app>/e2e/app-key`.
 2. `arco deploy --env=e2e --yes`, `arco info --env=e2e --json` for the URL.
-3. Checks: `test_up`, `test_cache`, `test_storage`, `test_queue_job`, `test_scheduler`, `test_arco_command`, `test_logs` (as in the Floci table above).
+3. Checks: `test_up`, `test_cache`, `test_storage`, `test_queue_job`, `test_scheduler`, `test_arco_command`, `test_logs`, `test_permissions_boundary` (as in the Floci table above).
 4. `arco remove --env=e2e --yes`, then the cleanup prints its plan, what it leaves alone and each delete. A failed remove or a failed delete fails the run and names what is left.
 
 Step 4 also runs when the deploy fails. If the run is killed (Ctrl-C), nothing cleans up: the app name is printed at the start (`[e2e-aws] … app arco-e2e-…`); run `AWS_PROFILE=<profile> ARCO_E2E_APP=<it> ARCO_E2E_ACCOUNT=<id> vendor/bin/arco remove --env=e2e --yes` from a copy of `examples/laravel`, then delete the retained `<app>-e2e-*` queues, bucket and table and the parameter by hand.
 
 ## Permissions of the E2E profile
 
-Besides what `arco deploy` and `arco remove` need ([getting started: minimal IAM permissions](../../packages/arco/docs/getting-started.md#minimal-iam-permissions), with SSM scoped to `parameter/arco-e2e-*`): `ssm:PutParameter`, `ssm:AddTagsToResource`, `ssm:DescribeParameters`, `ssm:DeleteParameter`; `s3:ListAllMyBuckets`, `s3:GetBucketTagging`, `s3:ListBucketVersions`, `s3:DeleteObjectVersion`, `s3:DeleteBucket`; `dynamodb:ListTables`, `dynamodb:DescribeTable`, `dynamodb:ListTagsOfResource`, `dynamodb:DeleteTable`; `sqs:ListQueues`, `sqs:GetQueueUrl`, `sqs:ListQueueTags`, `sqs:DeleteQueue`; `logs:DescribeLogGroups`, `logs:ListTagsForResource`, `logs:DeleteLogGroup`; `tag:GetResources`.
+Besides what `arco deploy` and `arco remove` need ([getting started: minimal IAM permissions](../../packages/arco/docs/getting-started.md#minimal-iam-permissions), with SSM scoped to `parameter/arco-e2e-*`, and the boundary's `iam:PutRolePermissionsBoundary` on `role/arco-*`, since the `e2e` environment sets `arn:aws:iam::aws:policy/PowerUserAccess`): `ssm:PutParameter`, `ssm:AddTagsToResource`, `ssm:DescribeParameters`, `ssm:DeleteParameter`; `s3:ListAllMyBuckets`, `s3:GetBucketTagging`, `s3:ListBucketVersions`, `s3:DeleteObjectVersion`, `s3:DeleteBucket`; `dynamodb:ListTables`, `dynamodb:DescribeTable`, `dynamodb:ListTagsOfResource`, `dynamodb:DeleteTable`; `sqs:ListQueues`, `sqs:GetQueueUrl`, `sqs:ListQueueTags`, `sqs:DeleteQueue`; `logs:DescribeLogGroups`, `logs:ListTagsForResource`, `logs:DeleteLogGroup`; `tag:GetResources`.
 
 The cleanup itself is covered by `tests/Unit/E2e/AwsE2eCleanupTest.php` against an in-memory account (`FakeAwsAccount`): no network, no profile.

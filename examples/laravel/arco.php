@@ -17,7 +17,9 @@ return App::make($app)
             'APP_KEY' => 'base64:' . base64_encode(str_repeat('a', 32)),
         ]))
     // Local end-to-end run against the Floci emulator (bin/test-docker e2e).
+    // Both run environments set an AWS-managed boundary (no IAM setup needed); the checks read it back with iam:GetRole.
     ->environment('floci', fn (Environment $env) => $env
+        ->permissionsBoundary('arn:aws:iam::aws:policy/PowerUserAccess')
         ->console()
         ->scheduler(1)
         ->queue('default')
@@ -34,7 +36,8 @@ return App::make($app)
     // docs/maintainers/e2e.md), which creates the APP_KEY parameter itself. With ARCO_E2E_ACCOUNT set,
     // every arco command also refuses credentials of any other account.
     ->environment('e2e', function (Environment $env) use ($app, $e2eAccount) {
-        $env->console()
+        $env->permissionsBoundary('arn:aws:iam::aws:policy/PowerUserAccess')
+            ->console()
             ->scheduler(1)
             ->queue('default')
             ->storage('files')

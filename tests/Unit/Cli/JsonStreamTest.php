@@ -92,6 +92,28 @@ final class JsonStreamTest extends TestCase
         self::assertStringContainsString('deploy.console_reason.custom_binary', $lines[2]['message']);
     }
 
+    public function test_the_permissions_boundary_is_in_the_step_params_and_a_kept_one_is_a_note(): void
+    {
+        $boundary = 'arn:aws:iam::123456789012:policy/arco-boundary';
+        $stream = $this->stream();
+        $stream('deploy.step_role', ['role' => 'arco-shop-production', 'boundary' => $boundary]);
+        $stream('deploy.boundary_set', ['role' => 'arco-shop-production', 'boundary' => $boundary]);
+        $stream('deploy.boundary_kept', ['role' => 'arco-shop-production', 'boundary' => $boundary]);
+
+        $lines = $this->lines();
+        self::assertSame([
+            ['deploy.step_role', 'started'],
+            ['deploy.step_role', 'done'],
+            ['deploy.boundary_set', 'started'],
+            ['deploy.boundary_kept', 'note'],
+        ], array_map(fn (array $l) => [$l['key'], $l['status']], $lines));
+        foreach ($lines as $line) {
+            self::assertSame(['role' => 'arco-shop-production', 'boundary' => $boundary], $line['params'], 'not a secret: never redacted');
+        }
+        self::assertSame('note', \Multiapi\Arco\Cli\StepPrinter::kind('deploy.boundary_kept', []));
+        self::assertSame('step', \Multiapi\Arco\Cli\StepPrinter::kind('deploy.boundary_set', []));
+    }
+
     public function test_progress_is_sent_first_then_at_most_once_a_second_and_always_at_100(): void
     {
         $stream = $this->stream();

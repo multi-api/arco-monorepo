@@ -39,6 +39,9 @@ final class ExampleE2eEnvironmentTest extends TestCase
         self::assertSame('state', $config->tables[0]->name);
         self::assertSame('expires_at', $config->tables[0]->ttl);
         self::assertSame('arco-e2e-0123abcd-e2e-state', $config->tables[0]->tableName($config));
+        // An AWS-managed boundary: the run needs no IAM setup, and its check reads it back with iam:GetRole.
+        self::assertSame('arn:aws:iam::aws:policy/PowerUserAccess', $config->permissionsBoundary);
+        self::assertNull($config->role);
     }
 
     public function test_defaults_without_a_run(): void

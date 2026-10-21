@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Tests\E2e;
 
+use Aws\Iam\IamClient;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigLoader;
@@ -36,12 +37,20 @@ final class AwsE2eTest extends TestCase
     private static ?string $runApp = null;
     private static bool $dryRun = true;
     private static ?AwsE2eCleanup $cleanup = null;
+    /** The guarded clients of the E2E account (set once connect() accepted them). */
+    private static ?AwsClients $aws = null;
     /** From the first call that may create something on: tearDownAfterClass removes and cleans up. */
     private static bool $mayHaveCreated = false;
 
     protected static function environment(): string
     {
         return self::ENV;
+    }
+
+    protected static function iam(): IamClient
+    {
+        \assert(self::$aws !== null);
+        return self::$aws->iam();
     }
 
     /** @return array<string, string> */
@@ -63,6 +72,7 @@ final class AwsE2eTest extends TestCase
         self::$cleanup = AwsE2eCleanup::connect($aws, $account, null, static function (string $line): void {
             fwrite(STDERR, "$line\n");
         });
+        self::$aws = $aws;
 
         self::$runApp = AwsE2eCleanup::newAppName();
         // The config loader of this process (dry-run listing) reads arco.php the way the CLI does.

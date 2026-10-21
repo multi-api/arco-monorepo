@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Tests\E2e;
 
 use Aws\CloudFormation\CloudFormationClient;
 use Aws\DynamoDb\DynamoDbClient;
+use Aws\Iam\IamClient;
 use Aws\Route53\Route53Client;
 use PHPUnit\Framework\Attributes\Depends;
 use PHPUnit\Framework\Attributes\Group;
@@ -49,6 +50,15 @@ final class FlociE2eTest extends TestCase
     protected static function environment(): string
     {
         return self::ENV;
+    }
+
+    protected static function iam(): IamClient
+    {
+        return new IamClient([
+            'region' => self::REQUIRED_ENV['AWS_REGION'],
+            'endpoint' => self::REQUIRED_ENV['AWS_ENDPOINT_URL'],
+            'credentials' => ['key' => 'test', 'secret' => 'test'],
+        ]);
     }
 
     public static function setUpBeforeClass(): void
@@ -154,6 +164,9 @@ final class FlociE2eTest extends TestCase
         }
         $done = array_filter($steps, static fn (array $step): bool => $step['status'] === 'done');
         self::assertNotSame([], $done, '[deploy --json] no step reached done');
+        // The boundary of arco.php is in the role step's params, unredacted (0.11).
+        $role = array_values(array_filter($steps, static fn (array $step): bool => $step['key'] === 'deploy.step_role' && $step['status'] === 'started'));
+        self::assertSame(['role' => 'arco-arco-example-floci', 'boundary' => 'arn:aws:iam::aws:policy/PowerUserAccess'], $role[0]['params'] ?? null, '[deploy --json] deploy.step_role params');
         $zip = array_filter($events, static fn (array $event): bool => $event['type'] === 'progress' && ($event['key'] ?? null) === 'build.zip' && ($event['percent'] ?? null) === 100);
         self::assertNotSame([], $zip, '[deploy --json] no build.zip progress reaching 100');
     }
