@@ -267,4 +267,22 @@ final class TaggedResourcesTest extends TestCase
         $this->expectException(ResourceGroupsTaggingAPIException::class);
         (self::subject($mocks))->list($this->config());
     }
+
+    public function test_a_generic_table_is_listed_as_a_retained_dynamodb_table_without_relations(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->table('state', ttl: 'expires_at')->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['ResourceTagMappingList' => [self::mapping('arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-state', extra: ['arco:resource' => 'table:state'])]]),
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
+        );
+
+        self::assertSame([[
+            'type' => 'dynamodb:table',
+            'name' => 'shop-production-state',
+            'arn' => 'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-state',
+            'retained' => true,
+            'relations' => [],
+        ]], self::subject($mocks)->list($config));
+    }
 }

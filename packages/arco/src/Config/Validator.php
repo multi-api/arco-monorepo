@@ -209,6 +209,7 @@ final class Validator
                 $result->error('validation.table_existing', ['table' => $table->kind, 'value' => $table->existing]);
             }
         }
+        self::validateGenericTables($config, $result);
 
         // The script every command goes through (artisan), as the console runtime runs it: php <entry> <args>.
         $entry = null;
@@ -522,6 +523,68 @@ final class Validator
         }
         if ($defaults > 1) {
             $result->error('validation.storage_default_twice');
+        }
+    }
+
+    /** Names Arco's own tables take: <app>-<env>-cache and <app>-<env>-failed-jobs. */
+    private const RESERVED_TABLE_NAMES = ['cache', 'failed-jobs'];
+    /** DynamoDB's limit for table and attribute names. */
+    private const DYNAMODB_NAME_MAX = 255;
+
+    /**
+     * Why a table() cannot take this name: the name rule, or one of Arco's own tables.
+     *
+     * @return array{key: string, params: array<string, string>}|null
+     */
+    public static function genericTableNameError(string $name): ?array
+    {
+        if (preg_match(self::NAME, $name) !== 1) {
+            return ['key' => 'validation.generic_table_name', 'params' => ['name' => $name]];
+        }
+        if (in_array($name, self::RESERVED_TABLE_NAMES, true)) {
+            return ['key' => 'validation.generic_table_reserved', 'params' => ['name' => $name]];
+        }
+        return null;
+    }
+
+    private static function validateGenericTables(AppConfig $config, ValidationResult $result): void
+    {
+        // Every DynamoDB table the app uses, by ARN: one table cannot be two of them.
+        $taken = [];
+        foreach (['cache()' => $config->cacheTable, 'failedJobsTable()' => $config->failedJobsTable] as $call => $table) {
+            if ($table !== null) {
+                $taken[$table->arn($config)] = $call;
+            }
+        }
+        foreach ($config->tables as $table) {
+            $name = $table->name;
+            $error = self::genericTableNameError($name);
+            if ($error !== null) {
+                $result->error($error['key'], $error['params']);
+                continue;
+            }
+            if ($table->existing === null) {
+                $physical = $table->tableName($config);
+                if (strlen($physical) > self::DYNAMODB_NAME_MAX) {
+                    $result->error('validation.generic_table_name_length', ['table' => $name, 'name' => $physical]);
+                    continue;
+                }
+            } elseif (! GenericTableConfig::isExisting($table->existing)) {
+                $result->error('validation.generic_table_existing', ['table' => $name, 'value' => $table->existing]);
+                continue;
+            } elseif ($table->ttl !== null) {
+                // TTL is set by the resources stack, which holds no table Arco did not create.
+                $result->warning('validation.generic_table_existing_ttl', ['table' => $name, 'existing' => $table->existing]);
+            }
+            if ($table->ttl !== null && ($table->ttl === '' || strlen($table->ttl) > self::DYNAMODB_NAME_MAX)) {
+                $result->error('validation.generic_table_ttl', ['table' => $name, 'value' => $table->ttl]);
+            }
+            $arn = $table->arn($config);
+            if (isset($taken[$arn])) {
+                $result->error('validation.generic_table_clash', ['table' => $name, 'name' => $table->physicalName($config), 'other' => $taken[$arn]]);
+                continue;
+            }
+            $taken[$arn] = "table('{$name}')";
         }
     }
 

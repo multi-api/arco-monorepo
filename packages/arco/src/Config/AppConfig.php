@@ -14,6 +14,7 @@ final readonly class AppConfig
      * @param list<string> $deployCommands
      * @param list<QueueConfig> $queues
      * @param list<StorageConfig> $storage
+     * @param list<GenericTableConfig> $tables
      */
     public function __construct(
         public string $app,
@@ -63,6 +64,8 @@ final readonly class AppConfig
         public ?string $cacheDriver = null,
         /** dns('cloudflare'): the custom domains' zones are on Cloudflare ($dnsProfile is then null) */
         public bool $dnsCloudflare = false,
+        /** table() entries, declaration order, app level first */
+        public array $tables = [],
     ) {
     }
 
@@ -106,6 +109,7 @@ final readonly class AppConfig
             failedJobsTable: $this->failedJobsTable,
             cacheDriver: $this->cacheDriver,
             dnsCloudflare: $this->dnsCloudflare,
+            tables: $this->tables,
         );
     }
 
