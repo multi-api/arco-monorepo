@@ -298,7 +298,7 @@ return [
     'cloudflare.zone_missing' => 'No active Cloudflare zone the API token can see holds: {domains}. Add the zone to Cloudflare, or give the token ({env}) the permissions {permissions} on it.',
     'cloudflare.request_failed' => 'A Cloudflare API request failed: {detail}',
     'cloudflare.gave_up' => 'Cloudflare kept answering HTTP {status} to {call} after {attempts} attempts. Try again in a few minutes.',
-    'cloudflare.partial' => "A Cloudflare DNS change failed part-way: {detail}\nAlready changed in Cloudflare:\n{done}\nDeploy again to finish: Arco recognises the records it already wrote.",
+    'cloudflare.partial' => "A Cloudflare DNS change failed part-way: {detail}\nAlready changed in Cloudflare:\n{done}\nRun the command again to finish: Arco recognises the records it already wrote.",
     'cloudflare.partial_conflict' => "These DNS records appeared while Arco was changing Cloudflare, and Arco does not take over live records:\n{records}\nAlready changed in Cloudflare:\n{done}\nRemove them, or deploy again with --force-dns to replace them.",
     'cloudflare.validation_conflict' => "These DNS records already exist at the certificate's validation name and are not what ACM asks for:\n{records}\nArco does not take over live records. Remove them, or deploy again with --force-dns to replace them.",
     'cloudflare.dns_profile_conflict' => '--dns-profile names a Route 53 profile, but this environment uses dns(\'cloudflare\'). Leave --dns-profile out.',

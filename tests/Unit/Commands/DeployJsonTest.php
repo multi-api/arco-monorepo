@@ -15,6 +15,7 @@ use Multiapi\Arco\Console\CommandResult;
 use Multiapi\Arco\Deploy\AppStatus;
 use Multiapi\Arco\Deploy\DeployException;
 use Multiapi\Arco\Deploy\DeployPipeline;
+use Multiapi\Arco\Deploy\Domains\CloudflareApi;
 use Multiapi\Arco\Package\Packager;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Binary\ElfInspectorTest;
@@ -407,6 +408,40 @@ final class DeployJsonTest extends TestCase
         self::assertSame('refused', self::last($lines)['outcome']);
         self::assertStringStartsWith('cloudflare.', self::last($lines)['error']['key']);
         self::assertStringNotContainsString(FakeCloudflare::TOKEN, $tester->getDisplay());
+    }
+
+    public function test_a_cloudflare_outage_before_any_aws_change_is_failed_not_refused(): void
+    {
+        file_put_contents("$this->project/arco.php", str_replace(
+            "->variables(['APP_ENV' => 'production'])",
+            "->domain('arco.acmeapp.io')->dns('cloudflare')",
+            (string) file_get_contents("$this->project/arco.php"),
+        ));
+        $cloudflare = (new FakeCloudflare())->queue(...array_fill(0, CloudflareApi::ATTEMPTS, FakeCloudflare::json(503, ['success' => false])));
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester($this->existing(), cloudflare: $cloudflare);
+
+        $lines = $this->deploy($tester, ['--cloudflare-token' => FakeCloudflare::TOKEN]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertSame(['failed', 'cloudflare.gave_up'], [self::last($lines)['outcome'], self::last($lines)['error']['key']]);
+    }
+
+    public function test_a_cloudflare_request_failure_before_any_aws_change_is_failed_not_refused(): void
+    {
+        file_put_contents("$this->project/arco.php", str_replace(
+            "->variables(['APP_ENV' => 'production'])",
+            "->domain('arco.acmeapp.io')->dns('cloudflare')",
+            (string) file_get_contents("$this->project/arco.php"),
+        ));
+        $cloudflare = (new FakeCloudflare())->queue(FakeCloudflare::json(400, ['success' => false, 'errors' => [['code' => 1000, 'message' => 'Bad request']]]));
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester($this->existing(), cloudflare: $cloudflare);
+
+        $lines = $this->deploy($tester, ['--cloudflare-token' => FakeCloudflare::TOKEN]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertSame(['failed', 'cloudflare.request_failed'], [self::last($lines)['outcome'], self::last($lines)['error']['key']]);
     }
 
     public function test_a_build_failure_is_failed_not_refused(): void

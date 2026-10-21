@@ -108,6 +108,7 @@ final class FlociE2eTest extends TestCase
     }
 
     /** Every stdout line of `arco deploy --json` is a schema-1 JSON object, and the last is the deployed result. */
+    #[Depends('test_up')]
     public function test_deploy_json(): void
     {
         \assert(self::$jsonDeploy !== null);
@@ -158,6 +159,7 @@ final class FlociE2eTest extends TestCase
     }
 
     /** The table ->table('state', ttl: 'expires_at') creates: PK/SK strings, on demand, TTL on expires_at, in info --json. */
+    #[Depends('test_up')]
     public function test_table_resource(): void
     {
         $tables = self::$info['tables'] ?? null;

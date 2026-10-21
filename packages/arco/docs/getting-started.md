@@ -607,8 +607,8 @@ Every line has `schema` (`1`) and `type`, one of:
 |---|---|
 | `deployed` | `deploy` finished: the new revision is live. |
 | `removed` | `remove` finished. |
-| `refused` | Arco declined **before changing anything in AWS**: invalid `arco.php`, a confirmation that needs `--yes`, no profile, the `account()` lock, expired credentials, an ownership or other guard, a missing or refused Cloudflare token or zone, a `--package` zip it does not accept. Fix the cause and run again. For `remove`, anything before its first deletion. |
-| `failed` | Something went wrong: a build error (composer or artisan), an AWS error, a failed verification (`rolled_back` says whether the previous revision is live again), an unexpected error, and any error once AWS changes began, even a guard's. Check the AWS state before retrying. |
+| `refused` | Arco declined **before changing anything in AWS**: invalid `arco.php`, a confirmation that needs `--yes`, no profile, the `account()` lock, expired credentials, an ownership or other guard, a missing or rejected Cloudflare token or zone, a `--package` zip it does not accept. Fix the cause and run again. For `remove`, anything before its first deletion. |
+| `failed` | Something went wrong: a build error (composer or artisan), an AWS error, a Cloudflare outage or request error (`cloudflare.gave_up`, `cloudflare.request_failed`), a failed verification (`rolled_back` says whether the previous revision is live again), an unexpected error, and any error once AWS changes began, even a guard's. Check the AWS state before retrying. |
 
 `error.key` names the error: a message key such as `aws.account_mismatch`, `deploy.confirm_required`,
 `remove.yes_required`, `cloudflare.token_missing` or `build.command_failed`; for an invalid `arco.php`, the

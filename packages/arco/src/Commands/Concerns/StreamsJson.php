@@ -104,7 +104,7 @@ trait StreamsJson
     /**
      * The result of a run that stopped: "refused" for a guard or refusal before AWS changed (a
      * UserError: missing confirmation, profile, credentials or account lock; a config or validation
-     * error; a DeployException guard such as ownership or the Cloudflare checks; a prebuilt package
+     * error; a DeployException guard such as ownership or a missing or rejected Cloudflare token or zone; a prebuilt package
      * that does not fit), "failed" for anything else (a build, download or AWS failure) or after a change.
      */
     protected function jsonFailure(JsonStream $stream, InputInterface $input, ?Throwable $e, string $key, string $message): void
@@ -124,8 +124,14 @@ trait StreamsJson
         return $e === null
             || $e instanceof UserError
             || $e instanceof ConfigException
-            || $e instanceof DeployException
+            || ($e instanceof DeployException && ! in_array($e->key, self::jsonTransientKeys(), true))
             || ($e instanceof BuildException && in_array($e->key, self::jsonPackageRefusals(), true));
+    }
+
+    /** @return list<string> Cloudflare network or outage errors: like an AWS error before any change, they are failures, not refusals */
+    private static function jsonTransientKeys(): array
+    {
+        return ['cloudflare.gave_up', 'cloudflare.request_failed'];
     }
 
     /** @return list<string> PackageReader's refusals of a --package zip that does not fit this deploy */

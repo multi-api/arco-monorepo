@@ -39,7 +39,7 @@ nothing else changes meaning, so an upgrade needs no change unless an AWS profil
   (`ArcoAppTables`). `cache` and `failed-jobs` are reserved names. New commands `table:add` and `table:remove`;
   `arco info` lists the tables (`tables` in `--json`). DynamoDB allows one TTL change per table per hour. See
   [Tables](docs/configuration.md#tables).
-- **Added:** `arco info --json` has the keys `dns` and `tables`, after the existing ones.
+- **Added:** `arco info --json` has the keys `dns` and `tables`, after the existing keys and before the conditional `error` key.
 - **Docs:** Cloudflare, tables, `deploy`/`remove --json`, relations, the 0.10 upgrade notes and the new entries of
   the 1.x promise. The end-to-end suite deploys a `table()` and runs `arco deploy --json` against Floci.
 
