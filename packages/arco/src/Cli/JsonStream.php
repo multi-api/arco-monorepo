@@ -17,7 +17,10 @@ use Symfony\Component\Console\Output\OutputInterface;
  * - `{"type":"result",...}`: exactly once, always last (see result()).
  *
  * `key` and `params` are API; `message` is the human text in the current language and is not.
- * Registered secret values are replaced by [redacted] in every string written.
+ * Registered secret values are replaced by [redacted] in every string written: a secret of
+ * SUBSTRING_SECRET_LENGTH characters or more wherever it appears, a shorter one only where a whole string
+ * value equals it (replacing a short value inside text would mangle domains, URLs and messages: Floci's
+ * AWS secret key is "test"). A whole value that is the app, the environment or a custom domain is kept.
  */
 final class JsonStream
 {
@@ -25,17 +28,19 @@ final class JsonStream
     /** Progress key by the step that starts the progress run. */
     private const PROGRESS_KEYS = ['package.writing' => 'build.zip', 'deploy.php_cli_downloading' => 'binary.download'];
     private const PROGRESS_FALLBACK = 'progress';
-    /** Values this short are not redacted: they would blank out ordinary text. */
-    private const MIN_SECRET_LENGTH = 4;
+    /** Secrets this long are redacted inside any string; shorter ones only as a whole value. */
+    private const SUBSTRING_SECRET_LENGTH = 8;
 
     /** @var array{key: string, params: array<string, string|int>, at: float}|null the running step */
     private ?array $running = null;
     private string $progressKey = self::PROGRESS_FALLBACK;
     private ?float $progressAt = null;
     private ?int $progressPercent = null;
-    /** @var list<string> */
+    /** @var list<string> secrets redacted wherever they appear, longest first */
     private array $secrets = [];
-    /** @var list<string> the app and environment names: never redacted when they are a whole value */
+    /** @var list<string> short secrets, redacted only when a whole string value equals one */
+    private array $exactSecrets = [];
+    /** @var list<string> the app and environment names and the custom domains: never redacted when they are a whole value */
     private array $identity = [];
     private bool $result = false;
 
@@ -87,11 +92,18 @@ final class JsonStream
         $this->event($key, 'note', $params);
     }
 
-    /** Values never written as they are (resolved secrets, tokens); null, empty and short ones are ignored. */
+    /** Values never written as they are (resolved secrets, tokens); null and empty ones are ignored. */
     public function redact(?string ...$values): void
     {
         foreach ($values as $value) {
-            if ($value !== null && strlen($value) >= self::MIN_SECRET_LENGTH && ! in_array($value, $this->secrets, true)) {
+            if ($value === null || $value === '') {
+                continue;
+            }
+            if (strlen($value) < self::SUBSTRING_SECRET_LENGTH) {
+                if (! in_array($value, $this->exactSecrets, true)) {
+                    $this->exactSecrets[] = $value;
+                }
+            } elseif (! in_array($value, $this->secrets, true)) {
                 $this->secrets[] = $value;
             }
         }
@@ -112,7 +124,7 @@ final class JsonStream
     /** $text with the registered secret values redacted, for diagnostics written elsewhere (stderr). */
     public function scrubbed(string $text): string
     {
-        return $this->secrets === [] ? $text : str_replace($this->secrets, '[redacted]', $text);
+        return $this->redactString($text);
     }
 
     /** StepPrinter's counterpart: nothing is drawn, so nothing to end. */
@@ -226,12 +238,20 @@ final class JsonStream
     private function scrub(mixed $value): mixed
     {
         return match (true) {
-            $this->secrets === [] => $value,
-            is_string($value) => in_array($value, $this->identity, true) ? $value : str_replace($this->secrets, '[redacted]', $value),
+            $this->secrets === [] && $this->exactSecrets === [] => $value,
+            is_string($value) => in_array($value, $this->identity, true) ? $value : $this->redactString($value),
             is_array($value) => array_map($this->scrub(...), $value),
             $value instanceof \stdClass => (object) array_map($this->scrub(...), (array) $value),
             default => $value,
         };
+    }
+
+    private function redactString(string $text): string
+    {
+        if (in_array($text, $this->exactSecrets, true)) {
+            return '[redacted]';
+        }
+        return $this->secrets === [] ? $text : str_replace($this->secrets, '[redacted]', $text);
     }
 
     private static function at(float $seconds): string

@@ -168,7 +168,7 @@ final class JsonStreamTest extends TestCase
         $text = $this->output->fetch();
         self::assertStringNotContainsString('s3cr3t-value-123', $text);
         self::assertSame(3, substr_count($text, '[redacted]'), 'params, message and error');
-        self::assertStringContainsString('[redacted] tab', $text, 'values shorter than 4 characters are not redacted');
+        self::assertStringContainsString('[redacted] tab', $text, 'a short secret ("ab") is not redacted inside text');
     }
 
     public function test_lines_are_written_raw_even_when_the_output_is_quiet(): void
@@ -196,30 +196,48 @@ final class JsonStreamTest extends TestCase
         self::assertSame(['shop', 'production'], [$lines[4]['app'], $lines[4]['environment']]);
     }
 
-    public function test_custom_domains_are_never_redacted_by_a_short_secret(): void
+    public function test_a_short_secret_is_redacted_only_as_a_whole_value(): void
     {
-        // Floci's AWS secret key is "test": substring redaction would turn app.arco-e2e.test into app.arco-e2e.[redacted].
+        // Floci's AWS secret key is "test": as a substring it would mangle every *.test name.
         $stream = $this->stream();
         $stream->redact('test');
         $stream->identity('shop', 'production', 'app.arco-e2e.test');
-        $stream('deploy.dns_target', ['domain' => 'app.arco-e2e.test']);
-        $stream('deploy.command', ['command' => 'echo test']);
-        $stream->result('deployed', 'shop', 'production', domains: ['app.arco-e2e.test']);
+        $stream('deploy.dns_target', ['zone' => 'arco-e2e.test', 'record' => '_x1.app.arco-e2e.test.', 'url' => 'https://app.arco-e2e.test']);
+        $stream('deploy.command', ['command' => 'test']);
+        $stream->result('failed', 'shop', 'production', 'rev-1', 'https://app.arco-e2e.test', ['app.arco-e2e.test'], errorKey: 'error.unexpected', errorMessage: 'test');
 
         $lines = $this->lines();
-        self::assertSame('app.arco-e2e.test', $lines[0]['params']['domain']);
-        self::assertSame('echo [redacted]', $lines[2]['params']['command']);
-        self::assertSame(['app.arco-e2e.test'], $lines[count($lines) - 1]['domains']);
+        self::assertSame(['zone' => 'arco-e2e.test', 'record' => '_x1.app.arco-e2e.test.', 'url' => 'https://app.arco-e2e.test'], $lines[0]['params']);
+        self::assertStringContainsString('arco-e2e.test', $lines[0]['message']);
+        self::assertSame(['command' => '[redacted]'], $lines[2]['params'], 'a whole param equal to the short secret');
+        $result = $lines[count($lines) - 1];
+        self::assertSame(['https://app.arco-e2e.test', ['app.arco-e2e.test'], '[redacted]'], [$result['url'], $result['domains'], $result['error']['message']]);
+    }
+
+    public function test_a_secret_of_8_characters_or_more_is_redacted_inside_any_text(): void
+    {
+        $stream = $this->stream();
+        $stream->redact('k3y-8chr', 'test');
+        $stream('deploy.command', ['command' => 'echo k3y-8chr && echo test']);
+        $stream->result('failed', 'shop', 'production', errorKey: 'error.unexpected', errorMessage: 'bad key k3y-8chr in config');
+
+        $lines = $this->lines();
+        self::assertSame('echo [redacted] && echo test', $lines[0]['params']['command']);
+        self::assertStringNotContainsString('k3y-8chr', $lines[0]['message']);
+        self::assertSame('bad key [redacted] in config', $lines[1]['error']['message']);
+        self::assertSame('bad key [redacted] in config', $stream->scrubbed('bad key k3y-8chr in config'), 'stderr text too');
+        self::assertSame('[redacted]', $stream->scrubbed('test'));
     }
 
     public function test_the_result_identity_is_not_redacted_even_without_registered_names(): void
     {
         $stream = $this->stream();
-        $stream->redact('staging');
-        $stream->result('refused', null, 'staging', errorKey: 'aws.no_profile_non_interactive', errorMessage: 'No profile for staging');
+        // 8+ characters, so the secret is also redacted inside the message.
+        $stream->redact('staging-eu');
+        $stream->result('refused', null, 'staging-eu', errorKey: 'aws.no_profile_non_interactive', errorMessage: 'No profile for staging-eu');
 
         $line = $this->lines()[0];
-        self::assertSame('staging', $line['environment']);
+        self::assertSame('staging-eu', $line['environment']);
         self::assertSame('No profile for [redacted]', $line['error']['message']);
     }
 }

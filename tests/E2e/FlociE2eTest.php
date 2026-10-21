@@ -112,7 +112,9 @@ final class FlociE2eTest extends TestCase
     {
         \assert(self::$jsonDeploy !== null);
         $stdout = self::$jsonDeploy->getOutput();
-        $lines = explode("\n", rtrim($stdout, "\n"));
+        // Pure NDJSON: nothing but JSON lines, each ended by a newline, no blank or human line in between.
+        self::assertStringEndsWith("\n", $stdout, '[deploy --json] stdout does not end with a newline');
+        $lines = explode("\n", substr($stdout, 0, -1));
         self::assertNotSame([''], $lines, '[deploy --json] stdout is empty');
 
         $events = [];
@@ -142,7 +144,15 @@ final class FlociE2eTest extends TestCase
             self::assertIsString($step['key'] ?? null);
             self::assertContains($step['status'] ?? null, ['started', 'done', 'warning', 'note'], '[deploy --json] step status: ' . json_encode($step));
             self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', (string) ($step['at'] ?? ''), '[deploy --json] step time');
+            if ($step['status'] === 'done') {
+                self::assertIsInt($step['elapsed_ms'] ?? null, '[deploy --json] a done step without elapsed_ms: ' . json_encode($step));
+                self::assertGreaterThanOrEqual(0, $step['elapsed_ms']);
+            } else {
+                self::assertArrayNotHasKey('elapsed_ms', $step, '[deploy --json] elapsed_ms on a step that is not done: ' . json_encode($step));
+            }
         }
+        $done = array_filter($steps, static fn (array $step): bool => $step['status'] === 'done');
+        self::assertNotSame([], $done, '[deploy --json] no step reached done');
         $zip = array_filter($events, static fn (array $event): bool => $event['type'] === 'progress' && ($event['key'] ?? null) === 'build.zip' && ($event['percent'] ?? null) === 100);
         self::assertNotSame([], $zip, '[deploy --json] no build.zip progress reaching 100');
     }

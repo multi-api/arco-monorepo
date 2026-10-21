@@ -5,8 +5,12 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## 0.10.0
 
-Four additions; nothing changes meaning, so an upgrade needs no change ([Upgrading to 0.10](docs/upgrading.md#upgrading-to-010)).
-One thing to check: `'cloudflare'` is now reserved in `dns()`.
+Four features (Cloudflare DNS, `deploy`/`remove --json`, resource relations, `table()`) and two `info --json` keys;
+nothing else changes meaning, so an upgrade needs no change unless an AWS profile is named `cloudflare`
+([Upgrading to 0.10](docs/upgrading.md#upgrading-to-010)).
+
+- **Changed:** `'cloudflare'` is reserved in `dns()`: `->dns('cloudflare')` now means Cloudflare, so an AWS profile
+  named `cloudflare` can no longer be used as a DNS profile there. Rename the profile and write the new name.
 
 - **Added:** `->dns('cloudflare')` puts the custom domains' DNS records in Cloudflare (API v4): the ACM validation
   `CNAME`s and `CNAME <domain> → <distribution>.cloudfront.net`, always `proxied: false` (the apex works through
@@ -16,15 +20,15 @@ One thing to check: `'cloudflare'` is now reserved in `dns()`.
   Records carry the comment `managed by arco: <app>/<env>`: a live record without it is refused unless
   `--force-dns`, and `arco remove` deletes only this environment's. Validation `CNAME`s carry `managed by arco`
   and are kept on remove, as with Route 53; a conflicting record at a validation name shows only after the
-  certificate is requested. Requests are retried on HTTP 429 and 5xx. `arco init` and `domain:add` offer
+  certificate is requested. Requests answered with HTTP 429 or 5xx are tried up to 4 times. `arco init` and `domain:add` offer
   Cloudflare (`--dns=cloudflare`); `arco info` shows the DNS provider (`dns.provider` row, `dns` key in `--json`).
-  **Reserved:** a profile named `cloudflare` can no longer be used through `dns()`. See
-  [Cloudflare](docs/configuration.md#cloudflare).
+  See [Cloudflare](docs/configuration.md#cloudflare).
 - **Added:** `arco deploy --json` and `arco remove --json` print NDJSON on stdout: `step` events (`started`,
   `done` with `elapsed_ms`, `warning`, `note`), throttled `progress` lines (`build.zip`, `binary.download`) and a
   final `result` line (`outcome` `deployed`, `removed`, `failed` or `refused`, `revision`, `url`, `domains`,
   `rolled_back`, `cold_start_ms`, `error {key, message}`). Every line has `"schema": 1`. `--json` never asks,
-  sends the remaining human output to stderr or nowhere, redacts resolved secrets and tokens, and keeps the exit
+  sends the remaining human output to stderr or nowhere, redacts resolved secrets and tokens (inside text from 8
+  characters, as whole values below that), and keeps the exit
   codes. Step and error `key`s with their `params` are API; `message` texts are not. See
   [Deploy and remove with `--json`](docs/getting-started.md#deploy-and-remove-with---json).
 - **Added:** `relations` on every resource of `arco info --resources --json`: `worker_of`, `dlq_of`, `invokes`,

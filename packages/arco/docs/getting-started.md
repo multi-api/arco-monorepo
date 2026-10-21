@@ -547,7 +547,7 @@ They are worked out from `arco.php` and the listing itself, with no extra AWS ca
 `validates` is set on the certificate of `certificate(arn)`, or, without one, only when exactly one certificate
 is listed: a certificate kept from an earlier set of domains makes two, and then neither gets it. A queue
 Arco manages that is missing from the listing gives no `worker_of`/`dlq_of`; an `existing` queue is named by
-its configured ARN.
+its configured ARN when that ARN names the region and the account (otherwise it gets no relation).
 
 ```json
 {"type":"lambda:function","name":"shop-production-queue-emails","arn":"arn:aws:lambda:us-east-1:111111111111:function:shop-production-queue-emails","retained":false,"relations":[{"type":"worker_of","target":"arn:aws:sqs:us-east-1:111111111111:shop-production-emails"}]}
@@ -624,9 +624,11 @@ of its own) and `error.unexpected` (an unexpected exception; `message` is the ex
   option value, which the CLI rejects before the command runs, exits 1 with **no** result line: treat a
   non-zero exit without a result line as such an error (stderr says which).
 - Secret values Arco resolved (`arco-ssm:`, `arco-secret:`), the Cloudflare token, `AWS_SECRET_ACCESS_KEY` and
-  `AWS_SESSION_TOKEN` are replaced with `[redacted]` wherever they appear in a line. Values shorter than 4
-  characters are not redacted, and a value that is exactly the app name, the environment name or one of the
-  custom domains is kept as it is (so are the result's `app`, `environment` and `domains`).
+  `AWS_SESSION_TOKEN` are replaced with `[redacted]`: a value of 8 characters or more wherever it appears in a
+  line (and in what goes to stderr), a shorter one only where a whole string value (a param, a message, the
+  error message) is exactly that value, so a short secret cannot mangle domains, URLs or messages that merely
+  contain it. A value that is exactly the app name, the environment name or one of the custom domains is kept as
+  it is (so are the result's `app`, `environment` and `domains`).
 - **What is API.** Line types, the keys of each line, `status` and `outcome` values, and each step's and
   error's `key` with its `params` are covered by the [1.x promise](upgrading.md#the-1x-promise): a key keeps its
   meaning and its params, which may only gain entries. `message` texts are not API, and neither are which steps

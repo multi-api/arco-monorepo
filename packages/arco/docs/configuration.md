@@ -1083,7 +1083,8 @@ Arco writes the records in Cloudflare through its API v4:
   are kept, as with Route 53 (see [Remove](#remove)).
 - **Reserved name.** `'cloudflare'` in `dns()` always means Cloudflare: an AWS profile named `cloudflare` can no
   longer be used as a DNS profile through `dns()`. Rename the profile in `~/.aws/config` if you had one.
-- A Cloudflare request answered with HTTP 429 or 5xx is retried up to 4 times with backoff. If a change fails
+- A Cloudflare request answered with HTTP 429 or 5xx is tried up to 4 times in all (the first try and 3 retries,
+  with backoff). If a change fails
   part-way, the message lists what was already changed; deploy again to finish, Arco recognises its own records.
 - `--dns-profile` cannot be combined with `dns('cloudflare')`. `arco info` shows the provider in a `dns.provider`
   row (`cloudflare`, `route53 (<profile>)`, `route53 (deploy account)` or `manual`), and `--json` in the `dns` key

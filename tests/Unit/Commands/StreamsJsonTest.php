@@ -106,7 +106,7 @@ final class StreamsJsonTest extends TestCase
         self::assertSame('[redacted] [redacted] [redacted]', $lines[0]['params']['command']);
     }
 
-    public function test_the_custom_domains_of_the_target_are_never_redacted_by_a_short_secret(): void
+    public function test_a_short_aws_secret_never_mangles_domains_zones_or_urls(): void
     {
         // Floci's AWS secret key is "test", which every *.test domain contains.
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')
@@ -117,7 +117,8 @@ final class StreamsJsonTest extends TestCase
                 \assert(method_exists($command, 'target'));
                 $command->target($stream, $config);
                 $stream('deploy.dns_target', ['domain' => 'app.arco-e2e.test']);
-                $stream('deploy.command', ['command' => 'echo test']);
+                $stream('deploy.command', ['command' => 'echo test', 'zone' => 'arco-e2e.test', 'url' => 'https://app.arco-e2e.test']);
+                $stream('deploy.secret', ['value' => 'test']);
                 $stream->result('deployed', 'shop', 'production', domains: ['app.arco-e2e.test']);
                 return 0;
             });
@@ -128,7 +129,8 @@ final class StreamsJsonTest extends TestCase
 
         $lines = DeployJsonTest::lines($tester->getDisplay());
         self::assertSame('app.arco-e2e.test', $lines[0]['params']['domain']);
-        self::assertSame('echo [redacted]', $lines[2]['params']['command']);
+        self::assertSame(['command' => 'echo test', 'zone' => 'arco-e2e.test', 'url' => 'https://app.arco-e2e.test'], $lines[2]['params'], 'a short secret is not redacted inside text');
+        self::assertSame(['value' => '[redacted]'], $lines[4]['params'], 'but is as a whole value');
         self::assertSame(['app.arco-e2e.test'], $lines[count($lines) - 1]['domains']);
     }
 }
