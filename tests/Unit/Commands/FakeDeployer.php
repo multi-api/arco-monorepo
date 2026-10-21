@@ -64,6 +64,8 @@ final class FakeDeployer implements Deployer
     public ?\Throwable $groupError = null;
     /** @var list<array{0: string, 1: array<string, string|int>}> steps reported by remove() */
     public array $removeSteps = [];
+    /** thrown by remove() after its steps, e.g. AWS refusing a deletion */
+    public ?\Throwable $removeError = null;
 
     public function __construct(
         public ?string $previousRevision = null,
@@ -148,6 +150,9 @@ final class FakeDeployer implements Deployer
         $this->calls[] = 'remove';
         foreach ($this->removeSteps as [$key, $params]) {
             $onStep !== null && $onStep($key, $params);
+        }
+        if ($this->removeError !== null) {
+            throw $this->removeError;
         }
     }
     public function consoleExists(AppConfig $config): bool { $this->consoleLookups++; return $this->consoleExists; }
