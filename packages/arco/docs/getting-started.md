@@ -661,8 +661,11 @@ A deploy role (like the one of Arco's own end-to-end run, in a dedicated test ac
 - `iam:GetRole` (it also returns the `arco:region` tag the region check reads), `iam:CreateRole`,
   `iam:PutRolePolicy`, `iam:DeleteRolePolicy`, `iam:DeleteRole`, `iam:PassRole` on `arn:aws:iam::*:role/arco-*`
 - with a permissions boundary (`permissionsBoundary()`, `--permissions-boundary` or `ARCO_PERMISSIONS_BOUNDARY`):
-  `iam:PutRolePermissionsBoundary` on `arn:aws:iam::*:role/arco-*`, to put the boundary on an existing role (see
-  [Enforcing a permissions boundary](#enforcing-a-permissions-boundary) for the conditions an account owner adds)
+  `iam:PutRolePermissionsBoundary` on `arn:aws:iam::*:role/arco-*`. Grant it together with `iam:CreateRole`
+  whenever a boundary is used, as AWS's own permissions-boundary examples do: Arco calls it on an existing role, and
+  granting the pair means the profile works whether the role exists or not (see
+  [Enforcing a permissions boundary](#enforcing-a-permissions-boundary) for the conditions an account owner adds,
+  and for the Lambda scoping a profile handed to someone else needs)
 - `s3:*` on `arn:aws:s3:::arco-*` (and its objects)
 - `ssm:PutParameter`, `ssm:GetParameters`, `ssm:AddTagsToResource` (`secret:set` tags the parameter for the
   environment) on your app's parameters (`parameter/<app>/*`)
@@ -807,14 +810,26 @@ The zone check of `init` and `domain:add` calls only the profile you choose and 
 ### Enforcing a permissions boundary
 
 This part is for account owners who hand a deploy profile to someone else: a CI, a team, or a service such as
-Arco Cloud. The deploy permissions above include `iam:CreateRole`, `iam:PutRolePolicy` and `iam:PassRole` on
-`role/arco-*`, plus creating and invoking Lambda functions. Together they are admin-equivalent: whoever holds the
-profile can create an `arco-*` role with any inline policy and run code under it.
+Arco Cloud. The deploy permissions above are admin-equivalent in two ways:
 
-A [permissions boundary](configuration.md#permissions-boundary) closes this gap. The account owner creates a
-boundary policy (Arco never creates IAM policies), and the deploy profile may then write `arco-*` roles **only**
-when they carry exactly that boundary. Whatever inline policy the profile writes, the role can do no more than the
-boundary allows.
+- They include `iam:CreateRole`, `iam:PutRolePolicy` and `iam:PassRole` on `role/arco-*`, plus creating and
+  invoking Lambda functions. Whoever holds the profile can create an `arco-*` role with any inline policy and run
+  code under it.
+- Their Lambda resources are wide. `lambda:*WebFunction*` has no resource, and `function:*-console` and
+  `function:*-queue-*` match any function whose name ends in `-console` or contains `-queue-`. With
+  `lambda:UpdateFunctionCode` (or a handler or layer change through `lambda:UpdateFunctionConfiguration`) on a
+  function that is not Arco's, the profile runs its own code under that function's role, which can be an admin
+  role, and needs no `iam:PassRole` for it.
+
+A [permissions boundary](configuration.md#permissions-boundary) with the account guard below closes the first
+gap, and [scoping the Lambda writes to the app's functions](#lambda-writes-only-on-the-apps-functions) closes the
+second. You need both. The account owner creates a boundary policy (Arco never creates IAM policies), and the
+deploy profile may then write `arco-*` roles **only** when they carry exactly that boundary. Whatever inline
+policy the profile writes, the role can do no more than the boundary allows.
+
+The ARNs in this section and in the [recommended boundary policy](#a-recommended-boundary-policy) use the `aws`
+partition. In AWS China or AWS GovCloud (US), change `arn:aws:` to `arn:aws-cn:` or `arn:aws-us-gov:` in every
+ARN.
 
 #### The account guard
 
@@ -855,13 +870,133 @@ exactly as the deploy passes it):
 - For `iam:PutRolePolicy` and `iam:PutRolePermissionsBoundary`, `iam:PermissionsBoundary` is the boundary the role
   has, or gets, after the call. Arco puts the boundary on an existing role **before** it writes the role's policy,
   so the condition already holds when `PutRolePolicy` runs.
+- `iam:CreateRole` and `iam:PutRolePermissionsBoundary` are granted together, as in AWS's own permissions-boundary
+  examples: a new role is created with the boundary, an existing one gets it.
 - `iam:GetRole`, `iam:TagRole`, `iam:DeleteRolePolicy` and `iam:DeleteRole` stay as in the minimal permissions:
   `arco remove` deletes a bounded role without removing the boundary first.
 - Do not grant `iam:AttachRolePolicy` or `iam:UpdateAssumeRolePolicy`: Arco never uses them.
+- Optionally, `ArcoPassOnlyArcoRoles` can also require that the role is passed to Lambda only:
+  `"Condition": {"StringEquals": {"iam:PassedToService": "lambda.amazonaws.com"}}`. Arco passes the execution role
+  only to Lambda: as `executionRoleArn` of `CreateWebFunction` and `CreateWebFunctionRevision` (Lambda Web
+  Functions), and as `Role` of `CreateFunction` and `UpdateFunctionConfiguration` (the console and the workers).
+  It passes no role to CloudFormation (no `RoleARN`) or to EventBridge, and the role it creates trusts only
+  `lambda.amazonaws.com`. If a deploy with the condition fails with a `iam:PassRole` denial, check in CloudTrail
+  which service the call named and adjust the value.
+- **The trust policy of a new role is not constrained.** No IAM condition key limits the
+  `AssumeRolePolicyDocument` of `iam:CreateRole`, so the profile can create a bounded `arco-*` role that another
+  AWS account can assume. That account then has lasting access to everything the boundary allows, and with one
+  boundary shared by several apps (`<app>` replaced by `*`) that is every app's data. Arco itself always writes a
+  trust policy for `lambda.amazonaws.com` only. To detect other trust policies, use
+  [IAM Access Analyzer](https://docs.aws.amazon.com/IAM/latest/UserGuide/what-is-access-analyzer.html) (an
+  external access analyzer reports a role that a principal outside your account or organization can assume); to
+  prevent them, use an SCP or a resource control policy in AWS Organizations, for example one that denies
+  `sts:AssumeRole` on `role/arco-*` to principals outside your organization. The `iam:PassedToService` condition
+  above helps only partly: it limits where the profile passes the role, not who can assume it.
+
+#### Every `arco-*` role must carry the boundary
+
+No condition key on `iam:PassRole` can require the passed role to carry a boundary. `ArcoPassOnlyArcoRoles`
+therefore reaches every role named `arco-*`, including roles that an Arco 0.10 or older deploy created without a
+boundary, and any `arco-*` role made by another tool or person. One unbounded `arco-*` role with wide permissions is
+enough to bypass the guard: the profile creates a function with it. Before the guard is relied on, that is before
+the profile is handed out:
+
+1. Put the boundary on every existing `arco-*` role. Deploy each environment once with the boundary configured
+   (Arco sets it, with the step `deploy.boundary_set`), or set it yourself:
+   `aws iam put-role-permissions-boundary --role-name <role> --permissions-boundary <boundary arn>`. A role that
+   nothing deploys any more can be deleted instead.
+2. Check that none is left without it. `ListRoles` does not return the boundary, so list the roles and read each
+   one with `GetRole`:
+
+   ```bash
+   for role in $(aws iam list-roles --query "Roles[?starts_with(RoleName, 'arco-')].RoleName" --output text); do
+     printf '%s\t%s\n' "$role" "$(aws iam get-role --role-name "$role" --query 'Role.PermissionsBoundary.PermissionsBoundaryArn' --output text)"
+   done
+   ```
+
+   Every line must end in `<boundary arn>`. `None` is a role without a boundary.
+3. Make sure that no principal outside the guard can create or change `arco-*` roles (another deploy profile, a
+   person with `IAMFullAccess`, ...): give it the same guard, or deny it with an SCP. Run the check again after
+   any change of that kind.
+
+#### Lambda writes only on the app's functions
+
+For the guard to hold, every Lambda write the deploy profile has must be scoped to this app's functions,
+`<app>-*`: the Web Function `<app>-<env>` with its revisions and its endpoint, the console `<app>-<env>-console`
+and the workers `<app>-<env>-queue-<queue>`. In a guarded profile, replace the Lambda entries of the minimal
+permissions (the queue ones included) with these statements. Replace `<account>` and `<app>`; for a profile that
+deploys several apps, list one resource per app.
+
+```json
+[
+  {
+    "Sid": "ArcoWebFunctionOfTheApp",
+    "Effect": "Allow",
+    "Action": [
+      "lambda:CreateWebFunction", "lambda:CreateWebFunctionRevision", "lambda:UpdateWebFunctionEndpoint",
+      "lambda:DeleteWebFunction", "lambda:GetWebFunction", "lambda:GetWebFunctionEndpoint",
+      "lambda:GetWebFunctionRevision", "lambda:ListTags", "lambda:TagResource"
+    ],
+    "Resource": "arn:aws:lambda:*:<account>:web-function/<app>-*"
+  },
+  {
+    "Sid": "ArcoFunctionsOfTheApp",
+    "Effect": "Allow",
+    "Action": [
+      "lambda:CreateFunction", "lambda:UpdateFunctionCode", "lambda:UpdateFunctionConfiguration",
+      "lambda:GetFunctionConfiguration", "lambda:PublishVersion", "lambda:CreateAlias", "lambda:UpdateAlias",
+      "lambda:GetAlias", "lambda:PutFunctionEventInvokeConfig", "lambda:TagResource", "lambda:ListTags",
+      "lambda:DeleteFunction", "lambda:InvokeFunction", "lambda:AddPermission", "lambda:RemovePermission",
+      "lambda:GetPolicy"
+    ],
+    "Resource": "arn:aws:lambda:*:<account>:function:<app>-*"
+  },
+  {
+    "Sid": "ArcoWorkerMappingsOfTheApp",
+    "Effect": "Allow",
+    "Action": ["lambda:CreateEventSourceMapping", "lambda:UpdateEventSourceMapping", "lambda:DeleteEventSourceMapping"],
+    "Resource": "*",
+    "Condition": {"ArnLike": {"lambda:FunctionArn": "arn:aws:lambda:*:<account>:function:<app>-*"}}
+  },
+  {
+    "Sid": "ArcoLambdaReads",
+    "Effect": "Allow",
+    "Action": ["lambda:ListEventSourceMappings", "lambda:GetEventSourceMapping", "lambda:ListVersionsByFunction"],
+    "Resource": "*"
+  }
+]
+```
+
+- **The function ARNs.** The console and the workers are classic Lambda functions,
+  `arn:aws:lambda:<region>:<account>:function:<name>`; their versions and the `live` alias add `:<qualifier>`,
+  which `<app>-*` covers (in IAM `*` also matches `:`). The Web Function is another resource type: Arco calls the
+  Lambda Web Functions API by function name and reads the function's ARN from AWS (`functionArn`), and the AWS
+  SDK's model spells it `arn:aws:lambda:<region>:<account>:web-function/<name>`. `function:<app>-*` does not
+  match it. Before you rely on the guard, check the resource types of the Web Function actions in the
+  [Service Authorization Reference for AWS Lambda](https://docs.aws.amazon.com/service-authorization/latest/reference/list_awslambda.html)
+  and the ARN of your web function (`arco info --resources --json` lists it). If either spells it differently,
+  or lists revision or endpoint resources of their own, use that spelling in `ArcoWebFunctionOfTheApp`.
+- **What cannot be scoped.** An event source mapping has no function in its ARN (it is a UUID), and
+  `lambda:CreateEventSourceMapping` takes no resource, so `ArcoWorkerMappingsOfTheApp` uses `"Resource": "*"` with
+  the condition `lambda:FunctionArn`: the function the mapping invokes. `lambda:ListEventSourceMappings` and
+  `lambda:GetEventSourceMapping` cannot be scoped; they only read. If the Service Authorization Reference lists a
+  Web Function write with no resource type, that action cannot be scoped either: the profile then has it on every
+  web function of the account, and the guard holds only in an account where no web function other than the app's
+  exists.
+- **`lambda:ListVersionsByFunction` stays account-wide** as a read. The runtime clean-up reads every version of
+  every function tagged `arco:app` in the region (the code bucket is shared by all of the account's Arco apps).
+  It changes nothing, but it returns each version's configuration, environment variables included. If that
+  matters more to you, scope it to `function:<app>-*` too: the clean-up then deletes nothing and the deploy warns
+  (`deploy.prune_runtime_failed`).
+- **`<app>-*` is a prefix.** It also matches the functions of an app whose name starts with `<app>-` (`shop-*`
+  matches `shop-admin-production`). Give apps names where none is another's name followed by `-`, or scope each
+  environment: `<app>-<env>` and `<app>-<env>-*`.
+- `lambda:InvokeFunction` on `function:<app>-*` is what `arco command`, `arco tinker` and the deploy commands use
+  on the console.
 
 **What the profile must not have, or the guard is bypassed.** The guard only works when nothing else in the
-profile's policies (inline, managed, group, or an AWS-managed policy such as `AdministratorAccess` or
-`IAMFullAccess`) allows what it restricts:
+profile's policies (inline, managed, group, or an AWS-managed policy such as `AdministratorAccess`,
+`IAMFullAccess` or `AWSLambda_FullAccess`) allows what it restricts:
 
 - `iam:CreateRole`, `iam:PutRolePolicy` or `iam:PutRolePermissionsBoundary` on any resource without the
   `iam:PermissionsBoundary` condition, including through `iam:*` or `iam:*Role*`, and on roles not named `arco-*`
@@ -869,6 +1004,18 @@ profile's policies (inline, managed, group, or an AWS-managed policy such as `Ad
 - `iam:DeleteRolePermissionsBoundary` (denied above, but check for an explicit allow you rely on elsewhere);
 - `iam:PassRole` on roles other than `role/arco-*`: an existing powerful role passed to a function the profile
   creates runs code with that role's permissions;
+- Lambda write or invoke actions on functions other than the app's (outside `function:<app>-*` and
+  `web-function/<app>-*`): `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`,
+  `lambda:CreateFunction`, the `*WebFunction*` writes, `lambda:CreateEventSourceMapping` without the
+  `lambda:FunctionArn` condition, `lambda:InvokeFunction`, `lambda:AddPermission`, including through `lambda:*`
+  or a resource of `*`. `lambda:UpdateFunctionCode` on someone else's function runs the profile's code under that
+  function's role, with no `iam:PassRole`;
+- CloudFormation on stacks other than `arco-*` (`arn:aws:cloudformation:*:<account>:stack/arco-*`). Arco's
+  stacks run with the profile's own credentials (Arco passes no `RoleARN`), so the guard and the Lambda scoping
+  apply to everything they create: an `AWS::IAM::Role` in a stack is a `CreateRole` by the profile. An update of
+  another stack that has a service role runs with that role instead, outside the guard. A new stack with a
+  `RoleARN` needs `iam:PassRole`, which the guard limits to `arco-*` (and the `iam:PassedToService` condition, if
+  used, to Lambda);
 - `iam:AttachRolePolicy`, `iam:DetachRolePolicy`, `iam:UpdateAssumeRolePolicy` and `iam:UpdateRole`;
 - writing the boundary policy itself: `iam:CreatePolicyVersion`, `iam:SetDefaultPolicyVersion` and
   `iam:DeletePolicy` on it (denied above), and `iam:CreatePolicy` with the same name after a delete;
@@ -884,7 +1031,8 @@ profile's policies (inline, managed, group, or an AWS-managed policy such as `Ad
 With a boundary configured, an `AccessDenied` (or `AccessDeniedException`) on `iam:CreateRole`,
 `iam:PutRolePermissionsBoundary` or `iam:PutRolePolicy` stops the deploy with `deploy.boundary_denied`, params
 `{role, boundary, action, error}` (`action` is the denied IAM action, `error` the AWS error code; the AWS message
-is not included). It always comes before any Lambda change: no function, revision, console or worker was changed.
+is not included). No function, revision, console or worker was changed and traffic did not move, but earlier
+steps may already have run: the resources stack (queues, buckets and tables), the code bucket and the code upload.
 It has one of two causes:
 
 1. **The account guard.** The account requires exactly a specific boundary (condition `iam:PermissionsBoundary`)
@@ -893,7 +1041,7 @@ It has one of two causes:
    and its source). A deploy with no boundary at all against a guarded account fails at IAM with the plain AWS
    error, since Arco has no boundary to name.
 2. **A missing deploy permission.** The profile lacks `action` on `role/arco-*`, most often
-   `iam:PutRolePermissionsBoundary`, which only a boundary needs. Allow it.
+   `iam:PutRolePermissionsBoundary`, which only a boundary needs. Allow it, together with `iam:CreateRole`.
 
 Without a boundary configured, the same denial is reported as AWS's own error, as before 0.11.
 
@@ -910,7 +1058,8 @@ worked before. The statements below are every statement Arco's managed policy ca
 role's inline policy `arco`), widened from one environment's resource names to the app's prefix so that one
 boundary covers every environment of `<app>`. Replace `<account>` and `<app>`; for one boundary shared by several
 apps, replace `<app>` with a common prefix or `*` (a wider ceiling). The inline policy still narrows each role to
-its own environment.
+its own environment. The ARNs use the `aws` partition: in AWS China or AWS GovCloud (US), change every `arn:aws:`
+to `arn:aws-cn:` or `arn:aws-us-gov:`.
 
 ```json
 {

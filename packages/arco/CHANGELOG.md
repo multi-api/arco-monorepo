@@ -7,7 +7,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 One opt-in feature, a permissions boundary on the execution role, requested for accounts that hand the deploy
 profile to a CI or a service. Nothing changes without a boundary, so an upgrade needs no change
-([Upgrading to 0.11](docs/upgrading.md#upgrading-to-011)).
+([Upgrading to 0.11](docs/upgrading.md#upgrading-to-011)). The one difference: a role whose boundary was set by hand
+now gets the note `deploy.boundary_kept` on every deploy.
 
 - **Added:** `->permissionsBoundary(string|false $policyArn)` on the app and on an environment: the managed execution
   role `arco-<app>-<env>` carries that IAM permissions boundary. A new role is created with it; an existing role
@@ -21,17 +22,21 @@ profile to a CI or a service. Nothing changes without a boundary, so an upgrade 
   or `ARCO_PERMISSIONS_BOUNDARY` from the environment of the machine that runs Arco (not an app variable). Precedence:
   flag > variable > `arco.php`; an empty flag or variable counts as not given. `arco info` takes the same flag.
 - **Added:** with a boundary configured, an `AccessDenied` on `iam:CreateRole`, `iam:PutRolePermissionsBoundary` or
-  `iam:PutRolePolicy` stops the deploy, before any Lambda change, with `deploy.boundary_denied`
+  `iam:PutRolePolicy` stops the deploy, before any function or traffic change (the resources stack and the code
+  upload may already have run), with `deploy.boundary_denied`
   (`{role, boundary, action, error}`): either the account requires another boundary (condition
   `iam:PermissionsBoundary`) or the profile lacks `action` on `role/arco-*`.
 - **Added:** `arco info` shows a `permissionsBoundary` row with its source; `arco info --json` has the key
   `permissions_boundary` (string or `null`) after `tables`. In `deploy --json`, `deploy.step_role` has the param
   `boundary` when one is configured.
 - **Docs:** the setting and its interaction with `permissions()` (effective permissions are the intersection with
-  the boundary); `iam:PutRolePermissionsBoundary` in the minimal permissions when a boundary is used; a new
+  the boundary); `iam:PutRolePermissionsBoundary` in the minimal permissions when a boundary is used, granted with `iam:CreateRole`; a new
   [Enforcing a permissions boundary](docs/getting-started.md#enforcing-a-permissions-boundary) with the account
-  guard, the permissions that would bypass it, the denial and a recommended boundary policy derived from the
-  managed policy; the 0.11 upgrade notes and the new entries of the 1.x promise. The end-to-end suites set the
+  guard, what it needs to hold (every existing `arco-*` role carries the boundary, with a check; Lambda writes scoped
+  to the app's functions `<app>-*`, with the statements and the actions that cannot be scoped; no CloudFormation on
+  stacks other than `arco-*`; the optional `iam:PassedToService` condition), the unconstrained trust policy of a new
+  role (IAM Access Analyzer, SCPs), the permissions that would bypass it, the denial and a recommended boundary policy
+  derived from the managed policy, with the partition to change for `aws-cn` and `aws-us-gov`; the 0.11 upgrade notes and the new entries of the 1.x promise. The end-to-end suites set the
   AWS-managed boundary `PowerUserAccess` on the `floci` and `e2e` environments and read it back with `iam:GetRole`.
 
 ## 0.10.2

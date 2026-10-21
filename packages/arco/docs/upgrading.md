@@ -14,17 +14,20 @@ vendor/bin/arco info --env=staging     # validation runs here: errors and deprec
 ## Upgrading to 0.11
 
 Nothing is required: 0.11 only adds an opt-in setting. Without a permissions boundary, a deploy makes the same IAM
-calls as 0.10.2 and its output, `--json` included, is unchanged; the deploy profile needs no new permission.
+calls as 0.10.2 and its output, `--json` included, is unchanged, with one exception: a role whose boundary was set
+by hand (outside Arco) keeps it, and every deploy now prints the note `deploy.boundary_kept` for it. The deploy
+profile needs no new permission.
 What is new:
 
 - **`->permissionsBoundary(string|false $policyArn)`** puts an IAM permissions boundary on the managed execution
   role `arco-<app>-<env>`. The deploy host can set or override it without editing `arco.php`:
   `arco deploy --permissions-boundary=<arn>` > `ARCO_PERMISSIONS_BOUNDARY` > `arco.php`. Combining it with
   `role()` is an error. See [Permissions boundary](configuration.md#permissions-boundary).
-- With a boundary, the deploy profile also needs `iam:PutRolePermissionsBoundary` on `role/arco-*`, and an account
-  owner can tie role writes to the boundary with the account guard in
-  [Enforcing a permissions boundary](getting-started.md#enforcing-a-permissions-boundary), which also has a
-  recommended boundary policy. Before you set a boundary on an existing environment, check that it allows what the
+- With a boundary, the deploy profile also needs `iam:PutRolePermissionsBoundary` on `role/arco-*` (grant it
+  together with `iam:CreateRole`), and an account owner can tie role writes to the boundary with the account guard in
+  [Enforcing a permissions boundary](getting-started.md#enforcing-a-permissions-boundary). That section also says
+  what the guard needs to hold (every existing `arco-*` role bounded, Lambda writes scoped to the app's functions,
+  no CloudFormation on other stacks) and has a recommended boundary policy. Before you set a boundary on an existing environment, check that it allows what the
   app's `permissions()` add: the effective permissions are the intersection.
 - `arco info` shows a `permissionsBoundary` row (`-  default` when unset), and `arco info --json` has the key
   `permissions_boundary` (string or `null`) after `tables`.
