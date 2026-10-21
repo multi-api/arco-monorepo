@@ -233,4 +233,61 @@ final class BuilderTest extends TestCase
         self::assertFileExists("$result->appDir/src/fixtures/arco-sample.zip", 'only root-level arco-*.zip is excluded');
         $result->cleanup();
     }
+
+    public function test_build_directories_exist_while_building_and_are_not_packaged(): void
+    {
+        // Arco Cloud report (2026-10-21): storage/ is excluded from the copy, so a package that touches the Blade
+        // compiler in boot() made `composer install` (package:discover) fail with "Please provide a valid cache path".
+        $preset = new class implements \Multiapi\Arco\Build\FrameworkPreset, \Multiapi\Arco\Build\StagesDirectories {
+            public function name(): string { return 'fixture'; }
+            public function detects(string $projectDir): bool { return true; }
+            public function prepare(string $appDir): void {}
+            public function buildSteps(): array { return [['php', 'artisan', 'event:cache']]; }
+            public function workerScript(): ?string { return null; }
+            public function publicDir(): string { return 'public'; }
+            public function defaultVariables(): array { return []; }
+            public function excludeRules(): array { return ['storage/**']; }
+            public function healthPath(): string { return '/'; }
+            public function buildDirectories(): array { return ['storage/framework/views', 'storage/framework/cache/data']; }
+        };
+        $seen = [];
+        $runner = new FakeRunner([], function (array $command, string $cwd) use (&$seen): void {
+            $seen[$command[1]] = is_dir("$cwd/storage/framework/views") && is_dir("$cwd/storage/framework/cache/data");
+            if ($command[1] === 'artisan') {
+                file_put_contents("$cwd/storage/framework/views/compiled.php", '<?php');
+            }
+        });
+
+        $result = (new Builder($runner))->build($this->config(), $preset, $this->project);
+
+        self::assertSame(['install' => true, 'artisan' => true], $seen, 'present for composer and for the build steps');
+        self::assertDirectoryDoesNotExist("$result->appDir/storage", 'removed before packaging, with whatever the build wrote there');
+        self::assertDirectoryExists("$this->project/storage/app/public", 'the project itself is untouched');
+        $result->cleanup();
+    }
+
+    public function test_build_directories_must_stay_inside_the_staged_copy(): void
+    {
+        foreach (['../outside', '/tmp/x', 'storage/../../x', ''] as $bad) {
+            $preset = new class($bad) implements \Multiapi\Arco\Build\FrameworkPreset, \Multiapi\Arco\Build\StagesDirectories {
+                public function __construct(private string $dir) {}
+                public function name(): string { return 'fixture'; }
+                public function detects(string $projectDir): bool { return true; }
+                public function prepare(string $appDir): void {}
+                public function buildSteps(): array { return []; }
+                public function workerScript(): ?string { return null; }
+                public function publicDir(): string { return 'public'; }
+                public function defaultVariables(): array { return []; }
+                public function excludeRules(): array { return []; }
+                public function healthPath(): string { return '/'; }
+                public function buildDirectories(): array { return [$this->dir]; }
+            };
+            try {
+                (new Builder(new FakeRunner()))->build($this->config(), $preset, $this->project);
+                self::fail("expected a refusal for '$bad'");
+            } catch (\InvalidArgumentException) {
+                self::addToAssertionCount(1);
+            }
+        }
+    }
 }

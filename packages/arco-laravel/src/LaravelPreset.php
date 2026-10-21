@@ -6,8 +6,9 @@ use Multiapi\Arco\Build\BuildException;
 use Multiapi\Arco\Build\CachesPaths;
 use Multiapi\Arco\Build\FrameworkPreset;
 use Multiapi\Arco\Build\RunsCommands;
+use Multiapi\Arco\Build\StagesDirectories;
 
-final class LaravelPreset implements FrameworkPreset, CachesPaths, RunsCommands
+final class LaravelPreset implements FrameworkPreset, CachesPaths, RunsCommands, StagesDirectories
 {
     private const OCTANE_WORKER_STUB = 'vendor/laravel/octane/src/Commands/stubs/frankenphp-worker.php';
 
@@ -80,6 +81,16 @@ final class LaravelPreset implements FrameworkPreset, CachesPaths, RunsCommands
             'public/frankenphp-worker.php',
             'tests/**',
         ];
+    }
+
+    /**
+     * storage/ is excluded (see excludeRules), but Composer's package:discover and the build steps boot the app:
+     * Laravel's view.compiled is realpath(storage_path('framework/views')), so a package that touches the Blade
+     * compiler in boot() (laravel/cashier-paddle) fails with "Please provide a valid cache path" without them.
+     */
+    public function buildDirectories(): array
+    {
+        return ['storage/framework/views', 'storage/framework/cache/data', 'storage/framework/sessions', 'storage/logs'];
     }
 
     public function healthPath(): string

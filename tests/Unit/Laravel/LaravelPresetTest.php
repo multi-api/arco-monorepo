@@ -76,4 +76,13 @@ final class LaravelPresetTest extends TestCase
         self::assertInstanceOf(\Multiapi\Arco\Build\RunsCommands::class, new LaravelPreset());
         self::assertSame('artisan', (new LaravelPreset())->commandEntry());
     }
+
+    public function test_stages_laravel_storage_directories_for_the_build(): void
+    {
+        self::assertInstanceOf(\Multiapi\Arco\Build\StagesDirectories::class, new LaravelPreset());
+        self::assertSame(
+            ['storage/framework/views', 'storage/framework/cache/data', 'storage/framework/sessions', 'storage/logs'],
+            (new LaravelPreset())->buildDirectories(),
+        );
+    }
 }
