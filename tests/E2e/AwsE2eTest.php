@@ -206,6 +206,9 @@ final class AwsE2eTest extends TestCase
                 $create[] = "dynamodb-table {$table->tableName($config)}";
             }
         }
+        foreach (ResourcesStack::createdGenericTables($config) as $table) {
+            $create[] = "dynamodb-table {$table->tableName($config)}";
+        }
         return $create;
     }
 

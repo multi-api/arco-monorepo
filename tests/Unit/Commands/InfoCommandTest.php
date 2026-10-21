@@ -408,12 +408,12 @@ final class InfoCommandTest extends TestCase
         $project->restore();
     }
 
-    /** @return list<array{type: string, name: string, arn: string, retained: bool}> */
+    /** @return list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>}> */
     private static function tagged(): array
     {
         return [
-            ['type' => 'lambda:function', 'name' => 'shop-production-console', 'arn' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console', 'retained' => false],
-            ['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true],
+            ['type' => 'lambda:function', 'name' => 'shop-production-console', 'arn' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console', 'retained' => false, 'relations' => []],
+            ['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true, 'relations' => []],
         ];
     }
 
@@ -495,7 +495,7 @@ final class InfoCommandTest extends TestCase
         self::assertSame('schema', array_key_first($json), 'first key, as in info --resources');
         unset($json['schema']);
         self::assertSame(
-            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings'],
+            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables'],
             array_keys($json),
         );
         $project->restore();

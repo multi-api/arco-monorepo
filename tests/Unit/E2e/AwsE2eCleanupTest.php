@@ -114,6 +114,27 @@ final class AwsE2eCleanupTest extends TestCase
         self::assertSame([], $this->aws->parameters);
     }
 
+    public function test_plans_the_runs_table_tables_under_the_same_name_and_tag_guards(): void
+    {
+        // ->table('state') of the e2e environment: <app>-e2e-state, tagged like every Arco resource.
+        $state = 'arco-e2e-0123abcd-e2e-state';
+        $this->aws->tables[$state] = ['arco:app' => self::APP, 'arco:environment' => 'e2e', 'arco:resource' => 'table:state'];
+        // Same name rule, another app's tags; the run's tags, a name outside the run's prefix.
+        $this->aws->tables['arco-e2e-0123abcd-e2e-other'] = ['arco:app' => 'arco-example', 'arco:environment' => 'e2e', 'arco:resource' => 'table:other'];
+        $this->aws->tables['arco-example-e2e-state'] = ['arco:app' => self::APP, 'arco:environment' => 'e2e', 'arco:resource' => 'table:state'];
+
+        $cleanup = $this->cleanup();
+        $plan = $cleanup->plan(self::APP);
+
+        self::assertSame([['type' => 'dynamodb-table', 'name' => $state]], $plan);
+        $skipped = array_map(static fn (array $s): string => $s['name'], $cleanup->skipped());
+        self::assertEqualsCanonicalizing(['arco-e2e-0123abcd-e2e-other', 'arco-example-e2e-state'], $skipped);
+
+        $cleanup->apply($plan);
+
+        self::assertEqualsCanonicalizing(['arco-e2e-0123abcd-e2e-other', 'arco-example-e2e-state'], array_keys($this->aws->tables));
+    }
+
     public function test_a_tagged_resource_outside_the_run_name_prefix_is_skipped_and_reported(): void
     {
         $this->aws->bucket('somebody-elses-bucket', self::TAGS);

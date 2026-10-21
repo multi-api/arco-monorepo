@@ -2870,7 +2870,7 @@ final class AwsDeployerTest extends TestCase
 
         $resources = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->resources($this->config());
 
-        self::assertSame([['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true]], $resources);
+        self::assertSame([['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true, 'relations' => []]], $resources);
         self::assertSame(['GetResources', 'GetRole'], $mocks->calls);
     }
 
@@ -2915,5 +2915,185 @@ final class AwsDeployerTest extends TestCase
             }
             self::assertSame(['GetRole'], $mocks->calls, 'only the role is read');
         }
+    }
+
+    public function test_deploy_resources_creates_a_generic_table(): void
+    {
+        $config = $this->resourcesConfig(fn (App $app) => $app->table('state', ttl: 'expires_at'));
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackMissing(),
+            self::noTable(),                                     // the table name is free
+            self::stackMissing(),                                // Stacks::deploy
+            new Result([]),                                      // CreateStack
+            self::resourcesStack('CREATE_COMPLETE'),
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $config);
+
+        self::assertSame(['DescribeStacks', 'DescribeTable', 'DescribeStacks', 'CreateStack', 'DescribeStacks'], $calls);
+        self::assertSame('shop-production-state', $mocks->params[1]['TableName']);
+        $template = json_decode((string) $mocks->params[3]['TemplateBody'], true);
+        self::assertIsArray($template);
+        self::assertSame(['AppTableState'], array_keys($template['Resources']));
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.generic_table_created', ['table' => 'state', 'name' => 'shop-production-state']],
+        ], $steps);
+    }
+
+    public function test_deploy_resources_reports_an_unchanged_or_changed_generic_table(): void
+    {
+        $before = $this->resourcesConfig(fn (App $app) => $app->table('state'));
+        self::assertSame(['deploy.generic_table_updated'], $this->updateKeys($before, $before, ['AppTableState' => ['AWS::DynamoDB::Table', 'shop-production-state']]));
+        self::assertSame(['deploy.generic_table_changed'], $this->updateKeys($this->resourcesConfig(fn (App $app) => $app->table('state', ttl: 'expires_at')), $before, ['AppTableState' => ['AWS::DynamoDB::Table', 'shop-production-state']]));
+    }
+
+    public function test_an_existing_generic_table_is_not_in_the_stack(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::stackMissing());
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->table('state', existing: 'legacy-state')));
+
+        self::assertSame(['DescribeStacks'], $calls, 'no table lookup, no stack');
+        self::assertSame([], $steps);
+    }
+
+    public function test_deploy_resources_stops_before_any_change_when_a_generic_table_name_is_retained(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::stackMissing(), new Result(['Table' => ['TableName' => 'shop-production-state']]));
+
+        try {
+            $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->table('state')));
+            self::fail('expected deploy.generic_table_retained');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.generic_table_retained', $e->key);
+            self::assertSame(['kind' => 'table', 'name' => 'state', 'table' => 'shop-production-state', 'existing' => "table('state', existing: 'shop-production-state')"], $e->params);
+            $translator = new \Multiapi\Arco\Cli\Translator('en', \Multiapi\Arco\Arco::packageRoot() . '/lang');
+            self::assertStringStartsWith('Table "state" cannot be created: its DynamoDB table shop-production-state already exists', $translator->trans($e->key, $e->params));
+            $es = new \Multiapi\Arco\Cli\Translator('es', \Multiapi\Arco\Arco::packageRoot() . '/lang');
+            self::assertStringStartsWith('No se puede crear la tabla "state": su tabla DynamoDB shop-production-state', $es->trans($e->key, $e->params));
+        }
+        self::assertSame(['DescribeStacks', 'DescribeTable'], $mocks->calls, 'no CreateStack or UpdateStack');
+    }
+
+    public function test_a_generic_table_removed_from_arco_php_is_kept_and_reported(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::ownedResources([
+                'AppTableState' => ['AWS::DynamoDB::Table', 'shop-production-state'],
+                'AppTableEvents' => ['AWS::DynamoDB::Table', 'shop-production-events'],
+            ]),
+            self::runningTemplate($this->resourcesConfig(fn (App $app) => $app->table('state')->table('events'))),
+            self::resourcesStack(),                              // Stacks::deploy
+            new Result([]),                                      // UpdateStack
+            self::resourcesStack(),
+            new Result(['Table' => ['ItemCount' => 7]]),         // DescribeTable of the removed table
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->table('state')));
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'GetTemplate', 'DescribeStacks', 'UpdateStack', 'DescribeStacks', 'DescribeTable'], $calls);
+        $template = json_decode((string) $mocks->params[4]['TemplateBody'], true);
+        self::assertSame(['AppTableState'], array_keys($template['Resources']), 'the removed table leaves the template; Retain keeps it in AWS');
+        self::assertSame('shop-production-events', $mocks->params[6]['TableName']);
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.generic_table_updated', ['table' => 'state', 'name' => 'shop-production-state']],
+            ['deploy.table_kept', ['table' => 'shop-production-events', 'items' => 7]],
+        ], $steps);
+    }
+
+    public function test_the_last_generic_table_removed_deletes_the_stack_and_keeps_the_table(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::ownedResources(['AppTableState' => ['AWS::DynamoDB::Table', 'shop-production-state']]),
+            self::resourcesStack(),                              // Stacks::delete
+            new Result([]),                                      // DeleteStack
+            self::stackMissing(),
+            new Result(['Table' => ['ItemCount' => 0]]),
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app));
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'DescribeTable'], $calls);
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.table_kept', ['table' => 'shop-production-state', 'items' => 0]],
+        ], $steps);
+    }
+
+    public function test_a_created_generic_table_switched_to_existing_itself_is_not_offered_for_deletion(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::ownedResources(['AppTableState' => ['AWS::DynamoDB::Table', 'shop-production-state']]),
+            self::resourcesStack(),                              // Stacks::delete
+            new Result([]),                                      // DeleteStack
+            self::stackMissing(),
+        );
+
+        [$calls, $steps] = $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->table('state', existing: 'shop-production-state')));
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks'], $calls);
+        self::assertSame([
+            ['deploy.step_resources', ['stack' => 'arco-shop-production-resources']],
+            ['deploy.generic_table_now_existing', ['table' => 'shop-production-state', 'as' => 'state']],
+        ], $steps);
+    }
+
+    public function test_deploy_resources_stops_before_any_change_when_a_generic_table_would_be_replaced(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::resourcesStack(),
+            self::ownedResources(['AppTableState' => ['AWS::DynamoDB::Table', 'shop-staging-state']]),
+        );
+
+        try {
+            $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->table('state')));
+            self::fail('expected deploy.resource_replaced');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.resource_replaced', $e->key);
+            self::assertSame(['resource' => 'table:state', 'from' => 'shop-staging-state', 'to' => 'shop-production-state'], $e->params);
+        }
+        self::assertSame(['DescribeStacks', 'DescribeStackResources'], $mocks->calls);
+    }
+
+    public function test_prepare_lets_the_role_use_every_generic_table_and_its_indexes(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result([]),                                   // HeadBucket
+            new Result([]), new Result([]), new Result([]), new Result([]),
+            new Result(['VersionId' => 'v1']),                // HeadObject (web zip)
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), // GetRole
+            new Result([]),                                   // PutRolePolicy
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        );
+        $config = $this->resourcesConfig(fn (App $app) => $app->cache()->table('state', ttl: 'expires_at')->table('shared', existing: 'Shared'));
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prepare($config, $this->package(), null, [], fn () => null);
+
+        $policy = json_decode(self::byOperation($mocks)['PutRolePolicy'][0]['PolicyDocument'], true);
+        $bySid = array_column($policy['Statement'], null, 'Sid');
+        self::assertSame(['arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-cache'], $bySid['ArcoTables']['Resource'], "Arco's own tables keep their statement");
+        self::assertSame([
+            'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-state',
+            'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-state/index/*',
+            'arn:aws:dynamodb:us-east-1:111111111111:table/Shared',
+            'arn:aws:dynamodb:us-east-1:111111111111:table/Shared/index/*',
+        ], $bySid['ArcoAppTables']['Resource']);
     }
 }

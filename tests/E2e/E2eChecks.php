@@ -58,6 +58,18 @@ trait E2eChecks
     }
 
     #[Depends('test_up')]
+    public function test_table(): void
+    {
+        $answer = $this->http->get('table', self::url('/e2e/table'), retryServerErrors: false);
+        $data = json_decode($answer['body'], true);
+        self::assertSame(200, $answer['status'], "[table] /e2e/table answered {$answer['status']}: " . E2eHttp::excerpt($answer['body']));
+        self::assertTrue(is_array($data) && ($data['ok'] ?? null) === true, '[table] DynamoDB did not return the item just written: ' . E2eHttp::excerpt($answer['body']));
+        // ARCO_TABLES maps the logical name to the table Arco created: <app>-<env>-state.
+        self::assertIsString($data['table'] ?? null, '[table] /e2e/table named no table: ' . E2eHttp::excerpt($answer['body']));
+        self::assertStringEndsWith('-' . static::environment() . '-state', $data['table'], '[table] ARCO_TABLES maps "state" to an unexpected table');
+    }
+
+    #[Depends('test_up')]
     public function test_queue_job(): void
     {
         $dispatched = $this->http->json('queue', self::url('/e2e/dispatch'));
@@ -110,12 +122,12 @@ trait E2eChecks
         self::assertNotSame('', trim($logs->getOutput()), '[logs] arco logs printed nothing for the last 10 minutes');
     }
 
-    /** Runs arco deploy for the copy; the caller fails the run when it did not succeed. */
-    private static function deploy(): Process
+    /** Runs arco deploy (with --json: NDJSON on stdout) for the copy; the caller fails the run when it did not succeed. */
+    private static function deploy(bool $json = false): Process
     {
         $began = microtime(true);
-        $deploy = self::arco(['deploy', '--env=' . static::environment(), '--yes', '--no-interaction'], 1800);
-        self::report('deploy', $began, $deploy->isSuccessful() ? 'ok' : 'FAILED');
+        $deploy = self::arco(['deploy', '--env=' . static::environment(), '--yes', '--no-interaction', ...($json ? ['--json'] : [])], 1800);
+        self::report($json ? 'deploy --json' : 'deploy', $began, $deploy->isSuccessful() ? 'ok' : 'FAILED');
         return $deploy;
     }
 

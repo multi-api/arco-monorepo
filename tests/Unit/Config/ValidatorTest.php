@@ -774,4 +774,13 @@ final class ValidatorTest extends TestCase
             self::assertStringNotContainsString('también es la función de consola', $text);
         }
     }
+
+    public function test_dns_cloudflare_without_domains_warns(): void
+    {
+        $app = App::make('shop')->region('us-east-1')->dns('cloudflare')->environment('production');
+        $result = (new Validator())->validate(ConfigResolver::resolve($app->toArray(), 'production'), sys_get_temp_dir());
+
+        self::assertTrue($result->isValid());
+        self::assertSame(['validation.domain_settings_unused'], array_map(fn (array $w) => $w['key'], $result->warnings));
+    }
 }

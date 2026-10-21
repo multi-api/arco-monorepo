@@ -14,10 +14,13 @@ use Multiapi\Arco\Commands\DeployCommand;
 use Multiapi\Arco\Console\CommandResult;
 use Multiapi\Arco\Deploy\AppStatus;
 use Multiapi\Arco\Deploy\DeployPipeline;
+use Multiapi\Arco\Deploy\Domains\CloudflareDns;
+use Multiapi\Arco\Deploy\Domains\DnsProvider;
 use Multiapi\Arco\Package\Packager;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Binary\ElfInspectorTest;
 use Multiapi\Arco\Tests\Unit\Build\FakeRunner;
+use Multiapi\Arco\Tests\Unit\Deploy\Domains\FakeCloudflare;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -761,5 +764,142 @@ final class DeployCommandTest extends TestCase
         self::assertSame([], $deployer->calls);
         self::assertSame([], $this->factoryCalls, 'no AWS client is made');
         self::assertSame(0, $deployer->consoleLookups);
+    }
+
+    /** @var list<string> tokens the Cloudflare factory was given */
+    private array $cloudflareTokens = [];
+    /** @var list<?DnsProvider> the DNS provider each deployer was built with */
+    private array $providers = [];
+
+    /** A deploy command whose Cloudflare API is $cloudflare, with arco.php on dns('cloudflare'). */
+    private function cloudflareTester(FakeDeployer $deployer, FakeCloudflare $cloudflare, string $dnsCall = "->dns('cloudflare')"): CommandTester
+    {
+        file_put_contents("$this->project/arco.php", str_replace(
+            "->variables(['APP_ENV' => 'production'])",
+            "->domain(['arco.acmeapp.io', 'api-arco.acmeapp.io'])$dnsCall",
+            (string) file_get_contents("$this->project/arco.php"),
+        ));
+        $command = new DeployCommand(
+            awsFactory: function (?string $profile, string $region) {
+                $this->factoryCalls[] = ['aws', $profile, false];
+                return new AwsClients($profile, $region, ['handler' => $this->aws, 'credentials' => false]);
+            },
+            pipeline: new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager()),
+            deployerFactory: function (AwsClients $aws, ?AwsClients $dns, bool $force, bool $forceOwnership = false, ?DnsProvider $provider = null) use ($deployer) {
+                $this->factoryCalls[] = [$aws->profile, $dns?->profile, $force];
+                $this->providers[] = $provider;
+                return $deployer;
+            },
+            verifierFactory: fn () => new FakeVerifier(true, 800),
+            presets: new PresetRegistry([]),
+            consoleFactory: fn () => throw new \LogicException('No console expected.'),
+            cloudflareFactory: function (string $token) use ($cloudflare) {
+                $this->cloudflareTokens[] = $token;
+                return $cloudflare->api($token);
+            },
+        );
+        $app = Application::create();
+        $app->addCommands([$command]);
+        return new CommandTester($app->find('deploy'));
+    }
+
+    public function test_cloudflare_without_a_token_fails_before_any_aws_call(): void
+    {
+        putenv('CLOUDFLARE_API_TOKEN');
+        $deployer = new FakeDeployer();
+
+        $tester = $this->cloudflareTester($deployer, new FakeCloudflare());
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('CLOUDFLARE_API_TOKEN', $display);
+        self::assertStringContainsString('Zone:DNS:Edit + Zone:Read', $display);
+        self::assertSame([], $this->factoryCalls, 'no AWS clients, no deployer');
+        self::assertSame([], $deployer->calls);
+    }
+
+    public function test_cloudflare_token_comes_from_the_env_var_and_the_flag_wins(): void
+    {
+        $cloudflare = (new FakeCloudflare())->zone('acmeapp.io', 'zone-acme');
+        putenv('CLOUDFLARE_API_TOKEN=env-token-1234567890');
+        try {
+            $this->aws->append(new Result(['Account' => '222222222222']), new Result(['Account' => '222222222222']));
+            $deployer = new FakeDeployer('rev-1', new AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'));
+            $tester = $this->cloudflareTester($deployer, $cloudflare);
+            $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--cloudflare-token' => 'flag-token-1234567890'], ['interactive' => false]);
+            $tester->assertCommandIsSuccessful();
+            $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--force-dns' => true], ['interactive' => false]);
+            $tester->assertCommandIsSuccessful();
+        } finally {
+            putenv('CLOUDFLARE_API_TOKEN');
+        }
+
+        self::assertSame(['flag-token-1234567890', 'env-token-1234567890'], $this->cloudflareTokens);
+        self::assertSame(['Bearer flag-token-1234567890', 'Bearer env-token-1234567890'], array_values(array_unique($cloudflare->auth)));
+        self::assertSame([['aws', 'acme-prod', false], ['acme-prod', null, false], ['aws', 'acme-prod', false], ['acme-prod', null, true]], $this->factoryCalls, 'no Route 53 clients');
+        self::assertContainsOnlyInstancesOf(CloudflareDns::class, $this->providers);
+        self::assertContains('domains:', $deployer->calls);
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('DNS records go to Cloudflare (zones acmeapp.io)', $display);
+        self::assertStringNotContainsString('token-1234567890', $display);
+        self::assertSame([], $cloudflare->writes(), 'the deploy command only reads Cloudflare; the deployer writes');
+    }
+
+    public function test_a_refused_cloudflare_token_fails_before_any_aws_change_and_is_never_printed(): void
+    {
+        $cloudflare = (new FakeCloudflare())->zone('acmeapp.io', 'zone-acme')
+            ->queue(FakeCloudflare::json(403, ['success' => false, 'errors' => [['code' => 10000, 'message' => 'Authentication error']]]));
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = new FakeDeployer();
+
+        $tester = $this->cloudflareTester($deployer, $cloudflare);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--cloudflare-token' => FakeCloudflare::TOKEN], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('Cloudflare refused the API token', $display);
+        self::assertStringContainsString('CLOUDFLARE_API_TOKEN', $display);
+        self::assertStringContainsString('Zone:DNS:Edit + Zone:Read', $display);
+        self::assertStringNotContainsString(FakeCloudflare::TOKEN, $tester->getDisplay());
+        self::assertSame([['aws', 'acme-prod', false]], $this->factoryCalls, 'refused before the deployer exists');
+        self::assertSame([], $deployer->calls);
+    }
+
+    public function test_a_guzzle_failure_carrying_the_token_is_reported_without_it(): void
+    {
+        $request = new \GuzzleHttp\Psr7\Request('GET', 'https://api.cloudflare.com/client/v4/zones', ['Authorization' => 'Bearer ' . FakeCloudflare::TOKEN]);
+        $cloudflare = (new FakeCloudflare())->queue(new \GuzzleHttp\Exception\RequestException('Request failed: Authorization: Bearer ' . FakeCloudflare::TOKEN, $request));
+        $this->aws->append(new Result(['Account' => '222222222222']));
+
+        $tester = $this->cloudflareTester(new FakeDeployer(), $cloudflare);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--cloudflare-token' => FakeCloudflare::TOKEN], ['interactive' => false, 'verbosity' => \Symfony\Component\Console\Output\OutputInterface::VERBOSITY_DEBUG]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('A Cloudflare API request failed', $tester->getDisplay());
+        self::assertStringNotContainsString(FakeCloudflare::TOKEN, $tester->getDisplay());
+    }
+
+    public function test_a_missing_cloudflare_zone_is_refused_before_any_aws_change(): void
+    {
+        $cloudflare = (new FakeCloudflare())->zone('example.org', 'zone-other');
+        $this->aws->append(new Result(['Account' => '222222222222']));
+
+        $tester = $this->cloudflareTester(new FakeDeployer(), $cloudflare);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--cloudflare-token' => FakeCloudflare::TOKEN], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('No active Cloudflare zone the API token can see holds: arco.acmeapp.io, api-arco.acmeapp.io', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+        self::assertSame([['aws', 'acme-prod', false]], $this->factoryCalls);
+    }
+
+    public function test_dns_profile_cannot_be_combined_with_cloudflare(): void
+    {
+        $tester = $this->cloudflareTester(new FakeDeployer(), new FakeCloudflare());
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--cloudflare-token' => 'x', '--dns-profile' => 'acme-dns'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString("this environment uses dns('cloudflare')", (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+        self::assertSame([], $this->factoryCalls);
     }
 }

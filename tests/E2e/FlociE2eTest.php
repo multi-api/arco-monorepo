@@ -2,6 +2,8 @@
 
 namespace Multiapi\Arco\Tests\E2e;
 
+use Aws\CloudFormation\CloudFormationClient;
+use Aws\DynamoDb\DynamoDbClient;
 use Aws\Route53\Route53Client;
 use PHPUnit\Framework\Attributes\Depends;
 use PHPUnit\Framework\Attributes\Group;
@@ -39,6 +41,10 @@ final class FlociE2eTest extends TestCase
 
     private static ?string $distribution = null;
     private static bool $deployed = false;
+    /** The second deploy, `arco deploy --json` (a redeploy of the same app): its exit code, stdout and stderr. */
+    private static ?Process $jsonDeploy = null;
+    /** @var array<string, mixed> `arco info --json` after the deploys */
+    private static array $info = [];
 
     protected static function environment(): string
     {
@@ -60,7 +66,14 @@ final class FlociE2eTest extends TestCase
         }
         fwrite(STDERR, "\n" . self::tail($deploy->getOutput(), 40) . "\n");
 
-        $data = self::readInfo();
+        // A redeploy streaming NDJSON: test_deploy_json checks the stream; every later check runs on it.
+        self::$jsonDeploy = self::deploy(json: true);
+        if (! self::$jsonDeploy->isSuccessful()) {
+            self::fail("[deploy --json] arco deploy --json failed (exit " . self::$jsonDeploy->getExitCode() . "):\n"
+                . self::tail(self::$jsonDeploy->getOutput(), 40) . "\n" . self::tail(self::$jsonDeploy->getErrorOutput(), 40));
+        }
+
+        $data = self::$info = self::readInfo();
         $distribution = $data['distribution'] ?? null;
         self::$distribution = is_array($distribution) && is_string($distribution['domain'] ?? null) ? $distribution['domain'] : null;
         fwrite(STDERR, sprintf("[deploy] url %s, distribution %s\n", self::$url, self::$distribution ?? '-'));
@@ -92,6 +105,104 @@ final class FlociE2eTest extends TestCase
         $answer = $this->http->get('custom domain', $url, ['Host' => self::DOMAIN], 30);
         self::assertSame(200, $answer['status'], "[custom domain] $url with Host " . self::DOMAIN . ' (distribution ' . self::$distribution . ') answered '
             . $answer['status'] . ': ' . E2eHttp::excerpt($answer['body']) . "\nFloci's CloudFront log:\n" . self::flociLog('CloudFront'));
+    }
+
+    /** Every stdout line of `arco deploy --json` is a schema-1 JSON object, and the last is the deployed result. */
+    #[Depends('test_up')]
+    public function test_deploy_json(): void
+    {
+        \assert(self::$jsonDeploy !== null);
+        $stdout = self::$jsonDeploy->getOutput();
+        // Pure NDJSON: nothing but JSON lines, each ended by a newline, no blank or human line in between.
+        self::assertStringEndsWith("\n", $stdout, '[deploy --json] stdout does not end with a newline');
+        $lines = explode("\n", substr($stdout, 0, -1));
+        self::assertNotSame([''], $lines, '[deploy --json] stdout is empty');
+
+        $events = [];
+        foreach ($lines as $number => $line) {
+            $event = json_decode($line, true);
+            self::assertIsArray($event, sprintf('[deploy --json] stdout line %d is not a JSON object: %s', $number + 1, E2eHttp::excerpt($line)));
+            self::assertSame(1, $event['schema'] ?? null, sprintf('[deploy --json] stdout line %d has no "schema": 1: %s', $number + 1, E2eHttp::excerpt($line)));
+            self::assertContains($event['type'] ?? null, ['step', 'progress', 'result'], sprintf('[deploy --json] stdout line %d has an unknown type: %s', $number + 1, E2eHttp::excerpt($line)));
+            $events[] = $event;
+        }
+
+        $results = array_values(array_filter($events, static fn (array $event): bool => $event['type'] === 'result'));
+        self::assertCount(1, $results, '[deploy --json] expected exactly one result line');
+        $result = $events[array_key_last($events)];
+        self::assertSame('result', $result['type'], '[deploy --json] the last line is not the result: ' . E2eHttp::excerpt((string) end($lines)));
+        self::assertSame('deployed', $result['outcome'] ?? null, '[deploy --json] outcome: ' . E2eHttp::excerpt((string) end($lines)));
+        self::assertArrayHasKey('error', $result, '[deploy --json] the result has no error key');
+        self::assertNull($result['error'], '[deploy --json] the deployed result carries an error');
+        self::assertSame('floci', $result['environment'] ?? null);
+        self::assertSame([self::DOMAIN], $result['domains'] ?? null, '[deploy --json] result domains');
+        self::assertSame(self::$info['revision'] ?? null, $result['revision'] ?? null, '[deploy --json] result revision is not the live one');
+        self::assertSame(self::$url, is_string($result['url'] ?? null) ? rtrim($result['url'], '/') : null, '[deploy --json] result url differs from arco info --json');
+
+        $steps = array_filter($events, static fn (array $event): bool => $event['type'] === 'step');
+        self::assertNotSame([], $steps, '[deploy --json] no step events');
+        foreach ($steps as $step) {
+            self::assertIsString($step['key'] ?? null);
+            self::assertContains($step['status'] ?? null, ['started', 'done', 'warning', 'note'], '[deploy --json] step status: ' . json_encode($step));
+            self::assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/', (string) ($step['at'] ?? ''), '[deploy --json] step time');
+            if ($step['status'] === 'done') {
+                self::assertIsInt($step['elapsed_ms'] ?? null, '[deploy --json] a done step without elapsed_ms: ' . json_encode($step));
+                self::assertGreaterThanOrEqual(0, $step['elapsed_ms']);
+            } else {
+                self::assertArrayNotHasKey('elapsed_ms', $step, '[deploy --json] elapsed_ms on a step that is not done: ' . json_encode($step));
+            }
+        }
+        $done = array_filter($steps, static fn (array $step): bool => $step['status'] === 'done');
+        self::assertNotSame([], $done, '[deploy --json] no step reached done');
+        $zip = array_filter($events, static fn (array $event): bool => $event['type'] === 'progress' && ($event['key'] ?? null) === 'build.zip' && ($event['percent'] ?? null) === 100);
+        self::assertNotSame([], $zip, '[deploy --json] no build.zip progress reaching 100');
+    }
+
+    /** The table ->table('state', ttl: 'expires_at') creates: PK/SK strings, on demand, TTL on expires_at, in info --json. */
+    #[Depends('test_up')]
+    public function test_table_resource(): void
+    {
+        $tables = self::$info['tables'] ?? null;
+        self::assertIsArray($tables, '[table] arco info --json has no tables key');
+        self::assertSame('state', $tables[0]['name'] ?? null, '[table] arco info --json tables: ' . json_encode($tables));
+        $name = $tables[0]['table'] ?? null;
+        self::assertSame('arco-example-floci-state', $name, '[table] arco info --json tables: ' . json_encode($tables));
+
+        $dynamo = new DynamoDbClient([
+            'region' => self::REQUIRED_ENV['AWS_REGION'],
+            'endpoint' => self::REQUIRED_ENV['AWS_ENDPOINT_URL'],
+            'credentials' => ['key' => 'test', 'secret' => 'test'],
+        ]);
+        $table = $dynamo->describeTable(['TableName' => $name])['Table'];
+        self::assertSame([['AttributeName' => 'PK', 'KeyType' => 'HASH'], ['AttributeName' => 'SK', 'KeyType' => 'RANGE']], $table['KeySchema'], '[table] key schema');
+        self::assertEqualsCanonicalizing([['AttributeName' => 'PK', 'AttributeType' => 'S'], ['AttributeName' => 'SK', 'AttributeType' => 'S']], $table['AttributeDefinitions'], '[table] key types');
+        if (isset($table['BillingModeSummary'])) {
+            self::assertSame('PAY_PER_REQUEST', $table['BillingModeSummary']['BillingMode'] ?? null, '[table] billing mode; DescribeTable: ' . json_encode($table));
+        } else {
+            // Known Floci gap: DescribeTable of a table CloudFormation created with BillingMode PAY_PER_REQUEST has no
+            // BillingModeSummary and reports ProvisionedThroughput 5/5. The billing mode is checked in the template instead.
+            fwrite(STDERR, "[table] Known Floci gap: DescribeTable has no BillingModeSummary (ProvisionedThroughput "
+                . json_encode($table['ProvisionedThroughput'] ?? null) . "); checking BillingMode in the resources stack template\n");
+            $template = (new CloudFormationClient([
+                'region' => self::REQUIRED_ENV['AWS_REGION'],
+                'endpoint' => self::REQUIRED_ENV['AWS_ENDPOINT_URL'],
+                'credentials' => ['key' => 'test', 'secret' => 'test'],
+            ]))->getTemplate(['StackName' => 'arco-arco-example-floci-resources'])['TemplateBody'] ?? null;
+            $body = is_string($template) ? json_decode($template, true) : $template;
+            self::assertSame('PAY_PER_REQUEST', $body['Resources']['AppTableState']['Properties']['BillingMode'] ?? null, '[table] billing mode in the template: ' . E2eHttp::excerpt((string) json_encode($body['Resources']['AppTableState'] ?? $template)));
+        }
+
+        $ttl = $dynamo->describeTimeToLive(['TableName' => $name])['TimeToLiveDescription'] ?? [];
+        self::assertSame('expires_at', $ttl['AttributeName'] ?? null, '[table] TTL attribute: ' . json_encode($ttl));
+        self::assertContains($ttl['TimeToLiveStatus'] ?? null, ['ENABLED', 'ENABLING'], '[table] TTL status: ' . json_encode($ttl));
+
+        $tags = [];
+        foreach ($dynamo->listTagsOfResource(['ResourceArn' => $table['TableArn']])['Tags'] ?? [] as $tag) {
+            $tags[$tag['Key']] = $tag['Value'];
+        }
+        $ours = array_intersect_key($tags, array_flip(['arco:app', 'arco:environment', 'arco:resource']));
+        ksort($ours);
+        self::assertSame(['arco:app' => 'arco-example', 'arco:environment' => 'floci', 'arco:resource' => 'table:state'], $ours, '[table] tags');
     }
 
     #[Depends('test_up')]

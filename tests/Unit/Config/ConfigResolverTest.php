@@ -472,4 +472,25 @@ final class ConfigResolverTest extends TestCase
         self::assertSame('default', $none->sources['cache']);
         self::assertSame('default', $none->sources['failedJobsTable']);
     }
+
+    public function test_dns_cloudflare_is_cloudflare_and_not_a_profile(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->domain('shop.example.com')
+            ->dns('cloudflare')
+            ->environment('staging', fn (Environment $e) => $e->dns('acme-dns'))
+            ->environment('production')
+            ->toArray();
+
+        $production = ConfigResolver::resolve($raw, 'production');
+        self::assertTrue($production->dnsCloudflare);
+        self::assertNull($production->dnsProfile);
+        self::assertFalse($production->dnsManual);
+        self::assertSame('app', $production->sources['dns']);
+        self::assertTrue($production->withAccount('111111111111')->dnsCloudflare);
+
+        $staging = ConfigResolver::resolve($raw, 'staging');
+        self::assertFalse($staging->dnsCloudflare);
+        self::assertSame('acme-dns', $staging->dnsProfile);
+    }
 }
