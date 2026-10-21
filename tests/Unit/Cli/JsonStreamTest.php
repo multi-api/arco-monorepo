@@ -179,4 +179,31 @@ final class JsonStreamTest extends TestCase
 
         self::assertStringContainsString('<info>migrate</info>', $this->output->fetch());
     }
+
+    public function test_the_app_and_environment_names_are_never_redacted(): void
+    {
+        $stream = $this->stream();
+        $stream->redact('production', 'shop-secret');
+        $stream->identity('shop', 'production');
+        $stream('build.staging', ['app' => 'shop', 'environment' => 'production', 'preset' => 'plain']);
+        $stream('deploy.command', ['command' => 'echo shop-secret']);
+        $stream->result('deployed', 'shop', 'production');
+        $stream = $this->stream();
+
+        $lines = $this->lines();
+        self::assertSame('production', $lines[0]['params']['environment'], 'a param that is exactly the environment name');
+        self::assertSame('echo [redacted]', $lines[2]['params']['command']);
+        self::assertSame(['shop', 'production'], [$lines[4]['app'], $lines[4]['environment']]);
+    }
+
+    public function test_the_result_identity_is_not_redacted_even_without_registered_names(): void
+    {
+        $stream = $this->stream();
+        $stream->redact('staging');
+        $stream->result('refused', null, 'staging', errorKey: 'aws.no_profile_non_interactive', errorMessage: 'No profile for staging');
+
+        $line = $this->lines()[0];
+        self::assertSame('staging', $line['environment']);
+        self::assertSame('No profile for [redacted]', $line['error']['message']);
+    }
 }

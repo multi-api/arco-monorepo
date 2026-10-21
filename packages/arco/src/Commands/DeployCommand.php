@@ -11,6 +11,7 @@ use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\JsonStream;
 use Multiapi\Arco\Cli\StepPrinter;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
+use Multiapi\Arco\Commands\Concerns\StreamsJson;
 use Multiapi\Arco\Commands\Concerns\UsesCloudflare;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ArcoFileEditor;
@@ -36,7 +37,6 @@ use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
-use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\NullOutput;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
@@ -46,6 +46,7 @@ use Throwable;
 final class DeployCommand extends ArcoCommand
 {
     use ResolvesTarget;
+    use StreamsJson;
     use UsesCloudflare;
 
     private DeployPipeline $pipeline;
@@ -56,12 +57,8 @@ final class DeployCommand extends ArcoCommand
     private PresetRegistry $presets;
     /** @var Closure(AwsClients, AppConfig): Console */
     private Closure $consoleFactory;
-    /** @var Closure(): float seconds since the epoch, for the --json timestamps */
-    private Closure $clock;
     /** --json: the deployer of the running deploy, which knows whether AWS changed */
     private ?ChangeTrackingDeployer $tracked = null;
-    /** --json: the target once arco.php is loaded */
-    private ?AppConfig $target = null;
 
     public function __construct(
         ?Closure $awsFactory = null,
@@ -102,25 +99,26 @@ final class DeployCommand extends ArcoCommand
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $this->tracked = null;
-        $this->target = null;
         if (! $input->getOption('json')) {
             return $this->deploy($input, $output, new SymfonyStyle($input, $output), null);
         }
+        // Deploy command output goes to stderr with the other diagnostics.
+        return $this->runJson($input, $output, fn (OutputInterface $stderr, JsonStream $stream): int => $this->deploy($input, $stderr, new SymfonyStyle($input, new NullOutput()), $stream));
+    }
 
-        // stdout carries only the NDJSON lines; deploy command output and diagnostics go to stderr.
-        $input->setInteractive(false);
-        $stderr = $output instanceof ConsoleOutputInterface ? $output->getErrorOutput() : new NullOutput();
-        $stream = new JsonStream($output, $this->t(...), $this->clock);
-        $stream->redact($this->cloudflareToken($input), self::env('AWS_SECRET_ACCESS_KEY'), self::env('AWS_SESSION_TOKEN'));
-        try {
-            return $this->deploy($input, $stderr, new SymfonyStyle($input, new NullOutput()), $stream);
-        } catch (Throwable $e) {
-            // What the human output leaves to the application to render: the result says it, with its exit code.
-            $this->jsonFailure($stream, $input, 'error.unexpected', $e->getMessage());
-            $stderr->writeln($stream->scrubbed($e::class . ': ' . $e->getMessage()), OutputInterface::OUTPUT_RAW);
-            $code = $e->getCode();
-            return is_int($code) && $code > 0 ? min($code, 255) : self::FAILURE;
-        }
+    protected function jsonChanged(): bool
+    {
+        return $this->tracked?->changed() === true;
+    }
+
+    protected function jsonRolledBack(): bool
+    {
+        return $this->tracked?->rolledBack() === true;
+    }
+
+    protected function jsonSucceeded(): string
+    {
+        return 'deployed';
     }
 
     /**
@@ -135,7 +133,7 @@ final class DeployCommand extends ArcoCommand
         $config = null;
         try {
             $config = $this->loadTarget($input, $io, $stream === null ? null : $stream->warning(...));
-            $this->target = $config;
+            $this->jsonTarget($stream, $config);
             $preset = $this->presets->detect($this->projectDir());
 
             $migrate = (bool) $input->getOption('migrate');
@@ -222,10 +220,10 @@ final class DeployCommand extends ArcoCommand
             }
 
             $verifier = ($this->verifierFactory)($aws);
-            $plan = $commands === [] ? null : new CommandPlan($commands, ($this->consoleFactory)($aws, $config), function (string $command, CommandResult $result) use ($output, $steps, &$ran): void {
+            $plan = $commands === [] ? null : new CommandPlan($commands, ($this->consoleFactory)($aws, $config), function (string $command, CommandResult $result) use ($output, $steps, $stream, &$ran): void {
                 $ran[] = $command;
                 $steps->finish();
-                $output->write($result->output, false, OutputInterface::OUTPUT_RAW);
+                $output->write($stream === null ? $result->output : $stream->scrubbed($result->output), false, OutputInterface::OUTPUT_RAW);
                 if ($result->output !== '' && ! str_ends_with($result->output, "\n")) {
                     $output->writeln('');
                 }
@@ -300,7 +298,7 @@ final class DeployCommand extends ArcoCommand
                 ]);
                 $io->error($unknown);
                 if ($stream !== null) {
-                    $this->jsonFailure($stream, $input, 'deploy.command_unknown', $unknown);
+                    $this->jsonFailure($stream, $input, $e, 'deploy.command_unknown', $unknown);
                 }
                 $io->writeln($this->t('deploy.command_traffic_unchanged'));
                 $this->commandsNotUndone($io, $e->ran, $config, 'deploy.commands_may_have_run');
@@ -312,10 +310,10 @@ final class DeployCommand extends ArcoCommand
                 : $this->t($key, ['command' => $e->command, 'code' => $result->exitCode]);
             $io->error($message);
             if ($stream !== null) {
-                $this->jsonFailure($stream, $input, $key, $message);
+                $this->jsonFailure($stream, $input, $e, $key, $message);
                 // The command's log tail is a diagnostic: stderr with --json.
                 foreach ($result->logTail as $line) {
-                    $output->writeln('  ' . $line, OutputInterface::OUTPUT_RAW);
+                    $output->writeln($stream->scrubbed('  ' . $line), OutputInterface::OUTPUT_RAW);
                 }
             }
             foreach ($result->logTail as $line) {
@@ -332,7 +330,7 @@ final class DeployCommand extends ArcoCommand
             if ($message !== null) {
                 $io->error($message);
                 if ($stream !== null) {
-                    $this->jsonFailure($stream, $input, $this->describeErrorKey($e), $message);
+                    $this->jsonFailure($stream, $input, $e, $this->describeErrorKey($e), $message);
                 }
             }
             if ($config !== null) {
@@ -340,28 +338,6 @@ final class DeployCommand extends ArcoCommand
             }
             return $message === null ? throw $e : self::FAILURE;
         }
-    }
-
-    /**
-     * The --json result of a deploy that stopped: refused when nothing in AWS changed yet, failed otherwise.
-     */
-    private function jsonFailure(JsonStream $stream, InputInterface $input, string $key, string $message): void
-    {
-        $environment = $input->getOption('env');
-        $stream->result(
-            $this->tracked?->changed() === true ? 'failed' : 'refused',
-            $this->target?->app,
-            $this->target->environment ?? (is_string($environment) && $environment !== '' ? $environment : null),
-            rolledBack: $this->tracked?->rolledBack() === true,
-            errorKey: $key,
-            errorMessage: $message,
-        );
-    }
-
-    private static function env(string $name): ?string
-    {
-        $value = getenv($name);
-        return is_string($value) && $value !== '' ? $value : null;
     }
 
     /**

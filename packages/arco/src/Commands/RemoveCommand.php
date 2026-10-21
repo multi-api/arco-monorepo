@@ -10,6 +10,7 @@ use Multiapi\Arco\Cli\JsonStream;
 use Multiapi\Arco\Cli\StepPrinter;
 use Multiapi\Arco\Commands\Concerns\ConfirmsProtected;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
+use Multiapi\Arco\Commands\Concerns\StreamsJson;
 use Multiapi\Arco\Commands\Concerns\UsesCloudflare;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\AwsDeployer;
@@ -22,7 +23,6 @@ use Multiapi\Arco\Deploy\Sleeper;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
-use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\NullOutput;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
@@ -33,16 +33,13 @@ final class RemoveCommand extends ArcoCommand
 {
     use ConfirmsProtected;
     use ResolvesTarget;
+    use StreamsJson;
     use UsesCloudflare;
 
     /** @var Closure(AwsClients, ?AwsClients, bool, ?DnsProvider): Deployer */
     private Closure $deployerFactory;
-    /** @var Closure(): float seconds since the epoch, for the --json timestamps */
-    private Closure $clock;
     /** --json: whether a deletion step started (a failure after it is "failed", before it "refused") */
     private bool $deleting = false;
-    /** --json: the target once arco.php is loaded */
-    private ?AppConfig $target = null;
 
     /** @param (Closure(): float)|null $clock */
     public function __construct(?Closure $awsFactory = null, ?Closure $deployerFactory = null, ?Closure $cloudflareFactory = null, ?Closure $clock = null)
@@ -68,25 +65,26 @@ final class RemoveCommand extends ArcoCommand
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $this->deleting = false;
-        $this->target = null;
         if (! $input->getOption('json')) {
             return $this->remove($input, new SymfonyStyle($input, $output), null);
         }
+        // The same format as deploy --json.
+        return $this->runJson($input, $output, fn (OutputInterface $stderr, JsonStream $stream): int => $this->remove($input, new SymfonyStyle($input, new NullOutput()), $stream));
+    }
 
-        // stdout carries only the NDJSON lines (the same format as deploy --json); diagnostics go to stderr.
-        $input->setInteractive(false);
-        $stderr = $output instanceof ConsoleOutputInterface ? $output->getErrorOutput() : new NullOutput();
-        $stream = new JsonStream($output, $this->t(...), $this->clock);
-        $stream->redact($this->cloudflareToken($input));
-        try {
-            return $this->remove($input, new SymfonyStyle($input, new NullOutput()), $stream);
-        } catch (Throwable $e) {
-            // What the human output leaves to the application to render: the result says it, with its exit code.
-            $this->jsonFailure($stream, $input, 'error.unexpected', $e->getMessage());
-            $stderr->writeln($stream->scrubbed($e::class . ': ' . $e->getMessage()), OutputInterface::OUTPUT_RAW);
-            $code = $e->getCode();
-            return is_int($code) && $code > 0 ? min($code, 255) : self::FAILURE;
-        }
+    protected function jsonChanged(): bool
+    {
+        return $this->deleting;
+    }
+
+    protected function jsonRolledBack(): bool
+    {
+        return false;
+    }
+
+    protected function jsonSucceeded(): string
+    {
+        return 'removed';
     }
 
     /** The remove. With --json, $stream gets the steps and the result and $io writes nowhere. */
@@ -99,7 +97,7 @@ final class RemoveCommand extends ArcoCommand
                 $input->setOption('yes', true);
             }
             $config = $this->loadTarget($input, $io, $stream === null ? null : $stream->warning(...));
-            $this->target = $config;
+            $this->jsonTarget($stream, $config);
             $cloudflare = null;
             if ($config->dnsCloudflare) {
                 $profile = $input->getOption('dns-profile');
@@ -175,23 +173,10 @@ final class RemoveCommand extends ArcoCommand
             $message = $this->describeError($e) ?? throw $e;
             $io->error($message);
             if ($stream !== null) {
-                $this->jsonFailure($stream, $input, $this->describeErrorKey($e), $message);
+                $this->jsonFailure($stream, $input, $e, $this->describeErrorKey($e), $message);
             }
             return self::FAILURE;
         }
-    }
-
-    /** The --json result of a remove that stopped: refused before the first deletion step, failed after it. */
-    private function jsonFailure(JsonStream $stream, InputInterface $input, string $key, string $message): void
-    {
-        $environment = $input->getOption('env');
-        $stream->result(
-            $this->deleting ? 'failed' : 'refused',
-            $this->target?->app,
-            $this->target->environment ?? (is_string($environment) && $environment !== '' ? $environment : null),
-            errorKey: $key,
-            errorMessage: $message,
-        );
     }
 
     private function listResources(Deployer $deployer, AppConfig $config, SymfonyStyle $io, ?JsonStream $stream): void

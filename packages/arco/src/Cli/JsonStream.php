@@ -35,6 +35,8 @@ final class JsonStream
     private ?int $progressPercent = null;
     /** @var list<string> */
     private array $secrets = [];
+    /** @var list<string> the app and environment names: never redacted when they are a whole value */
+    private array $identity = [];
     private bool $result = false;
 
     /**
@@ -97,6 +99,16 @@ final class JsonStream
         usort($this->secrets, fn (string $a, string $b) => strlen($b) <=> strlen($a));
     }
 
+    /** The app and environment names (from arco.php, not secret): a param that is exactly one of them stays as is. */
+    public function identity(?string ...$names): void
+    {
+        foreach ($names as $name) {
+            if ($name !== null && $name !== '') {
+                $this->identity[] = $name;
+            }
+        }
+    }
+
     /** $text with the registered secret values redacted, for diagnostics written elsewhere (stderr). */
     public function scrubbed(string $text): string
     {
@@ -133,18 +145,19 @@ final class JsonStream
         if ($outcome === 'deployed' || $outcome === 'removed') {
             $this->endRunning();
         }
+        // app and environment name the target and are never redacted, even when a secret has the same value.
         $this->write([
             'type' => 'result',
             'outcome' => $outcome,
-            'app' => $app,
-            'environment' => $environment,
+            'app' => null,
+            'environment' => null,
             'revision' => $revision,
             'url' => $url,
             'domains' => $domains,
             'rolled_back' => $rolledBack,
             'cold_start_ms' => $coldStartMs,
             'error' => $errorKey === null ? null : ['key' => $errorKey, 'message' => (string) $errorMessage],
-        ]);
+        ], ['app' => $app, 'environment' => $environment]);
         $this->result = true;
     }
 
@@ -194,13 +207,17 @@ final class JsonStream
         $this->write($line);
     }
 
-    /** @param array<string, mixed> $line */
-    private function write(array $line): void
+    /**
+     * @param array<string, mixed> $line
+     * @param array<string, mixed> $raw fields of $line written as they are, not scrubbed
+     */
+    private function write(array $line, array $raw = []): void
     {
         if ($this->result) {
             return;
         }
-        $json = json_encode($this->scrub(['schema' => self::SCHEMA] + $line), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
+        $scrubbed = $this->scrub(['schema' => self::SCHEMA] + $line);
+        $json = json_encode(is_array($scrubbed) ? array_replace($scrubbed, $raw) : $scrubbed, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
         // Raw (no <tag> styling) and shown even with --quiet: the stream is the command's output.
         $this->output->writeln($json, OutputInterface::OUTPUT_RAW | OutputInterface::VERBOSITY_QUIET);
     }
@@ -210,7 +227,7 @@ final class JsonStream
     {
         return match (true) {
             $this->secrets === [] => $value,
-            is_string($value) => str_replace($this->secrets, '[redacted]', $value),
+            is_string($value) => in_array($value, $this->identity, true) ? $value : str_replace($this->secrets, '[redacted]', $value),
             is_array($value) => array_map($this->scrub(...), $value),
             $value instanceof \stdClass => (object) array_map($this->scrub(...), (array) $value),
             default => $value,

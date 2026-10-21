@@ -346,4 +346,23 @@ final class RemoveCommandTest extends TestCase
         self::assertContains('remove', $deployer->calls);
         $project->restore();
     }
+
+    public function test_json_redacts_the_aws_secret_environment_values_like_deploy(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->removeSteps = [['remove.step_console', ['function' => 'aws-secret-key-value']]];
+        putenv('AWS_SECRET_ACCESS_KEY=aws-secret-key-value');
+        try {
+            $tester = $project->tester($this->command($deployer));
+            $lines = $this->removeJson($tester, ['--env' => 'production', '--yes' => true]);
+        } finally {
+            putenv('AWS_SECRET_ACCESS_KEY');
+        }
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('aws-secret-key-value', $tester->getDisplay());
+        self::assertSame('removed', $lines[count($lines) - 1]['outcome']);
+        $project->restore();
+    }
 }

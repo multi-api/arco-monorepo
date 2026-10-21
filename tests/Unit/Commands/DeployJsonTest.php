@@ -82,12 +82,18 @@ final class DeployJsonTest extends TestCase
         }
     }
 
-    private function tester(FakeDeployer $deployer, bool $verifies = true, ?FakeConsole $console = null, ?FakeCloudflare $cloudflare = null): CommandTester
+    /** @param (\Closure(): void)|null $onDeployer runs when the deployer is made, mid-deploy */
+    private function tester(FakeDeployer $deployer, bool $verifies = true, ?FakeConsole $console = null, ?FakeCloudflare $cloudflare = null, ?FakeRunner $runner = null, ?\Closure $onDeployer = null): CommandTester
     {
         $command = new DeployCommand(
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $this->aws, 'credentials' => false]),
-            pipeline: new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager()),
-            deployerFactory: fn () => $deployer,
+            pipeline: new DeployPipeline(new Builder($runner ?? new FakeRunner()), new BinaryProvider(new GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager()),
+            deployerFactory: function () use ($deployer, $onDeployer) {
+                if ($onDeployer !== null) {
+                    $onDeployer();
+                }
+                return $deployer;
+            },
             verifierFactory: fn () => new FakeVerifier($verifies, 800),
             presets: new PresetRegistry([]),
             consoleFactory: fn () => $console ?? throw new \LogicException('No console expected.'),
@@ -401,5 +407,88 @@ final class DeployJsonTest extends TestCase
         self::assertSame('refused', self::last($lines)['outcome']);
         self::assertStringStartsWith('cloudflare.', self::last($lines)['error']['key']);
         self::assertStringNotContainsString(FakeCloudflare::TOKEN, $tester->getDisplay());
+    }
+
+    public function test_a_build_failure_is_failed_not_refused(): void
+    {
+        file_put_contents("$this->project/composer.json", '{"require":{}}');
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+        $tester = $this->tester($deployer, runner: new FakeRunner(['install' => 'Your requirements could not be resolved']));
+
+        $lines = $this->deploy($tester);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $result = self::last($lines);
+        self::assertSame(['failed', 'build.command_failed', false], [$result['outcome'], $result['error']['key'], $result['rolled_back']]);
+        self::assertContains('build.composer', self::keys($lines, 'started'));
+        self::assertSame(['describe'], $deployer->calls, 'nothing in AWS changed: still failed, the build broke');
+    }
+
+    public function test_php_deprecations_and_warnings_go_to_stderr_never_stdout(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester($this->existing(), onDeployer: function (): void {
+            trigger_error('Something old is deprecated', E_USER_DEPRECATED);
+            trigger_error('Something looks wrong', E_USER_WARNING);
+        });
+
+        // PHPUnit lowers error_reporting while its own handler runs; bin/arco runs with PHP's E_ALL.
+        $level = error_reporting(E_ALL);
+        try {
+            $lines = $this->deploy($tester);
+        } finally {
+            error_reporting($level);
+        }
+
+        self::assertSame('deployed', self::last($lines)['outcome']);
+        self::assertStringNotContainsString('deprecated', $tester->getDisplay());
+        self::assertStringContainsString('PHP Deprecated: Something old is deprecated', $tester->getErrorOutput());
+        self::assertStringContainsString('PHP Warning: Something looks wrong', $tester->getErrorOutput());
+    }
+
+    public function test_the_failing_command_output_and_log_tail_on_stderr_are_redacted(): void
+    {
+        $path = "$this->project/arco.php";
+        file_put_contents($path, str_replace(
+            "->variables(['APP_ENV' => 'production'])",
+            "->variables(['APP_ENV' => 'production', 'APP_KEY' => 'arco-ssm:/shop/production/app-key'])->deployCommands(['scripts/migrate.php'])",
+            (string) file_get_contents($path),
+        ));
+        $this->aws->append(
+            new Result(['Account' => '222222222222']),
+            new Result(['Parameters' => [['Name' => '/shop/production/app-key', 'Value' => self::SECRET]], 'InvalidParameters' => []]),
+        );
+        $tester = $this->tester($this->existing(), console: new FakeConsole([new CommandResult(3, 'key is ' . self::SECRET . "\n", null, null, ['tail ' . self::SECRET])]));
+
+        $this->deploy($tester);
+
+        self::assertSame(3, $tester->getStatusCode());
+        $stderr = $tester->getErrorOutput();
+        self::assertStringNotContainsString(self::SECRET, $stderr);
+        self::assertStringContainsString('key is [redacted]', $stderr);
+        self::assertStringContainsString('tail [redacted]', $stderr);
+    }
+
+    public function test_a_secret_equal_to_the_app_or_environment_name_never_redacts_them(): void
+    {
+        $path = "$this->project/arco.php";
+        file_put_contents($path, str_replace(
+            "->variables(['APP_ENV' => 'production'])",
+            "->variables(['APP_ENV' => 'production', 'STAGE' => 'arco-ssm:/shop/production/stage'])",
+            (string) file_get_contents($path),
+        ));
+        $this->aws->append(
+            new Result(['Account' => '222222222222']),
+            new Result(['Parameters' => [['Name' => '/shop/production/stage', 'Value' => 'production']], 'InvalidParameters' => []]),
+        );
+        $tester = $this->tester($this->existing());
+
+        $lines = $this->deploy($tester);
+
+        $result = self::last($lines);
+        self::assertSame(['deployed', 'shop', 'production'], [$result['outcome'], $result['app'], $result['environment']]);
+        $staging = array_values(array_filter($lines, fn (array $l) => ($l['key'] ?? null) === 'build.staging'))[0];
+        self::assertSame('production', $staging['params']['environment']);
     }
 }
