@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Tests\Integration;
 
 use Multiapi\Arco\Binary\BinaryProvider;
 use Multiapi\Arco\Binary\RuntimeManifest;
+use Multiapi\Arco\Laravel\LaravelPreset;
 use Multiapi\Arco\Package\ConsolePackager;
 use Multiapi\Arco\Package\PackageReader;
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
@@ -143,7 +144,9 @@ final class WorkerRuntimeTest extends TestCase
     {
         $this->api = new RuntimeApiEmulator(SiblingContainers::BIND);
         $this->container = 'arco-worker-it-' . bin2hex(random_bytes(3));
+        // As a deploy does (DeployPipeline::variables): the preset's defaults first, LARAVEL_STORAGE_PATH among them.
         $env = [
+            ...(new LaravelPreset())->defaultVariables(),
             'AWS_LAMBDA_RUNTIME_API' => SiblingContainers::testHost() . ":{$this->api->port}", 'LAMBDA_TASK_ROOT' => '/var/task', 'AWS_REGION' => 'us-east-1',
             'AWS_DEFAULT_REGION' => 'us-east-1', 'AWS_ACCESS_KEY_ID' => 'AKIDTEST', 'AWS_SECRET_ACCESS_KEY' => 'secret', 'AWS_SESSION_TOKEN' => 'token',
             'ARCO' => '1', 'ARCO_WORKER_QUEUE' => 'emails', 'ARCO_QUEUE_TRIES' => '3',
