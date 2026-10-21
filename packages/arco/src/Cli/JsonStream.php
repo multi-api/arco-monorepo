@@ -99,7 +99,7 @@ final class JsonStream
         usort($this->secrets, fn (string $a, string $b) => strlen($b) <=> strlen($a));
     }
 
-    /** The app and environment names (from arco.php, not secret): a param that is exactly one of them stays as is. */
+    /** The app and environment names and the custom domains (from arco.php, not secret): a value that is exactly one of them stays as is. */
     public function identity(?string ...$names): void
     {
         foreach ($names as $name) {

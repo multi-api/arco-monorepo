@@ -7,6 +7,10 @@ use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\JsonStream;
 use Multiapi\Arco\Commands\Concerns\StreamsJson;
 use Multiapi\Arco\Commands\Concerns\UsesCloudflare;
+use Multiapi\Arco\Config\App;
+use Multiapi\Arco\Config\AppConfig;
+use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Config\Environment;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -16,14 +20,14 @@ use Symfony\Component\Console\Tester\CommandTester;
 /** The shared --json wrapper of deploy and remove. */
 final class StreamsJsonTest extends TestCase
 {
-    /** @param \Closure(JsonStream): int $body */
+    /** @param \Closure(JsonStream, object): int $body */
     private function tester(\Closure $body, string $succeeded = 'deployed'): CommandTester
     {
         $command = new class ($body, $succeeded) extends ArcoCommand {
             use StreamsJson;
             use UsesCloudflare;
 
-            /** @param \Closure(JsonStream): int $body */
+            /** @param \Closure(JsonStream, object): int $body */
             public function __construct(private readonly \Closure $body, private readonly string $succeeded)
             {
                 $this->clock = fn (): float => 1792591385.0;
@@ -38,7 +42,12 @@ final class StreamsJsonTest extends TestCase
 
             protected function execute(InputInterface $input, OutputInterface $output): int
             {
-                return $this->runJson($input, $output, fn (OutputInterface $stderr, JsonStream $stream): int => ($this->body)($stream));
+                return $this->runJson($input, $output, fn (OutputInterface $stderr, JsonStream $stream): int => ($this->body)($stream, $this));
+            }
+
+            public function target(JsonStream $stream, AppConfig $config): void
+            {
+                $this->jsonTarget($stream, $config);
             }
 
             protected function jsonChanged(): bool
@@ -95,5 +104,31 @@ final class StreamsJsonTest extends TestCase
 
         $lines = DeployJsonTest::lines($tester->getDisplay());
         self::assertSame('[redacted] [redacted] [redacted]', $lines[0]['params']['command']);
+    }
+
+    public function test_the_custom_domains_of_the_target_are_never_redacted_by_a_short_secret(): void
+    {
+        // Floci's AWS secret key is "test", which every *.test domain contains.
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')
+            ->environment('production', fn (Environment $env) => $env->domain(['app.arco-e2e.test']))->toArray(), 'production');
+        putenv('AWS_SECRET_ACCESS_KEY=test');
+        try {
+            $tester = $this->tester(function (JsonStream $stream, object $command) use ($config): int {
+                \assert(method_exists($command, 'target'));
+                $command->target($stream, $config);
+                $stream('deploy.dns_target', ['domain' => 'app.arco-e2e.test']);
+                $stream('deploy.command', ['command' => 'echo test']);
+                $stream->result('deployed', 'shop', 'production', domains: ['app.arco-e2e.test']);
+                return 0;
+            });
+            $tester->execute(['--env' => 'production', '--json' => true], ['capture_stderr_separately' => true]);
+        } finally {
+            putenv('AWS_SECRET_ACCESS_KEY');
+        }
+
+        $lines = DeployJsonTest::lines($tester->getDisplay());
+        self::assertSame('app.arco-e2e.test', $lines[0]['params']['domain']);
+        self::assertSame('echo [redacted]', $lines[2]['params']['command']);
+        self::assertSame(['app.arco-e2e.test'], $lines[count($lines) - 1]['domains']);
     }
 }

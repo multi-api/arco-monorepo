@@ -97,7 +97,8 @@ trait StreamsJson
     protected function jsonTarget(?JsonStream $stream, AppConfig $config): void
     {
         $this->jsonTarget = $config;
-        $stream?->identity($config->app, $config->environment);
+        // The custom domains come from arco.php too: a short secret (Floci's "test" key) must not mangle them.
+        $stream?->identity($config->app, $config->environment, ...$config->domains);
     }
 
     /**

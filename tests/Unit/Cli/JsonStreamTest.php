@@ -196,6 +196,22 @@ final class JsonStreamTest extends TestCase
         self::assertSame(['shop', 'production'], [$lines[4]['app'], $lines[4]['environment']]);
     }
 
+    public function test_custom_domains_are_never_redacted_by_a_short_secret(): void
+    {
+        // Floci's AWS secret key is "test": substring redaction would turn app.arco-e2e.test into app.arco-e2e.[redacted].
+        $stream = $this->stream();
+        $stream->redact('test');
+        $stream->identity('shop', 'production', 'app.arco-e2e.test');
+        $stream('deploy.dns_target', ['domain' => 'app.arco-e2e.test']);
+        $stream('deploy.command', ['command' => 'echo test']);
+        $stream->result('deployed', 'shop', 'production', domains: ['app.arco-e2e.test']);
+
+        $lines = $this->lines();
+        self::assertSame('app.arco-e2e.test', $lines[0]['params']['domain']);
+        self::assertSame('echo [redacted]', $lines[2]['params']['command']);
+        self::assertSame(['app.arco-e2e.test'], $lines[count($lines) - 1]['domains']);
+    }
+
     public function test_the_result_identity_is_not_redacted_even_without_registered_names(): void
     {
         $stream = $this->stream();
