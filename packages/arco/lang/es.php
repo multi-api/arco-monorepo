@@ -62,6 +62,8 @@ return [
     'validation.binary_overrides_build' => 'binary() omite el manifiesto de runtimes, por lo que build(), frankenphp() y php() se ignoran. Quítalos o quita binary().',
     'validation.permission' => 'permissions()[{index}]: {field} falta o no es válido. Cada statement necesita Effect (Allow o Deny), Action y Resource (un string o una lista); un Sid debe ser alfanumérico y no puede empezar con "Arco".',
     'validation.permissions_with_role' => 'permissions() se ignora porque role() usa tu propio rol de ejecución. Agrega esos statements a ese rol.',
+    'validation.boundary_arn' => 'El límite de permisos debe ser el ARN de una política de IAM, como arn:aws:iam::123456789012:policy/arco-boundary o arn:aws:iam::aws:policy/PowerUserAccess, en una sola línea; se recibió "{value}" (origen: {source}).',
+    'validation.boundary_with_custom_role' => 'El límite de permisos {boundary} (origen: {source}) no se puede combinar con role(): cuando traes tu propio rol, Arco no crea un rol de ejecución, así que no hay nada que limitar. Configura el límite en tu rol desde IAM o quita role() para que Arco cree uno.',
     'validation.domain' => 'El dominio "{domain}" no es un nombre de host válido. Usa un nombre en minúsculas como app.example.com, sin esquema, puerto ni ruta.',
     'validation.domain_wildcard' => 'Dominio "{domain}": no se admiten dominios comodín. Indica cada nombre de host.',
     'validation.domain_duplicate' => 'El dominio "{domain}" aparece más de una vez.',

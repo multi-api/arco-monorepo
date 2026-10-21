@@ -17,6 +17,8 @@ final class FakeDeployer implements Deployer
     /** @var array<string, string> */
     public array $variables = [];
     public ?Package $package = null;
+    /** the configuration prepare() was given */
+    public ?AppConfig $preparedConfig = null;
     public ?ConsoleArtifacts $console = null;
     /** step reported by prune(), as AwsDeployer does when AWS refuses the cleanup */
     public ?string $pruneWarning = null;
@@ -79,6 +81,7 @@ final class FakeDeployer implements Deployer
     public function prepare(AppConfig $config, Package $package, ?ConsoleArtifacts $console, array $variables, ?callable $onStep = null): PreparedDeploy
     {
         $this->calls[] = 'prepare';
+        $this->preparedConfig = $config;
         $this->variables = $variables;
         $this->package = $package;
         $this->console = $console;

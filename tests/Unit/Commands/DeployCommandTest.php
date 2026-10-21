@@ -902,4 +902,59 @@ final class DeployCommandTest extends TestCase
         self::assertStringContainsString("this environment uses dns('cloudflare')", (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
         self::assertSame([], $this->factoryCalls);
     }
+
+    public function test_the_permissions_boundary_reaches_the_deployer_flag_over_host_env_over_arco_php(): void
+    {
+        file_put_contents("$this->project/arco.php", str_replace("->console()", "->console()->permissionsBoundary('arn:aws:iam::123456789012:policy/app')", (string) file_get_contents("$this->project/arco.php")));
+        $run = function (array $options): FakeDeployer {
+            $this->aws->append(new Result(['Account' => '222222222222']));
+            $deployer = new FakeDeployer();
+            $tester = $this->tester($deployer);
+            $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--yes' => true, ...$options], ['interactive' => false]);
+            $tester->assertCommandIsSuccessful();
+            return $deployer;
+        };
+        try {
+            putenv('ARCO_PERMISSIONS_BOUNDARY');
+            self::assertSame('arn:aws:iam::123456789012:policy/app', $run([])->preparedConfig?->permissionsBoundary);
+
+            putenv('ARCO_PERMISSIONS_BOUNDARY=arn:aws:iam::123456789012:policy/ci');
+            self::assertSame('arn:aws:iam::123456789012:policy/ci', $run([])->preparedConfig?->permissionsBoundary);
+
+            $flagged = $run(['--permissions-boundary' => 'arn:aws:iam::123456789012:policy/flag'])->preparedConfig;
+            self::assertSame('arn:aws:iam::123456789012:policy/flag', $flagged?->permissionsBoundary);
+            self::assertSame('--permissions-boundary', $flagged->sources['permissionsBoundary']);
+        } finally {
+            putenv('ARCO_PERMISSIONS_BOUNDARY');
+        }
+    }
+
+    public function test_a_host_boundary_with_a_custom_role_fails_before_any_aws_call(): void
+    {
+        file_put_contents("$this->project/arco.php", str_replace("->console()", "->console()->role('arn:aws:iam::123456789012:role/mine')", (string) file_get_contents("$this->project/arco.php")));
+        putenv('ARCO_PERMISSIONS_BOUNDARY=arn:aws:iam::123456789012:policy/ci');
+        try {
+            $deployer = new FakeDeployer();
+            $tester = $this->tester($deployer);
+            $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--yes' => true], ['interactive' => false]);
+
+            self::assertSame(1, $tester->getStatusCode());
+            self::assertStringContainsString('ARCO_PERMISSIONS_BOUNDARY', $tester->getDisplay());
+            self::assertSame([], $deployer->calls);
+        } finally {
+            putenv('ARCO_PERMISSIONS_BOUNDARY');
+        }
+    }
+
+    public function test_an_invalid_boundary_flag_fails_before_any_aws_call(): void
+    {
+        $deployer = new FakeDeployer();
+        $tester = $this->tester($deployer);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--yes' => true, '--permissions-boundary' => 'arn:aws:iam::123456789012:role/x'], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('arn:aws:iam::123456789012:role/x', $tester->getDisplay());
+        self::assertSame([], $deployer->calls);
+        self::assertSame(0, $deployer->ownershipChecks);
+    }
 }

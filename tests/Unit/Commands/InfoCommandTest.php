@@ -495,7 +495,7 @@ final class InfoCommandTest extends TestCase
         self::assertSame('schema', array_key_first($json), 'first key, as in info --resources');
         unset($json['schema']);
         self::assertSame(
-            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables'],
+            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables', 'permissions_boundary'],
             array_keys($json),
         );
         $project->restore();
@@ -564,5 +564,91 @@ final class InfoCommandTest extends TestCase
             self::assertStringContainsString('nowhere', $json['error']);
             $project->restore();
         }
+    }
+
+    public function test_shows_the_permissions_boundary_with_its_source(): void
+    {
+        putenv('ARCO_PERMISSIONS_BOUNDARY');
+        $app = 'arn:aws:iam::123456789012:policy/app-boundary';
+        $config = str_replace(
+            ["->concurrency(48)", "->timeout(60)"],
+            ["->concurrency(48)->permissionsBoundary('$app')", "->timeout(60)->permissionsBoundary('arn:aws:iam::aws:policy/PowerUserAccess')"],
+            ProjectFixture::standardConfig(),
+        );
+        $project = new ProjectFixture($config);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'staging'], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        self::assertMatchesRegularExpression('/permissionsBoundary\s+arn:aws:iam::123456789012:policy\/app-boundary\s+app *\n/', $tester->getDisplay());
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/permissionsBoundary\s+arn:aws:iam::aws:policy\/PowerUserAccess\s+environment *\n/', $tester->getDisplay());
+
+        putenv('ARCO_PERMISSIONS_BOUNDARY=arn:aws:iam::123456789012:policy/ci');
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/permissionsBoundary\s+arn:aws:iam::123456789012:policy\/ci\s+ARCO_PERMISSIONS_BOUNDARY *\n/', $tester->getDisplay());
+
+        $tester->execute(['--env' => 'production', '--permissions-boundary' => 'arn:aws:iam::123456789012:policy/flag'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/permissionsBoundary\s+arn:aws:iam::123456789012:policy\/flag\s+--permissions-boundary *\n/', $tester->getDisplay());
+
+        $tester->execute(['--env' => 'production', '--json' => true, '--permissions-boundary' => 'arn:aws:iam::123456789012:policy/flag'], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame('arn:aws:iam::123456789012:policy/flag', $json['permissions_boundary']);
+        self::assertSame('permissions_boundary', array_key_last($json), 'appended after tables');
+        self::assertArrayNotHasKey('permissionsBoundary', $json['settings'], 'the top-level key carries it; settings keep their keys');
+        putenv('ARCO_PERMISSIONS_BOUNDARY');
+        $project->restore();
+    }
+
+    public function test_without_a_boundary_the_row_is_default_and_the_json_key_is_null(): void
+    {
+        putenv('ARCO_PERMISSIONS_BOUNDARY');
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/permissionsBoundary\s+-\s+default *\n/', $tester->getDisplay());
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertArrayHasKey('permissions_boundary', $json);
+        self::assertNull($json['permissions_boundary']);
+        $project->restore();
+    }
+
+    public function test_the_json_error_key_stays_after_the_permissions_boundary(): void
+    {
+        putenv('ARCO_PERMISSIONS_BOUNDARY');
+        $config = str_replace("->timeout(60)", "->timeout(60)->account('999999999999')", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $mocks = new \Multiapi\Arco\Tests\Unit\Deploy\AwsMocks();
+        $mocks->handler->append(new \Aws\Result(['Account' => '111111111111']));
+        $tester = $project->tester(new InfoCommand(awsFactory: fn (?string $p, string $r) => $mocks->clients($r), deployerFactory: fn () => new FakeDeployer()));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--json' => true], ['interactive' => false]);
+
+        $keys = array_keys(json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR));
+        self::assertSame(['tables', 'permissions_boundary', 'error'], array_slice($keys, -3));
+        $project->restore();
+    }
+
+    public function test_an_invalid_or_conflicting_boundary_fails_info_like_deploy(): void
+    {
+        putenv('ARCO_PERMISSIONS_BOUNDARY');
+        $config = str_replace("->timeout(60)", "->timeout(60)->role('arn:aws:iam::123456789012:role/mine')", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'staging', '--permissions-boundary' => 'arn:aws:iam::123456789012:role/x'], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('--permissions-boundary', $tester->getDisplay());
+
+        putenv('ARCO_PERMISSIONS_BOUNDARY=arn:aws:iam::123456789012:policy/ci');
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertSame(1, $tester->getStatusCode());
+        self::assertStringContainsString('role()', $tester->getDisplay());
+        putenv('ARCO_PERMISSIONS_BOUNDARY');
+        $project->restore();
     }
 }

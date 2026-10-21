@@ -62,6 +62,8 @@ return [
     'validation.binary_overrides_build' => 'binary() bypasses the runtime manifest, so build(), frankenphp() and php() are ignored. Remove them or remove binary().',
     'validation.permission' => 'permissions()[{index}]: {field} is missing or invalid. Each statement needs Effect (Allow or Deny), Action and Resource (a string or a list); a Sid must be alphanumeric and must not start with "Arco".',
     'validation.permissions_with_role' => 'permissions() is ignored because role() uses your own execution role. Add those statements to that role instead.',
+    'validation.boundary_arn' => 'The permissions boundary must be an IAM policy ARN, such as arn:aws:iam::123456789012:policy/arco-boundary or arn:aws:iam::aws:policy/PowerUserAccess, on one line; got "{value}" (source: {source}).',
+    'validation.boundary_with_custom_role' => 'The permissions boundary {boundary} (source: {source}) cannot be combined with role(): Arco creates no execution role when you bring your own, so there is nothing to bound. Set the boundary on your role in IAM, or remove role() so Arco creates one.',
     'validation.domain' => 'Domain "{domain}" is not a valid hostname. Use a lowercase name such as app.example.com, without scheme, port or path.',
     'validation.domain_wildcard' => 'Domain "{domain}": wildcard domains are not supported. List each hostname.',
     'validation.domain_duplicate' => 'Domain "{domain}" is listed more than once.',
