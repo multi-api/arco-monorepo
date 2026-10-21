@@ -73,4 +73,12 @@ final class PhpIniTest extends TestCase
         self::assertSame([], PhpIni::prepare([], $this->dir, []));
         self::assertDirectoryDoesNotExist($this->dir);
     }
+
+    public function test_the_security_defaults_harden_php_8_5_and_the_app_can_override_them(): void
+    {
+        // php.net's interim hardening for CVE-2026-109618/109619 (2026-10-21), on top of the PHP 8.5.12 runtime.
+        self::assertSame(['session.upload_progress.enabled' => false, 'fatal_error_backtraces' => false], PhpIni::SECURITY_DEFAULTS);
+        self::assertSame(['session.upload_progress.enabled' => true, 'fatal_error_backtraces' => false, 'memory_limit' => '1G'], PhpIni::withDefaults(['session.upload_progress.enabled' => true, 'memory_limit' => '1G']));
+        self::assertSame(PhpIni::SECURITY_DEFAULTS, PhpIni::withDefaults([]));
+    }
 }

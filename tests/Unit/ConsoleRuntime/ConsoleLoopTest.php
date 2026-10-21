@@ -82,7 +82,7 @@ final class ConsoleLoopTest extends TestCase
         self::assertStringContainsString('greeting:hola', $ok['output']);
         // phpIni() applies to commands through an .ini file in the child's scan dir (FrankenPHP: integration test).
         self::assertStringContainsString("ini::$this->root/tmp/php\n", $ok['output']);
-        self::assertSame(['memory_limit' => '321M'], parse_ini_file("$this->root/tmp/php/99-arco.ini"));
+        self::assertSame(['session.upload_progress.enabled' => '0', 'fatal_error_backtraces' => '0', 'memory_limit' => '321M'], parse_ini_file("$this->root/tmp/php/99-arco.ini"));
         self::assertStringContainsString('to-stderr', $ok['output']);
         self::assertStringContainsString('cwd:' . realpath("$this->root/app"), $ok['output']);
         self::assertSame(3, $failed['exitCode']);

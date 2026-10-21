@@ -70,7 +70,7 @@ final class WorkerTest extends TestCase
         self::assertStringContainsString("home:$this->root/tmp\n", $output);
         self::assertStringContainsString('cwd:' . realpath("$this->root/app"), $output);
         self::assertStringContainsString("ini::$this->root/tmp/php\n", $output, 'phpIni() applies to the worker');
-        self::assertSame(['memory_limit' => '321M'], parse_ini_file("$this->root/tmp/php/99-arco.ini"));
+        self::assertSame(['session.upload_progress.enabled' => '0', 'fatal_error_backtraces' => '0', 'memory_limit' => '321M'], parse_ini_file("$this->root/tmp/php/99-arco.ini"));
         self::assertDirectoryExists("$this->root/tmp/storage/framework/views");
         self::assertSame(1, preg_match('/^\{"arco":"worker_ready","queue":"emails".*$/m', $output), $output);
         self::assertLessThan(strpos($output, 'args:'), strpos($output, '"worker_ready"'), 'ready is logged before the worker starts');
