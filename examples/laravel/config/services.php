@@ -28,6 +28,11 @@ return [
         'region' => env('AWS_DEFAULT_REGION', 'us-east-1'),
     ],
 
+    // The DynamoDB tables of arco.php's ->table() calls: logical name => table name (ARCO_TABLES).
+    'arco' => [
+        'tables' => json_decode((string) env('ARCO_TABLES', '{}'), true) ?: [],
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

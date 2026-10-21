@@ -35,6 +35,10 @@ final class ExampleE2eEnvironmentTest extends TestCase
         self::assertSame('111122223333', $config->account);
         self::assertSame('arco-ssm:/arco-e2e-0123abcd/e2e/app-key', $config->variables['APP_KEY']);
         self::assertSame([], $config->domains);
+        self::assertCount(1, $config->tables);
+        self::assertSame('state', $config->tables[0]->name);
+        self::assertSame('expires_at', $config->tables[0]->ttl);
+        self::assertSame('arco-e2e-0123abcd-e2e-state', $config->tables[0]->tableName($config));
     }
 
     public function test_defaults_without_a_run(): void
@@ -59,6 +63,7 @@ final class ExampleE2eEnvironmentTest extends TestCase
             'sqs-queue arco-e2e-0123abcd-e2e-default-dlq',
             's3-bucket arco-e2e-0123abcd-e2e-files-111122223333',
             'dynamodb-table arco-e2e-0123abcd-e2e-cache',
+            'dynamodb-table arco-e2e-0123abcd-e2e-state',
         ] as $resource) {
             self::assertContains($resource, $create);
         }

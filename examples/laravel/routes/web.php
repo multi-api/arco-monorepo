@@ -1,6 +1,7 @@
 <?php
 
 use App\Jobs\E2eMarkerJob;
+use Aws\DynamoDb\DynamoDbClient;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
@@ -48,6 +49,32 @@ Route::get('/e2e/storage', function () {
         }
 
         return response()->json(['ok' => false, 'error' => implode(' <- ', $errors)], 500);
+    }
+});
+
+// ->table('state'): write an item to the table ARCO_TABLES names, then read it back.
+Route::get('/e2e/table', function () {
+    $table = config('services.arco.tables.state');
+    if (! is_string($table)) {
+        return response()->json(['ok' => false, 'error' => 'ARCO_TABLES has no "state" table'], 500);
+    }
+    $value = bin2hex(random_bytes(8));
+    try {
+        $dynamo = new DynamoDbClient(['region' => (string) (getenv('AWS_REGION') ?: 'us-east-1'), 'version' => 'latest']);
+        $key = ['PK' => ['S' => 'e2e'], 'SK' => ['S' => 'check']];
+        $dynamo->putItem(['TableName' => $table, 'Item' => $key + [
+            'value' => ['S' => $value],
+            'expires_at' => ['N' => (string) (time() + 3600)],
+        ]]);
+        $item = $dynamo->getItem(['TableName' => $table, 'Key' => $key, 'ConsistentRead' => true])['Item'] ?? [];
+
+        return response()->json(['ok' => ($item['value']['S'] ?? null) === $value, 'table' => $table]);
+    } catch (Throwable $e) {
+        // As /e2e/storage: messages only against a local emulator; on AWS just the error code or class.
+        $code = $e instanceof Aws\Exception\AwsException ? $e->getAwsErrorCode() : null;
+        $error = (string) getenv('AWS_ENDPOINT_URL') !== '' ? get_class($e) . ': ' . $e->getMessage() : ($code ?? get_class($e));
+
+        return response()->json(['ok' => false, 'table' => $table, 'error' => $error], 500);
     }
 });
 

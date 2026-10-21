@@ -10,7 +10,8 @@ use Multiapi\Arco\Logs\LogGroups;
 
 /**
  * Deletes what `arco remove` keeps after a real-AWS end-to-end run: the retained S3 buckets (emptied
- * first, every version), DynamoDB tables and SQS queues (with their dead-letter queues), the run's CloudWatch
+ * first, every version), DynamoDB tables (Arco's cache and failed-jobs tables and the ->table() ones,
+ * all named <app>-e2e-<name>) and SQS queues (with their dead-letter queues), the run's CloudWatch
  * log groups, plus the run's APP_KEY parameter. This is the only code in the project that deletes real AWS resources, so:
  *
  * - An instance exists only after connect() checked that no endpoint override is set and that the

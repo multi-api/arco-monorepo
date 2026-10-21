@@ -23,6 +23,7 @@ return App::make($app)
         ->queue('default')
         ->storage('files')
         ->cache()
+        ->table('state', ttl: 'expires_at')
         ->domain(['app.arco-e2e.test'])
         ->variables([
             'APP_ENV' => 'production',
@@ -38,6 +39,7 @@ return App::make($app)
             ->queue('default')
             ->storage('files')
             ->cache()
+            ->table('state', ttl: 'expires_at')
             ->maxInstances(2)
             ->variables([
                 'APP_ENV' => 'production',
