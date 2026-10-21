@@ -47,10 +47,34 @@ final readonly class GenericTableConfig
     /** An `existing` ARN as given; otherwise the table in the app's region and account. */
     public function arn(AppConfig $config): string
     {
-        $table = $this->tableName($config);
+        return self::arnOf($this->tableName($config), $config);
+    }
+
+    /**
+     * The ARN of a table given by name (in the app's region and account, empty while the account is not
+     * known yet) or by ARN (as given).
+     */
+    public static function arnOf(string $table, AppConfig $config): string
+    {
         if (preg_match(self::ARN, $table) === 1) {
             return $table;
         }
         return 'arn:' . Partition::of($config->region ?? '') . ':dynamodb:' . ($config->region ?? '') . ':' . ($config->account ?? '') . ':table/' . $table;
+    }
+
+    /**
+     * Whether two table ARNs (from arn() or arnOf()) can be the same table: same region and name, and the
+     * same account when both know it. An empty account (arco.php locks none, and the credentials have not
+     * resolved it) matches any, so a check before the account is known errs on the side of a clash.
+     */
+    public static function sameTable(string $a, string $b): bool
+    {
+        $parse = static fn (string $arn): ?array => preg_match('/^arn:[a-z-]+:dynamodb:([a-z0-9-]*):(\d{12}|):table\/(.+)$/', $arn, $m) === 1 ? [$m[1], $m[2], $m[3]] : null;
+        $x = $parse($a);
+        $y = $parse($b);
+        if ($x === null || $y === null) {
+            return $a === $b;
+        }
+        return $x[0] === $y[0] && $x[2] === $y[2] && ($x[1] === '' || $y[1] === '' || $x[1] === $y[1]);
     }
 }

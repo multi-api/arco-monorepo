@@ -100,15 +100,14 @@ final class InfoCommand extends ArcoCommand
                 // Additive (0.10), last so the earlier keys keep their order: cloudflare, route53 (<profile>)
                 // or manual; null without domains.
                 'dns' => self::dnsProvider($config),
-            ]
-                // Additive (0.10), only with table(): name => DynamoDB table (as in ARCO_TABLES).
-                + ($config->tables === [] ? [] : ['tables' => array_map(fn (GenericTableConfig $table) => [
+                // Additive (0.10), last: the table() tables, name => DynamoDB table (as in ARCO_TABLES); [] without any.
+                'tables' => array_map(fn (GenericTableConfig $table) => [
                     'name' => $table->name,
                     'table' => $table->tableName($config),
                     'existing' => $table->existing !== null,
                     'ttl' => $table->ttl,
-                ], $config->tables)])
-                + ($remoteError !== null ? ['error' => $remoteError] : []), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+                ], $config->tables),
+            ] + ($remoteError !== null ? ['error' => $remoteError] : []), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             return $remoteError === null ? self::SUCCESS : self::FAILURE;
         }
 

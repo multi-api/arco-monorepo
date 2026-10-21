@@ -886,7 +886,7 @@ final class AwsDeployer implements Deployer
         }
         foreach ($generic as $table) {
             if (! isset($owned[ResourcesStack::genericTableLogicalId($table->name)]) && $lookup->exists($table->tableName($config))) {
-                throw DeployException::make('deploy.table_retained', ['kind' => "table:{$table->name}", 'table' => $table->tableName($config), 'existing' => "table('{$table->name}', existing: '{$table->tableName($config)}')"]);
+                throw DeployException::make('deploy.generic_table_retained', ['kind' => 'table', 'name' => $table->name, 'table' => $table->tableName($config), 'existing' => "table('{$table->name}', existing: '{$table->tableName($config)}')"]);
             }
         }
 
@@ -1024,9 +1024,9 @@ final class AwsDeployer implements Deployer
             }
         }
         // By ARN: an `existing` ARN of another region or account with the same name is another table.
-        $removed = (new GenericTableConfig('', existing: $id))->arn($config);
+        $removed = GenericTableConfig::arnOf($id, $config);
         foreach ($config->tables as $table) {
-            if ($table->existing !== null && $table->arn($config) === $removed) {
+            if ($table->existing !== null && GenericTableConfig::sameTable($table->arn($config), $removed)) {
                 return ['deploy.generic_table_now_existing', ['table' => $id, 'as' => $table->name]];
             }
         }

@@ -2967,10 +2967,14 @@ final class AwsDeployerTest extends TestCase
 
         try {
             $this->deployResources($mocks, $this->resourcesConfig(fn (App $app) => $app->table('state')));
-            self::fail('expected deploy.table_retained');
+            self::fail('expected deploy.generic_table_retained');
         } catch (DeployException $e) {
-            self::assertSame('deploy.table_retained', $e->key);
-            self::assertSame(['kind' => 'table:state', 'table' => 'shop-production-state', 'existing' => "table('state', existing: 'shop-production-state')"], $e->params);
+            self::assertSame('deploy.generic_table_retained', $e->key);
+            self::assertSame(['kind' => 'table', 'name' => 'state', 'table' => 'shop-production-state', 'existing' => "table('state', existing: 'shop-production-state')"], $e->params);
+            $translator = new \Multiapi\Arco\Cli\Translator('en', \Multiapi\Arco\Arco::packageRoot() . '/lang');
+            self::assertStringStartsWith('Table "state" cannot be created: its DynamoDB table shop-production-state already exists', $translator->trans($e->key, $e->params));
+            $es = new \Multiapi\Arco\Cli\Translator('es', \Multiapi\Arco\Arco::packageRoot() . '/lang');
+            self::assertStringStartsWith('No se puede crear la tabla "state": su tabla DynamoDB shop-production-state', $es->trans($e->key, $e->params));
         }
         self::assertSame(['DescribeStacks', 'DescribeTable'], $mocks->calls, 'no CreateStack or UpdateStack');
     }

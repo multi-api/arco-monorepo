@@ -251,4 +251,38 @@ final class GenericTableTest extends TestCase
         ], $bySid['ArcoAppTables']);
         self::assertArrayNotHasKey('ArcoAppTables', array_column(PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [])['Statement'], null, 'Sid'));
     }
+
+    public function test_the_clash_check_does_not_need_a_locked_account(): void
+    {
+        // No ->account(): validation runs before the credentials resolve it.
+        $app = fn () => App::make('shop')->region('us-east-1')->environment('production');
+        self::assertSame(
+            [['key' => 'validation.generic_table_clash', 'params' => ['table' => 'c', 'name' => 'shop-production-cache', 'other' => 'cache()']]],
+            self::errors($app()->cache()->table('c', existing: 'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-cache')),
+        );
+        self::assertSame(
+            [['key' => 'validation.generic_table_clash', 'params' => ['table' => 'j', 'name' => 'shop-production-failed-jobs', 'other' => 'failedJobsTable()']]],
+            self::errors($app()->failedJobsTable()->table('j', existing: 'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-failed-jobs')),
+        );
+        self::assertSame(
+            [['key' => 'validation.generic_table_clash', 'params' => ['table' => 'other', 'name' => 'shop-production-state', 'other' => "table('state')"]]],
+            self::errors($app()->table('state')->table('other', existing: 'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-state')),
+        );
+        // Another region is another table, account or not.
+        self::assertSame([], self::errors($app()->cache()->table('c', existing: 'arn:aws:dynamodb:eu-west-1:111111111111:table/shop-production-cache')));
+        // With the account locked, an ARN of another account is another table.
+        self::assertSame([], self::errors(self::app()->cache()->table('c', existing: 'arn:aws:dynamodb:us-east-1:222222222222:table/shop-production-cache')));
+    }
+
+    public function test_same_table_treats_an_empty_account_as_any(): void
+    {
+        self::assertTrue(GenericTableConfig::sameTable('arn:aws:dynamodb:us-east-1::table/t1', 'arn:aws:dynamodb:us-east-1:111111111111:table/t1'));
+        self::assertTrue(GenericTableConfig::sameTable('arn:aws:dynamodb:us-east-1:111111111111:table/t1', 'arn:aws:dynamodb:us-east-1:111111111111:table/t1'));
+        self::assertFalse(GenericTableConfig::sameTable('arn:aws:dynamodb:us-east-1:222222222222:table/t1', 'arn:aws:dynamodb:us-east-1:111111111111:table/t1'));
+        self::assertFalse(GenericTableConfig::sameTable('arn:aws:dynamodb:us-east-1::table/t1', 'arn:aws:dynamodb:us-east-1::table/t2'));
+        self::assertFalse(GenericTableConfig::sameTable('arn:aws:dynamodb:eu-west-1::table/t1', 'arn:aws:dynamodb:us-east-1::table/t1'));
+        $config = self::resolve(self::app());
+        self::assertSame('arn:aws:dynamodb:us-east-1:111111111111:table/t1', GenericTableConfig::arnOf('t1', $config));
+        self::assertSame('arn:aws:dynamodb:eu-west-1:222222222222:table/Shared', GenericTableConfig::arnOf('arn:aws:dynamodb:eu-west-1:222222222222:table/Shared', $config));
+    }
 }

@@ -549,7 +549,8 @@ final class Validator
 
     private static function validateGenericTables(AppConfig $config, ValidationResult $result): void
     {
-        // Every DynamoDB table the app uses, by ARN: one table cannot be two of them.
+        // Every DynamoDB table the app uses, ARN => call: one table cannot be two of them. Before the
+        // account is known an ARN has none, and sameTable() lets it match any account.
         $taken = [];
         foreach (['cache()' => $config->cacheTable, 'failedJobsTable()' => $config->failedJobsTable] as $call => $table) {
             if ($table !== null) {
@@ -580,9 +581,11 @@ final class Validator
                 $result->error('validation.generic_table_ttl', ['table' => $name, 'value' => $table->ttl]);
             }
             $arn = $table->arn($config);
-            if (isset($taken[$arn])) {
-                $result->error('validation.generic_table_clash', ['table' => $name, 'name' => $table->physicalName($config), 'other' => $taken[$arn]]);
-                continue;
+            foreach ($taken as $other => $call) {
+                if (GenericTableConfig::sameTable($arn, (string) $other)) {
+                    $result->error('validation.generic_table_clash', ['table' => $name, 'name' => $table->physicalName($config), 'other' => $call]);
+                    continue 2;
+                }
             }
             $taken[$arn] = "table('{$name}')";
         }

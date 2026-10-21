@@ -19,6 +19,7 @@ final class GenericTableCommandsTest extends TestCase
 
     protected function tearDown(): void
     {
+        putenv('AWS_PROFILE');
         $this->project?->restore();
     }
 
@@ -192,14 +193,15 @@ final class GenericTableCommandsTest extends TestCase
             ['name' => 'state', 'table' => 'shop-production-state', 'existing' => false, 'ttl' => 'expires_at'],
             ['name' => 'shared', 'table' => 'legacy-table', 'existing' => true, 'ttl' => null],
         ], $json['tables']);
-        self::assertSame('dns', array_keys($json)[count($json) - 2], 'tables is added last');
-        putenv('AWS_PROFILE');
+        self::assertSame('tables', array_key_last($json), 'tables is added last');
     }
 
-    public function test_info_json_without_tables_has_no_tables_key(): void
+    public function test_info_json_without_tables_has_an_empty_tables_key(): void
     {
         $this->project();
         $tester = $this->run_(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')), ['--env' => 'production', '--json' => true]);
-        self::assertArrayNotHasKey('tables', json_decode($tester->getDisplay(), true), 'the key comes with table(), like ARCO_TABLES');
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame([], $json['tables']);
+        self::assertSame('tables', array_key_last($json));
     }
 }
