@@ -7,6 +7,19 @@ use PHPUnit\Framework\TestCase;
 
 final class InfoCommandTest extends TestCase
 {
+    private string|false $boundaryEnv = false;
+
+    protected function setUp(): void
+    {
+        $this->boundaryEnv = getenv('ARCO_PERMISSIONS_BOUNDARY');
+    }
+
+    /** Restored even when an assertion fails mid-test, so the env var never leaks into the next test. */
+    protected function tearDown(): void
+    {
+        putenv($this->boundaryEnv === false ? 'ARCO_PERMISSIONS_BOUNDARY' : 'ARCO_PERMISSIONS_BOUNDARY=' . $this->boundaryEnv);
+    }
+
     public function test_shows_resolved_settings_with_sources_and_masks_plain_secrets(): void
     {
         $project = new ProjectFixture(ProjectFixture::standardConfig());
@@ -568,7 +581,6 @@ final class InfoCommandTest extends TestCase
 
     public function test_shows_the_permissions_boundary_with_its_source(): void
     {
-        putenv('ARCO_PERMISSIONS_BOUNDARY');
         $app = 'arn:aws:iam::123456789012:policy/app-boundary';
         $config = str_replace(
             ["->concurrency(48)", "->timeout(60)"],
@@ -597,13 +609,11 @@ final class InfoCommandTest extends TestCase
         self::assertSame('arn:aws:iam::123456789012:policy/flag', $json['permissions_boundary']);
         self::assertSame('permissions_boundary', array_key_last($json), 'appended after tables');
         self::assertArrayNotHasKey('permissionsBoundary', $json['settings'], 'the top-level key carries it; settings keep their keys');
-        putenv('ARCO_PERMISSIONS_BOUNDARY');
         $project->restore();
     }
 
     public function test_without_a_boundary_the_row_is_default_and_the_json_key_is_null(): void
     {
-        putenv('ARCO_PERMISSIONS_BOUNDARY');
         $project = new ProjectFixture(ProjectFixture::standardConfig());
         $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
 
@@ -619,7 +629,6 @@ final class InfoCommandTest extends TestCase
 
     public function test_the_json_error_key_stays_after_the_permissions_boundary(): void
     {
-        putenv('ARCO_PERMISSIONS_BOUNDARY');
         $config = str_replace("->timeout(60)", "->timeout(60)->account('999999999999')", ProjectFixture::standardConfig());
         $project = new ProjectFixture($config);
         $mocks = new \Multiapi\Arco\Tests\Unit\Deploy\AwsMocks();
@@ -635,7 +644,6 @@ final class InfoCommandTest extends TestCase
 
     public function test_an_invalid_or_conflicting_boundary_fails_info_like_deploy(): void
     {
-        putenv('ARCO_PERMISSIONS_BOUNDARY');
         $config = str_replace("->timeout(60)", "->timeout(60)->role('arn:aws:iam::123456789012:role/mine')", ProjectFixture::standardConfig());
         $project = new ProjectFixture($config);
         $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
@@ -648,7 +656,6 @@ final class InfoCommandTest extends TestCase
         $tester->execute(['--env' => 'production'], ['interactive' => false]);
         self::assertSame(1, $tester->getStatusCode());
         self::assertStringContainsString('role()', $tester->getDisplay());
-        putenv('ARCO_PERMISSIONS_BOUNDARY');
         $project->restore();
     }
 }

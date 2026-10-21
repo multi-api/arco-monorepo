@@ -232,6 +232,105 @@ final class AwsDeployerTest extends TestCase
         self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_function', 'deploy.step_console', 'deploy.step_traffic'], $steps);
     }
 
+    private const BOUNDARY = 'arn:aws:iam::123456789012:policy/arco-boundary';
+
+    private function boundaryConfig(): AppConfig
+    {
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->permissionsBoundary(self::BOUNDARY)->environment('production')->toArray(), 'production');
+    }
+
+    /** @return list<Result> GetCallerIdentity, HeadBucket, the bucket hardening PUTs, HeadObject (the web zip is already uploaded) */
+    private static function untilTheRole(): array
+    {
+        return [new Result(['Account' => '111111111111']), new Result([]), new Result([]), new Result([]), new Result([]), new Result([]), new Result(['VersionId' => 'v1'])];
+    }
+
+    private const UNTIL_THE_ROLE = ['GetCallerIdentity', 'HeadBucket', 'PutPublicAccessBlock', 'PutBucketPolicy', 'PutBucketVersioning', 'PutBucketLifecycleConfiguration', 'HeadObject'];
+
+    /** @return iterable<string, array{list<mixed>, list<string>}> */
+    public static function deniedRoles(): iterable
+    {
+        yield 'CreateRole' => [[self::noRole(), AwsMocks::error(IamException::class, 'CreateRole', 'AccessDenied', 403)], ['GetRole', 'CreateRole']];
+        yield 'PutRolePermissionsBoundary' => [
+            [new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), AwsMocks::error(IamException::class, 'PutRolePermissionsBoundary', 'AccessDenied', 403)],
+            ['GetRole', 'PutRolePermissionsBoundary'],
+        ];
+        yield 'PutRolePolicy' => [
+            [new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']], 'PermissionsBoundary' => ['PermissionsBoundaryArn' => self::BOUNDARY]]]), AwsMocks::error(IamException::class, 'PutRolePolicy', 'AccessDeniedException', 403)],
+            ['GetRole', 'PutRolePolicy'],
+        ];
+    }
+
+    /**
+     * @param list<mixed> $iam
+     * @param list<string> $iamCalls
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('deniedRoles')]
+    public function test_a_role_the_account_guard_denies_stops_the_deploy_before_any_lambda_call(array $iam, array $iamCalls): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[...self::untilTheRole(), ...$iam]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        try {
+            $deployer->prepare($this->boundaryConfig(), $this->package(), $this->console(), []);
+            self::fail('expected deploy.boundary_denied');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.boundary_denied', $e->key);
+            self::assertSame(['role' => 'arco-shop-production', 'boundary' => self::BOUNDARY], $e->params);
+        }
+        self::assertSame([...self::UNTIL_THE_ROLE, ...$iamCalls], $mocks->calls, 'the role step comes before every function step: no Lambda call after the denial');
+        self::assertCount(0, $mocks->handler);
+    }
+
+    public function test_a_redeploy_puts_the_boundary_on_the_role_and_streams_it_in_the_step_params(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), // GetRole: no boundary yet
+            new Result([]),                                   // PutRolePermissionsBoundary
+            new Result([]),                                   // PutRolePolicy
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        ]);
+        $steps = [];
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->prepare($this->boundaryConfig(), $this->package(), null, [], function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame([...self::UNTIL_THE_ROLE, 'GetRole', 'PutRolePermissionsBoundary', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision'], $mocks->calls);
+        self::assertSame(self::BOUNDARY, $mocks->params[8]['PermissionsBoundary']);
+        self::assertSame([
+            ['deploy.step_role', ['role' => 'arco-shop-production', 'boundary' => self::BOUNDARY]],
+            ['deploy.boundary_set', ['role' => 'arco-shop-production', 'boundary' => self::BOUNDARY]],
+        ], array_values(array_filter($steps, fn (array $s) => str_contains($s[0], 'role') || str_contains($s[0], 'boundary'))));
+    }
+
+    public function test_without_a_boundary_the_role_step_and_its_calls_are_as_before(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
+            new Result([]),                                   // PutRolePolicy
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        ]);
+        $steps = [];
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->prepare($this->config(), $this->package(), null, [], function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame([...self::UNTIL_THE_ROLE, 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision'], $mocks->calls);
+        self::assertArrayNotHasKey('PermissionsBoundary', $mocks->params[8]);
+        self::assertContains(['deploy.step_role', ['role' => 'arco-shop-production']], $steps, 'no boundary param without a boundary');
+    }
+
     public function test_a_console_with_bin_php_uploads_no_binary_and_sets_no_binary_variables_but_keeps_the_binary_statement(): void
     {
         $mocks = new AwsMocks();
