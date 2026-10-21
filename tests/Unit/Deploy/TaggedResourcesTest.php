@@ -172,6 +172,41 @@ final class TaggedResourcesTest extends TestCase
         self::assertSame(['acm:certificate abc' => [], 'cloudfront:distribution E1ABC' => [], 'events:rule arco-shop-production-scheduler' => [], 'lambda:function shop-production-queue-ghost' => []], $relations);
     }
 
+    public function test_validates_needs_a_certificate_that_can_be_identified(): void
+    {
+        $domains = fn (?string $arn) => ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', function ($e) use ($arn) {
+            $e->domain('shop.example.com');
+            if ($arn !== null) {
+                $e->certificate($arn);
+            }
+        })->toArray(), 'production');
+        $one = 'arn:aws:acm:us-east-1:111111111111:certificate/one';
+        $two = 'arn:aws:acm:us-east-1:111111111111:certificate/two';
+        $both = [self::mapping($one), self::mapping($two)];
+        $validates = [['type' => 'validates', 'target' => 'shop.example.com']];
+
+        // Two certificates and none configured: which one covers the domain is unknown.
+        self::assertSame(['acm:certificate one' => [], 'acm:certificate two' => []], self::relations($domains(null), $both));
+        // A configured certificate ARN: only that one.
+        self::assertSame(['acm:certificate one' => [], 'acm:certificate two' => $validates], self::relations($domains($two), $both));
+        // A configured ARN that is not listed: none.
+        self::assertSame(['acm:certificate one' => [], 'acm:certificate two' => []], self::relations($domains('arn:aws:acm:us-east-1:111111111111:certificate/other'), $both));
+        // Exactly one listed and none configured: it is the environment's.
+        self::assertSame(['acm:certificate one' => $validates], self::relations($domains(null), [self::mapping($one)]));
+    }
+
+    public function test_a_managed_queue_missing_from_the_listing_gets_no_worker_or_dlq_target(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e->queue('emails'))->toArray(), 'production')->withAccount('111111111111');
+
+        $relations = self::relations($config, [
+            self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production-queue-emails'),
+            self::mapping('arn:aws:sqs:us-east-1:111111111111:shop-production-emails-dlq'),
+        ]);
+
+        self::assertSame(['lambda:function shop-production-queue-emails' => [], 'sqs shop-production-emails-dlq' => []], $relations);
+    }
+
     public function test_never_lists_a_resource_whose_tags_differ(): void
     {
         // AWS filters by tag; a mapping with other values (or one tag missing) is still never listed.

@@ -110,10 +110,15 @@ final class TaggedResources
         foreach ($resources as $resource) {
             $arns[$resource['type'] . ' ' . $resource['name']] = $resource['arn'];
         }
-        // The queue ARN: the listed one for a queue Arco made, else the one the config spells (existing).
+        // The queue ARN: the listed one for a queue Arco made; for an `existing:` queue (never listed) the
+        // one the config spells, when it names a region and an account. A managed queue that is not
+        // listed has no target: a relation always points at something the listing or the config shows.
         $queueArn = static function (QueueConfig $queue) use ($config, $arns): ?string {
-            $arn = $arns['sqs ' . $queue->physicalName($config)] ?? $queue->arn($config);
-            return str_contains($arn, '::') || str_ends_with($arn, ':') ? null : $arn;
+            if ($queue->existing === null) {
+                return $arns['sqs ' . $queue->physicalName($config)] ?? null;
+            }
+            $arn = $queue->arn($config);
+            return self::hasRegionAndAccount($arn) ? $arn : null;
         };
         $workers = [];
         $dlqs = [];
@@ -128,6 +133,7 @@ final class TaggedResources
                 $dlqs[$dlq] = $arn;
             }
         }
+        $certificates = count(array_filter($resources, static fn (array $r): bool => $r['type'] === 'acm:certificate'));
         $console = $arns['lambda:function ' . $config->consoleFunctionName()] ?? null;
         foreach ($resources as &$resource) {
             $resource['relations'] = match ($resource['type']) {
@@ -135,11 +141,34 @@ final class TaggedResources
                 'sqs' => self::relations('dlq_of', array_filter([$dlqs[$resource['name']] ?? null])),
                 'events:rule' => $resource['name'] === SchedulerRule::name($config) ? self::relations('invokes', array_filter([$console])) : [],
                 'cloudfront:distribution' => self::relations('serves', $config->domains),
-                'acm:certificate' => self::relations('validates', $config->domains),
+                'acm:certificate' => self::relations('validates', self::validatesDomains($config, $resource['arn'], $certificates)),
                 default => [],
             };
         }
         return $resources;
+    }
+
+    /** An ARN spelled with both a region and an account (a name-only reference builds `arn:aws:sqs:::name`). */
+    private static function hasRegionAndAccount(string $arn): bool
+    {
+        $parts = explode(':', $arn, 6);
+        return ($parts[3] ?? '') !== '' && ($parts[4] ?? '') !== '';
+    }
+
+    /**
+     * The domains a listed certificate validates. The listing carries no domains, so the certificate must be
+     * identified without asking ACM: the configured `certificate()` ARN, else the only one listed. With
+     * several (a stale one after the domains changed, one Arco only found) nothing is claimed.
+     *
+     * @param int $certificates how many certificates are listed
+     * @return list<string>
+     */
+    private static function validatesDomains(AppConfig $config, string $arn, int $certificates): array
+    {
+        if ($config->certificate !== null) {
+            return $arn === $config->certificate ? $config->domains : [];
+        }
+        return $certificates === 1 ? $config->domains : [];
     }
 
     /**
