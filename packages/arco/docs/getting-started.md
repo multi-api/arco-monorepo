@@ -629,6 +629,21 @@ of its own) and `error.unexpected` (an unexpected exception; `message` is the ex
   error message) is exactly that value, so a short secret cannot mangle domains, URLs or messages that merely
   contain it. A value that is exactly the app name, the environment name or one of the custom domains is kept as
   it is (so are the result's `app`, `environment` and `domains`).
+- **Permissions boundary keys** (0.11, only when a boundary is configured or the role has one; see
+  [Permissions boundary](configuration.md#permissions-boundary)):
+  - `deploy.step_role` gains the param `boundary` (the configured policy ARN) next to `role`. Without a boundary
+    its params stay exactly `{"role": ...}`. This is the only line that carries the boundary when the role is new
+    or already has it.
+  - `deploy.boundary_set` (a step, `started`/`done`), params `{role, boundary}`: an existing role got the boundary
+    (it had none, or another one).
+  - `deploy.boundary_kept` (status `note`), params `{role, boundary}`: `arco.php` no longer sets a boundary, and the
+    role keeps the one it has (`boundary` is the role's current one). Arco never removes it.
+  - `deploy.boundary_denied` (the `error.key` of a `failed` result), params `{role, boundary, action, error}`:
+    `action` is the IAM write AWS denied (`iam:CreateRole`, `iam:PutRolePermissionsBoundary` or
+    `iam:PutRolePolicy`) and `error` its AWS error code (`AccessDenied` or `AccessDeniedException`); see
+    [Enforcing a permissions boundary](#enforcing-a-permissions-boundary).
+
+  The boundary is not a secret and is never redacted.
 - **What is API.** Line types, the keys of each line, `status` and `outcome` values, and each step's and
   error's `key` with its `params` are covered by the [1.x promise](upgrading.md#the-1x-promise): a key keeps its
   meaning and its params, which may only gain entries. `message` texts are not API, and neither are which steps
@@ -645,6 +660,9 @@ A deploy role (like the one of Arco's own end-to-end run, in a dedicated test ac
   already returns the role's tags)
 - `iam:GetRole` (it also returns the `arco:region` tag the region check reads), `iam:CreateRole`,
   `iam:PutRolePolicy`, `iam:DeleteRolePolicy`, `iam:DeleteRole`, `iam:PassRole` on `arn:aws:iam::*:role/arco-*`
+- with a permissions boundary (`permissionsBoundary()`, `--permissions-boundary` or `ARCO_PERMISSIONS_BOUNDARY`):
+  `iam:PutRolePermissionsBoundary` on `arn:aws:iam::*:role/arco-*`, to put the boundary on an existing role (see
+  [Enforcing a permissions boundary](#enforcing-a-permissions-boundary) for the conditions an account owner adds)
 - `s3:*` on `arn:aws:s3:::arco-*` (and its objects)
 - `ssm:PutParameter`, `ssm:GetParameters`, `ssm:AddTagsToResource` (`secret:set` tags the parameter for the
   environment) on your app's parameters (`parameter/<app>/*`)
@@ -785,6 +803,220 @@ DNS aliases, certificate) is skipped.
 
 The zone check of `init` and `domain:add` calls only the profile you choose and needs
 `route53:ListHostedZonesByName` and `sts:GetCallerIdentity` there.
+
+### Enforcing a permissions boundary
+
+This part is for account owners who hand a deploy profile to someone else: a CI, a team, or a service such as
+Arco Cloud. The deploy permissions above include `iam:CreateRole`, `iam:PutRolePolicy` and `iam:PassRole` on
+`role/arco-*`, plus creating and invoking Lambda functions. Together they are admin-equivalent: whoever holds the
+profile can create an `arco-*` role with any inline policy and run code under it.
+
+A [permissions boundary](configuration.md#permissions-boundary) closes this gap. The account owner creates a
+boundary policy (Arco never creates IAM policies), and the deploy profile may then write `arco-*` roles **only**
+when they carry exactly that boundary. Whatever inline policy the profile writes, the role can do no more than the
+boundary allows.
+
+#### The account guard
+
+Replace the unconditioned `iam:CreateRole` and `iam:PutRolePolicy` of the minimal permissions with these
+statements in the deploy profile's policy (`<account>` is the account id, `<boundary arn>` the boundary policy,
+exactly as the deploy passes it):
+
+```json
+[
+  {
+    "Sid": "ArcoRoleWritesOnlyWithTheBoundary",
+    "Effect": "Allow",
+    "Action": ["iam:CreateRole", "iam:PutRolePolicy", "iam:PutRolePermissionsBoundary"],
+    "Resource": "arn:aws:iam::<account>:role/arco-*",
+    "Condition": {"StringEquals": {"iam:PermissionsBoundary": "<boundary arn>"}}
+  },
+  {
+    "Sid": "ArcoNeverRemoveTheBoundary",
+    "Effect": "Deny",
+    "Action": "iam:DeleteRolePermissionsBoundary",
+    "Resource": "arn:aws:iam::<account>:role/arco-*"
+  },
+  {
+    "Sid": "ArcoBoundaryPolicyIsFixed",
+    "Effect": "Deny",
+    "Action": ["iam:CreatePolicyVersion", "iam:SetDefaultPolicyVersion", "iam:DeletePolicy"],
+    "Resource": "<boundary arn>"
+  },
+  {
+    "Sid": "ArcoPassOnlyArcoRoles",
+    "Effect": "Allow",
+    "Action": "iam:PassRole",
+    "Resource": "arn:aws:iam::<account>:role/arco-*"
+  }
+]
+```
+
+- For `iam:PutRolePolicy` and `iam:PutRolePermissionsBoundary`, `iam:PermissionsBoundary` is the boundary the role
+  has, or gets, after the call. Arco puts the boundary on an existing role **before** it writes the role's policy,
+  so the condition already holds when `PutRolePolicy` runs.
+- `iam:GetRole`, `iam:TagRole`, `iam:DeleteRolePolicy` and `iam:DeleteRole` stay as in the minimal permissions:
+  `arco remove` deletes a bounded role without removing the boundary first.
+- Do not grant `iam:AttachRolePolicy` or `iam:UpdateAssumeRolePolicy`: Arco never uses them.
+
+**What the profile must not have, or the guard is bypassed.** The guard only works when nothing else in the
+profile's policies (inline, managed, group, or an AWS-managed policy such as `AdministratorAccess` or
+`IAMFullAccess`) allows what it restricts:
+
+- `iam:CreateRole`, `iam:PutRolePolicy` or `iam:PutRolePermissionsBoundary` on any resource without the
+  `iam:PermissionsBoundary` condition, including through `iam:*` or `iam:*Role*`, and on roles not named `arco-*`
+  (an unbounded role of another name, passed to Lambda, is the same gap);
+- `iam:DeleteRolePermissionsBoundary` (denied above, but check for an explicit allow you rely on elsewhere);
+- `iam:PassRole` on roles other than `role/arco-*`: an existing powerful role passed to a function the profile
+  creates runs code with that role's permissions;
+- `iam:AttachRolePolicy`, `iam:DetachRolePolicy`, `iam:UpdateAssumeRolePolicy` and `iam:UpdateRole`;
+- writing the boundary policy itself: `iam:CreatePolicyVersion`, `iam:SetDefaultPolicyVersion` and
+  `iam:DeletePolicy` on it (denied above), and `iam:CreatePolicy` with the same name after a delete;
+- creating or changing other principals: `iam:CreateUser`, `iam:CreateAccessKey`, `iam:CreateLoginProfile`,
+  `iam:UpdateLoginProfile`, `iam:PutUserPolicy`, `iam:AttachUserPolicy`, `iam:CreateGroup`, `iam:PutGroupPolicy`,
+  `iam:AttachGroupPolicy`, `iam:AddUserToGroup`, and `iam:CreateInstanceProfile`/`iam:AddRoleToInstanceProfile`;
+- changing its own permissions: any `iam:Put*Policy`, `iam:Attach*Policy` or `iam:CreatePolicyVersion` on the
+  profile's own user, group, role or the managed policies attached to them;
+- `sts:AssumeRole` on roles more privileged than the boundary.
+
+#### When AWS denies the role write
+
+With a boundary configured, an `AccessDenied` (or `AccessDeniedException`) on `iam:CreateRole`,
+`iam:PutRolePermissionsBoundary` or `iam:PutRolePolicy` stops the deploy with `deploy.boundary_denied`, params
+`{role, boundary, action, error}` (`action` is the denied IAM action, `error` the AWS error code; the AWS message
+is not included). It always comes before any Lambda change: no function, revision, console or worker was changed.
+It has one of two causes:
+
+1. **The account guard.** The account requires exactly a specific boundary (condition `iam:PermissionsBoundary`)
+   and the configured one is not it. Check that the ARN in `arco.php`, `--permissions-boundary` or
+   `ARCO_PERMISSIONS_BOUNDARY` is exactly the one the account owner gave you (`arco info` shows the effective value
+   and its source). A deploy with no boundary at all against a guarded account fails at IAM with the plain AWS
+   error, since Arco has no boundary to name.
+2. **A missing deploy permission.** The profile lacks `action` on `role/arco-*`, most often
+   `iam:PutRolePermissionsBoundary`, which only a boundary needs. Allow it.
+
+Without a boundary configured, the same denial is reported as AWS's own error, as before 0.11.
+
+**A partial change is possible.** When `iam:PutRolePermissionsBoundary` succeeds and the following
+`iam:PutRolePolicy` is denied, the role keeps the new boundary: it was already the boundary the deploy wanted, and
+Arco never removes one. No function changed, and the app keeps running with its previous inline policy, now capped
+by the new boundary. A re-run behaves the same way (the boundary is already there, so it goes straight to
+`PutRolePolicy`) until the cause is fixed.
+
+#### A recommended boundary policy
+
+The boundary must allow everything the execution role needs at runtime, or the app gets `AccessDenied` where it
+worked before. The statements below are every statement Arco's managed policy can contain (the `Sid`s match the
+role's inline policy `arco`), widened from one environment's resource names to the app's prefix so that one
+boundary covers every environment of `<app>`. Replace `<account>` and `<app>`; for one boundary shared by several
+apps, replace `<app>` with a common prefix or `*` (a wider ceiling). The inline policy still narrows each role to
+its own environment.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ArcoLogs",
+      "Effect": "Allow",
+      "Action": ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"],
+      "Resource": [
+        "arn:aws:logs:*:<account>:log-group:/aws/lambda/web/<app>-*",
+        "arn:aws:logs:*:<account>:log-group:/aws/lambda/<app>-*"
+      ]
+    },
+    {
+      "Sid": "ArcoQueues",
+      "Effect": "Allow",
+      "Action": ["sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility", "sqs:GetQueueAttributes", "sqs:GetQueueUrl"],
+      "Resource": "arn:aws:sqs:*:<account>:<app>-*"
+    },
+    {
+      "Sid": "ArcoStorage",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:GetObjectAcl", "s3:PutObjectAcl", "s3:AbortMultipartUpload"],
+      "Resource": "arn:aws:s3:::<app>-*/*"
+    },
+    {
+      "Sid": "ArcoStorageList",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::<app>-*"
+    },
+    {
+      "Sid": "ArcoTables",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:Query", "dynamodb:Scan",
+        "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem", "dynamodb:ConditionCheckItem", "dynamodb:DescribeTable"
+      ],
+      "Resource": ["arn:aws:dynamodb:*:<account>:table/<app>-*", "arn:aws:dynamodb:*:<account>:table/<app>-*/index/*"]
+    },
+    {
+      "Sid": "ArcoRuntimeBinary",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::arco-<account>-*/runtime/*"
+    },
+    {
+      "Sid": "ArcoParameters",
+      "Effect": "Allow",
+      "Action": "ssm:GetParameters",
+      "Resource": "arn:aws:ssm:*:<account>:parameter/<app>/*"
+    },
+    {
+      "Sid": "ArcoSecrets",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "arn:aws:secretsmanager:*:<account>:secret:<app>/*"
+    },
+    {
+      "Sid": "ArcoSecretsBatch",
+      "Effect": "Allow",
+      "Action": "secretsmanager:BatchGetSecretValue",
+      "Resource": "*"
+    },
+    {
+      "Sid": "ArcoDecrypt",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "*",
+      "Condition": {"StringLike": {"kms:ViaService": ["ssm.*.amazonaws.com", "secretsmanager.*.amazonaws.com"]}}
+    },
+    {
+      "Sid": "AppPermissions",
+      "Effect": "Allow",
+      "Action": ["<the actions of the app's permissions()>"],
+      "Resource": ["<their resources>"]
+    }
+  ]
+}
+```
+
+- **Logs**: the web function writes to `/aws/lambda/web/<app>-<env>` and `/aws/lambda/web/<app>-<env>.local`, the
+  console to `/aws/lambda/<app>-<env>-console`, each worker to `/aws/lambda/<app>-<env>-queue-<queue>`. In IAM `*`
+  also matches `:` and `/`, so the two patterns cover the groups and their streams.
+- **Queues, buckets and tables**: `queue()`, `storage()`, `cache()`, `failedJobsTable()` and `table()` create
+  `<app>-<env>-…` names (buckets `<app>-<env>-<storage>-<account>`). An `existing` queue, bucket or table has its own
+  name: add its ARN (bucket: `arn:aws:s3:::<bucket>` and `arn:aws:s3:::<bucket>/*`) to the matching statement. The
+  queue actions also cover the workers, which Lambda's event source mapping runs with the execution role. Dead-letter
+  queues need nothing at runtime.
+- **ArcoTables** merges the cache and failed-jobs statement (`ArcoTables` in the inline policy) with the `table()`
+  one (`ArcoAppTables`, which adds `Scan`, `ConditionCheckItem` and the indexes).
+- **ArcoRuntimeBinary**: the console function reads its FrankenPHP binary from the code bucket
+  `arco-<account>-<region>`.
+- **Secrets**: `arco secret:set` writes SSM parameters `/<app>/<env>/<name>`. An `arco-ssm:` reference elsewhere,
+  and every `arco-secret:` (Secrets Manager) reference, have the names you gave them: change the `parameter/` and
+  `secret:` resources to cover them (a Secrets Manager name gets a `-??????` suffix, so end the pattern with `*`).
+  Without any reference, these three statements and `ArcoDecrypt` are never used.
+- **No Lambda statement.** The execution role needs no `lambda:InvokeFunction`: the scheduler rule invokes the
+  console through the function's resource policy, people and the deploy invoke it with their own credentials, and
+  queue jobs reach the workers through SQS.
+- **AppPermissions** is a placeholder. **The account owner must extend the boundary with whatever the app adds
+  through `permissions()`** (SES, another bucket, ...): an action the boundary does not allow silently does nothing,
+  however the inline policy grants it. A boundary allows only; a `Deny` in `permissions()` needs no counterpart.
+- New Arco features may add statements to the managed policy; the changelog lists them, and the boundary then
+  needs them too.
 
 ## Language
 

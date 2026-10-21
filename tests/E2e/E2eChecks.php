@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Tests\E2e;
 
+use Aws\Iam\IamClient;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\Attributes\Depends;
 use Symfony\Component\Process\Process;
@@ -17,12 +18,17 @@ trait E2eChecks
     private static ?string $app = null;
     /** The function URL from arco info --json, without a trailing slash. */
     private static ?string $url = null;
+    /** The web function's name from arco info --json (the execution role is arco-<function>). */
+    private static ?string $function = null;
     /** When the running check began; null when none is running (a skipped check never starts one). */
     private static ?float $started = null;
 
     private E2eHttp $http;
 
     abstract protected static function environment(): string;
+
+    /** The IAM client of the account the suite deploys to. */
+    abstract protected static function iam(): IamClient;
 
     /** @return array<string, string> extra environment for every arco process */
     protected static function processEnv(): array
@@ -122,6 +128,19 @@ trait E2eChecks
         self::assertNotSame('', trim($logs->getOutput()), '[logs] arco logs printed nothing for the last 10 minutes');
     }
 
+    /** arco.php's permissionsBoundary() reaches the execution role (iam:GetRole) and arco info --json. */
+    #[Depends('test_up')]
+    public function test_permissions_boundary(): void
+    {
+        \assert(self::$function !== null);
+        $expected = 'arn:aws:iam::aws:policy/PowerUserAccess';
+        $role = substr('arco-' . self::$function, 0, 64);
+        $data = static::iam()->getRole(['RoleName' => $role])['Role'] ?? [];
+        $boundary = is_array($data) && is_array($data['PermissionsBoundary'] ?? null) ? ($data['PermissionsBoundary']['PermissionsBoundaryArn'] ?? null) : null;
+        self::assertSame($expected, $boundary, "[permissions boundary] iam:GetRole $role: " . json_encode($data['PermissionsBoundary'] ?? null));
+        self::assertSame($expected, self::readInfo()['permissions_boundary'] ?? null, '[permissions boundary] arco info --json permissions_boundary');
+    }
+
     /** Runs arco deploy (with --json: NDJSON on stdout) for the copy; the caller fails the run when it did not succeed. */
     private static function deploy(bool $json = false): Process
     {
@@ -144,6 +163,7 @@ trait E2eChecks
             self::fail("[deploy] arco info --json gave no URL:\n" . $info->getOutput() . $info->getErrorOutput());
         }
         self::$url = rtrim($data['url'], '/');
+        self::$function = is_string($data['function'] ?? null) ? $data['function'] : null;
         /** @var array<string, mixed> $data */
         return $data;
     }

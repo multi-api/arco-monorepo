@@ -3,6 +3,37 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## 0.11.0
+
+One opt-in feature, a permissions boundary on the execution role, requested for accounts that hand the deploy
+profile to a CI or a service. Nothing changes without a boundary, so an upgrade needs no change
+([Upgrading to 0.11](docs/upgrading.md#upgrading-to-011)).
+
+- **Added:** `->permissionsBoundary(string|false $policyArn)` on the app and on an environment: the managed execution
+  role `arco-<app>-<env>` carries that IAM permissions boundary. A new role is created with it; an existing role
+  without it, or with another one, gets it (`iam:PutRolePermissionsBoundary`) before its inline policy is written,
+  with the step `deploy.boundary_set`. Arco never removes a boundary: when `arco.php` stops setting one, the role
+  keeps it, with the note `deploy.boundary_kept`. The value must be a policy ARN (AWS-managed policies allowed;
+  `validation.boundary_arn`), and combining it with `role()` is an error (`validation.boundary_with_custom_role`).
+  `permissionsBoundary(false)` on an environment clears an app-level one. See
+  [Permissions boundary](docs/configuration.md#permissions-boundary).
+- **Added:** the deploy host can set the boundary without editing `arco.php`: `arco deploy --permissions-boundary=<arn>`
+  or `ARCO_PERMISSIONS_BOUNDARY` from the environment of the machine that runs Arco (not an app variable). Precedence:
+  flag > variable > `arco.php`; an empty flag or variable counts as not given. `arco info` takes the same flag.
+- **Added:** with a boundary configured, an `AccessDenied` on `iam:CreateRole`, `iam:PutRolePermissionsBoundary` or
+  `iam:PutRolePolicy` stops the deploy, before any Lambda change, with `deploy.boundary_denied`
+  (`{role, boundary, action, error}`): either the account requires another boundary (condition
+  `iam:PermissionsBoundary`) or the profile lacks `action` on `role/arco-*`.
+- **Added:** `arco info` shows a `permissionsBoundary` row with its source; `arco info --json` has the key
+  `permissions_boundary` (string or `null`) after `tables`. In `deploy --json`, `deploy.step_role` has the param
+  `boundary` when one is configured.
+- **Docs:** the setting and its interaction with `permissions()` (effective permissions are the intersection with
+  the boundary); `iam:PutRolePermissionsBoundary` in the minimal permissions when a boundary is used; a new
+  [Enforcing a permissions boundary](docs/getting-started.md#enforcing-a-permissions-boundary) with the account
+  guard, the permissions that would bypass it, the denial and a recommended boundary policy derived from the
+  managed policy; the 0.11 upgrade notes and the new entries of the 1.x promise. The end-to-end suites set the
+  AWS-managed boundary `PowerUserAccess` on the `floci` and `e2e` environments and read it back with `iam:GetRole`.
+
 ## 0.10.2
 
 - **Fixed:** the Laravel build no longer fails with "Please provide a valid cache path" when a package resolves
