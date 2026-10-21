@@ -33,7 +33,7 @@ final class RuntimeManifestEditorTest extends TestCase
     private static function buildJson(string $id = '1.13.0-r90'): array
     {
         return [
-            'id' => $id, 'frankenphp' => '1.13.0', 'php' => '8.5.12', 'arch' => 'linux-aarch64',
+            'id' => $id, 'frankenphp' => '1.13.0', 'php' => '8.5.13', 'arch' => 'linux-aarch64',
             'sha256' => str_repeat('b', 64), 'size' => 168140100,
         ];
     }
@@ -58,7 +58,7 @@ final class RuntimeManifestEditorTest extends TestCase
     public function test_a_newer_build_of_the_default_php_minor_becomes_the_default(): void
     {
         RuntimeManifestEditor::add($this->path, self::buildJson(), 'multi-api/arco-runtime');
-        self::assertSame('php8.5.12-fp1.13.0-r90', RuntimeManifest::load($this->path)->resolve(null, null)->id);
+        self::assertSame('php8.5.13-fp1.13.0-r90', RuntimeManifest::load($this->path)->resolve(null, null)->id);
         // The pre-0.9 ids still name their own builds.
         self::assertSame('php8.5.11-fp1.13.0-r2', RuntimeManifest::load($this->path)->get('1.13.0-r2')->id);
     }
@@ -70,7 +70,7 @@ final class RuntimeManifestEditorTest extends TestCase
         ]];
         RuntimeManifestEditor::add($this->path, $build, 'multi-api/arco-runtime');
 
-        $cli = RuntimeManifest::load($this->path)->get('php8.5.12-fp1.13.0-r90')->phpCli;
+        $cli = RuntimeManifest::load($this->path)->get('php8.5.13-fp1.13.0-r90')->phpCli;
         self::assertNotNull($cli);
         self::assertSame(
             ['https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.0-r90/php-linux-aarch64', str_repeat('c', 64), 90000000],
@@ -132,7 +132,7 @@ final class RuntimeManifestEditorTest extends TestCase
         yield 'missing sha' => [array_diff_key(self::buildJson(), ['sha256' => true])];
         yield 'id/version mismatch' => [['frankenphp' => '1.12.0'] + self::buildJson()];
         yield 'bad id' => [['id' => 'latest'] + self::buildJson()];
-        yield 'new-format id' => [['id' => 'php8.5.12-fp1.13.0-r90'] + self::buildJson()];
+        yield 'new-format id' => [['id' => 'php8.5.13-fp1.13.0-r90'] + self::buildJson()];
         yield 'php not a version' => [['php' => '8.5'] + self::buildJson()];
     }
 
@@ -153,7 +153,7 @@ final class RuntimeManifestEditorTest extends TestCase
     {
         $before = file_get_contents($this->path);
         // The same Arco id, and the same release (tag) under another PHP version.
-        foreach (['8.5.11', '8.5.12'] as $php) {
+        foreach (['8.5.11', '8.5.13'] as $php) {
             try {
                 RuntimeManifestEditor::add($this->path, ['sha256' => str_repeat('c', 64), 'php' => $php] + self::buildJson('1.13.0-r1'), 'multi-api/arco-runtime');
                 self::fail('Expected InvalidArgumentException');
