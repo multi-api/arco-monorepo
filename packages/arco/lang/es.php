@@ -294,6 +294,7 @@ return [
     'cloudflare.request_failed' => 'Falló una petición a la API de Cloudflare: {detail}',
     'cloudflare.gave_up' => 'Cloudflare siguió respondiendo HTTP {status} a {call} tras {attempts} intentos. Vuelve a intentarlo en unos minutos.',
     'cloudflare.partial' => "Un cambio de DNS en Cloudflare falló a medias: {detail}\nYa se cambió en Cloudflare:\n{done}\nVuelve a desplegar para terminar: Arco reconoce los registros que ya escribió.",
+    'cloudflare.partial_conflict' => "Estos registros DNS aparecieron mientras Arco cambiaba Cloudflare, y Arco no toma registros en uso:\n{records}\nYa se cambió en Cloudflare:\n{done}\nElimínalos o vuelve a desplegar con --force-dns para reemplazarlos.",
     'cloudflare.validation_conflict' => "Estos registros DNS ya existen en el nombre de validación del certificado y no son los que pide ACM:\n{records}\nArco no toma registros en uso. Elimínalos o vuelve a desplegar con --force-dns para reemplazarlos.",
     'cloudflare.dns_profile_conflict' => '--dns-profile indica un perfil de Route 53, pero este entorno usa dns(\'cloudflare\'). Quita --dns-profile.',
     'deploy.success_domains' => "Dominios propios:\n{urls}",

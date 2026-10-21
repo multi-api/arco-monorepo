@@ -50,7 +50,7 @@ final class FakeCloudflare
     public function record(string $zoneId, string $name, string $type, string $content, ?string $comment = null, array $fields = []): string
     {
         $id = 'rec' . $this->next++;
-        $this->records[$id] = ['id' => $id, 'zone_id' => $zoneId, 'name' => $name, 'type' => $type, 'content' => $content, 'proxied' => false, 'ttl' => 1, 'comment' => $comment] + $fields;
+        $this->records[$id] = $fields + ['id' => $id, 'zone_id' => $zoneId, 'name' => $name, 'type' => $type, 'content' => $content, 'proxied' => false, 'ttl' => 1, 'comment' => $comment];
         return $id;
     }
 
@@ -119,7 +119,12 @@ final class FakeCloudflare
             return self::json(404, ['success' => false, 'errors' => [['code' => 7003, 'message' => 'Could not route to zone']], 'result' => null]);
         }
         if ($method === 'GET') {
-            return self::ok(array_values(array_filter($this->records, fn (array $r) => $r['zone_id'] === $zone && (! isset($params['name']) || $r['name'] === $params['name']))));
+            $found = array_values(array_filter($this->records, fn (array $r) => $r['zone_id'] === $zone && (! isset($params['name']) || $r['name'] === $params['name'])));
+            $perPage = max(1, (int) ($params['per_page'] ?? 100));
+            $page = max(1, (int) ($params['page'] ?? 1));
+            $total = max(1, (int) ceil(count($found) / $perPage));
+            return self::json(200, ['success' => true, 'errors' => [], 'result' => array_slice($found, ($page - 1) * $perPage, $perPage),
+                'result_info' => ['page' => $page, 'per_page' => $perPage, 'total_pages' => $total, 'count' => min($perPage, max(0, count($found) - ($page - 1) * $perPage)), 'total_count' => count($found)]]);
         }
         if ($method === 'POST') {
             $new = 'rec' . $this->next++;

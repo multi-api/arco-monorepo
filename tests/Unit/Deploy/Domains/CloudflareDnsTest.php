@@ -456,4 +456,98 @@ final class CloudflareDnsTest extends TestCase
         $sleeper = $this->cf->sleeper;
         return $sleeper->slept;
     }
+
+    public function test_records_follow_every_page(): void
+    {
+        for ($i = 0; $i < 120; $i++) {
+            $this->cf->record(self::ZONE, 'big.acmeapp.io', 'TXT', "v$i");
+        }
+        $dns = new CloudflareDns($this->cf->api());
+        $zone = $dns->zoneFor('big.acmeapp.io');
+        self::assertNotNull($zone);
+
+        self::assertCount(120, $dns->records($zone, 'big.acmeapp.io'));
+        self::assertSame([
+            'GET zones/zone-acme/dns_records?name=big.acmeapp.io&per_page=100',
+            'GET zones/zone-acme/dns_records?name=big.acmeapp.io&per_page=100&page=2',
+        ], array_slice($this->cf->log, -2));
+    }
+
+    public function test_zone_lookups_follow_every_page(): void
+    {
+        // A first page without the zone that says there is a second one.
+        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => [['id' => 'zone-x', 'name' => 'other.io']], 'result_info' => ['page' => 1, 'total_pages' => 2]]));
+
+        self::assertSame(self::ZONE, (new CloudflareDns($this->cf->api()))->zoneFor('acmeapp.io')?->id);
+        self::assertSame(['GET zones?name=acmeapp.io&status=active&per_page=5', 'GET zones?name=acmeapp.io&status=active&per_page=5&page=2'], $this->cf->log);
+    }
+
+    public function test_a_proxied_validation_cname_of_ours_is_set_to_dns_only(): void
+    {
+        $this->queueCertificateRequestAndStack();
+        $id = $this->cf->record(self::ZONE, '_a.arco.acmeapp.io', 'CNAME', '_x.acm-validations.aws', 'managed by arco', ['proxied' => true]);
+
+        $this->deploy();
+
+        self::assertSame("PATCH zones/zone-acme/dns_records/$id", $this->cf->writes()[0]);
+        self::assertSame(['name' => '_a.arco.acmeapp.io', 'type' => 'CNAME', 'content' => '_x.acm-validations.aws', 'proxied' => false, 'comment' => 'managed by arco'], self::written($this->cf->records[$id]));
+    }
+
+    public function test_a_proxied_validation_cname_not_written_by_arco_is_refused(): void
+    {
+        $this->queueCertificateRequestAndStack(complete: false);
+        $this->cf->record(self::ZONE, '_a.arco.acmeapp.io', 'CNAME', '_x.acm-validations.aws', 'by hand', ['proxied' => true]);
+
+        try {
+            $this->deploy();
+            self::fail('expected a validation conflict');
+        } catch (DeployException $e) {
+            self::assertSame('cloudflare.validation_conflict', $e->key);
+        }
+        self::assertSame([], $this->cf->writes());
+    }
+
+    public function test_a_record_appearing_part_way_keeps_its_list_and_what_was_changed(): void
+    {
+        $dns = new CloudflareDns($this->cf->api());
+        $zone = $dns->zoneFor('arco.acmeapp.io');
+        self::assertNotNull($zone);
+        $ours = $this->cf->record(self::ZONE, 'arco.acmeapp.io', 'A', '192.0.2.10', self::MARKER);
+        $this->cf->record(self::ZONE, 'arco.acmeapp.io', 'AAAA', '2001:db8::1');
+        $planned = $dns->records($zone, 'arco.acmeapp.io')[0];
+
+        try {
+            $dns->apply($zone, [$planned], [\Multiapi\Arco\Deploy\Domains\DnsRecord::cname('arco.acmeapp.io', self::DIST)], $this->config());
+            self::fail('expected a conflict');
+        } catch (DeployException $e) {
+            self::assertSame('cloudflare.partial_conflict', $e->key);
+            self::assertSame('  arco.acmeapp.io AAAA → 2001:db8::1', $e->params['records']);
+            self::assertSame('  deleted arco.acmeapp.io A → 192.0.2.10', $e->params['done']);
+        }
+        self::assertArrayNotHasKey($ours, $this->cf->records);
+    }
+
+    public function test_a_failure_reports_the_changes_of_earlier_zones_too(): void
+    {
+        $this->cf->zone('shop.example.org', 'zone-shop');
+        $dns = new CloudflareDns($this->cf->api());
+        $acme = $dns->zoneFor('arco.acmeapp.io');
+        $shop = $dns->zoneFor('shop.example.org');
+        self::assertNotNull($acme);
+        self::assertNotNull($shop);
+        $owner = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', function (Environment $e): void {
+            $e->domain(['arco.acmeapp.io', 'shop.example.org'])->dns('cloudflare');
+        })->toArray(), 'production');
+
+        $dns->apply($acme, [], [\Multiapi\Arco\Deploy\Domains\DnsRecord::cname('arco.acmeapp.io', self::DIST)], $owner);
+        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => []]), FakeCloudflare::json(400, ['success' => false, 'errors' => [['code' => 1004, 'message' => 'DNS Validation Error']]]));
+        try {
+            $dns->apply($shop, [], [\Multiapi\Arco\Deploy\Domains\DnsRecord::cname('shop.example.org', self::DIST)], $owner);
+            self::fail('expected a partial failure');
+        } catch (DeployException $e) {
+            self::assertSame('cloudflare.partial', $e->key);
+            self::assertSame('  created arco.acmeapp.io CNAME → ' . self::DIST, $e->params['done']);
+            self::assertStringContainsString('1004: DNS Validation Error', (string) $e->params['detail']);
+        }
+    }
 }

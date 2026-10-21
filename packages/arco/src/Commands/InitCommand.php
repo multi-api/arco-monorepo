@@ -58,7 +58,6 @@ final class InitCommand extends ArcoCommand
             ->addOption('domain', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'Custom domain for the environments (repeatable)')
             ->addOption('dns-profile', null, InputOption::VALUE_REQUIRED, 'AWS profile whose Route 53 holds the DNS zones of the domains')
             ->addOption('dns', null, InputOption::VALUE_REQUIRED, '"manual" when the DNS is not in Route 53, "cloudflare" when the zones are on Cloudflare')
-            ->addOption('cloudflare-token', null, InputOption::VALUE_REQUIRED, 'Cloudflare API token to check the zones with (default: the CLOUDFLARE_API_TOKEN environment variable); never written anywhere')
             ->addOption('console', null, InputOption::VALUE_NEGATABLE, 'Add the console function (arco command, tinker, deploy commands, scheduler)')
             ->addOption('migrate', null, InputOption::VALUE_NEGATABLE, 'Run "migrate --force" on every deploy (adds the console function)')
             ->addOption('scheduler', null, InputOption::VALUE_REQUIRED, 'Run the Laravel scheduler every N minutes (' . implode(', ', Validator::SCHEDULER_INTERVALS) . ')')
@@ -67,6 +66,7 @@ final class InitCommand extends ArcoCommand
             ->addOption('failed-jobs-table', null, InputOption::VALUE_NONE, 'Keep failed jobs in a DynamoDB table')
             ->addOption('storage', null, InputOption::VALUE_REQUIRED, 'Add an S3 bucket under this storage name')
             ->addOption('cache', null, InputOption::VALUE_NONE, 'Add the DynamoDB cache table');
+        $this->addCloudflareTokenOption();
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int

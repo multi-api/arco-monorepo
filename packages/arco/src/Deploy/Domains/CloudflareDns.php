@@ -23,6 +23,8 @@ final class CloudflareDns implements DnsProvider
 
     /** @var array<string, HostedZone|null> lookups by candidate zone name */
     private array $zones = [];
+    /** @var list<string> every change this provider made, across apply() calls (one deploy or remove) */
+    private array $done = [];
 
     /** @param bool $force replace records Arco does not own (--force-dns) */
     public function __construct(private readonly CloudflareApi $api, private readonly bool $force = false)
@@ -88,7 +90,7 @@ final class CloudflareDns implements DnsProvider
 
     public function records(HostedZone $zone, string $name): array
     {
-        $result = $this->api->get("zones/{$zone->id}/dns_records", ['name' => Hostname::normalize($name), 'per_page' => 100]);
+        $result = $this->api->getAll("zones/{$zone->id}/dns_records", ['name' => Hostname::normalize($name), 'per_page' => 100]);
         return array_values(array_filter(
             self::maps($result),
             fn (array $record) => Hostname::same(self::string($record['name'] ?? null), $name),
@@ -150,7 +152,7 @@ final class CloudflareDns implements DnsProvider
      */
     public function apply(HostedZone $zone, array $deletes, array $upserts, AppConfig $owner): void
     {
-        $done = [];
+        $done = &$this->done;
         try {
             foreach ($deletes as $record) {
                 $this->deleteRecord($zone, $record, $done);
@@ -164,10 +166,12 @@ final class CloudflareDns implements DnsProvider
             if ($done === []) {
                 throw $e;
             }
-            throw DeployException::make('cloudflare.partial', [
-                'detail' => (string) ($e->params['detail'] ?? $e->key),
-                'done' => implode("\n", array_map(fn (string $line) => "  $line", $done)),
-            ]);
+            $lines = implode("\n", array_map(fn (string $line) => "  $line", $done));
+            // A record that appeared since the guard read the zone: its list, with what already changed.
+            if (isset($e->params['records'])) {
+                throw DeployException::make('cloudflare.partial_conflict', ['records' => (string) $e->params['records'], 'done' => $lines]);
+            }
+            throw DeployException::make('cloudflare.partial', ['detail' => (string) ($e->params['detail'] ?? $e->key), 'done' => $lines]);
         }
     }
 
@@ -201,7 +205,15 @@ final class CloudflareDns implements DnsProvider
     {
         $existing = $this->records($zone, $record->name);
         foreach ($existing as $current) {
-            if (($current['type'] ?? null) === $record->type && Hostname::same(self::string($current['content'] ?? null), $record->value)) {
+            if (($current['type'] ?? null) !== $record->type || ! Hostname::same(self::string($current['content'] ?? null), $record->value)) {
+                continue;
+            }
+            if (($current['proxied'] ?? false) !== true) {
+                return;
+            }
+            // Proxied, ACM cannot see it: ours is set to DNS only; another one is a conflict like any other.
+            if (self::arcoComment($current)) {
+                $this->write($zone, $record, self::string($current['comment'] ?? null), $current, null, $done);
                 return;
             }
         }
@@ -238,7 +250,7 @@ final class CloudflareDns implements DnsProvider
             return;
         }
         $this->api->patch("zones/{$zone->id}/dns_records/$id", $body);
-        $done[] = 'updated ' . $this->describe($current) . " to $record->value";
+        $done[] = 'updated ' . $this->describe($current) . " to $record->value (DNS only)";
     }
 
     /**
@@ -257,7 +269,7 @@ final class CloudflareDns implements DnsProvider
 
     private function lookup(string $name): ?HostedZone
     {
-        foreach (self::maps($this->api->get('zones', ['name' => $name, 'status' => 'active', 'per_page' => 5])) as $zone) {
+        foreach (self::maps($this->api->getAll('zones', ['name' => $name, 'status' => 'active', 'per_page' => 5])) as $zone) {
             $id = self::string($zone['id'] ?? null);
             if ($id !== '' && Hostname::same(self::string($zone['name'] ?? null), $name)) {
                 return new HostedZone($id, Hostname::normalize(self::string($zone['name'] ?? null)), false);
@@ -275,6 +287,13 @@ final class CloudflareDns implements DnsProvider
             }
         }
         return false;
+    }
+
+    /** @param array<string, mixed> $record a comment Arco writes: `managed by arco` or an environment's marker */
+    private static function arcoComment(array $record): bool
+    {
+        $comment = self::string($record['comment'] ?? null);
+        return $comment === self::MARKER || str_starts_with($comment, self::MARKER . ': ');
     }
 
     /** @param array<string, mixed> $record */
