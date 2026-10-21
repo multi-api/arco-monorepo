@@ -247,17 +247,17 @@ final class AwsDeployerTest extends TestCase
 
     private const UNTIL_THE_ROLE = ['GetCallerIdentity', 'HeadBucket', 'PutPublicAccessBlock', 'PutBucketPolicy', 'PutBucketVersioning', 'PutBucketLifecycleConfiguration', 'HeadObject'];
 
-    /** @return iterable<string, array{list<mixed>, list<string>}> */
+    /** @return iterable<string, array{list<mixed>, list<string>, string, string}> */
     public static function deniedRoles(): iterable
     {
-        yield 'CreateRole' => [[self::noRole(), AwsMocks::error(IamException::class, 'CreateRole', 'AccessDenied', 403)], ['GetRole', 'CreateRole']];
+        yield 'CreateRole' => [[self::noRole(), AwsMocks::error(IamException::class, 'CreateRole', 'AccessDenied', 403)], ['GetRole', 'CreateRole'], 'iam:CreateRole', 'AccessDenied'];
         yield 'PutRolePermissionsBoundary' => [
             [new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), AwsMocks::error(IamException::class, 'PutRolePermissionsBoundary', 'AccessDenied', 403)],
-            ['GetRole', 'PutRolePermissionsBoundary'],
+            ['GetRole', 'PutRolePermissionsBoundary'], 'iam:PutRolePermissionsBoundary', 'AccessDenied',
         ];
         yield 'PutRolePolicy' => [
             [new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']], 'PermissionsBoundary' => ['PermissionsBoundaryArn' => self::BOUNDARY]]]), AwsMocks::error(IamException::class, 'PutRolePolicy', 'AccessDeniedException', 403)],
-            ['GetRole', 'PutRolePolicy'],
+            ['GetRole', 'PutRolePolicy'], 'iam:PutRolePolicy', 'AccessDeniedException',
         ];
     }
 
@@ -266,7 +266,7 @@ final class AwsDeployerTest extends TestCase
      * @param list<string> $iamCalls
      */
     #[\PHPUnit\Framework\Attributes\DataProvider('deniedRoles')]
-    public function test_a_role_the_account_guard_denies_stops_the_deploy_before_any_lambda_call(array $iam, array $iamCalls): void
+    public function test_a_role_the_account_guard_denies_stops_the_deploy_before_any_lambda_call(array $iam, array $iamCalls, string $action, string $code): void
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(...[...self::untilTheRole(), ...$iam]);
@@ -277,7 +277,7 @@ final class AwsDeployerTest extends TestCase
             self::fail('expected deploy.boundary_denied');
         } catch (DeployException $e) {
             self::assertSame('deploy.boundary_denied', $e->key);
-            self::assertSame(['role' => 'arco-shop-production', 'boundary' => self::BOUNDARY], $e->params);
+            self::assertSame(['role' => 'arco-shop-production', 'boundary' => self::BOUNDARY, 'action' => $action, 'error' => $code], $e->params);
         }
         self::assertSame([...self::UNTIL_THE_ROLE, ...$iamCalls], $mocks->calls, 'the role step comes before every function step: no Lambda call after the denial');
         self::assertCount(0, $mocks->handler);
@@ -327,7 +327,7 @@ final class AwsDeployerTest extends TestCase
         $deployer->prepare($this->config(), $this->package(), null, [], function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
 
         self::assertSame([...self::UNTIL_THE_ROLE, 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision'], $mocks->calls);
-        self::assertArrayNotHasKey('PermissionsBoundary', $mocks->params[8]);
+        self::assertSame([], array_values(array_filter(array_column($steps, 0), fn (string $key) => str_contains($key, 'boundary'))), 'no boundary step or note without a boundary');
         self::assertContains(['deploy.step_role', ['role' => 'arco-shop-production']], $steps, 'no boundary param without a boundary');
     }
 

@@ -207,21 +207,21 @@ final class ExecutionRoleTest extends TestCase
         self::assertNotContains('deploy.boundary_set', \Multiapi\Arco\Cli\StepPrinter::WARNINGS, 'a step (bullet), not a warning block');
     }
 
-    /** @return iterable<string, array{list<mixed>, string, list<string>}> */
+    /** @return iterable<string, array{list<mixed>, string, list<string>, string}> */
     public static function boundaryDenials(): iterable
     {
         foreach (['AccessDenied', 'AccessDeniedException'] as $code) {
             yield "CreateRole $code" => [
                 [AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404), AwsMocks::error(IamException::class, 'CreateRole', $code, 403)],
-                'CreateRole', ['GetRole', 'CreateRole'],
+                'CreateRole', ['GetRole', 'CreateRole'], $code,
             ];
             yield "PutRolePermissionsBoundary $code" => [
                 [self::existing(), AwsMocks::error(IamException::class, 'PutRolePermissionsBoundary', $code, 403)],
-                'PutRolePermissionsBoundary', ['GetRole', 'PutRolePermissionsBoundary'],
+                'PutRolePermissionsBoundary', ['GetRole', 'PutRolePermissionsBoundary'], $code,
             ];
             yield "PutRolePolicy $code" => [
                 [self::existing(['PermissionsBoundary' => ['PermissionsBoundaryArn' => self::BOUNDARY]]), AwsMocks::error(IamException::class, 'PutRolePolicy', $code, 403)],
-                'PutRolePolicy', ['GetRole', 'PutRolePolicy'],
+                'PutRolePolicy', ['GetRole', 'PutRolePolicy'], $code,
             ];
         }
     }
@@ -231,7 +231,7 @@ final class ExecutionRoleTest extends TestCase
      * @param list<string> $calls
      */
     #[\PHPUnit\Framework\Attributes\DataProvider('boundaryDenials')]
-    public function test_a_denial_while_a_boundary_is_configured_names_the_boundary(array $responses, string $operation, array $calls): void
+    public function test_a_denial_while_a_boundary_is_configured_names_the_boundary_the_action_and_the_error(array $responses, string $operation, array $calls, string $code): void
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(...$responses);
@@ -241,10 +241,36 @@ final class ExecutionRoleTest extends TestCase
             self::fail('expected deploy.boundary_denied');
         } catch (DeployException $e) {
             self::assertSame('deploy.boundary_denied', $e->key);
-            self::assertSame(['role' => 'r', 'boundary' => self::BOUNDARY], $e->params);
+            self::assertSame(['role' => 'r', 'boundary' => self::BOUNDARY, 'action' => "iam:$operation", 'error' => $code], $e->params);
             self::assertInstanceOf(IamException::class, $e->getPrevious());
         }
         self::assertSame($calls, $mocks->calls, "$operation is the last call");
+    }
+
+    /** @return iterable<string, array{mixed}> */
+    public static function malformedBoundaries(): iterable
+    {
+        yield 'a string' => ['arn:aws:iam::123456789012:policy/x'];
+        yield 'null' => [null];
+        yield 'no ARN' => [['PermissionsBoundaryType' => 'Policy']];
+        yield 'an empty ARN' => [['PermissionsBoundaryArn' => '']];
+        yield 'a non-string ARN' => [['PermissionsBoundaryArn' => ['x']]];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('malformedBoundaries')]
+    public function test_a_malformed_boundary_on_the_role_reads_as_none(mixed $boundary): void
+    {
+        // As none: with a boundary configured it is put on the role; without one there is nothing to keep.
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::existing(['PermissionsBoundary' => $boundary]), new Result([]), new Result([]), self::existing(['PermissionsBoundary' => $boundary]), new Result([]));
+        [$steps, $record] = self::recorder();
+        $role = new ExecutionRole($mocks->clients()->iam());
+
+        $role->ensure('r', self::POLICY, [], 'eu-west-1', $record, self::BOUNDARY);
+        $role->ensure('r', self::POLICY, [], 'eu-west-1', $record);
+
+        self::assertSame(['GetRole', 'PutRolePermissionsBoundary', 'PutRolePolicy', 'GetRole', 'PutRolePolicy'], $mocks->calls);
+        self::assertSame([['deploy.boundary_set', ['role' => 'r', 'boundary' => self::BOUNDARY]]], $steps->getArrayCopy(), 'no boundary_kept for a malformed one');
     }
 
     public function test_a_denial_without_a_boundary_is_the_aws_error_as_before(): void
@@ -270,12 +296,16 @@ final class ExecutionRoleTest extends TestCase
         foreach (['en', 'es'] as $lang) {
             $translator = new \Multiapi\Arco\Cli\Translator($lang, \Multiapi\Arco\Arco::packageRoot() . '/lang');
             foreach (['deploy.boundary_set', 'deploy.boundary_kept', 'deploy.boundary_denied'] as $key) {
-                $text = $translator->trans($key, ['role' => 'arco-shop-production', 'boundary' => self::BOUNDARY]);
+                $text = $translator->trans($key, ['role' => 'arco-shop-production', 'boundary' => self::BOUNDARY, 'action' => 'iam:PutRolePolicy', 'error' => 'AccessDenied']);
                 self::assertNotSame($key, $text, "$lang: $key");
                 self::assertStringContainsString('arco-shop-production', $text, "$lang: $key");
                 self::assertStringContainsString(self::BOUNDARY, $text, "$lang: $key");
             }
-            self::assertStringContainsString('iam:PermissionsBoundary', $translator->trans('deploy.boundary_denied', ['role' => 'r', 'boundary' => self::BOUNDARY]), "$lang names the condition key");
+            $denied = $translator->trans('deploy.boundary_denied', ['role' => 'r', 'boundary' => self::BOUNDARY, 'action' => 'iam:PutRolePermissionsBoundary', 'error' => 'AccessDeniedException']);
+            self::assertStringContainsString('iam:PermissionsBoundary', $denied, "$lang names the condition key");
+            self::assertStringContainsString('iam:PutRolePermissionsBoundary', $denied, "$lang names the action the profile may lack");
+            self::assertStringContainsString('AccessDeniedException', $denied, "$lang names the AWS error code");
+            self::assertStringNotContainsString('{', $denied, "$lang: every placeholder is filled");
         }
     }
 }

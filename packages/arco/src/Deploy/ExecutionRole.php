@@ -61,7 +61,7 @@ final class ExecutionRole
             if ($e->getAwsErrorCode() !== 'NoSuchEntity') {
                 throw $e;
             }
-            $arn = self::arn($this->bounded($roleName, $boundary, fn () => $this->iam->createRole([
+            $arn = self::arn($this->bounded($roleName, $boundary, 'iam:CreateRole', fn () => $this->iam->createRole([
                 'RoleName' => $roleName,
                 'AssumeRolePolicyDocument' => json_encode(self::TRUST, JSON_THROW_ON_ERROR),
                 'Description' => 'Execution role managed by Arco',
@@ -72,7 +72,7 @@ final class ExecutionRole
         }
 
         if (! $created && $boundary !== null && $current !== $boundary) {
-            $this->bounded($roleName, $boundary, fn () => $this->iam->putRolePermissionsBoundary(['RoleName' => $roleName, 'PermissionsBoundary' => $boundary]));
+            $this->bounded($roleName, $boundary, 'iam:PutRolePermissionsBoundary', fn () => $this->iam->putRolePermissionsBoundary(['RoleName' => $roleName, 'PermissionsBoundary' => $boundary]));
             if ($onStep !== null) {
                 $onStep('deploy.boundary_set', ['role' => $roleName, 'boundary' => $boundary]);
             }
@@ -81,7 +81,7 @@ final class ExecutionRole
             $onStep('deploy.boundary_kept', ['role' => $roleName, 'boundary' => $current]);
         }
 
-        $this->bounded($roleName, $boundary, fn () => $this->iam->putRolePolicy([
+        $this->bounded($roleName, $boundary, 'iam:PutRolePolicy', fn () => $this->iam->putRolePolicy([
             'RoleName' => $roleName,
             'PolicyName' => 'arco',
             'PolicyDocument' => json_encode($policy, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES),
@@ -91,13 +91,14 @@ final class ExecutionRole
     }
 
     /**
-     * Runs an IAM write; with a boundary configured, a denial is most likely the account guard that
-     * allows the write only with exactly its boundary (condition key iam:PermissionsBoundary).
+     * Runs an IAM write; with a boundary configured, a denial is either the account guard that allows
+     * the write only with exactly its boundary (condition key iam:PermissionsBoundary) or a deploy
+     * profile without $action. The error names both, with the AWS error code (never its message).
      *
      * @param callable(): ResultInterface $call
      * @throws DeployException deploy.boundary_denied
      */
-    private function bounded(string $roleName, ?string $boundary, callable $call): ResultInterface
+    private function bounded(string $roleName, ?string $boundary, string $action, callable $call): ResultInterface
     {
         try {
             return $call();
@@ -105,7 +106,7 @@ final class ExecutionRole
             if ($boundary === null || ! in_array($e->getAwsErrorCode(), self::DENIED, true)) {
                 throw $e;
             }
-            throw DeployException::make('deploy.boundary_denied', ['role' => $roleName, 'boundary' => $boundary], $e);
+            throw DeployException::make('deploy.boundary_denied', ['role' => $roleName, 'boundary' => $boundary, 'action' => $action, 'error' => (string) $e->getAwsErrorCode()], $e);
         }
     }
 
