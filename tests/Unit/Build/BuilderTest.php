@@ -290,4 +290,26 @@ final class BuilderTest extends TestCase
             }
         }
     }
+
+    public function test_a_package_the_preset_requires_is_checked_before_composer_runs(): void
+    {
+        // Arco Cloud report (2026-10-22): without laravel/octane, the deploy failed only after composer install.
+        $runner = new FakeRunner();
+        try {
+            (new Builder($runner))->build($this->config(), new \Multiapi\Arco\Tests\Support\RequiringPreset(['laravel/octane', 'vendor/other']), $this->project);
+            self::fail('expected build.needs_packages');
+        } catch (BuildException $e) {
+            self::assertSame('build.needs_packages', $e->key);
+            self::assertSame(['preset' => 'requiring', 'packages' => 'laravel/octane vendor/other'], $e->params);
+        }
+        self::assertSame([], $runner->calls, 'refused before composer install');
+    }
+
+    public function test_a_required_package_in_composer_json_passes(): void
+    {
+        file_put_contents("$this->project/composer.json", json_encode(['require' => ['laravel/octane' => '^2.0']]));
+        $result = (new Builder(new FakeRunner()))->build($this->config(), new \Multiapi\Arco\Tests\Support\RequiringPreset(), $this->project);
+        self::assertDirectoryExists($result->appDir);
+        $result->cleanup();
+    }
 }

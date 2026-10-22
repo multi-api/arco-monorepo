@@ -802,7 +802,7 @@ ENV);
 
         $tester->assertCommandIsSuccessful();
         self::assertStringContainsString(
-            'composer require league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.9',
+            'composer require league/flysystem-aws-s3-v3:^3.0 aws/aws-sdk-php multiapi/arco-laravel:^0.11',
             $tester->getDisplay(),
         );
         $project->restore();
@@ -918,6 +918,32 @@ ENV);
         self::assertNull($config->logRetention);
         self::assertStringNotContainsString('WARNING', $tester->getDisplay());
         self::assertValid($project);
+        $project->restore();
+    }
+
+    public function test_prints_the_packages_the_preset_requires(): void
+    {
+        $project = new ProjectFixture();
+        file_put_contents("$project->dir/composer.lock", json_encode(['packages' => [['name' => 'laravel/framework']]]));
+        $tester = $project->tester(new InitCommand(new PresetRegistry([new \Multiapi\Arco\Tests\Support\RequiringPreset()])));
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('composer require laravel/octane', $tester->getDisplay());
+        $project->restore();
+    }
+
+    public function test_no_preset_package_hint_when_installed(): void
+    {
+        $project = new ProjectFixture();
+        file_put_contents("$project->dir/composer.lock", json_encode(['packages' => [['name' => 'laravel/octane']]]));
+        $tester = $project->tester(new InitCommand(new PresetRegistry([new \Multiapi\Arco\Tests\Support\RequiringPreset()])));
+
+        $tester->execute(['--name' => 'shop', '--region' => 'us-east-1'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('composer require', $tester->getDisplay());
         $project->restore();
     }
 }

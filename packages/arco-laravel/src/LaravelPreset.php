@@ -5,10 +5,11 @@ namespace Multiapi\Arco\Laravel;
 use Multiapi\Arco\Build\BuildException;
 use Multiapi\Arco\Build\CachesPaths;
 use Multiapi\Arco\Build\FrameworkPreset;
+use Multiapi\Arco\Build\RequiresPackages;
 use Multiapi\Arco\Build\RunsCommands;
 use Multiapi\Arco\Build\StagesDirectories;
 
-final class LaravelPreset implements FrameworkPreset, CachesPaths, RunsCommands, StagesDirectories
+final class LaravelPreset implements FrameworkPreset, CachesPaths, RunsCommands, StagesDirectories, RequiresPackages
 {
     private const OCTANE_WORKER_STUB = 'vendor/laravel/octane/src/Commands/stubs/frankenphp-worker.php';
 
@@ -91,6 +92,12 @@ final class LaravelPreset implements FrameworkPreset, CachesPaths, RunsCommands,
     public function buildDirectories(): array
     {
         return ['storage/framework/views', 'storage/framework/cache/data', 'storage/framework/sessions', 'storage/logs'];
+    }
+
+    /** The web runtime is Octane's FrankenPHP worker (see prepare()). */
+    public function requiredPackages(): array
+    {
+        return ['laravel/octane'];
     }
 
     public function healthPath(): string

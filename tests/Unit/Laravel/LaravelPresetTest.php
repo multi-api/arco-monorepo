@@ -85,4 +85,10 @@ final class LaravelPresetTest extends TestCase
             (new LaravelPreset())->buildDirectories(),
         );
     }
+
+    public function test_requires_octane(): void
+    {
+        self::assertInstanceOf(\Multiapi\Arco\Build\RequiresPackages::class, new LaravelPreset());
+        self::assertSame(['laravel/octane'], (new LaravelPreset())->requiredPackages());
+    }
 }
