@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## 0.11.1
+## 0.11.2
 
 - **Fixed:** a Laravel app without `laravel/octane` is caught early. `arco init` lists it with the other
   packages to `composer require`, and `arco deploy` / `arco package` refuse in seconds, before the copy and
@@ -11,6 +11,11 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   after `composer install`, with `laravel.octane_missing`. Reported by Arco Cloud.
 - **Fixed:** `arco init` and the deploy's package check suggested `multiapi/arco-laravel:^0.9`; they now
   suggest `^0.11`, the line that goes with this Arco.
+
+## 0.11.1
+
+Tagged by mistake on the 0.11.0 commit before the 0.11.2 fixes were merged: v0.11.1 is the 0.11.0 code.
+Use 0.11.2.
 
 ## 0.11.0
 
