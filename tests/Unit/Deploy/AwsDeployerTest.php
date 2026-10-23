@@ -1935,10 +1935,14 @@ final class AwsDeployerTest extends TestCase
             new Result(['state' => 'Active', 'stateReason' => 'ok']),
             new Result(['VersionId' => 'cv1']),               // HeadObject (console zip)
             new Result(['ContentLength' => 3, 'VersionId' => 'bv1']), new Result([]), // binary: HeadObject, CopyObject
-            // emails: new worker
-            self::lambdaMissing('GetAlias'), self::lambdaMissing('GetFunctionConfiguration'), new Result(['State' => 'Pending']), self::ready(), new Result(['Version' => '1']),
-            // reports: redeploy of an existing worker
-            new Result(['FunctionVersion' => '8']), self::ready(), self::ready(), new Result([]), self::ready(), new Result([]), self::ready(), new Result(['Version' => '9']),
+            self::lambdaMissing('GetAlias'), new Result(['FunctionVersion' => '8']),     // live versions: emails (new), reports
+            // Both workers are updated together, phase by phase: emails is new, reports is redeployed.
+            self::lambdaMissing('GetFunctionConfiguration'), self::ready(),            // emails missing, reports exists
+            self::ready(),                                                              // reports idle before its code update
+            new Result(['State' => 'Pending']), new Result([]),                         // CreateFunction emails, UpdateFunctionCode reports
+            self::ready(), self::ready(),                                                // both ready
+            new Result([]), self::ready(),                                              // UpdateFunctionConfiguration reports, ready
+            new Result(['Version' => '1']), new Result(['Version' => '9']),             // PublishVersion emails, reports
         );
         $steps = [];
 
@@ -1949,8 +1953,9 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([
             'GetCallerIdentity', 'HeadBucket', 'PutPublicAccessBlock', 'PutBucketPolicy', 'PutBucketVersioning', 'PutBucketLifecycleConfiguration', 'HeadObject', 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint',
             'CreateWebFunctionRevision', 'GetWebFunctionRevision', 'HeadObject', 'HeadObject', 'CopyObject',
-            'GetAlias', 'GetFunctionConfiguration', 'CreateFunction', 'GetFunctionConfiguration', 'PublishVersion',
-            'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion',
+            'GetAlias', 'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'GetFunctionConfiguration',
+            'CreateFunction', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'GetFunctionConfiguration',
+            'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion', 'PublishVersion',
         ], $mocks->calls);
         $by = self::byOperation($mocks);
         $consoleKey = 'shop/production/console-' . str_repeat('c', 64) . '.zip';
