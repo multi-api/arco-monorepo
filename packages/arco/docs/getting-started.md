@@ -215,8 +215,10 @@ CloudWatch Logs up to about 40 seconds late, so the health check alone decides w
 passed, and the cold start is read last, after the custom domains: Arco keeps looking for up to about
 60 seconds from the start of that lookup, however long the domains took (at most 40 CloudWatch Logs calls). If the report has not
 arrived by then, or CloudWatch Logs cannot be read (for example when throttled), the summary says
-`Cold start: not available yet` and the deploy still succeeds. With `->auth('iam')` the report is
-the only health signal, so Arco waits up to about 75 seconds for it before deciding; a missing or
+`Cold start: not available yet` and the deploy still succeeds. With `domain()` (0.11.4) only CloudFront may
+call the endpoint, so the health check is a request signed with the deploy credentials (SigV4, service `lambda`),
+which needs `lambda:InvokeWebFunctionEndpoint`; Lambda's 403 names that permission. With `->auth('iam')` and no
+`domain()` the report is the only health signal, so Arco waits up to about 75 seconds for it before deciding; a missing or
 unreadable report fails verification, with a message that says which of the two happened.
 
 While building, Arco prints each phase (copying the project, `composer install --no-dev`, the
@@ -633,7 +635,9 @@ of its own) and `error.unexpected` (an unexpected exception; `message` is the ex
 - **CloudFront-only endpoint keys** (0.11.4, only with `domain()` or when `domain()` was just removed): the steps
   `deploy.oac_policy` (params `{function, distribution}`), `deploy.endpoint_protected` (`{function}`, the endpoint
   becomes `IamAuth`), `deploy.endpoint_unprotected` (`{function}`, the endpoint becomes public again) and
-  `deploy.oac_revoked`, and the errors `deploy.policy_unreadable` and `deploy.access_arn_invalid`.
+  `deploy.oac_revoked` (`{function}`, only when Arco's statement was removed), the warning
+  `deploy.domain_stack_unreadable` (`{stack, function, error}`), the errors `deploy.policy_unreadable` and
+  `deploy.access_arn_invalid`, and the verification reason `deploy.verify_signed_forbidden` (`{function}`).
 - **Permissions boundary keys** (0.11, only when a boundary is configured or the role has one; see
   [Permissions boundary](configuration.md#permissions-boundary)):
   - `deploy.step_role` gains the param `boundary` (the configured policy ARN) next to `role`. Without a boundary
@@ -800,6 +804,9 @@ With `domain()`, the deploy profile also needs:
 - `lambda:GetResourcePolicy`, `lambda:PutResourcePolicy` on `arn:aws:lambda:*:*:web-function/<app>-*` (0.11.4:
   Arco lets only the environment's CloudFront invoke the endpoint), and `lambda:DeleteResourcePolicy` (only when you
   remove `domain()` and Arco's statement was the only one). `lambda:*WebFunction*` does not match them
+- `lambda:InvokeWebFunctionEndpoint` on `arn:aws:lambda:*:*:web-function/<app>-*/endpoint/*` (0.11.4: the post-deploy
+  `/up` check is a signed request, since only CloudFront and signed callers may invoke the endpoint).
+  `lambda:*WebFunction*` does not match it
 - the Route 53 permissions below when the deploy account also hosts the DNS zones
 
 The DNS profile (`dns('profile')` or `--dns-profile`) needs `route53:ListHostedZonesByName`,
@@ -947,7 +954,8 @@ deploys several apps, list one resource per app.
       "lambda:CreateWebFunction", "lambda:CreateWebFunctionRevision", "lambda:UpdateWebFunctionEndpoint",
       "lambda:DeleteWebFunction", "lambda:GetWebFunction", "lambda:GetWebFunctionEndpoint",
       "lambda:GetWebFunctionRevision", "lambda:ListTags", "lambda:TagResource",
-      "lambda:GetResourcePolicy", "lambda:PutResourcePolicy", "lambda:DeleteResourcePolicy"
+      "lambda:GetResourcePolicy", "lambda:PutResourcePolicy", "lambda:DeleteResourcePolicy",
+      "lambda:InvokeWebFunctionEndpoint"
     ],
     "Resource": "arn:aws:lambda:*:<account>:web-function/<app>-*"
   },

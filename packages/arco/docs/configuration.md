@@ -1173,8 +1173,9 @@ first and, with `auth('public')`, makes the endpoint public again. `arco info` s
 `arco info --json` has the key `endpoint_auth`. The deploy needs extra permissions (see
 [Permissions for custom domains](getting-started.md#permissions-for-custom-domains)).
 
-Because an unsigned request gets 403, the post-deploy check does not probe `/up` here: it uses the platform init report,
-as with `auth('iam')`.
+Because an unsigned request gets 403, the post-deploy check probes `/up` with a request signed with the deploy
+credentials (SigV4, service `lambda`), so the deploy profile needs `lambda:InvokeWebFunctionEndpoint` on the endpoint.
+`auth('iam')` without `domain()` keeps using the platform init report.
 
 **Known residual.** CloudFront appends the viewer's address to an `X-Forwarded-For` the viewer sent, and Laravel (with
 every proxy trusted) takes the leftmost address as `request()->ip()`. A viewer can therefore still choose the IP your

@@ -24,20 +24,24 @@ profile needs new permissions first.
   `cloudfront.amazonaws.com` to call `lambda:InvokeWebFunctionEndpoint` on the endpoint, only for that
   distribution), waits until the distribution is `Deployed`, and only then switches an existing endpoint to
   `IamAuth`, so an upgrade does not cut the live site. New steps: `deploy.oac_policy`, `deploy.endpoint_protected`,
-  `deploy.endpoint_unprotected` and `deploy.oac_revoked`; errors `deploy.policy_unreadable` and
-  `deploy.access_arn_invalid` (Arco never writes a policy it cannot read). Statements Arco did not write are kept.
-  Removing `domain()` removes the statement first and, for `auth('public')`, makes the endpoint public again;
-  `arco remove` cleans up as before.
+  `deploy.endpoint_unprotected` and `deploy.oac_revoked` (only when a statement was removed); warning
+  `deploy.domain_stack_unreadable`; errors `deploy.policy_unreadable`, `deploy.access_arn_invalid` (Arco never writes
+  a policy it cannot read) and the verification reason `deploy.verify_signed_forbidden`. Statements Arco did not write are kept.
+  Removing `domain()` removes the statement first (for `auth('public')` and `auth('iam')`) and, for `auth('public')`,
+  makes the endpoint public again; `arco remove` cleans up as before.
 - **Changed:** `auth('iam')` together with `domain()` is allowed now (`validation.domain_iam` is gone) and means the
   same as `domain()` alone.
-- **Changed:** with `domain()`, the post-deploy verifier uses the platform init report, as it does for
-  `auth('iam')`, instead of probing `/up` (an unsigned probe gets 403). A deploy whose app boots but whose `/up`
-  route fails is no longer caught in these environments.
+- **Changed:** with `domain()`, the post-deploy check still probes `/up` on the endpoint, now with a SigV4-signed
+  request (service `lambda`, the deploy credentials, the endpoint's region), with the same success rule as before.
+  This needs `lambda:InvokeWebFunctionEndpoint` on the environment's endpoint ARN; a 403 names the missing
+  permission (`deploy.verify_signed_forbidden`). `auth('iam')` without `domain()` keeps using the platform init
+  report and needs no new permission.
 - **Changed:** new deploy permissions with `domain()`: `cloudfront:CreateOriginAccessControl`,
   `cloudfront:GetOriginAccessControl`, `cloudfront:UpdateOriginAccessControl`,
   `cloudfront:DeleteOriginAccessControl` (CloudFormation uses the deploy credentials), and
   `lambda:GetResourcePolicy`, `lambda:PutResourcePolicy` (plus `lambda:DeleteResourcePolicy`, only when `domain()`
-  is removed and Arco's statement was the only one) on `web-function/<app>-*`. The existing
+  is removed and Arco's statement was the only one) on `web-function/<app>-*`, and
+  `lambda:InvokeWebFunctionEndpoint` on `web-function/<app>-*/endpoint/*` (the signed `/up` probe). The existing
   `cloudfront:*Distribution*` does not cover the first four. A deploy without them stops with an AWS access error.
   **Arco Cloud's connect template needs the same permissions before it deploys an environment with `domain()` with
   0.11.4.**
@@ -47,7 +51,8 @@ profile needs new permissions first.
   configured value; no key is renamed.
 - **Changed:** with `domain()`, `arco deploy` marks the endpoint URL in its summary as CloudFront only
   (`deploy.endpoint_cloudfront_only`). `--json` results are unchanged. `auth('iam')` deploys without `domain()`
-  make one extra `DescribeStacks` call (to find a leftover CloudFront statement); no new permission.
+  make one extra `DescribeStacks` call (to find a leftover CloudFront statement); no new permission. If the profile
+  may not call it, the deploy prints the warning `deploy.domain_stack_unreadable` and goes on.
 - **Note (known residual, not fixed here):** closing the endpoint does not stop `X-Forwarded-For` spoofing through
   CloudFront. CloudFront appends the viewer address to an `X-Forwarded-For` the viewer sent, and because Laravel
   trusts every proxy (`TrustProxies::at('*')`), `request()->ip()` returns the leftmost address, the one the viewer

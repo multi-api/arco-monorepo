@@ -113,12 +113,14 @@ available yet": Floci does not report the Lambda init metric to CloudWatch Logs.
 
 - **IAM is not enforced like AWS.** A deploy that works here can still fail on AWS because of a missing
   permission. Check [Minimal IAM permissions](getting-started.md#minimal-iam-permissions) before the real deploy.
-- **No init report, so no `domain()` or `auth('iam')` deploy passes verification.** An `IamAuth` endpoint cannot be
-  probed without a signature, so Arco waits for the Lambda init report in CloudWatch Logs, and Floci does not write
-  it. Since 0.11.4 `domain()` makes the endpoint `IamAuth`, so a deploy of an environment with `domain()` against
-  Floci stops at "The new revision did not pass verification". Floci's support for the origin access control and the
-  Web Function resource policy that 0.11.4 adds is untested: the deploy never gets that far. Test `domain()` against
-  a real account.
+- **No init report, so no `auth('iam')` deploy passes verification.** An `IamAuth` endpoint without `domain()` cannot
+  be probed, so Arco waits for the Lambda init report in CloudWatch Logs, and Floci does not write it. (With
+  `domain()`, Arco probes `/up` with a signed request, which works against Floci.)
+- **`domain()` deploys stop at the domain stack.** Since 0.11.4 the stack has a CloudFront origin access control with
+  the signing behavior `always-amz-auth`, the only one AWS accepts for Lambda Web Function origins. Floci's CloudFront
+  only knows `always`, `never` and `no-override`, so the stack rolls back with "The parameter SigningBehavior must be
+  one of always, never, or no-override." Floci's support for the Web Function resource policy is untested for the
+  same reason. Test `domain()` against a real account.
 - **No real DNS or TLS.** Custom domains do not resolve outside the emulator, and nothing is served over HTTPS.
 
 ## Clean up
