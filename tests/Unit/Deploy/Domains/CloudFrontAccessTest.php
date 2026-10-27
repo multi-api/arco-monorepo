@@ -194,6 +194,98 @@ final class CloudFrontAccessTest extends TestCase
         self::assertNotContains('deploy.endpoint_still_public', array_column($this->steps, 0), 'the error itself says so');
     }
 
+    public function test_a_401_through_cloudfront_is_retried_like_a_403(): void
+    {
+        $this->switching();
+        $this->http->append(new Response(401), new Response(200));
+
+        $this->protect();
+
+        self::assertCount(0, $this->http, 'the 401 was retried');
+        self::assertSame(5.0, $this->sleeper->now() - 1_000_000.0 - 10);
+    }
+
+    public function test_a_persistent_401_is_reverted(): void
+    {
+        $this->switching();
+        $this->aws->handler->append(self::endpoint('IamAuth'), new Result([]), self::endpoint('ApplicationManaged'));
+        $this->http->append(...array_fill(0, 13, new Response(401)));
+
+        $this->expectException(DeployException::class);
+        $this->expectExceptionMessage('deploy.protection_reverted');
+        $this->protect();
+    }
+
+    public function test_a_revert_that_fails_once_is_retried(): void
+    {
+        $this->switching();
+        $this->aws->handler->append(
+            self::endpoint('IamAuth'),
+            AwsMocks::error(LambdaWebException::class, 'UpdateWebFunctionEndpoint', 'AccessDeniedException', 403),
+            self::endpoint('IamAuth'), new Result([]), self::endpoint('ApplicationManaged'),
+        );
+        $this->http->append(...array_fill(0, 13, new Response(403)));
+
+        try {
+            $this->protect();
+            self::fail('a reverted switch fails the deploy');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.protection_reverted', $e->key);
+        }
+
+        self::assertSame(['GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'],
+            array_slice($this->aws->calls, 7));
+        self::assertSame('ApplicationManaged', $this->aws->params[10]['authType']);
+    }
+
+    public function test_a_revert_that_keeps_failing_gives_the_manual_command(): void
+    {
+        $this->switching();
+        $refused = fn () => AwsMocks::error(LambdaWebException::class, 'UpdateWebFunctionEndpoint', 'AccessDeniedException', 403, 'not allowed');
+        $this->aws->handler->append(
+            self::endpoint('IamAuth'), $refused(), self::endpoint('IamAuth'), $refused(), self::endpoint('IamAuth'), $refused(),
+        );
+        $this->http->append(...array_fill(0, 13, new Response(403)));
+
+        try {
+            $this->protect();
+            self::fail('a failed revert must stop the deploy');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.protection_revert_failed', $e->key);
+            self::assertSame([
+                'function' => 'shop-production',
+                'error' => 'not allowed',
+                'command' => 'aws lambda-web update-web-function-endpoint --region us-east-1 --function-name shop-production --endpoint-name default --auth-type ApplicationManaged',
+            ], $e->params);
+        }
+        self::assertSame(3, count(array_keys(array_slice($this->aws->calls, 7), 'UpdateWebFunctionEndpoint')), 'three attempts');
+        self::assertNotContains('deploy.endpoint_still_public', array_column($this->steps, 0), 'the endpoint is not known to be public');
+    }
+
+    public function test_an_error_after_the_switch_reverts_before_it_is_rethrown(): void
+    {
+        // The idle wait after the switch fails: the check never ran, so the lock is unverified.
+        $this->aws->handler->append(
+            self::endpoint('ApplicationManaged'), self::noPolicy(), new Result([]),
+            new Result(['Distribution' => ['Id' => 'E123', 'Status' => 'Deployed']]),
+            self::endpoint('ApplicationManaged'), new Result([]),
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunctionEndpoint', 'ValidationException', 400),
+            self::endpoint('IamAuth'), new Result([]), self::endpoint('ApplicationManaged'),
+        );
+
+        try {
+            $this->protect();
+            self::fail('the error must stop the deploy');
+        } catch (LambdaWebException $e) {
+            self::assertSame('ValidationException', $e->getAwsErrorCode(), 'the original error');
+        }
+
+        self::assertSame(['IamAuth', 'ApplicationManaged'], [$this->aws->params[5]['authType'], $this->aws->params[8]['authType']]);
+        self::assertSame(0, count($this->http), 'no request through CloudFront');
+        self::assertNull($this->http->getLastRequest());
+        self::assertSame(['deploy.oac_policy', 'deploy.endpoint_protected', 'deploy.endpoint_still_public'], array_column($this->steps, 0), 'reverted: the endpoint is public again');
+    }
+
     public function test_a_failure_before_the_switch_says_the_endpoint_is_still_public(): void
     {
         $this->aws->handler->append(

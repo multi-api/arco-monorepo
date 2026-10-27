@@ -48,10 +48,12 @@ profile needs new permissions first.
   **Arco Cloud's connect template needs the same permissions before it deploys an environment with `domain()` with
   0.11.4.**
 - **Changed:** after an existing endpoint switches to `IamAuth`, the deploy requests the health path through the
-  distribution's own domain (`deploy.protection_check`), retrying 403 and 5xx for about a minute. If CloudFront
+  distribution's own domain (`deploy.protection_check`), retrying 401, 403 and 5xx for about a minute. If CloudFront
   still cannot reach the app, Arco sets the endpoint back to `ApplicationManaged` (the site keeps serving through
   CloudFront, unprotected) and the deploy fails with `deploy.protection_reverted`. The policy statement and the
-  access control stay; the next successful deploy locks the endpoint again.
+  access control stay; the next successful deploy locks the endpoint again. Any other error after the switch also
+  sets the endpoint back first. If that fails three times, the deploy stops with `deploy.protection_revert_failed`,
+  which prints the `aws lambda-web update-web-function-endpoint` command that makes the endpoint public by hand.
 - **Changed:** `auth('iam')` → `auth('public')` without `domain()` makes no resource-policy call: the statement is
   only removed while a domain stack is left from an earlier `domain()`.
 - **Upgrade every deploy path to 0.11.4:** a deploy by 0.11.3 or older (a CI lock file, a teammate, Arco Cloud's

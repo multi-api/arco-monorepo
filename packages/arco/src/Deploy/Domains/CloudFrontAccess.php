@@ -29,6 +29,7 @@ final class CloudFrontAccess
     /** How long the site may answer 403 or 5xx through CloudFront after the switch before Arco reverts it. */
     private const CHECK_SECONDS = 60;
     private const CHECK_POLL = 5;
+    private const REVERT_ATTEMPTS = 3;
 
     public function __construct(
         private readonly WebFunctions $web,
@@ -97,19 +98,59 @@ final class CloudFrontAccess
         $this->web->waitEndpoint($function);
         $this->web->setAuth($function, 'IamAuth');
         $public = false;
-        $this->web->waitEndpoint($function);
-        $this->checkThroughCloudFront($function, $distributionDomain, $healthPath, $step);
+        $region = (string) $config->region;
+        try {
+            $this->web->waitEndpoint($function);
+            $reached = $this->checkThroughCloudFront($distributionDomain, $healthPath, $step);
+        } catch (\Throwable $e) {
+            // Whatever stopped the check, the endpoint must not stay locked unverified: the site could be down.
+            $this->revert($function, $region, $e);
+            $public = true;
+            throw $e;
+        }
+        if ($reached !== null) {
+            $this->revert($function, $region);
+            throw DeployException::make('deploy.protection_reverted', ['function' => $function, 'url' => "https://$distributionDomain$healthPath", 'answer' => $reached]);
+        }
     }
 
     /**
-     * Requests the health path through CloudFront, unsigned, as a viewer does. A 403 (Lambda refusing
+     * Sets the endpoint back to ApplicationManaged after a failed switch, retrying a few times: until it works,
+     * CloudFront may be unable to reach the site.
+     *
+     * @throws DeployException deploy.protection_revert_failed, with the command that does it by hand
+     */
+    private function revert(string $function, string $region, ?\Throwable $cause = null): void
+    {
+        for ($attempt = 1; ; $attempt++) {
+            try {
+                $this->web->waitEndpoint($function);
+                $this->web->setAuth($function, 'ApplicationManaged');
+                $this->web->waitEndpoint($function);
+                return;
+            } catch (\Throwable $e) {
+                if ($attempt >= self::REVERT_ATTEMPTS) {
+                    throw DeployException::make('deploy.protection_revert_failed', [
+                        'function' => $function,
+                        'error' => $e->getMessage(),
+                        'command' => "aws lambda-web update-web-function-endpoint --region $region --function-name $function --endpoint-name " . WebFunctions::ENDPOINT . ' --auth-type ApplicationManaged',
+                    ], $cause ?? $e);
+                }
+                $this->sleeper->sleep(self::CHECK_POLL);
+            }
+        }
+    }
+
+    /**
+     * Requests the health path through CloudFront, unsigned, as a viewer does. A 401 or 403 (Lambda refusing
      * CloudFront's signature) or a 5xx is retried for about a minute: CloudFront and the policy can take
-     * a moment. Anything else means CloudFront reaches the app. On a persistent failure the endpoint
-     * goes back to ApplicationManaged; the statement and the access control stay (harmless on it).
+     * a moment. Anything else means CloudFront reaches the app. On a persistent failure the caller sets
+     * the endpoint back to ApplicationManaged; the statement and the access control stay (harmless on it).
      *
      * @param callable(string, array<string, string|int>): void $step
+     * @return string|null null when CloudFront reached the app; otherwise the last answer
      */
-    private function checkThroughCloudFront(string $function, string $distributionDomain, string $healthPath, callable $step): void
+    private function checkThroughCloudFront(string $distributionDomain, string $healthPath, callable $step): ?string
     {
         $url = "https://$distributionDomain$healthPath";
         $step('deploy.protection_check', ['url' => $url]);
@@ -122,18 +163,15 @@ final class CloudFrontAccess
                 $status = null;
                 $answer = $e->getMessage();
             }
-            if ($status !== null && $status !== 403 && $status < 500) {
-                return;
+            if ($status !== null && ! in_array($status, [401, 403], true) && $status < 500) {
+                return null;
             }
             if ($this->sleeper->now() >= $deadline) {
                 break;
             }
             $this->sleeper->sleep(self::CHECK_POLL);
         }
-        $this->web->waitEndpoint($function);
-        $this->web->setAuth($function, 'ApplicationManaged');
-        $this->web->waitEndpoint($function);
-        throw DeployException::make('deploy.protection_reverted', ['function' => $function, 'url' => $url, 'answer' => $answer]);
+        return $answer;
     }
 
     /**

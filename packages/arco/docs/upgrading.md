@@ -34,9 +34,11 @@ could carry any `X-Forwarded-Host` or `X-Forwarded-For` header, which `arco-lara
   control, which takes a few minutes), puts a statement in the Web Function's resource policy, waits for the
   distribution, and then makes the endpoint `IamAuth`. It then requests the health path through the distribution
   (retrying for about a minute). If CloudFront cannot reach the app, Arco makes the endpoint public again, the site
-  keeps serving, and the deploy fails with `deploy.protection_reverted`; deploy again once the cause is fixed. The
-  site stays up during the upgrade; run it under light traffic the first time, because a policy change can take a
-  few seconds to apply. To make an endpoint public by hand:
+  keeps serving again, and the deploy fails with `deploy.protection_reverted`; deploy again once the cause is fixed.
+  With a correct grant the site stays up during the upgrade. With a wrong one, viewers can get 403 for about 60 to 90
+  seconds, until the automatic revert; run the first upgrade under light traffic. If even the revert fails, the
+  deploy stops with `deploy.protection_revert_failed` and prints the command to run. To make an endpoint public by
+  hand:
   `aws lambda-web update-web-function-endpoint --function-name <app>-<env> --endpoint-name default --auth-type ApplicationManaged`.
 - **The raw endpoint URL now answers 403** with `domain()`. Your custom domains are unaffected. If something calls
   the `*.on.aws` URL directly (a health check, a webhook sender), point it at a custom domain.
