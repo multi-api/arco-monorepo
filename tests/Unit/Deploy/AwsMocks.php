@@ -26,9 +26,10 @@ final class AwsMocks
         $this->handler = new MockHandler();
     }
 
-    public function clients(string $region = 'us-east-1'): AwsClients
+    /** @param array<string, mixed> $overrides extra client config (e.g. 'retries' => 0 to see each failure) */
+    public function clients(string $region = 'us-east-1', array $overrides = []): AwsClients
     {
-        return new AwsClients(null, $region, [
+        return new AwsClients(null, $region, [...$overrides, 
             'handler' => function (CommandInterface $command, RequestInterface $request) {
                 $this->calls[] = $command->getName();
                 $this->params[] = $command->toArray();
