@@ -97,10 +97,10 @@ final class NetworkConnectorsTest extends TestCase
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            self::notFound('GetNetworkConnector'),
             AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
             new Result(['Role' => ['Arn' => self::ROLE]]),
             new Result([]),
-            self::notFound('GetNetworkConnector'),
             new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'Id' => 'nc-1', 'VersionArn' => self::CONNECTOR . ':1', 'State' => 'PENDING']),
             new Result(self::connector(['State' => 'PENDING'])),
             new Result(self::connector(['LatestVersionArn' => self::CONNECTOR . ':1'])),
@@ -111,7 +111,7 @@ final class NetworkConnectorsTest extends TestCase
         $version = $this->subject($mocks, $sleeper)->ensure($this->config(), ['arco:app' => 'shop'], $step);
 
         self::assertSame(self::CONNECTOR . ':1', $version);
-        self::assertSame(['GetRole', 'CreateRole', 'PutRolePolicy', 'GetNetworkConnector', 'CreateNetworkConnector', 'GetNetworkConnector', 'GetNetworkConnector'], $mocks->calls);
+        self::assertSame(['GetNetworkConnector', 'GetRole', 'CreateRole', 'PutRolePolicy', 'CreateNetworkConnector', 'GetNetworkConnector', 'GetNetworkConnector'], $mocks->calls);
         $create = $mocks->params[4];
         self::assertSame('shop-production', $create['Name']);
         self::assertSame(self::ROLE, $create['OperatorRole']);
@@ -122,7 +122,7 @@ final class NetworkConnectorsTest extends TestCase
             'NetworkProtocol' => 'IPv4',
             'AssociatedComputeResourceTypes' => ['WebFunction'],
         ], $create['Configuration']['VpcEgressConfiguration']);
-        self::assertSame('shop-production', $mocks->params[3]['Identifier']);
+        self::assertSame('shop-production', $mocks->params[0]['Identifier']);
         self::assertGreaterThan(0, $sleeper->slept);
         $keys = array_column($steps->getArrayCopy(), 0);
         self::assertSame(['deploy.step_network', 'deploy.network_waiting'], $keys);
@@ -133,25 +133,26 @@ final class NetworkConnectorsTest extends TestCase
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            new Result(self::connector()),
             AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
             new Result(['Role' => ['Arn' => self::ROLE]]),
             new Result([]),
-            new Result(self::connector()),
         );
         self::steps($step);
 
         $this->subject($mocks)->ensure($this->config(self::BOUNDARY), [], $step);
 
-        self::assertSame(self::BOUNDARY, $mocks->params[1]['PermissionsBoundary']);
+        self::assertSame(['GetNetworkConnector', 'GetRole', 'CreateRole', 'PutRolePolicy'], $mocks->calls);
+        self::assertSame(self::BOUNDARY, $mocks->params[2]['PermissionsBoundary']);
     }
 
     public function test_unchanged_connector_makes_no_update(): void
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            new Result(self::connector()),
             new Result(['Role' => ['Arn' => self::ROLE]]),
             new Result([]),
-            new Result(self::connector()),
         );
         self::steps($step);
 
@@ -169,9 +170,9 @@ final class NetworkConnectorsTest extends TestCase
         ]]]);
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            new Result($changed),
             new Result(['Role' => ['Arn' => self::ROLE]]),
             new Result([]),
-            new Result($changed),
             new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'Id' => 'nc-1', 'VersionArn' => self::CONNECTOR . ':4', 'LastUpdateStatus' => 'InProgress']),
             new Result(self::connector(['LastUpdateStatus' => 'InProgress'])),
             new Result(self::connector(['LastUpdateStatus' => 'Successful', 'LatestVersionArn' => self::CONNECTOR . ':4', 'LatestVersion' => 4])),
@@ -181,7 +182,7 @@ final class NetworkConnectorsTest extends TestCase
         $version = $this->subject($mocks)->ensure($this->config(), [], $step);
 
         self::assertSame(self::CONNECTOR . ':4', $version);
-        self::assertSame(['GetRole', 'PutRolePolicy', 'GetNetworkConnector', 'UpdateNetworkConnector', 'GetNetworkConnector', 'GetNetworkConnector'], $mocks->calls);
+        self::assertSame(['GetNetworkConnector', 'GetRole', 'PutRolePolicy', 'UpdateNetworkConnector', 'GetNetworkConnector', 'GetNetworkConnector'], $mocks->calls);
         self::assertSame('shop-production', $mocks->params[3]['Identifier']);
         self::assertSame(['subnet-a', 'subnet-b'], $mocks->params[3]['Configuration']['VpcEgressConfiguration']['SubnetIds']);
         self::assertContains('deploy.network_updated', array_column($steps->getArrayCopy(), 0));
@@ -196,10 +197,10 @@ final class NetworkConnectorsTest extends TestCase
         ]]]);
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            new Result($other),
             new Result(['Role' => ['Arn' => self::ROLE]]),
             new Result([]),
-            new Result($other),
-            new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'Id' => 'nc-1']),
+            new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'Id' => 'nc-1', 'VersionArn' => self::CONNECTOR . ':4']),
             new Result(self::connector(['LastUpdateStatus' => 'Successful', 'LatestVersionArn' => self::CONNECTOR . ':4'])),
         );
         self::steps($step);
@@ -221,9 +222,9 @@ final class NetworkConnectorsTest extends TestCase
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            new Result(self::connector($state)),
             new Result(['Role' => ['Arn' => self::ROLE]]),
             new Result([]),
-            new Result(self::connector($state)),
         );
         self::steps($step);
 
@@ -239,31 +240,73 @@ final class NetworkConnectorsTest extends TestCase
         self::assertNotContains('UpdateNetworkConnector', $mocks->calls);
     }
 
+    private function changedConnector(): Result
+    {
+        return new Result(self::connector(['Configuration' => ['VpcEgressConfiguration' => ['SubnetIds' => ['subnet-z'], 'SecurityGroupIds' => [], 'NetworkProtocol' => 'IPv4', 'AssociatedComputeResourceTypes' => ['WebFunction']]]]));
+    }
+
     public function test_an_update_that_fails_while_waiting_stops_with_reason(): void
     {
-        $changed = self::connector(['Configuration' => ['VpcEgressConfiguration' => ['SubnetIds' => ['subnet-z'], 'SecurityGroupIds' => [], 'NetworkProtocol' => 'IPv4', 'AssociatedComputeResourceTypes' => ['WebFunction']]]]);
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            $this->changedConnector(),
             new Result(['Role' => ['Arn' => self::ROLE]]),
             new Result([]),
-            new Result($changed),
-            new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'Id' => 'nc-1']),
-            new Result(self::connector(['LastUpdateStatus' => 'Failed', 'LastUpdateStatusReasonCode' => 'InvalidSubnet', 'LastUpdateStatusReason' => 'bad subnet'])),
+            new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'Id' => 'nc-1', 'VersionArn' => self::CONNECTOR . ':4']),
+            new Result(self::connector(['LatestVersionArn' => self::CONNECTOR . ':4', 'LastUpdateStatus' => 'Failed', 'LastUpdateStatusReasonCode' => 'InvalidSubnet', 'LastUpdateStatusReason' => 'bad subnet'])),
         );
         self::steps($step);
 
-        $this->expectException(DeployException::class);
-        $this->subject($mocks)->ensure($this->config(), [], $step);
+        try {
+            $this->subject($mocks)->ensure($this->config(), [], $step);
+            self::fail('expected a DeployException');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.network_failed', $e->key);
+            self::assertSame('shop-production', $e->params['connector']);
+            self::assertSame('InvalidSubnet', $e->params['code']);
+            self::assertSame('bad subnet', $e->params['reason']);
+        }
+    }
+
+    public function test_a_stale_failed_status_from_a_previous_update_is_ignored_until_the_read_reflects_this_update(): void
+    {
+        $mocks = new AwsMocks();
+        $stale = ['LastUpdateStatus' => 'Failed', 'LastUpdateStatusReasonCode' => 'InvalidSubnet', 'LastModified' => '2026-10-27T10:00:00Z'];
+        $mocks->handler->append(
+            new Result([...self::connector($stale), 'Configuration' => ['VpcEgressConfiguration' => ['SubnetIds' => ['subnet-z'], 'SecurityGroupIds' => [], 'NetworkProtocol' => 'IPv4', 'AssociatedComputeResourceTypes' => ['WebFunction']]]]),
+            new Result(['Role' => ['Arn' => self::ROLE]]),
+            new Result([]),
+            new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'Id' => 'nc-1', 'VersionArn' => self::CONNECTOR . ':4']),
+            new Result(self::connector($stale)),
+            new Result(self::connector(['LastUpdateStatus' => 'Successful', 'LatestVersionArn' => self::CONNECTOR . ':4', 'LatestVersion' => 4])),
+        );
+        self::steps($step);
+
+        self::assertSame(self::CONNECTOR . ':4', $this->subject($mocks)->ensure($this->config(), [], $step));
+        self::assertSame(['GetNetworkConnector', 'GetRole', 'PutRolePolicy', 'UpdateNetworkConnector', 'GetNetworkConnector', 'GetNetworkConnector'], $mocks->calls);
+    }
+
+    public function test_a_stale_failed_status_does_not_block_a_connector_that_already_matches(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(self::connector(['LastUpdateStatus' => 'Failed', 'LastUpdateStatusReasonCode' => 'InvalidSubnet'])),
+            new Result(['Role' => ['Arn' => self::ROLE]]),
+            new Result([]),
+        );
+        self::steps($step);
+
+        self::assertSame(self::CONNECTOR . ':3', $this->subject($mocks)->ensure($this->config(), [], $step));
     }
 
     public function test_a_connector_that_never_settles_times_out(): void
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
+            self::notFound('GetNetworkConnector'),
             AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
             new Result(['Role' => ['Arn' => self::ROLE]]),
             new Result([]),
-            self::notFound('GetNetworkConnector'),
             new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'Id' => 'nc-1', 'VersionArn' => self::CONNECTOR . ':1']),
         );
         for ($i = 0; $i < 70; $i++) {
@@ -283,8 +326,6 @@ final class NetworkConnectorsTest extends TestCase
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
-            new Result(['Role' => ['Arn' => self::ROLE]]),
-            new Result([]),
             new Result(self::connector(['OperatorRole' => 'arn:aws:iam::111111111111:role/someone-else'])),
         );
         self::steps($step);
@@ -296,8 +337,7 @@ final class NetworkConnectorsTest extends TestCase
             self::assertSame('deploy.network_foreign', $e->key);
             self::assertSame('shop-production', $e->params['connector']);
         }
-        self::assertNotContains('UpdateNetworkConnector', $mocks->calls);
-        self::assertNotContains('DeleteNetworkConnector', $mocks->calls);
+        self::assertSame(['GetNetworkConnector'], $mocks->calls, 'no update, no delete and no IAM write (no role created or rewritten)');
     }
 
     public function test_find_returns_null_when_missing_and_the_connector_when_owned(): void
@@ -328,6 +368,43 @@ final class NetworkConnectorsTest extends TestCase
         self::assertSame('shop-production', $mocks->params[0]['Identifier']);
         self::assertSame([self::CONNECTOR . ':1', self::CONNECTOR . ':3', self::CONNECTOR . ':4'], array_column(array_slice($mocks->params, 1), 'Identifier'));
         self::assertCount(0, $steps);
+    }
+
+    /** @return iterable<string, array{list<array<string, mixed>>}> */
+    public static function unsafeVersionLists(): iterable
+    {
+        yield 'version number missing' => [[['VersionArn' => self::CONNECTOR . ':1'], ['VersionArn' => self::CONNECTOR . ':2', 'Version' => 2]]];
+        yield 'unqualified ARN' => [[['VersionArn' => self::CONNECTOR, 'Version' => 1], ['VersionArn' => self::CONNECTOR . ':2', 'Version' => 2]]];
+        yield 'ARN does not end in its version' => [[['VersionArn' => self::CONNECTOR . ':7', 'Version' => 1], ['VersionArn' => self::CONNECTOR . ':2', 'Version' => 2]]];
+    }
+
+    /** @param list<array<string, mixed>> $versions */
+    #[\PHPUnit\Framework\Attributes\DataProvider('unsafeVersionLists')]
+    public function test_prune_deletes_nothing_when_the_version_list_cannot_be_trusted(array $versions): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['NetworkConnectorVersions' => $versions]));
+        $steps = self::steps($step);
+
+        $this->subject($mocks)->pruneVersions($this->config(), [], $step);
+
+        self::assertSame(['ListNetworkConnectorVersions'], $mocks->calls);
+        self::assertCount(0, $steps, 'a quiet no-op');
+    }
+
+    public function test_prune_never_deletes_the_highest_version_even_when_it_is_listed_first(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['NetworkConnectorVersions' => [
+            ['VersionArn' => self::CONNECTOR . ':9', 'Version' => 9],
+            ['VersionArn' => self::CONNECTOR . ':10', 'Version' => 10],
+            ['VersionArn' => self::CONNECTOR . ':8', 'Version' => 8],
+        ]]), new Result([]), new Result([]));
+        self::steps($step);
+
+        $this->subject($mocks)->pruneVersions($this->config(), [], $step);
+
+        self::assertSame([self::CONNECTOR . ':9', self::CONNECTOR . ':8'], array_column(array_slice($mocks->params, 1), 'Identifier'));
     }
 
     public function test_prune_follows_pages_and_only_warns_when_a_delete_fails(): void

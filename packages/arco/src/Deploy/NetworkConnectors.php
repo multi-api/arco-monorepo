@@ -74,6 +74,9 @@ final class NetworkConnectors
         $name = $config->functionName();
         $step('deploy.step_network', ['connector' => $name, 'subnets' => implode(', ', $vpc->subnets), 'groups' => implode(', ', $vpc->securityGroups)]);
 
+        // Before any write: a foreign connector must not leave a created or rewritten role behind.
+        $current = $this->find($config);
+
         ['arn' => $roleArn] = $this->roles->ensure(self::operatorRoleName($config), self::operatorPolicy(), $tags, null, $step, $config->permissionsBoundary);
         $desired = [
             'SubnetIds' => $vpc->subnets,
@@ -82,7 +85,6 @@ final class NetworkConnectors
             'AssociatedComputeResourceTypes' => ['WebFunction'],
         ];
 
-        $current = $this->find($config);
         if ($current === null) {
             $created = $this->core->createNetworkConnector([
                 'Name' => $name,
@@ -101,16 +103,27 @@ final class NetworkConnectors
             throw self::failed($name, $current, 'State');
         }
         if (($current['LastUpdateStatus'] ?? null) === 'InProgress') {
-            $current = $this->wait($name, $step, fn (array $c) => ($c['LastUpdateStatus'] ?? null) !== 'InProgress', updating: true, ignoreFailedUpdate: true);
+            $current = $this->wait($name, $step, fn (array $c) => ($c['LastUpdateStatus'] ?? null) !== 'InProgress');
         }
         $latest = self::text($current['LatestVersionArn'] ?? null);
         if (self::sameConfiguration($current, $desired)) {
             return $latest;
         }
 
-        $this->core->updateNetworkConnector(['Identifier' => $name, 'Configuration' => ['VpcEgressConfiguration' => $desired]]);
-        // A new version, not just a Successful status: the answer right after the update may still be the old one.
-        $updated = $this->wait($name, $step, fn (array $c) => ($c['LastUpdateStatus'] ?? null) === 'Successful' && self::text($c['LatestVersionArn'] ?? null) !== $latest, updating: true);
+        $update = $this->core->updateNetworkConnector(['Identifier' => $name, 'Configuration' => ['VpcEgressConfiguration' => $desired]]);
+        // The new version is the target. A read can still show the previous update's status (a stale Failed
+        // included), so a status counts only once the read reflects this update.
+        $target = self::text($update['VersionArn'] ?? null);
+        $modified = self::stamp($current['LastModified'] ?? null);
+        $reflects = static fn (array $c): bool => $target !== ''
+            ? self::text($c['LatestVersionArn'] ?? null) === $target || ($modified !== '' && self::stamp($c['LastModified'] ?? null) !== $modified)
+            : self::text($c['LatestVersionArn'] ?? null) !== $latest;
+        $updated = $this->wait(
+            $name,
+            $step,
+            fn (array $c) => ($c['LastUpdateStatus'] ?? null) === 'Successful' && ($target !== '' ? self::text($c['LatestVersionArn'] ?? null) === $target : $reflects($c)),
+            fn (array $c) => ($c['LastUpdateStatus'] ?? null) === 'Failed' && $reflects($c),
+        );
         $step('deploy.network_updated', ['connector' => $name, 'version' => self::int($updated['LatestVersion'] ?? null)]);
         return self::text($updated['LatestVersionArn'] ?? null);
     }
@@ -144,14 +157,20 @@ final class NetworkConnectors
     {
         $name = $config->functionName();
         try {
+            /** @var array<string, int> $versions version ARN => number */
             $versions = [];
             $marker = null;
             do {
                 $page = $this->core->listNetworkConnectorVersions(['Identifier' => $name, ...($marker === null ? [] : ['Marker' => $marker])]);
                 foreach (is_array($page['NetworkConnectorVersions'] ?? null) ? $page['NetworkConnectorVersions'] : [] as $version) {
-                    if (is_array($version) && is_string($version['VersionArn'] ?? null)) {
-                        $versions[$version['VersionArn']] = self::int($version['Version'] ?? null);
+                    $arn = is_array($version) ? $version['VersionArn'] ?? null : null;
+                    $number = is_array($version) ? $version['Version'] ?? null : null;
+                    // Only a version-qualified ARN ending in its own number is ever deleted: an unqualified one
+                    // would delete the whole connector. Anything unexpected in the list, and nothing is pruned.
+                    if (! is_string($arn) || ! is_numeric($number) || ! str_ends_with($arn, ':' . (int) $number)) {
+                        return;
                     }
+                    $versions[$arn] = (int) $number;
                 }
                 $marker = is_string($page['NextMarker'] ?? null) && $page['NextMarker'] !== '' ? $page['NextMarker'] : null;
             } while ($marker !== null);
@@ -217,13 +236,14 @@ final class NetworkConnectors
     }
 
     /**
-     * Polls until $done; a FAILED connector, or an update that Failed (when $updating), stops with its reason.
+     * Polls until $done; a FAILED connector, or an update that $updateFailed says failed, stops with its reason.
      *
      * @param callable(string, array<string, string|int>): void $step
      * @param callable(array<string, mixed>): bool $done
+     * @param (callable(array<string, mixed>): bool)|null $updateFailed
      * @return array<string, mixed>
      */
-    private function wait(string $name, callable $step, callable $done, bool $updating = false, bool $ignoreFailedUpdate = false): array
+    private function wait(string $name, callable $step, callable $done, ?callable $updateFailed = null): array
     {
         $deadline = $this->sleeper->now() + self::TIMEOUT;
         $announced = false;
@@ -232,7 +252,7 @@ final class NetworkConnectors
             if ($connector['State'] === 'FAILED') {
                 throw self::failed($name, $connector, 'State');
             }
-            if ($updating && ! $ignoreFailedUpdate && ($connector['LastUpdateStatus'] ?? null) === 'Failed') {
+            if ($updateFailed !== null && $updateFailed($connector)) {
                 throw self::failed($name, $connector, 'LastUpdateStatus');
             }
             if ($done($connector)) {
@@ -303,6 +323,16 @@ final class NetworkConnectors
     private static function error(AwsException $e): string
     {
         return trim((string) $e->getAwsErrorCode() . ' ' . (string) $e->getAwsErrorMessage());
+    }
+
+    /** A LastModified value as comparable text (the SDK parses timestamps into DateTime objects). */
+    private static function stamp(mixed $value): string
+    {
+        return match (true) {
+            $value instanceof \DateTimeInterface => $value->format('U.u'),
+            is_scalar($value) => (string) $value,
+            default => '',
+        };
     }
 
     private static function int(mixed $value): int
