@@ -1275,8 +1275,8 @@ to `arn:aws-cn:` or `arn:aws-us-gov:`.
 - **ArcoVpcAccess** is needed only with `vpc()`; without it, leave it out. The boundary caps two roles there: the
   execution role (its `ArcoVpcAccess` statement: the first six actions, for the console and the workers) and the
   network connector's operator role `arco-<app>-<env>-network`, which carries the same boundary (it adds
-  `ec2:DescribeSecurityGroups` and `ec2:CreateTags`; its inline policy limits `ec2:CreateNetworkInterface` and
-  `ec2:CreateTags` to `ec2:ManagedResourceOperator` = `network-connectors.lambda.amazonaws.com`). Without these
+  `ec2:DescribeSecurityGroups` and `ec2:CreateTags`; its inline policy limits `ec2:CreateTags` to
+  `ec2:ManagedResourceOperator` = `network-connectors.lambda.amazonaws.com`). Without these
   actions in the boundary the connector ends `FAILED` (`InsufficientRolePermissions`) or the console and workers
   cannot start in the VPC.
 - **No Lambda statement.** The execution role needs no `lambda:InvokeFunction`: the scheduler rule invokes the

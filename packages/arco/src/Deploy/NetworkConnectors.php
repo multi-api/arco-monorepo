@@ -51,10 +51,16 @@ final class NetworkConnectors
         return [
             'Version' => '2012-10-17',
             'Statement' => [
+                // As AWS documents it: a ManagedResourceOperator condition on CreateNetworkInterface denies it.
                 [
                     'Effect' => 'Allow',
-                    'Action' => ['ec2:CreateNetworkInterface', 'ec2:CreateTags'],
-                    'Resource' => '*',
+                    'Action' => 'ec2:CreateNetworkInterface',
+                    'Resource' => ['arn:aws:ec2:*:*:network-interface/*', 'arn:aws:ec2:*:*:subnet/*', 'arn:aws:ec2:*:*:security-group/*'],
+                ],
+                [
+                    'Effect' => 'Allow',
+                    'Action' => 'ec2:CreateTags',
+                    'Resource' => 'arn:aws:ec2:*:*:network-interface/*',
                     'Condition' => ['StringEquals' => ['ec2:ManagedResourceOperator' => self::SERVICE]],
                 ],
                 [
@@ -91,7 +97,7 @@ final class NetworkConnectors
         // Before any write: a foreign connector must not leave a created or rewritten role behind.
         $current = $this->find($config);
 
-        ['arn' => $roleArn, 'created' => $roleCreated] = $this->roles->ensure(self::operatorRoleName($config), self::operatorPolicy(), $tags, null, $step, $config->permissionsBoundary);
+        ['arn' => $roleArn] = $this->roles->ensure(self::operatorRoleName($config), self::operatorPolicy(), $tags, null, $step, $config->permissionsBoundary);
         $desired = [
             'SubnetIds' => $vpc->subnets,
             'SecurityGroupIds' => $vpc->securityGroups,
@@ -115,7 +121,9 @@ final class NetworkConnectors
         }
 
         if ($current === null) {
-            $created = LambdaHelpers::retryRolePropagation($this->sleeper, $roleCreated, self::ROLE_ERRORS, fn () => $this->core->createNetworkConnector([
+            // Retried even for an existing role: ensure() has just rewritten its inline policy, and lambda-core
+            // checks the role's EC2 permissions when the connector is created.
+            $created = LambdaHelpers::retryRolePropagation($this->sleeper, true, self::ROLE_ERRORS, fn () => $this->core->createNetworkConnector([
                 'Name' => $name,
                 'Configuration' => ['VpcEgressConfiguration' => $desired],
                 'OperatorRole' => $roleArn,

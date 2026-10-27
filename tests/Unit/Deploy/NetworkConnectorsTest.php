@@ -98,12 +98,19 @@ final class NetworkConnectorsTest extends TestCase
         self::assertSame('arco-' . $exact->functionName() . '-network', NetworkConnectors::operatorRoleName($exact), 'a name that fits is not shortened');
     }
 
-    public function test_operator_policy_scopes_interface_creation_to_the_service(): void
+    public function test_operator_policy_matches_the_documented_operator_policy(): void
     {
+        // The AWS-documented policy: CreateNetworkInterface carries no condition (the request on the subnet and
+        // the security group has no ec2:ManagedResourceOperator key, so a condition there denies it); only the
+        // create-time tagging is scoped to the service.
         $policy = NetworkConnectors::operatorPolicy();
-        $conditioned = $policy['Statement'][0];
-        self::assertSame(['ec2:CreateNetworkInterface', 'ec2:CreateTags'], $conditioned['Action']);
-        self::assertSame(['StringEquals' => ['ec2:ManagedResourceOperator' => 'network-connectors.lambda.amazonaws.com']], $conditioned['Condition']);
+        [$create, $tag] = $policy['Statement'];
+        self::assertSame('ec2:CreateNetworkInterface', $create['Action']);
+        self::assertSame(['arn:aws:ec2:*:*:network-interface/*', 'arn:aws:ec2:*:*:subnet/*', 'arn:aws:ec2:*:*:security-group/*'], $create['Resource']);
+        self::assertArrayNotHasKey('Condition', $create);
+        self::assertSame('ec2:CreateTags', $tag['Action']);
+        self::assertSame('arn:aws:ec2:*:*:network-interface/*', $tag['Resource']);
+        self::assertSame(['StringEquals' => ['ec2:ManagedResourceOperator' => 'network-connectors.lambda.amazonaws.com']], $tag['Condition']);
         $actions = array_merge(...array_map(fn (array $s) => (array) $s['Action'], $policy['Statement']));
         foreach (['ec2:DeleteNetworkInterface', 'ec2:DescribeNetworkInterfaces', 'ec2:DescribeSubnets', 'ec2:DescribeSecurityGroups'] as $action) {
             self::assertContains($action, $actions);
@@ -312,14 +319,33 @@ final class NetworkConnectorsTest extends TestCase
         self::assertSame(['GetNetworkConnector', 'GetRole', 'CreateRole', 'PutRolePolicy', 'CreateNetworkConnector', 'CreateNetworkConnector', 'GetNetworkConnector'], $mocks->calls);
     }
 
-    public function test_create_is_not_retried_when_the_operator_role_already_existed(): void
+    public function test_create_is_retried_when_the_existing_operator_role_just_got_its_policy(): void
+    {
+        // Seen on real AWS: the rewritten inline policy is not visible yet when lambda-core checks it.
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::notFound('GetNetworkConnector'),
+            new Result(['Role' => ['Arn' => self::ROLE]]),
+            new Result([]),
+            AwsMocks::error(LambdaCoreException::class, 'CreateNetworkConnector', 'InvalidParameterValueException', 400, 'Encountered unauthorized operation while calling EC2 due to invalid ConnectorOperatorRole permissions'),
+            new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'State' => 'PENDING', 'VersionArn' => self::CONNECTOR . ':1']),
+            new Result(self::connector()),
+        );
+        self::steps($step);
+
+        $this->subject($mocks)->ensure($this->config(), [], $step);
+
+        self::assertSame(['GetNetworkConnector', 'GetRole', 'PutRolePolicy', 'CreateNetworkConnector', 'CreateNetworkConnector', 'GetNetworkConnector'], $mocks->calls);
+    }
+
+    public function test_create_is_not_retried_on_an_error_unrelated_to_the_role(): void
     {
         $mocks = new AwsMocks();
         $mocks->handler->append(
             self::notFound('GetNetworkConnector'),
             new Result(['Role' => ['Arn' => self::ROLE]]),
             new Result([]),
-            AwsMocks::error(LambdaCoreException::class, 'CreateNetworkConnector', 'ValidationException', 400, 'The operator role cannot be assumed by the service'),
+            AwsMocks::error(LambdaCoreException::class, 'CreateNetworkConnector', 'ValidationException', 400, 'Subnet subnet-1 does not exist'),
         );
         self::steps($step);
 

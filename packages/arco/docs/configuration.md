@@ -1202,8 +1202,9 @@ environment clears an app-level one. Arco does not create VPCs, subnets, NATs, e
 - **The Web Function** gets a Lambda *network connector*, one per environment, named like the function
   (`<app>-<env>`), and its revision pins the connector version. The connector is managed by an operator role
   `arco-<app>-<env>-network` (at most 64 characters; see Ownership below) that Arco creates, tags and guards like the execution role.
-  The role trusts `lambda.amazonaws.com`; its inline policy grants `ec2:CreateNetworkInterface` and
-  `ec2:CreateTags` (only when `ec2:ManagedResourceOperator` is `network-connectors.lambda.amazonaws.com`), and
+  The role trusts `lambda.amazonaws.com`; its inline policy (the one AWS documents for operator roles) grants
+  `ec2:CreateNetworkInterface`, `ec2:CreateTags` on network interfaces (only when `ec2:ManagedResourceOperator` is
+  `network-connectors.lambda.amazonaws.com`), and
   `ec2:DeleteNetworkInterface`, `ec2:DescribeNetworkInterfaces`, `ec2:DescribeSubnets` and
   `ec2:DescribeSecurityGroups`. It carries `permissionsBoundary()` if set. With `role()` Arco still creates the
   operator role (it is not the execution role), without a boundary, because `permissionsBoundary()` stays
