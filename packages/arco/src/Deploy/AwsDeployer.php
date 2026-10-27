@@ -86,14 +86,25 @@ final class AwsDeployer implements Deployer
         $resources[] = $rule;
         // Read-only, before claim() tags anything: a stack refusal later would come after those tags.
         $this->checkStacks($config);
+        // Refusals first: nothing more is read of a resource that is not this environment's.
+        $guard->check($config, array_values(array_filter($resources)), $this->force);
+        // prepare() needs the connector the live revision pins: the one to keep with vpc(), or a leftover
+        // to remove without it. A lambda-web read; lambda-core is only asked with vpc() or once a revision pins one.
+        $live = null;
+        if ($web !== null && RevisionFactory::servesNetworkConnectors()) {
+            $live = $this->liveConnectors[$config->functionName()] = (new WebFunctions($this->aws->lambdaWeb(), $this->sleeper))->liveConnectorArn($config->functionName());
+        }
+        if (RevisionFactory::usesVpc($config)) {
+            // Refused even with --force: lambda-core cannot tag a connector, so it could never be taken over.
+            $this->networkConnectors()->find($config);
+        }
+        if (RevisionFactory::usesVpc($config) || $live !== null) {
+            // prepare() rewrites the operator role's policy with vpc(); prune() deletes it with a leftover connector.
+            $resources[] = $guard->role($names[] = NetworkConnectors::operatorRoleName($config));
+        }
         $guard->claim($config, array_values(array_filter($resources)), $this->force, $onStep);
         foreach ($names as $name) {
             $this->verified[$name] = true;
-        }
-        // prepare() needs the connector the live revision pins: the one to keep with vpc(), or a leftover
-        // to remove without it. A lambda-web read; lambda-core is only asked once a revision pins one.
-        if ($web !== null && RevisionFactory::servesNetworkConnectors()) {
-            $this->liveConnectors[$config->functionName()] = (new WebFunctions($this->aws->lambdaWeb(), $this->sleeper))->liveConnectorArn($config->functionName());
         }
     }
 
@@ -179,8 +190,9 @@ final class AwsDeployer implements Deployer
         $tags = self::tags($config);
         $liveConnector = $this->liveConnectors[$function] ?? null;
         // vpc() left arco.php (or a removal deploy failed its verification): this deploy takes everything out of
-        // the VPC, and prune() removes the connector once the new revision is verified.
-        $leftover = $liveConnector !== null && $config->vpc === null && $this->ownConnector($config, $liveConnector, 'deploy.', $step);
+        // the VPC, whoever owns the connector. prune() removes Arco's connector once the new revision is verified.
+        $outOfVpc = $liveConnector !== null && $config->vpc === null;
+        $leftover = $outOfVpc && $this->ownConnector($config, $liveConnector, 'deploy.', $step);
         $roleCreated = false;
         if ($config->role !== null) {
             $roleArn = $config->role;
@@ -195,8 +207,8 @@ final class AwsDeployer implements Deployer
                 array_map(fn (StorageConfig $storage) => $storage->arn($config), $config->storage),
                 array_map(fn (TableConfig $table) => $table->arn($config), array_values(array_filter([$config->cacheTable, $config->failedJobsTable]))),
                 array_map(fn (GenericTableConfig $table) => $table->arn($config), $config->tables),
-                // A leftover connector keeps the ENI statements: the automatic rollback may bring back a VPC console or worker.
-                RevisionFactory::usesVpc($config) || $leftover);
+                // Leaving the VPC keeps the ENI statements: the automatic rollback may bring back a VPC console or worker.
+                RevisionFactory::usesVpc($config) || $outOfVpc);
             ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags, $region, $step, $config->permissionsBoundary);
         }
 
@@ -204,7 +216,7 @@ final class AwsDeployer implements Deployer
         if (RevisionFactory::usesVpc($config)) {
             // Before any revision: a failed connector stops the deploy with the live revision untouched. The operator
             // role is Arco's even with role(), which only names the execution role.
-            $connectorArn = $this->networkConnectors()->ensure($config, $tags, $step);
+            $connectorArn = $this->networkConnectors()->ensure($config, $tags, $step, $liveConnector);
         } elseif ($config->vpc !== null) {
             $step('deploy.vpc_unsupported_emulator', ['function' => $function]);
         }
@@ -222,6 +234,9 @@ final class AwsDeployer implements Deployer
         }
         $web->waitRevision($function, $revisionId);
 
+        // The ENI statements are new to the role when no live revision pinned a connector: the console and the
+        // workers retry the error a not-yet-propagated permission gives, as with a role created now.
+        $functionsRoleNew = $roleCreated || ($config->role === null && RevisionFactory::usesVpc($config) && $liveConnector === null);
         $consoleVersion = null;
         $previousConsole = null;
         $consoleKey = null;
@@ -243,7 +258,7 @@ final class AwsDeployer implements Deployer
             if ($config->consoleEnabled()) {
                 $functions = $this->consoleFunction();
                 $previousConsole = $functions->liveVersion($config->consoleFunctionName());
-                $requests[] = $functions->request($config, $bucket, $consoleKey, $consoleObject, $roleArn, $runtimeVariables, $tags, $roleCreated, $leftover);
+                $requests[] = $functions->request($config, $bucket, $consoleKey, $consoleObject, $roleArn, $runtimeVariables, $tags, $functionsRoleNew, $outOfVpc);
             }
             $workers = $this->workerFunctions();
             $previousWorkers = [];
@@ -251,7 +266,7 @@ final class AwsDeployer implements Deployer
                 $name = $config->workerFunctionName($queue->name);
                 $step('deploy.step_worker', ['function' => $name, 'queue' => $queue->name]);
                 $previousWorkers[$queue->name] = $workers->function()->liveVersion($name);
-                $requests[] = $workers->request($config, $queue, $bucket, $consoleKey, $consoleObject, $roleArn, $runtimeVariables, $tags, $roleCreated, $leftover);
+                $requests[] = $workers->request($config, $queue, $bucket, $consoleKey, $consoleObject, $roleArn, $runtimeVariables, $tags, $functionsRoleNew, $outOfVpc);
             }
             $versions = LambdaFunction::deployAll($this->sleeper, $requests);
             if ($config->consoleEnabled()) {
@@ -585,10 +600,18 @@ final class AwsDeployer implements Deployer
             return false;
         }
         if ($config->vpc !== null) {
-            return $this->ownConnector($config, null, 'remove.', $step);
+            $remove = $this->ownConnector($config, null, 'remove.', $step);
+        } else {
+            $live = $webExists ? (new WebFunctions($this->aws->lambdaWeb(), $this->sleeper))->liveConnectorArn($config->functionName()) : null;
+            $remove = $live !== null && $this->ownConnector($config, $live, 'remove.', $step);
         }
-        $live = $webExists ? (new WebFunctions($this->aws->lambdaWeb(), $this->sleeper))->liveConnectorArn($config->functionName()) : null;
-        return $live !== null && $this->ownConnector($config, $live, 'remove.', $step);
+        if ($remove) {
+            // Its operator role goes with it: refused, before anything is deleted, when another environment owns it.
+            $guard = new OwnershipGuard($this->aws);
+            $role = $guard->role(NetworkConnectors::operatorRoleName($config));
+            $guard->checkRemoval($config, $role === null ? [] : [$role]);
+        }
+        return $remove;
     }
 
     /**

@@ -19,6 +19,8 @@ final class NetworkConnectors
     private const TIMEOUT = 600;
     private const POLL = 10;
     private const SUFFIX = '-network';
+    /** What lambda-core may answer while a role created seconds ago is not assumable yet (LambdaHelpers::retryRolePropagation). */
+    private const ROLE_ERRORS = ['ValidationException', 'InvalidParameterValueException', 'AccessDeniedException'];
 
     public function __construct(
         private readonly LambdaCoreClient $core,
@@ -28,10 +30,19 @@ final class NetworkConnectors
     ) {
     }
 
-    /** `arco-<app>-<env>-network`, at most 64 characters; the suffix is kept so it never equals the execution role. */
+    /**
+     * `arco-<app>-<env>-network`, at most 64 characters; the suffix is kept so it never equals the execution role.
+     * A name that does not fit is shortened and keeps a hash of the function name, so two environments with a
+     * long common prefix never share an operator role.
+     */
     public static function operatorRoleName(AppConfig $config): string
     {
-        return substr('arco-' . $config->functionName(), 0, 64 - strlen(self::SUFFIX)) . self::SUFFIX;
+        $name = 'arco-' . $config->functionName();
+        if (strlen($name . self::SUFFIX) <= 64) {
+            return $name . self::SUFFIX;
+        }
+        $hash = '-' . substr(hash('sha256', $config->functionName()), 0, 8);
+        return substr($name, 0, 64 - strlen($hash) - strlen(self::SUFFIX)) . $hash . self::SUFFIX;
     }
 
     /** @return array<string, mixed> */
@@ -62,13 +73,16 @@ final class NetworkConnectors
 
     /**
      * Creates the operator role and the connector, or updates the connector to the configured subnets and
-     * groups, and waits until it is usable. Returns the version ARN a revision pins.
+     * groups, and waits until it is usable. Returns the version ARN a revision pins. A FAILED connector that
+     * the live revision does not pin is deleted and created again (a fixed vpc() would otherwise never apply:
+     * an update needs ACTIVE); one the live revision pins stops the deploy.
      *
      * @param array<string, string> $tags
      * @param callable(string, array<string, string|int>): void $step
+     * @param string|null $liveVersionArn the connector version the live revision pins, if any
      * @throws DeployException deploy.network_foreign, deploy.network_failed, deploy.network_timeout
      */
-    public function ensure(AppConfig $config, array $tags, callable $step): string
+    public function ensure(AppConfig $config, array $tags, callable $step, ?string $liveVersionArn = null): string
     {
         $vpc = $config->vpc ?? throw new \LogicException('NetworkConnectors::ensure needs vpc().');
         $name = $config->functionName();
@@ -77,7 +91,7 @@ final class NetworkConnectors
         // Before any write: a foreign connector must not leave a created or rewritten role behind.
         $current = $this->find($config);
 
-        ['arn' => $roleArn] = $this->roles->ensure(self::operatorRoleName($config), self::operatorPolicy(), $tags, null, $step, $config->permissionsBoundary);
+        ['arn' => $roleArn, 'created' => $roleCreated] = $this->roles->ensure(self::operatorRoleName($config), self::operatorPolicy(), $tags, null, $step, $config->permissionsBoundary);
         $desired = [
             'SubnetIds' => $vpc->subnets,
             'SecurityGroupIds' => $vpc->securityGroups,
@@ -85,29 +99,44 @@ final class NetworkConnectors
             'AssociatedComputeResourceTypes' => ['WebFunction'],
         ];
 
+        if ($current !== null && $current['State'] === 'FAILED' && ($liveVersionArn === null || ! self::pins($current, $liveVersionArn))) {
+            // Nothing serves through it: replaced, so a corrected vpc() applies.
+            $failure = $this->failed($name, $current, 'State');
+            $step('deploy.network_replacing', ['connector' => $name, 'reason' => $failure->params['reason'] ?? '', 'code' => $failure->params['code'] ?? '']);
+            try {
+                $this->core->deleteNetworkConnector(['Identifier' => $name]);
+            } catch (LambdaCoreException $e) {
+                if ($e->getAwsErrorCode() !== 'ResourceNotFoundException') {
+                    throw $e;
+                }
+            }
+            $this->waitGone($name);
+            $current = null;
+        }
+
         if ($current === null) {
-            $created = $this->core->createNetworkConnector([
+            $created = LambdaHelpers::retryRolePropagation($this->sleeper, $roleCreated, self::ROLE_ERRORS, fn () => $this->core->createNetworkConnector([
                 'Name' => $name,
                 'Configuration' => ['VpcEgressConfiguration' => $desired],
                 'OperatorRole' => $roleArn,
                 ...($tags === [] ? [] : ['Tags' => $tags]),
-            ]);
-            $this->wait($name, $step, fn (array $c) => $c['State'] === 'ACTIVE');
-            return self::text($created['VersionArn'] ?? null);
+            ]));
+            $active = $this->wait($name, $step, fn (array $c) => $c['State'] === 'ACTIVE');
+            return self::version($created['VersionArn'] ?? null, $active['LatestVersionArn'] ?? null);
         }
 
         if ($current['State'] === 'PENDING') {
             $current = $this->wait($name, $step, fn (array $c) => $c['State'] === 'ACTIVE');
         }
         if ($current['State'] !== 'ACTIVE') {
-            throw self::failed($name, $current, 'State');
+            throw $this->failed($name, $current, 'State');
         }
         if (($current['LastUpdateStatus'] ?? null) === 'InProgress') {
             $current = $this->wait($name, $step, fn (array $c) => ($c['LastUpdateStatus'] ?? null) !== 'InProgress');
         }
         $latest = self::text($current['LatestVersionArn'] ?? null);
         if (self::sameConfiguration($current, $desired)) {
-            return $latest;
+            return self::version($latest);
         }
 
         $update = $this->core->updateNetworkConnector(['Identifier' => $name, 'Configuration' => ['VpcEgressConfiguration' => $desired]]);
@@ -125,7 +154,22 @@ final class NetworkConnectors
             fn (array $c) => ($c['LastUpdateStatus'] ?? null) === 'Failed' && $reflects($c),
         );
         $step('deploy.network_updated', ['connector' => $name, 'version' => self::int($updated['LatestVersion'] ?? null)]);
-        return self::text($updated['LatestVersionArn'] ?? null);
+        return self::version($updated['LatestVersionArn'] ?? null, $target);
+    }
+
+    /**
+     * The first non-empty version ARN: a revision without one would silently run outside the VPC.
+     *
+     * @throws \UnexpectedValueException
+     */
+    private static function version(mixed ...$candidates): string
+    {
+        foreach ($candidates as $candidate) {
+            if (self::text($candidate) !== '') {
+                return self::text($candidate);
+            }
+        }
+        throw new \UnexpectedValueException('Lambda returned no network connector version ARN.');
     }
 
     /**
@@ -159,6 +203,8 @@ final class NetworkConnectors
         try {
             /** @var array<string, int> $versions version ARN => number */
             $versions = [];
+            /** @var array{Id?: string, Arn?: string} $identity the connector's id and ARN, as the list shows them */
+            $identity = [];
             $marker = null;
             do {
                 $page = $this->core->listNetworkConnectorVersions(['Identifier' => $name, ...($marker === null ? [] : ['Marker' => $marker])]);
@@ -171,6 +217,11 @@ final class NetworkConnectors
                         return;
                     }
                     $versions[$arn] = (int) $number;
+                    foreach (['Id', 'Arn'] as $key) {
+                        if (is_string($version[$key] ?? null) && $version[$key] !== '') {
+                            $identity[$key] = $version[$key];
+                        }
+                    }
                 }
                 $marker = is_string($page['NextMarker'] ?? null) && $page['NextMarker'] !== '' ? $page['NextMarker'] : null;
             } while ($marker !== null);
@@ -181,9 +232,21 @@ final class NetworkConnectors
         if ($versions === []) {
             return;
         }
-        $keep = [...$keepVersionArns, (string) array_search(max($versions), $versions, true)];
-        foreach (array_keys($versions) as $arn) {
-            if (in_array($arn, $keep, true)) {
+        // A revision may name the connector by its id or by its name: kept versions are matched by number,
+        // among the ARNs that are this connector's (pins()). One that cannot be read, and nothing is pruned.
+        $connector = ['Name' => $name, 'Id' => $identity['Id'] ?? '', 'Arn' => $identity['Arn'] ?? ''];
+        $keep = [max($versions)];
+        foreach ($keepVersionArns as $kept) {
+            $number = self::versionNumber($kept);
+            if ($number === null) {
+                return;
+            }
+            if (self::pins($connector, $kept)) {
+                $keep[] = $number;
+            }
+        }
+        foreach ($versions as $arn => $number) {
+            if (in_array($number, $keep, true)) {
                 continue;
             }
             try {
@@ -236,6 +299,13 @@ final class NetworkConnectors
             || ($arn !== '' && ($versionArn === $arn || str_starts_with($versionArn, $arn . ':')));
     }
 
+    /** The version number at the end of a connector version ARN; null when it is not one. */
+    private static function versionNumber(string $versionArn): ?int
+    {
+        $parts = explode(':', $versionArn);
+        return count($parts) === 8 && $parts[5] === 'network-connector' && ctype_digit($parts[7]) ? (int) $parts[7] : null;
+    }
+
     /**
      * What arco info shows of the connector: its id, latest version and state.
      *
@@ -277,12 +347,12 @@ final class NetworkConnectors
         $deadline = $this->sleeper->now() + self::TIMEOUT;
         $announced = false;
         while (true) {
-            $connector = $this->get($name) ?? throw DeployException::make('deploy.network_failed', ['connector' => $name, 'reason' => 'gone', 'code' => 'ResourceNotFoundException']);
+            $connector = $this->get($name) ?? throw DeployException::make('deploy.network_failed', ['connector' => $name, 'reason' => 'gone', 'code' => 'ResourceNotFoundException', 'region' => $this->core->getRegion()]);
             if ($connector['State'] === 'FAILED') {
-                throw self::failed($name, $connector, 'State');
+                throw $this->failed($name, $connector, 'State');
             }
             if ($updateFailed !== null && $updateFailed($connector)) {
-                throw self::failed($name, $connector, 'LastUpdateStatus');
+                throw $this->failed($name, $connector, 'LastUpdateStatus');
             }
             if ($done($connector)) {
                 return $connector;
@@ -303,7 +373,7 @@ final class NetworkConnectors
         $deadline = $this->sleeper->now() + self::TIMEOUT;
         while (($connector = $this->get($name)) !== null) {
             if ($connector['State'] === 'DELETE_FAILED') {
-                throw self::failed($name, $connector, 'State');
+                throw $this->failed($name, $connector, 'State');
             }
             if ($this->sleeper->now() >= $deadline) {
                 throw DeployException::make('deploy.network_timeout', ['connector' => $name, 'seconds' => self::TIMEOUT]);
@@ -316,7 +386,7 @@ final class NetworkConnectors
      * @param array<string, mixed> $connector
      * @param 'State'|'LastUpdateStatus' $field which status failed: its reason code and text are read from the matching keys
      */
-    private static function failed(string $name, array $connector, string $field): DeployException
+    private function failed(string $name, array $connector, string $field): DeployException
     {
         $prefix = $field === 'State' ? 'State' : 'LastUpdateStatus';
         $code = self::text($connector[$prefix . 'ReasonCode'] ?? null);
@@ -325,6 +395,7 @@ final class NetworkConnectors
             'connector' => $name,
             'reason' => $reason !== '' ? $reason : ($code !== '' ? $code : self::text($connector[$field] ?? null)),
             'code' => $code,
+            'region' => $this->core->getRegion(),
         ]);
     }
 

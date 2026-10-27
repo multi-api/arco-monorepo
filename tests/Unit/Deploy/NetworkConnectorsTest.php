@@ -81,6 +81,23 @@ final class NetworkConnectorsTest extends TestCase
         self::assertNotSame(ExecutionRole::roleName($long), $name);
     }
 
+    public function test_long_environments_with_a_common_prefix_get_different_operator_roles(): void
+    {
+        $prefix = str_repeat('a', 40);
+        $names = [];
+        foreach (['production-eu', 'production-us'] as $environment) {
+            $config = ConfigResolver::resolve(App::make($prefix)->region('us-east-1')->environment($environment)->toArray(), $environment);
+            self::assertGreaterThan(51, strlen($config->functionName()), 'long enough to be shortened');
+            $names[] = $name = NetworkConnectors::operatorRoleName($config);
+            self::assertLessThanOrEqual(64, strlen($name));
+            self::assertStringEndsWith('-network', $name);
+            self::assertStringStartsWith('arco-' . $prefix, $name);
+        }
+        self::assertNotSame($names[0], $names[1], 'a shortened name keeps a hash of the full one');
+        $exact = ConfigResolver::resolve(App::make(str_repeat('a', 40))->region('us-east-1')->environment(str_repeat('b', 10))->toArray(), str_repeat('b', 10));
+        self::assertSame('arco-' . $exact->functionName() . '-network', NetworkConnectors::operatorRoleName($exact), 'a name that fits is not shortened');
+    }
+
     public function test_operator_policy_scopes_interface_creation_to_the_service(): void
     {
         $policy = NetworkConnectors::operatorPolicy();
@@ -229,15 +246,129 @@ final class NetworkConnectorsTest extends TestCase
         self::steps($step);
 
         try {
-            $this->subject($mocks)->ensure($this->config(), [], $step);
+            // The live revision pins it: replacing it would take the app off the network.
+            $this->subject($mocks)->ensure($this->config(), [], $step, 'arn:aws:lambda:us-east-1:111111111111:network-connector:nc-1:3');
             self::fail('expected a DeployException');
         } catch (DeployException $e) {
             self::assertSame('deploy.network_failed', $e->key);
             self::assertSame('shop-production', $e->params['connector']);
             self::assertSame($code, $e->params['code']);
             self::assertSame('no IPs', $e->params['reason'], 'AWS text; the CLI swaps in the translation of the code');
+            self::assertSame('us-east-1', $e->params['region']);
         }
         self::assertNotContains('UpdateNetworkConnector', $mocks->calls);
+        self::assertNotContains('DeleteNetworkConnector', $mocks->calls);
+    }
+
+    public function test_an_owned_failed_connector_no_live_revision_uses_is_replaced(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(self::connector(['State' => 'FAILED', 'StateReasonCode' => 'InvalidSubnet', 'StateReason' => 'bad subnet'])),
+            new Result(['Role' => ['Arn' => self::ROLE]]),
+            new Result([]),
+            new Result(['State' => 'DELETING']),
+            new Result(self::connector(['State' => 'DELETING'])),
+            self::notFound('GetNetworkConnector'),
+            new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'Id' => 'nc-2', 'VersionArn' => self::CONNECTOR . ':1', 'State' => 'PENDING']),
+            new Result(self::connector(['Id' => 'nc-2', 'LatestVersionArn' => self::CONNECTOR . ':1', 'LatestVersion' => 1])),
+        );
+        $steps = self::steps($step);
+
+        $version = $this->subject($mocks)->ensure($this->config(), [], $step, 'arn:aws:lambda:us-east-1:111111111111:network-connector:nc-0ld:2');
+
+        self::assertSame(self::CONNECTOR . ':1', $version);
+        self::assertSame(['GetNetworkConnector', 'GetRole', 'PutRolePolicy', 'DeleteNetworkConnector', 'GetNetworkConnector', 'GetNetworkConnector', 'CreateNetworkConnector', 'GetNetworkConnector'], $mocks->calls);
+        self::assertSame('shop-production', $mocks->params[3]['Identifier'], 'the whole connector, by name');
+        self::assertContains(['deploy.network_replacing', ['connector' => 'shop-production', 'reason' => 'bad subnet', 'code' => 'InvalidSubnet']], $steps->getArrayCopy());
+        self::assertContains('deploy.network_replacing', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
+    public function test_a_failed_connector_message_names_the_manual_delete_command(): void
+    {
+        foreach (['en', 'es'] as $lang) {
+            $text = (new Translator($lang, dirname(__DIR__, 3) . '/packages/arco/lang'))->trans('deploy.network_failed', ['connector' => 'shop-production', 'reason' => 'x', 'code' => 'y', 'region' => 'us-east-1']);
+            self::assertStringContainsString('aws lambda-core delete-network-connector --identifier shop-production --region us-east-1', $text);
+        }
+    }
+
+    public function test_create_is_retried_while_a_new_operator_role_propagates(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::notFound('GetNetworkConnector'),
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
+            new Result(['Role' => ['Arn' => self::ROLE]]),
+            new Result([]),
+            AwsMocks::error(LambdaCoreException::class, 'CreateNetworkConnector', 'ValidationException', 400, 'The operator role cannot be assumed by the service'),
+            new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'Id' => 'nc-1', 'VersionArn' => self::CONNECTOR . ':1', 'State' => 'PENDING']),
+            new Result(self::connector(['LatestVersionArn' => self::CONNECTOR . ':1'])),
+        );
+        self::steps($step);
+
+        $version = $this->subject($mocks)->ensure($this->config(), [], $step);
+
+        self::assertSame(self::CONNECTOR . ':1', $version);
+        self::assertSame(['GetNetworkConnector', 'GetRole', 'CreateRole', 'PutRolePolicy', 'CreateNetworkConnector', 'CreateNetworkConnector', 'GetNetworkConnector'], $mocks->calls);
+    }
+
+    public function test_create_is_not_retried_when_the_operator_role_already_existed(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::notFound('GetNetworkConnector'),
+            new Result(['Role' => ['Arn' => self::ROLE]]),
+            new Result([]),
+            AwsMocks::error(LambdaCoreException::class, 'CreateNetworkConnector', 'ValidationException', 400, 'The operator role cannot be assumed by the service'),
+        );
+        self::steps($step);
+
+        try {
+            $this->subject($mocks)->ensure($this->config(), [], $step);
+            self::fail('expected the AWS error');
+        } catch (LambdaCoreException $e) {
+            self::assertSame('ValidationException', $e->getAwsErrorCode());
+        }
+        self::assertSame(['GetNetworkConnector', 'GetRole', 'PutRolePolicy', 'CreateNetworkConnector'], $mocks->calls);
+    }
+
+    public function test_a_create_without_a_version_arn_uses_the_one_of_the_active_connector(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::notFound('GetNetworkConnector'),
+            new Result(['Role' => ['Arn' => self::ROLE]]),
+            new Result([]),
+            new Result(['Arn' => self::CONNECTOR, 'Name' => 'shop-production', 'State' => 'PENDING']),
+            new Result(self::connector(['LatestVersionArn' => self::CONNECTOR . ':1'])),
+        );
+        self::steps($step);
+
+        self::assertSame(self::CONNECTOR . ':1', $this->subject($mocks)->ensure($this->config(), [], $step));
+    }
+
+    /** @return iterable<string, array{list<mixed>}> answers after the operator role's GetRole and PutRolePolicy */
+    public static function noVersion(): iterable
+    {
+        yield 'created' => [[new Result(['State' => 'PENDING']), new Result(self::connector(['LatestVersionArn' => null]))]];
+        yield 'unchanged' => [[]];
+    }
+
+    /** @param list<mixed> $after */
+    #[\PHPUnit\Framework\Attributes\DataProvider('noVersion')]
+    public function test_ensure_never_returns_an_empty_version_arn(array $after): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            $after === [] ? new Result(self::connector(['LatestVersionArn' => null])) : self::notFound('GetNetworkConnector'),
+            new Result(['Role' => ['Arn' => self::ROLE]]),
+            new Result([]),
+            ...$after,
+        );
+        self::steps($step);
+
+        $this->expectException(\UnexpectedValueException::class);
+        $this->subject($mocks)->ensure($this->config(), [], $step);
     }
 
     private function changedConnector(): Result
@@ -390,6 +521,31 @@ final class NetworkConnectorsTest extends TestCase
 
         self::assertSame(['ListNetworkConnectorVersions'], $mocks->calls);
         self::assertCount(0, $steps, 'a quiet no-op');
+    }
+
+    public function test_prune_matches_kept_versions_by_number_whichever_way_the_arn_names_the_connector(): void
+    {
+        $versions = array_map(fn (int $n) => ['Arn' => self::CONNECTOR, 'VersionArn' => self::CONNECTOR . ":$n", 'Name' => 'shop-production', 'Id' => 'nc-1', 'Version' => $n, 'State' => 'ACTIVE'], [1, 2, 3]);
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['NetworkConnectorVersions' => $versions]), new Result([]));
+        self::steps($step);
+
+        // The live revision names the connector by its id; the list names it by its name.
+        $this->subject($mocks)->pruneVersions($this->config(), ['arn:aws:lambda:us-east-1:111111111111:network-connector:nc-1:2'], $step);
+
+        self::assertSame([self::CONNECTOR . ':1'], array_column(array_slice($mocks->params, 1), 'Identifier'));
+    }
+
+    public function test_prune_deletes_nothing_when_a_kept_arn_cannot_be_read(): void
+    {
+        $versions = array_map(fn (int $n) => ['Arn' => self::CONNECTOR, 'VersionArn' => self::CONNECTOR . ":$n", 'Name' => 'shop-production', 'Id' => 'nc-1', 'Version' => $n], [1, 2, 3]);
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['NetworkConnectorVersions' => $versions]));
+        self::steps($step);
+
+        $this->subject($mocks)->pruneVersions($this->config(), ['arn:aws:lambda:us-east-1:111111111111:network-connector:nc-1'], $step);
+
+        self::assertSame(['ListNetworkConnectorVersions'], $mocks->calls);
     }
 
     public function test_prune_never_deletes_the_highest_version_even_when_it_is_listed_first(): void
