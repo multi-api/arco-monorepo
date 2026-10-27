@@ -3,6 +3,38 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## 0.12.0
+
+New opt-in setting in `arco.php`: `vpc()`. Without it nothing changes. To use it, the deploy permissions need new
+statements first ([Upgrading to 0.12](docs/upgrading.md#upgrading-to-012)).
+
+- **Added:** `->vpc(subnets: [...], securityGroups: [...])`, on the app or an environment (`->vpc(false)` clears an
+  app-level one), runs the environment's Web Function, console, scheduler and queue workers inside your VPC. The Web
+  Function uses a Lambda network connector (one per environment, named like the function) managed by an operator role
+  `arco-<app>-<env>-network` that Arco creates and removes; the console and workers use `VpcConfig`, and the
+  managed execution role gets the network interface permissions (`ArcoVpcAccess`). 1 to 16 subnets and 1 to 5
+  security groups; one subnet works (checked on real AWS), two Availability Zones are recommended for production.
+  A changed configuration creates a new connector version and new revisions without downtime; old versions are
+  pruned after a successful deploy, keeping the ones rollback needs. A connector that ends `FAILED` fails the deploy
+  before any revision exists, with the reason translated (wrong subnet or security group, no free IPs, missing role
+  permissions). Removing `vpc()` takes the environment out of the VPC and deletes the connector and operator role
+  only after the deploy is verified; if that delete fails, the warning prints the manual commands and later
+  deploys do not retry. `arco remove` deletes them too, and leaves a connector Arco did not create alone.
+  `arco info` shows the VPC block (`--json`: a `vpc` object or `null`). Behind an emulator endpoint the VPC is
+  skipped with a note (`deploy.vpc_unsupported_emulator`). The subnets need a NAT or endpoints for the AWS APIs
+  (SSM, Secrets Manager, SQS, S3, DynamoDB, and the runtime binary download); see
+  [VPC](docs/configuration.md#vpc). New steps `deploy.step_network`, `deploy.network_waiting`,
+  `deploy.network_updated`, `deploy.network_removed`; errors `deploy.network_failed`, `deploy.network_timeout`,
+  `deploy.network_foreign`; warnings `deploy.network_prune_failed`, `deploy.network_cleanup_failed`.
+- **Added:** new deploy permissions with `vpc()`: `lambda:CreateNetworkConnector`, `lambda:GetNetworkConnector`,
+  `lambda:UpdateNetworkConnector`, `lambda:DeleteNetworkConnector`, `lambda:ListNetworkConnectorVersions`,
+  `lambda:PassNetworkConnector` on `network-connector:*`, `iam:PassRole` on `arco-<app>-*-network`, and
+  `ec2:DescribeSubnets`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs`
+  ([Permissions for VPC](docs/getting-started.md#permissions-for-vpc)). Arco Cloud's connect template needs them
+  for apps that use `vpc()`.
+
+Requested by the ferretería project (MultiERP) through Arco Cloud.
+
 ## 0.11.5
 
 Nothing changes in `arco.php` or in the deploy permissions.

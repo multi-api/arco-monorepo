@@ -11,6 +11,25 @@ composer require multiapi/arco-laravel:^0.11
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
+## Upgrading to 0.12
+
+Nothing is required: 0.12 only adds an opt-in setting, `vpc()`. Without it, a deploy makes the same calls as in
+0.11.5, and the deploy permissions do not change.
+
+To use it:
+
+- **Add the new deploy permissions first** (see [Permissions for VPC](getting-started.md#permissions-for-vpc)):
+  `lambda:CreateNetworkConnector`, `lambda:GetNetworkConnector`, `lambda:UpdateNetworkConnector`,
+  `lambda:DeleteNetworkConnector`, `lambda:ListNetworkConnectorVersions`, `lambda:PassNetworkConnector` on
+  `arn:aws:lambda:<region>:<account>:network-connector:*`; `iam:PassRole` on `arn:aws:iam::<account>:role/arco-<app>-*-network`
+  to `lambda.amazonaws.com`; and `ec2:DescribeSubnets`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs`. A service
+  that deploys for you (Arco Cloud) needs them in its connect template.
+- **The subnets need a NAT** (or endpoints) for the AWS APIs the app calls; see
+  [The VPC needs a NAT](configuration.md#the-vpc-needs-a-nat).
+- With `role()`, add the network interface permissions (`AWSLambdaVPCAccessExecutionRole`) to your execution role.
+- Require `multiapi/arco:^0.12` in every deploy path: an older Arco does not know the connector and would deploy a
+  revision outside the VPC.
+
 ## Upgrading to 0.11.4 (security)
 
 Upgrade and redeploy every environment that has `domain()`. Before 0.11.4, the Web Function endpoint of such an

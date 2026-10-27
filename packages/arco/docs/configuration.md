@@ -115,6 +115,7 @@ like the others (an environment's call replaces the app's, and `cache(false)` tu
 | `cache(bool = true, existing: ?string, driver: 'dynamodb')` | off | A DynamoDB table for Laravel's cache (see [Cache and failed-jobs tables](#cache-and-failed-jobs-tables)) |
 | `failedJobsTable(bool = true, existing: ?string)` | off | A DynamoDB table for Laravel's failed jobs (same section) |
 | `table(name, ttl: ?string, existing: ?string)` | none | A DynamoDB table of your own (`PK`/`SK` strings, on demand) for the app to use through the AWS SDK (see [Tables](#tables)); `table(name, false)` drops an app-level table from an environment |
+| `vpc(subnets: [...], securityGroups: [...])` | none | Run the environment's Web Function, console, scheduler and workers inside your VPC through a Lambda network connector (see [VPC](#vpc)); 1 to 16 subnets and 1 to 5 security groups; `vpc(false)` at environment level clears an app-level `vpc()` |
 
 An *environment* in Arco is an `environment()` in `arco.php` (staging, production), each deployed as
 its own Web Function. AWS calls one running copy of a function an *execution environment*; Arco calls
@@ -1185,6 +1186,86 @@ app sees. Do not rely on `request()->ip()` for rate limiting, audit logs or allo
 
 - The origin read timeout is `timeout() + 2` seconds, at most 60 (CloudFront's default limit).
 - One distribution per environment; no WAF, no apex redirects.
+
+## VPC
+
+```php
+Environment::make('staging')
+    ->vpc(subnets: ['subnet-0abc1234'], securityGroups: ['sg-0abc1234']);
+```
+
+`vpc()` (0.12) puts every compute piece of the environment inside your VPC, so the app can reach private
+resources such as RDS, ElastiCache or an internal API: the Web Function, the console (and so `deployCommands()`
+and the scheduler) and the queue workers. It can be set on the app or on an environment; `->vpc(false)` on an
+environment clears an app-level one. Arco does not create VPCs, subnets, NATs, endpoints or security groups.
+
+- **The Web Function** gets a Lambda *network connector*, one per environment, named like the function
+  (`<app>-<env>`), and its revision pins the connector version. The connector is managed by an operator role
+  `arco-<app>-<env>-network` (at most 64 characters) that Arco creates, tags and guards like the execution role.
+  The role trusts `lambda.amazonaws.com`; its inline policy grants `ec2:CreateNetworkInterface` and
+  `ec2:CreateTags` (only when `ec2:ManagedResourceOperator` is `network-connectors.lambda.amazonaws.com`), and
+  `ec2:DeleteNetworkInterface`, `ec2:DescribeNetworkInterfaces`, `ec2:DescribeSubnets` and
+  `ec2:DescribeSecurityGroups`. It carries `permissionsBoundary()` if set. With `role()` Arco still creates the
+  operator role (it is not the execution role), without a boundary, because `permissionsBoundary()` stays
+  refused together with `role()`.
+- **The console and the workers** are classic Lambda functions: they get `VpcConfig` with the same subnets and
+  security groups. The managed execution role gets the network interface statements (`ArcoVpcAccess`:
+  `ec2:CreateNetworkInterface`, `ec2:DescribeNetworkInterfaces`, `ec2:DescribeSubnets`,
+  `ec2:DeleteNetworkInterface`, `ec2:AssignPrivateIpAddresses`, `ec2:UnassignPrivateIpAddresses`). With `role()`
+  you add them yourself (`AWSLambdaVPCAccessExecutionRole` has them).
+
+### Limits
+
+- At least 1 and at most 16 subnets; at least 1 and at most 5 security groups (5 is the classic Lambda
+  `VpcConfig` limit, the stricter one).
+- Subnet ids look like `subnet-...`, security group ids like `sg-...`; no duplicates. Arco does not check that
+  the subnets share a VPC; Lambda rejects that and Arco shows its error.
+- IPv4 only. One network for the whole environment: the console cannot stay outside the VPC.
+- **One subnet works** (checked on real AWS). Two subnets in different Availability Zones are recommended for
+  production: with one, the environment loses VPC access while that zone is down.
+
+### The VPC needs a NAT
+
+A function in a VPC has no internet access by itself, and that includes the AWS APIs. Without a NAT gateway or
+NAT instance (or VPC endpoints), calls to public addresses time out. Arco cannot judge your routing, so it does
+not check it. What an Arco app calls at runtime:
+
+- **SSM Parameter Store** and **Secrets Manager**, for `arco-ssm:` and `arco-secret:` references (read at
+  startup);
+- **SQS**, to dispatch jobs;
+- **S3** and **DynamoDB** (storage, cache, tables, failed jobs): a free *gateway endpoint* is enough, a NAT also
+  works;
+- **S3, for the runtime binary:** a console or worker whose zip has no `bin/php` downloads the FrankenPHP binary
+  from the code bucket at cold start, so without S3 access (gateway endpoint or NAT) it cannot start.
+
+Whatever else your app calls (payment APIs, mail) needs the NAT too. Gateway endpoints for S3 and DynamoDB, created
+by Arco, are planned for a later release; today you create them in the VPC. To reach a database in another VPC
+or account (peering, transit gateway), the routes and security groups are yours as well.
+
+### Changing and removing `vpc()`
+
+Changing subnets or security groups creates a new connector version and new revisions, and traffic moves as in any
+deploy, without downtime. Old connector versions are deleted after a successful deploy, except the latest one and
+those the live and previous revisions pin (the automatic rollback needs them). A failure there is a warning.
+
+A connector that ends `FAILED` fails the deploy before any revision exists, with the reason: a wrong subnet or
+security group, no free IP addresses, or missing operator role permissions. The first connector takes about 4
+minutes to become active.
+
+Removing `vpc()` (or `vpc(false)`) deploys the environment out of the VPC first. Only after that deploy is
+verified does Arco delete the connector and then the operator role. If the verification fails, the next deploy
+finishes the removal. If the delete itself fails, the deploy still succeeds, the warning prints the
+`aws lambda-core` and `aws iam` commands to run by hand, and later deploys do not try again. The execution role
+keeps the network interface statements until the deploy after the cleanup. Older revisions that pinned the connector
+cannot serve traffic once it is gone; this matters only if you move traffic by hand.
+
+`arco remove` deletes the Web Function, the console and the workers, then waits until the connector is gone, then
+deletes the operator role. A connector that Arco did not create (its operator role is not Arco's) is left alone.
+`arco info` shows the subnets, security groups, connector id, version and state; `arco info --json` has a `vpc`
+object, or `null`.
+
+Deploy permissions: see [Permissions for VPC](getting-started.md#permissions-for-vpc). Behind an emulator
+endpoint the VPC is skipped with a note (see [Try your app locally with Floci](local-floci.md)).
 
 ## Runtime options
 
