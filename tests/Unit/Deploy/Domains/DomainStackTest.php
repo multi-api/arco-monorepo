@@ -58,6 +58,14 @@ final class DomainStackTest extends TestCase
         self::assertSame(['Value' => ['Ref' => 'Distribution']], $template['Outputs']['DistributionId'], 'the id the resource policy names');
     }
 
+    public function test_without_origin_access_the_template_has_no_access_control(): void
+    {
+        $template = DomainStack::template($this->config(), 'abc.xpt.lambda-web.us-east-2.on.aws', self::CERT, [], false);
+        self::assertSame(['ForwardHost', 'Distribution'], array_keys($template['Resources']));
+        self::assertArrayNotHasKey('OriginAccessControlId', $template['Resources']['Distribution']['Properties']['DistributionConfig']['Origins'][0]);
+        self::assertSame(['ForwardHost', 'OriginAccess', 'Distribution'], array_keys($this->template()['Resources']), 'the default signs');
+    }
+
     public function test_origin_access_control_names_fit_64_characters_and_stay_unique(): void
     {
         $long = $this->config(app: str_repeat('a', 40), env: str_repeat('b', 23));

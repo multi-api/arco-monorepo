@@ -58,6 +58,33 @@ final class RevisionFactoryTest extends TestCase
         self::assertSame('IamAuth', RevisionFactory::initialEndpoint($config('public', true))['authType'], 'a new environment starts locked');
     }
 
+    public function test_behind_an_emulator_endpoint_domain_keeps_the_configured_auth(): void
+    {
+        $config = fn (string $auth) => ConfigResolver::resolve(App::make('shop')->region('us-east-1')->auth($auth)
+            ->environment('production', fn (Environment $e) => $e->domain('arco.acmeapp.io'))->toArray(), 'production');
+        $saved = [getenv('AWS_ENDPOINT_URL'), getenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS')];
+        try {
+            putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+            putenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS');
+            self::assertFalse(RevisionFactory::protectsEndpoint($config('public')));
+            self::assertSame('ApplicationManaged', RevisionFactory::authType($config('public')));
+            self::assertSame('IamAuth', RevisionFactory::authType($config('iam')));
+
+            // Anything the emulator detection does not accept is real AWS: the protection stays.
+            putenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=true');
+            self::assertTrue(RevisionFactory::protectsEndpoint($config('public')));
+            putenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS');
+            putenv('AWS_ENDPOINT_URL=not a url');
+            self::assertTrue(RevisionFactory::protectsEndpoint($config('public')));
+            putenv('AWS_ENDPOINT_URL');
+            self::assertTrue(RevisionFactory::protectsEndpoint($config('public')));
+            self::assertSame('IamAuth', RevisionFactory::authType($config('public')));
+        } finally {
+            putenv($saved[0] === false ? 'AWS_ENDPOINT_URL' : "AWS_ENDPOINT_URL=$saved[0]");
+            putenv($saved[1] === false ? 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS' : "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=$saved[1]");
+        }
+    }
+
     public function test_omits_empty_variables_because_lambda_rejects_them(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');

@@ -44,7 +44,7 @@ final class AwsVerifier implements Verifier
     {
         $reason = null;
         $reasonParams = [];
-        if ($config->auth === 'iam' && $config->domains === []) {
+        if ($config->auth === 'iam' && ! RevisionFactory::protectsEndpoint($config)) {
             // An unsigned probe always gets 403 from an IAM-authenticated endpoint, so the
             // platform init report is the only signal: it must exist and say success.
             [$status, $error] = [null, null];
@@ -64,7 +64,7 @@ final class AwsVerifier implements Verifier
             // With domain() only CloudFront may invoke the endpoint (IamAuth), so the probe is signed with the
             // deploy credentials (lambda:InvokeWebFunctionEndpoint). Signing an endpoint that is still public
             // during an upgrade changes nothing for it.
-            $signed = $config->domains !== [];
+            $signed = RevisionFactory::protectsEndpoint($config);
             [$status, $error] = $this->probe($result->url() . $healthPath, $signed ? (string) $config->region : null);
             $ok = $status !== null && $status >= 200 && $status < 300;
             if ($signed && $status === 403) {

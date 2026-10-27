@@ -50,9 +50,10 @@ final class DomainStack
 
     /**
      * @param list<string> $cachedPaths path patterns CloudFront may cache (CachesPaths)
+     * @param bool $originAccess sign origin requests (RevisionFactory::protectsEndpoint()); false only behind an emulator
      * @return array<string, mixed>
      */
-    public static function template(AppConfig $config, string $endpointDomain, string $certificateArn, array $cachedPaths): array
+    public static function template(AppConfig $config, string $endpointDomain, string $certificateArn, array $cachedPaths, bool $originAccess = true): array
     {
         $function = ['EventType' => 'viewer-request', 'FunctionARN' => ['Fn::GetAtt' => ['ForwardHost', 'FunctionARN']]];
         $distribution = [
@@ -70,8 +71,6 @@ final class DomainStack
             'Origins' => [[
                 'Id' => self::ORIGIN_ID,
                 'DomainName' => $endpointDomain,
-                // Signs every origin request: with domain() the endpoint is IamAuth and only this distribution may invoke it.
-                'OriginAccessControlId' => ['Fn::GetAtt' => ['OriginAccess', 'Id']],
                 'CustomOriginConfig' => [
                     'OriginProtocolPolicy' => 'https-only',
                     'HTTPSPort' => 443,
@@ -104,46 +103,54 @@ final class DomainStack
             ], $cachedPaths);
         }
 
+        $forwardHost = [
+            'Type' => 'AWS::CloudFront::Function',
+            'Properties' => [
+                'Name' => self::functionName($config),
+                'AutoPublish' => true,
+                'FunctionCode' => self::FUNCTION_CODE,
+                'FunctionConfig' => [
+                    'Comment' => 'Arco: pass the viewer host to the app as X-Forwarded-Host',
+                    'Runtime' => 'cloudfront-js-2.0',
+                ],
+            ],
+        ];
+        $resources = ['ForwardHost' => $forwardHost];
+        if ($originAccess) {
+            // Signs every origin request: with domain() the endpoint is IamAuth and only this distribution may invoke it.
+            $distribution['Origins'][0]['OriginAccessControlId'] = ['Fn::GetAtt' => ['OriginAccess', 'Id']];
+            $resources['OriginAccess'] = self::originAccess($config);
+        }
+        $resources['Distribution'] = ['Type' => 'AWS::CloudFront::Distribution', 'Properties' => ['DistributionConfig' => $distribution]];
+
         return [
             'AWSTemplateFormatVersion' => '2010-09-09',
             'Description' => "Arco custom domains for {$config->app}/{$config->environment}",
-            'Resources' => [
-                'ForwardHost' => [
-                    'Type' => 'AWS::CloudFront::Function',
-                    'Properties' => [
-                        'Name' => self::functionName($config),
-                        'AutoPublish' => true,
-                        'FunctionCode' => self::FUNCTION_CODE,
-                        'FunctionConfig' => [
-                            'Comment' => 'Arco: pass the viewer host to the app as X-Forwarded-Host',
-                            'Runtime' => 'cloudfront-js-2.0',
-                        ],
-                    ],
-                ],
-                'OriginAccess' => [
-                    'Type' => 'AWS::CloudFront::OriginAccessControl',
-                    'Properties' => [
-                        'OriginAccessControlConfig' => [
-                            'Name' => self::originAccessName($config),
-                            'Description' => "Arco: signs requests to {$config->app}/{$config->environment}",
-                            'OriginAccessControlOriginType' => 'lambda',
-                            // The only behaviour Web Function origins accept: signs, and keeps the viewer's Authorization.
-                            'SigningBehavior' => self::SIGNING_BEHAVIOR,
-                            // HomeRegion endpoints are regional: SigV4, not SigV4a.
-                            'SigningProtocol' => 'sigv4',
-                        ],
-                    ],
-                ],
-                'Distribution' => [
-                    'Type' => 'AWS::CloudFront::Distribution',
-                    'Properties' => ['DistributionConfig' => $distribution],
-                ],
-            ],
+            'Resources' => $resources,
             'Outputs' => [
                 'DistributionId' => ['Value' => ['Ref' => 'Distribution']],
                 'DistributionDomain' => ['Value' => ['Fn::GetAtt' => ['Distribution', 'DomainName']]],
                 // Lets remove find the aliases even after domain() changed in arco.php.
                 'Aliases' => ['Value' => implode(',', $config->domains)],
+            ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private static function originAccess(AppConfig $config): array
+    {
+        return [
+            'Type' => 'AWS::CloudFront::OriginAccessControl',
+            'Properties' => [
+                'OriginAccessControlConfig' => [
+                    'Name' => self::originAccessName($config),
+                    'Description' => "Arco: signs requests to {$config->app}/{$config->environment}",
+                    'OriginAccessControlOriginType' => 'lambda',
+                    // The only behaviour Web Function origins accept: signs, and keeps the viewer's Authorization.
+                    'SigningBehavior' => self::SIGNING_BEHAVIOR,
+                    // HomeRegion endpoints are regional: SigV4, not SigV4a.
+                    'SigningProtocol' => 'sigv4',
+                ],
             ],
         ];
     }

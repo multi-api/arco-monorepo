@@ -116,6 +116,7 @@ return [
     'deploy.endpoint_protected' => 'Exigiendo firmas de CloudFront en {function}: la URL de su endpoint ya no responde directamente',
     'deploy.endpoint_unprotected' => 'Se quitó domain(): el endpoint de {function} vuelve a ser público',
     'deploy.oac_revoked' => 'Se quitó domain(): CloudFront ya no puede invocar {function}, que mantiene la autenticación IAM',
+    'deploy.endpoint_unprotected_emulator' => 'Endpoint de emulador (AWS_ENDPOINT_URL): {function} mantiene su autenticación configurada y CloudFront no firma; en AWS solo CloudFront puede invocarlo',
     'deploy.domain_stack_unreadable' => 'No se pudo comprobar si quedó un stack de dominios {stack} de un domain() anterior ({error}). Si quedó, su distribución de CloudFront aún puede invocar {function}: permite cloudformation:DescribeStacks y vuelve a desplegar, o ejecuta arco remove para los dominios.',
     'deploy.policy_unreadable' => 'No se pudo leer la política basada en recursos de {arn} como un documento de política. Arco no reescribe una política que no puede leer, así que las declaraciones que no escribió quedan intactas. Revísala con `aws lambda-web get-resource-policy` y vuelve a desplegar.',
     'deploy.access_arn_invalid' => 'Arco no pudo armar el permiso de acceso de CloudFront (función {function}, endpoint {endpoint}, distribución {distribution}); el endpoint quedó como estaba.',

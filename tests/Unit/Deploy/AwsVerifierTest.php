@@ -272,6 +272,22 @@ final class AwsVerifierTest extends TestCase
         }
     }
 
+    public function test_behind_an_emulator_endpoint_a_domain_is_verified_by_the_unsigned_probe(): void
+    {
+        $group = new FakeLogGroup(self::T0 + 10);
+        $http = new HttpMock([new Response(200)]);
+        $saved = getenv('AWS_ENDPOINT_URL');
+        putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+        try {
+            $result = $this->signedVerifier($group, $http)->verify($this->domainConfig(), $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
+        } finally {
+            putenv($saved === false ? 'AWS_ENDPOINT_URL' : "AWS_ENDPOINT_URL=$saved");
+        }
+
+        self::assertTrue($result->ok);
+        self::assertFalse((bool) $http->getLastRequest()?->hasHeader('Authorization'), 'the endpoint keeps the configured auth (public)');
+    }
+
     public function test_a_signed_probe_lambda_refuses_names_the_missing_permission(): void
     {
         $group = new FakeLogGroup(self::T0 + 10);

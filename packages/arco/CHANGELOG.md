@@ -53,6 +53,10 @@ profile needs new permissions first.
   (`deploy.endpoint_cloudfront_only`). `--json` results are unchanged. `auth('iam')` deploys without `domain()`
   make one extra `DescribeStacks` call (to find a leftover CloudFront statement); no new permission. If the profile
   may not call it, the deploy prints the warning `deploy.domain_stack_unreadable` and goes on.
+- **Changed:** behind an emulator endpoint (`AWS_ENDPOINT_URL`, such as Floci), a `domain()` environment is deployed
+  without this protection: no origin access control, no policy statement, the configured `auth()`, and the plain `/up`
+  probe, with the note `deploy.endpoint_unprotected_emulator`. Floci's CloudFront cannot sign for a Lambda Web Function
+  origin (it rejects `always-amz-auth`). Real AWS deploys (the variable unset) always get the protection.
 - **Note (known residual, not fixed here):** closing the endpoint does not stop `X-Forwarded-For` spoofing through
   CloudFront. CloudFront appends the viewer address to an `X-Forwarded-For` the viewer sent, and because Laravel
   trusts every proxy (`TrustProxies::at('*')`), `request()->ip()` returns the leftmost address, the one the viewer

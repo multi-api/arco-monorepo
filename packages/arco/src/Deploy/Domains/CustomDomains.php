@@ -5,6 +5,7 @@ namespace Multiapi\Arco\Deploy\Domains;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\DeployException;
+use Multiapi\Arco\Deploy\RevisionFactory;
 use Multiapi\Arco\Deploy\Sleeper;
 
 /**
@@ -63,7 +64,7 @@ final class CustomDomains
         $certificate = $this->certificate($config, $step);
 
         $step('domains.step_distribution', ['stack' => $stackName]);
-        $template = DomainStack::template($config, $endpointDomain, $certificate, $cachedPaths);
+        $template = DomainStack::template($config, $endpointDomain, $certificate, $cachedPaths, RevisionFactory::protectsEndpoint($config));
         $outputs = $this->stacks->deploy($stackName, DomainStack::body($template), $tags);
         $distribution = $outputs['DistributionDomain'] ?? throw DeployException::make('domains.distribution_missing', ['stack' => $stackName, 'output' => 'DistributionDomain']);
         if ($onDistribution !== null) {

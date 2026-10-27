@@ -47,6 +47,9 @@ recognised endpoint is set, `arco deploy` prints a note naming it (before it loa
 - builds URLs with `http` (an `https://` endpoint keeps `https`),
 - uses path-style bucket URLs (`<endpoint>/<bucket>`) and sets `AWS_USE_PATH_STYLE_ENDPOINT=true` in the app
   (a value you set in `variables()` wins).
+- deploys a `domain()` environment without the CloudFront protection of 0.11.4: no origin access control in the
+  domain stack, no resource-policy statement, and the endpoint keeps the auth `auth()` configures (public by default),
+  checked with the plain `/up` probe. The deploy says so in one line. On AWS only CloudFront may invoke that endpoint.
 
 Nothing changes on real AWS when the variable is unset.
 
@@ -113,14 +116,12 @@ available yet": Floci does not report the Lambda init metric to CloudWatch Logs.
 
 - **IAM is not enforced like AWS.** A deploy that works here can still fail on AWS because of a missing
   permission. Check [Minimal IAM permissions](getting-started.md#minimal-iam-permissions) before the real deploy.
-- **No init report, so no `auth('iam')` deploy passes verification.** An `IamAuth` endpoint without `domain()` cannot
-  be probed, so Arco waits for the Lambda init report in CloudWatch Logs, and Floci does not write it. (With
-  `domain()`, Arco probes `/up` with a signed request, which works against Floci.)
-- **`domain()` deploys stop at the domain stack.** Since 0.11.4 the stack has a CloudFront origin access control with
-  the signing behavior `always-amz-auth`, the only one AWS accepts for Lambda Web Function origins. Floci's CloudFront
-  only knows `always`, `never` and `no-override`, so the stack rolls back with "The parameter SigningBehavior must be
-  one of always, never, or no-override." Floci's support for the Web Function resource policy is untested for the
-  same reason. Test `domain()` against a real account.
+- **No init report, so no `auth('iam')` deploy passes verification.** An `IamAuth` endpoint cannot be probed without
+  a signature, so Arco waits for the Lambda init report in CloudWatch Logs, and Floci does not write it.
+- **No CloudFront protection for `domain()`.** Floci's CloudFront does not know the signing behavior
+  `always-amz-auth`, the only one AWS accepts for Lambda Web Function origins, so it cannot sign requests to the
+  endpoint. Arco therefore skips the protection behind an emulator endpoint (see above). Test the protection itself
+  (the custom domain answers, the endpoint URL answers 403) against a real account.
 - **No real DNS or TLS.** Custom domains do not resolve outside the emulator, and nothing is served over HTTPS.
 
 ## Clean up

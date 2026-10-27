@@ -640,6 +640,47 @@ final class AwsDeployerTest extends TestCase
             'deploy.oac_policy', 'deploy.endpoint_protected', 'domains.step_dns', 'domains.manual_records', 'domains.manual_record'], $steps);
     }
 
+    /** Runs $test with AWS_ENDPOINT_URL pointing at an emulator, as Floci deploys do. */
+    private static function behindEmulator(\Closure $test): void
+    {
+        $saved = getenv('AWS_ENDPOINT_URL');
+        putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+        try {
+            $test();
+        } finally {
+            putenv($saved === false ? 'AWS_ENDPOINT_URL' : "AWS_ENDPOINT_URL=$saved");
+        }
+    }
+
+    public function test_behind_an_emulator_endpoint_a_domain_is_served_without_the_cloudfront_protection(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::webEndpoint('ApplicationManaged', 'rev-1'), new Result([]), self::webEndpoint('ApplicationManaged', 'rev-2'),
+            self::domainStack('UPDATE_COMPLETE'),
+            new Result(['Certificate' => ['CertificateArn' => self::CERTIFICATE, 'DomainName' => 'arco.acmeapp.io', 'SubjectAlternativeNames' => ['arco.acmeapp.io'], 'Status' => 'ISSUED', 'Type' => 'AMAZON_ISSUED', 'KeyAlgorithm' => 'RSA-2048']]),
+            self::domainStack('UPDATE_COMPLETE'), new Result([]), self::domainStack('UPDATE_COMPLETE'),
+        );
+        $steps = [];
+        $step = function (string $key) use (&$steps): void { $steps[] = $key; };
+
+        self::behindEmulator(function () use ($mocks, $step): void {
+            $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+            $result = $deployer->release($this->domainConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), $step);
+            $deployer->attachDomains($this->domainConfig(), $result, [], $step);
+        });
+
+        self::assertSame(['GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
+            'DescribeStacks', 'DescribeCertificate', 'DescribeStacks', 'UpdateStack', 'DescribeStacks'], $mocks->calls, 'no policy, no auth switch');
+        self::assertSame('ApplicationManaged', $mocks->params[1]['authType'], 'the configured auth');
+        $template = json_decode((string) $mocks->params[6]['TemplateBody'], true);
+        self::assertArrayNotHasKey('OriginAccess', $template['Resources']);
+        self::assertArrayNotHasKey('OriginAccessControlId', $template['Resources']['Distribution']['Properties']['DistributionConfig']['Origins'][0]);
+        self::assertSame(['deploy.step_traffic', 'deploy.endpoint_unprotected_emulator', 'domains.step_certificate', 'domains.certificate_using',
+            'domains.step_distribution', 'domains.step_dns', 'domains.manual_records', 'domains.manual_record'], $steps);
+        self::assertSame('note', \Multiapi\Arco\Cli\StepPrinter::kind('deploy.endpoint_unprotected_emulator', []));
+    }
+
     public function test_with_a_domain_traffic_and_rollback_keep_the_endpoints_auth(): void
     {
         foreach (['ApplicationManaged', 'IamAuth'] as $auth) {

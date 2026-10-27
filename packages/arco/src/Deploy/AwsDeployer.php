@@ -260,7 +260,7 @@ final class AwsDeployer implements Deployer
 
         $step('deploy.step_traffic', ['revision' => $prepared->revisionId]);
         $current = $web->waitEndpoint($function);
-        if ($config->domains === [] && ($current['authType'] ?? null) === 'IamAuth') {
+        if (! RevisionFactory::protectsEndpoint($config) && ($current['authType'] ?? null) === 'IamAuth') {
             // domain() left arco.php: Arco's CloudFront statement goes before the endpoint takes the configured
             // auth again. The distribution outlives the deploy (only remove deletes its stack), so with auth('iam')
             // it would otherwise keep serving the app. An endpoint that is public now never had the statement in
@@ -415,6 +415,11 @@ final class AwsDeployer implements Deployer
             return $result;
         }
         $step = $onStep ?? static function (string $key, array $params = []): void {};
+        if (! RevisionFactory::protectsEndpoint($config)) {
+            // An emulator endpoint (AWS_ENDPOINT_URL): no origin access control, no policy, the configured auth.
+            $step('deploy.endpoint_unprotected_emulator', ['function' => $config->functionName()]);
+            return $result->withDomains($this->customDomains($config)->deploy($config, $result->domainName, $cachedPaths, self::tags($config), $step));
+        }
         $access = $this->cloudFrontAccess(new WebFunctions($this->aws->lambdaWeb(), $this->sleeper));
         $domains = $this->customDomains($config)->deploy($config, $result->domainName, $cachedPaths, self::tags($config), $step,
             fn (string $distributionId) => $access->protect($config, $distributionId, $step));
@@ -431,7 +436,7 @@ final class AwsDeployer implements Deployer
     private static function routedAuth(AppConfig $config, array $endpoint): string
     {
         $current = $endpoint['authType'] ?? null;
-        return $config->domains !== [] && in_array($current, ['IamAuth', 'ApplicationManaged'], true) ? $current : RevisionFactory::authType($config);
+        return RevisionFactory::protectsEndpoint($config) && in_array($current, ['IamAuth', 'ApplicationManaged'], true) ? $current : RevisionFactory::authType($config);
     }
 
     private function cloudFrontAccess(WebFunctions $web): CloudFrontAccess

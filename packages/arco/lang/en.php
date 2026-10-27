@@ -116,6 +116,7 @@ return [
     'deploy.endpoint_protected' => 'Requiring CloudFront signatures on {function}: its endpoint URL no longer answers directly',
     'deploy.endpoint_unprotected' => 'domain() was removed: making the endpoint of {function} public again',
     'deploy.oac_revoked' => 'domain() was removed: CloudFront may no longer invoke {function}, which keeps IAM auth',
+    'deploy.endpoint_unprotected_emulator' => 'Emulator endpoint (AWS_ENDPOINT_URL): {function} keeps its configured auth and CloudFront does not sign; on AWS only CloudFront may invoke it',
     'deploy.domain_stack_unreadable' => 'Could not check for a domains stack {stack} left from an earlier domain() ({error}). If one is left, its CloudFront distribution may still invoke {function}: allow cloudformation:DescribeStacks and deploy again, or run arco remove for the domains.',
     'deploy.policy_unreadable' => 'The resource-based policy of {arn} could not be read as a policy document. Arco does not rewrite a policy it cannot read, so the statements it did not write stay intact. Check it with `aws lambda-web get-resource-policy`, then deploy again.',
     'deploy.access_arn_invalid' => 'Arco could not build the CloudFront access grant (function {function}, endpoint {endpoint}, distribution {distribution}); the endpoint was left as it was.',

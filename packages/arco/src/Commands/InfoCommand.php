@@ -122,7 +122,7 @@ final class InfoCommand extends ArcoCommand
         $rows = [];
         foreach ($settings as $key => $row) {
             $value = $this->display($key, $row[0], $status);
-            if ($key === 'auth' && $config->domains !== []) {
+            if ($key === 'auth' && RevisionFactory::protectsEndpoint($config)) {
                 // domain() makes the endpoint IamAuth whatever auth() says: only CloudFront may invoke it.
                 $value = $this->t('info.auth_cloudfront', ['auth' => $value]);
             }

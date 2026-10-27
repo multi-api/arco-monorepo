@@ -636,7 +636,8 @@ of its own) and `error.unexpected` (an unexpected exception; `message` is the ex
   `deploy.oac_policy` (params `{function, distribution}`), `deploy.endpoint_protected` (`{function}`, the endpoint
   becomes `IamAuth`), `deploy.endpoint_unprotected` (`{function}`, the endpoint becomes public again) and
   `deploy.oac_revoked` (`{function}`, only when Arco's statement was removed), the warning
-  `deploy.domain_stack_unreadable` (`{stack, function, error}`), the errors `deploy.policy_unreadable` and
+  `deploy.domain_stack_unreadable` (`{stack, function, error}`), the note `deploy.endpoint_unprotected_emulator`
+  (`{function}`, only behind an emulator endpoint: see [Try your app locally with Floci](local-floci.md)), the errors `deploy.policy_unreadable` and
   `deploy.access_arn_invalid`, and the verification reason `deploy.verify_signed_forbidden` (`{function}`).
 - **Permissions boundary keys** (0.11, only when a boundary is configured or the role has one; see
   [Permissions boundary](configuration.md#permissions-boundary)):
