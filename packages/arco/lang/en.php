@@ -167,6 +167,7 @@ return [
     'deploy.network_reason.InsufficientRolePermissions' => 'the network connector operator role lacks EC2 permissions for the network interfaces; check its policy and any permissions boundary',
     'deploy.network_timeout' => 'The network connector {connector} was not ready after {seconds} seconds. Deploy again once it settles; it keeps going on AWS.',
     'deploy.network_foreign' => 'A network connector named {connector} exists, but it was not created by Arco for this environment (its operator role is not {role}). Arco does not touch it: remove or rename it, or change the app or environment name.',
+    'deploy.vpc_unsupported_emulator' => 'Emulator endpoint (AWS_ENDPOINT_URL): vpc() is skipped, the emulator has no network connectors; on AWS {function} runs in the VPC',
     'deploy.network_removed' => 'Removed the network connector {connector} and its operator role',
     'deploy.network_prune_failed' => 'Could not delete old versions of the network connector {connector} ({error}); the deploy succeeded. The next deploy tries again.',
     'deploy.boundary_set' => 'Set permissions boundary {boundary} on role {role}',

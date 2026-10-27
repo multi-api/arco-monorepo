@@ -182,11 +182,21 @@ final class AwsDeployer implements Deployer
                 array_map(fn (QueueConfig $queue) => $config->workerFunctionName($queue->name), $config->queues),
                 array_map(fn (StorageConfig $storage) => $storage->arn($config), $config->storage),
                 array_map(fn (TableConfig $table) => $table->arn($config), array_values(array_filter([$config->cacheTable, $config->failedJobsTable]))),
-                array_map(fn (GenericTableConfig $table) => $table->arn($config), $config->tables));
+                array_map(fn (GenericTableConfig $table) => $table->arn($config), $config->tables),
+                RevisionFactory::usesVpc($config));
             ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags, $region, $step, $config->permissionsBoundary);
         }
 
-        $revision = RevisionFactory::revision($config, $bucket, $key, $versionId, $roleArn, $variables);
+        $connectorArn = null;
+        if (RevisionFactory::usesVpc($config)) {
+            // Before any revision: a failed connector stops the deploy with the live revision untouched. The operator
+            // role is Arco's even with role(), which only names the execution role.
+            $connectorArn = (new NetworkConnectors($this->aws->lambdaCore(), new ExecutionRole($this->aws->iam()), $account, $this->sleeper))->ensure($config, $tags, $step);
+        } elseif ($config->vpc !== null) {
+            $step('deploy.vpc_unsupported_emulator', ['function' => $function]);
+        }
+
+        $revision = RevisionFactory::revision($config, $bucket, $key, $versionId, $roleArn, $variables, $connectorArn);
         $previous = null;
         if ($web->get($function) === null) {
             $step('deploy.step_function', ['function' => $function]);

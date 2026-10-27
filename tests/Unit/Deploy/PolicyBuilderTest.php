@@ -149,4 +149,22 @@ final class PolicyBuilderTest extends TestCase
             self::assertSame(PolicyBuilder::MAX_SIZE, $e->params['max']);
         }
     }
+
+    public function test_vpc_access_adds_the_network_interface_statement_only_when_asked(): void
+    {
+        $with = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], vpcAccess: true);
+        $statement = array_values(array_filter($with['Statement'], fn (array $s) => ($s['Sid'] ?? null) === 'ArcoVpcAccess'));
+
+        self::assertCount(1, $statement);
+        self::assertSame('Allow', $statement[0]['Effect']);
+        self::assertSame('*', $statement[0]['Resource']);
+        self::assertSame([
+            'ec2:CreateNetworkInterface', 'ec2:DescribeNetworkInterfaces', 'ec2:DescribeSubnets',
+            'ec2:DeleteNetworkInterface', 'ec2:AssignPrivateIpAddresses', 'ec2:UnassignPrivateIpAddresses',
+        ], $statement[0]['Action']);
+
+        $without = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', []);
+        self::assertCount(1, $without['Statement']);
+        self::assertStringNotContainsString('ArcoVpcAccess', json_encode($without, JSON_THROW_ON_ERROR));
+    }
 }

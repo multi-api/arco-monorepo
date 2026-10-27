@@ -172,4 +172,13 @@ final class ConsoleFunctionTest extends TestCase
         self::assertNull($console->aliasArn('shop-production-console'));
         self::assertSame('live', $mocks->params[0]['Name']);
     }
+
+    public function test_settings_carry_the_vpc_config_detach_empties_it_and_none_leaves_it_out(): void
+    {
+        $vpc = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e->vpc(subnets: ['subnet-a', 'subnet-b'], securityGroups: ['sg-1']))->toArray(), 'production');
+
+        self::assertSame(['SubnetIds' => ['subnet-a', 'subnet-b'], 'SecurityGroupIds' => ['sg-1']], ConsoleFunction::settings($vpc, 'arn:role', [])['VpcConfig']);
+        self::assertSame(['SubnetIds' => [], 'SecurityGroupIds' => []], ConsoleFunction::settings($this->config(), 'arn:role', [], true)['VpcConfig']);
+        self::assertArrayNotHasKey('VpcConfig', ConsoleFunction::settings($this->config(), 'arn:role', []));
+    }
 }

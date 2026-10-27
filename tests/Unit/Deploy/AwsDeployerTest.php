@@ -3507,4 +3507,173 @@ final class AwsDeployerTest extends TestCase
             'arn:aws:dynamodb:us-east-1:111111111111:table/Shared/index/*',
         ], $bySid['ArcoAppTables']['Resource']);
     }
+
+
+    private const CONNECTOR_VERSION = 'arn:aws:lambda:us-east-1:111111111111:network-connector:shop-production:3';
+
+    private function vpcConfig(bool $console = false, ?string $role = null): AppConfig
+    {
+        $app = App::make('shop')->region('us-east-1');
+        if ($console) {
+            $app = $app->console();
+        }
+        if ($role !== null) {
+            $app = $app->role($role);
+        }
+        return ConfigResolver::resolve($app->environment('production', fn (Environment $e) => $e->vpc(subnets: ['subnet-a', 'subnet-b'], securityGroups: ['sg-1']))->toArray(), 'production');
+    }
+
+    /** @return list<Result> the reads and writes of NetworkConnectors::ensure() for an unchanged connector */
+    private static function connectorReady(): array
+    {
+        return [
+            new Result(['Arn' => 'arn:connector', 'Name' => 'shop-production', 'OperatorRole' => 'arn:aws:iam::111111111111:role/arco-shop-production-network', 'State' => 'ACTIVE',
+                'LatestVersionArn' => self::CONNECTOR_VERSION, 'LatestVersion' => 3,
+                'Configuration' => ['VpcEgressConfiguration' => ['SubnetIds' => ['subnet-b', 'subnet-a'], 'SecurityGroupIds' => ['sg-1'], 'NetworkProtocol' => 'IPv4', 'AssociatedComputeResourceTypes' => ['WebFunction']]]]),
+            new Result(['Role' => ['Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production-network']]), // GetRole (operator)
+            new Result([]),                                                                                  // PutRolePolicy (operator)
+        ];
+    }
+
+    public function test_vpc_deploy_order(): void
+    {
+        $ready = fn () => new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']);
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), // GetRole
+            new Result([]),                                   // PutRolePolicy
+            ...self::connectorReady(),
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+            new Result(['VersionId' => 'cv1']),               // HeadObject (console zip)
+            new Result(['ContentLength' => 3, 'VersionId' => 'bv1']),
+            new Result([]),                                   // CopyObject
+            new Result(['FunctionVersion' => '6']),           // GetAlias
+            $ready(), $ready(), new Result([]), $ready(), new Result([]), $ready(), new Result(['Version' => '7']),
+        ]);
+        $steps = [];
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->prepare($this->vpcConfig(console: true), $this->package(), $this->console(), [], function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame([
+            ...self::UNTIL_THE_ROLE, 'GetRole', 'PutRolePolicy',
+            'GetNetworkConnector', 'GetRole', 'PutRolePolicy',
+            'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision',
+            'HeadObject', 'HeadObject', 'CopyObject',
+            'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion',
+        ], $mocks->calls, 'role, connector, revision, then the console');
+        $revision = array_search('CreateWebFunctionRevision', $mocks->calls, true);
+        self::assertSame(self::CONNECTOR_VERSION, $mocks->params[$revision]['serviceConfig']['egressNetworkConnectorArn']);
+        $update = array_search('UpdateFunctionConfiguration', $mocks->calls, true);
+        self::assertSame(['SubnetIds' => ['subnet-a', 'subnet-b'], 'SecurityGroupIds' => ['sg-1']], $mocks->params[$update]['VpcConfig']);
+        $policy = json_decode($mocks->params[array_search('PutRolePolicy', $mocks->calls, true)]['PolicyDocument'], true);
+        $vpc = array_values(array_filter($policy['Statement'], fn (array $s) => ($s['Sid'] ?? null) === 'ArcoVpcAccess'));
+        self::assertCount(1, $vpc, 'the execution role may manage the console and workers network interfaces');
+        self::assertContains('ec2:CreateNetworkInterface', $vpc[0]['Action']);
+        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_network', 'deploy.step_revision', 'deploy.step_console'], $steps);
+    }
+
+    public function test_failed_connector_creates_no_revision(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
+            new Result([]),
+            new Result(['Arn' => 'arn:connector', 'Name' => 'shop-production', 'OperatorRole' => 'arn:aws:iam::111111111111:role/arco-shop-production-network', 'State' => 'FAILED',
+                'StateReason' => 'bad', 'StateReasonCode' => 'InvalidSubnet', 'Configuration' => ['VpcEgressConfiguration' => ['SubnetIds' => ['subnet-b', 'subnet-a'], 'SecurityGroupIds' => ['sg-1']]]]),
+            new Result(['Role' => ['Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production-network']]),
+            new Result([]),
+        ]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        try {
+            $deployer->prepare($this->vpcConfig(), $this->package(), null, []);
+            self::fail('the deploy should stop on the failed connector');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.network_failed', $e->key);
+        }
+
+        self::assertNotContains('CreateWebFunctionRevision', $mocks->calls);
+        self::assertNotContains('CreateWebFunction', $mocks->calls);
+        self::assertNotContains('UpdateWebFunctionEndpoint', $mocks->calls);
+    }
+
+    public function test_environment_without_vpc_makes_no_network_calls(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
+            new Result([]),
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        ]);
+        $steps = [];
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->prepare($this->config(), $this->package(), null, [], function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame([...self::UNTIL_THE_ROLE, 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision'], $mocks->calls);
+        $revision = array_search('CreateWebFunctionRevision', $mocks->calls, true);
+        self::assertArrayNotHasKey('egressNetworkConnectorArn', $mocks->params[$revision]['serviceConfig']);
+        self::assertStringNotContainsString('ArcoVpcAccess', (string) $mocks->params[array_search('PutRolePolicy', $mocks->calls, true)]['PolicyDocument']);
+        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_revision'], $steps);
+    }
+
+    public function test_emulator_skips_vpc_with_note(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
+            new Result([]),
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        ]);
+        $steps = [];
+
+        self::behindEmulator(function () use ($mocks, &$steps): void {
+            $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+            $deployer->prepare($this->vpcConfig(), $this->package(), null, [], function (string $key) use (&$steps): void { $steps[] = $key; });
+        });
+
+        self::assertNotContains('GetNetworkConnector', $mocks->calls);
+        self::assertNotContains('CreateNetworkConnector', $mocks->calls);
+        self::assertContains('deploy.vpc_unsupported_emulator', $steps);
+        self::assertNotContains('deploy.step_network', $steps);
+        $revision = array_search('CreateWebFunctionRevision', $mocks->calls, true);
+        self::assertArrayNotHasKey('egressNetworkConnectorArn', $mocks->params[$revision]['serviceConfig']);
+        self::assertStringNotContainsString('ArcoVpcAccess', (string) $mocks->params[array_search('PutRolePolicy', $mocks->calls, true)]['PolicyDocument']);
+        self::assertSame('note', \Multiapi\Arco\Cli\StepPrinter::kind('deploy.vpc_unsupported_emulator', []));
+    }
+
+    public function test_with_a_custom_role_the_operator_role_is_still_created_and_the_execution_role_untouched(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            ...self::connectorReady(),
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        ]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->prepare($this->vpcConfig(role: 'arn:aws:iam::111111111111:role/mine'), $this->package(), null, []);
+
+        self::assertSame([...self::UNTIL_THE_ROLE, 'GetNetworkConnector', 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision'], $mocks->calls);
+        $role = array_search('PutRolePolicy', $mocks->calls, true);
+        self::assertSame('arco-shop-production-network', $mocks->params[$role]['RoleName'], 'only the operator role is written');
+        self::assertSame('arn:aws:iam::111111111111:role/mine', $mocks->params[array_search('CreateWebFunctionRevision', $mocks->calls, true)]['serviceConfig']['executionRoleArn']);
+    }
 }

@@ -167,6 +167,7 @@ return [
     'deploy.network_reason.InsufficientRolePermissions' => 'el rol operador del conector de red no tiene permisos EC2 para las interfaces de red; revisa su política y el permissions boundary',
     'deploy.network_timeout' => 'El conector de red {connector} no estuvo listo tras {seconds} segundos. Vuelve a hacer deploy cuando termine; sigue avanzando en AWS.',
     'deploy.network_foreign' => 'Ya existe un conector de red llamado {connector}, pero Arco no lo creó para este entorno (su rol operador no es {role}). Arco no lo toca: elimínalo o renómbralo, o cambia el nombre de la app o del entorno.',
+    'deploy.vpc_unsupported_emulator' => 'Endpoint de emulador (AWS_ENDPOINT_URL): se omite vpc(), el emulador no tiene conectores de red; en AWS {function} corre en la VPC',
     'deploy.network_removed' => 'Se eliminó el conector de red {connector} y su rol operador',
     'deploy.network_prune_failed' => 'No se pudieron eliminar versiones antiguas del conector de red {connector} ({error}); el deploy se completó. El próximo deploy lo reintenta.',
     'deploy.boundary_set' => 'Límite de permisos {boundary} aplicado al rol {role}',
