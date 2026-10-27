@@ -24,6 +24,8 @@ final readonly class PreparedDeploy
         public bool $leftoverConnector = false,
         /** @var list<string> connector version ARNs prune() keeps: the one the live revision pinned (the rollback target) and this deploy's */
         public array $keepConnectorVersions = [],
+        /** the live revision pinned a connector and vpc() is not set: this deploy took the console and the workers out of the VPC */
+        public bool $leftVpc = false,
     ) {
     }
 }

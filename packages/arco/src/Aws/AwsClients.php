@@ -7,6 +7,7 @@ use Aws\CloudFormation\CloudFormationClient;
 use Aws\CloudFront\CloudFrontClient;
 use Aws\CloudWatchLogs\CloudWatchLogsClient;
 use Aws\DynamoDb\DynamoDbClient;
+use Aws\Ec2\Ec2Client;
 use Aws\EventBridge\EventBridgeClient;
 use Aws\Credentials\CredentialProvider;
 use Aws\Credentials\Credentials;
@@ -208,6 +209,8 @@ final class AwsClients
     public function lambdaCore(): LambdaCoreClient { return $this->sdk->createLambdaCore(); }
     /** @param array<string, mixed> $overrides extra client config (invocations disable retries and raise the HTTP timeout) */
     public function lambda(array $overrides = []): LambdaClient { return $this->sdk->createLambda($overrides); }
+    /** EC2: only to read the VPC network interfaces Lambda deletes after a function leaves the VPC. */
+    public function ec2(): Ec2Client { return $this->sdk->createEc2(); }
     public function ssm(): SsmClient { return $this->sdk->createSsm(); }
     public function secretsManager(): SecretsManagerClient { return $this->sdk->createSecretsManager(); }
     /** @param array<string, mixed> $overrides extra client config (Live Tail passes an http_handler) */

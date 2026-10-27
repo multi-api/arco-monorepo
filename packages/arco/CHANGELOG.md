@@ -28,10 +28,15 @@ statements first ([Upgrading to 0.12](docs/upgrading.md#upgrading-to-012)).
   [VPC](docs/configuration.md#vpc). New steps `deploy.step_network`, `deploy.network_waiting`,
   `deploy.network_updated`, `deploy.network_removed`; errors `deploy.network_failed`, `deploy.network_timeout`,
   `deploy.network_foreign`; warnings `deploy.network_prune_failed`, `deploy.network_cleanup_failed`, `deploy.network_replacing`.
+- **Added:** the deploy that leaves the VPC, and `arco remove`, wait until Lambda has deleted the console's and the
+  workers' VPC network interfaces before the execution role loses its network statements or goes: Lambda needs
+  that role to delete them. New steps `deploy.step_vpc_interfaces`, `remove.step_vpc_interfaces`; warnings
+  `deploy.vpc_interfaces_pending`, `deploy.vpc_interfaces_failed`, `remove.vpc_interfaces_pending`,
+  `remove.vpc_interfaces_failed`.
 - **Added:** new deploy permissions with `vpc()`: `lambda:CreateNetworkConnector`, `lambda:GetNetworkConnector`,
   `lambda:UpdateNetworkConnector`, `lambda:DeleteNetworkConnector`, `lambda:ListNetworkConnectorVersions`,
   `lambda:PassNetworkConnector` on `network-connector:*`, `iam:PassRole` on `arco-<app>-*-network`, and
-  `ec2:DescribeSubnets`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs`
+  `ec2:DescribeSubnets`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs`, `ec2:DescribeNetworkInterfaces`
   ([Permissions for VPC](docs/getting-started.md#permissions-for-vpc)). Arco Cloud's connect template needs them
   for apps that use `vpc()`.
 

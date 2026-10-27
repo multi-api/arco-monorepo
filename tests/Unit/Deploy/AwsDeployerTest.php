@@ -3798,6 +3798,7 @@ final class AwsDeployerTest extends TestCase
         $prepared = $deployer->prepare($this->leftoverConfig(), $this->package(), $this->console(), [], function (string $key) use (&$steps): void { $steps[] = $key; });
 
         self::assertTrue($prepared->leftoverConnector);
+        self::assertTrue($prepared->leftVpc, 'prune() retires the console and worker versions still in the VPC');
         $by = self::byOperation($mocks);
         self::assertArrayNotHasKey('egressNetworkConnectorArn', $by['CreateWebFunctionRevision'][0]['serviceConfig']);
         self::assertSame(['shop-production-console', 'shop-production-queue-emails'], array_column($by['UpdateFunctionConfiguration'], 'FunctionName'));
@@ -3956,7 +3957,131 @@ final class AwsDeployerTest extends TestCase
             'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
             'DeleteRolePolicy' => new Result([]), 'DeleteRole' => new Result([]),
             'GetGroupQuery' => self::noGroup(),
+            // No console or worker version in a VPC: no network interface to wait for.
+            'ListVersionsByFunction' => new Result(['Versions' => []]),
         ];
+    }
+
+    /** @param list<string> $vpcVersions the console versions still in a VPC */
+    private static function consoleVersions(array $vpcVersions, array $outside = []): Result
+    {
+        $vpc = ['SubnetIds' => ['subnet-a'], 'SecurityGroupIds' => ['sg-1'], 'VpcId' => 'vpc-1'];
+        return new Result(['Versions' => [
+            ...array_map(fn (string $v) => ['Version' => $v, 'VpcConfig' => $vpc], $vpcVersions),
+            ...array_map(fn (string $v) => ['Version' => $v, 'VpcConfig' => ['SubnetIds' => [], 'SecurityGroupIds' => []]], $outside),
+        ]]);
+    }
+
+    private static function interfaces(string ...$ids): Result
+    {
+        return new Result(['NetworkInterfaces' => array_map(fn (string $id) => ['NetworkInterfaceId' => $id, 'Description' => 'AWS Lambda VPC ENI-shop-production-console'], $ids)]);
+    }
+
+    /**
+     * Lambda deletes a VPC function's network interface with the function's execution role, up to about 20 minutes
+     * after the function is gone: a role deleted earlier leaves the interface in the VPC for good.
+     */
+    public function test_remove_waits_for_the_consoles_vpc_interfaces_before_the_execution_role(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()],
+            'ListVersionsByFunction' => [self::consoleVersions(['$LATEST', '1']), new Result(['Versions' => []])],
+            'DescribeNetworkInterfaces' => [self::interfaces('eni-1'), self::interfaces()]]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(console: true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        $calls = $mocks->calls;
+        $lastDescribe = max(array_keys($calls, 'DescribeNetworkInterfaces', true));
+        self::assertLessThan(min(array_keys($calls, 'DescribeNetworkInterfaces', true)), max(array_keys($calls, 'DeleteFunction', true)), 'the functions go first');
+        self::assertLessThan(max(array_keys($calls, 'DeleteRole', true)), $lastDescribe, 'the execution role goes once the interfaces are gone');
+        self::assertLessThan(min(array_keys($calls, 'DeleteFunction', true)), min(array_keys($calls, 'ListVersionsByFunction', true)), 'the versions are read while the functions exist');
+        $by = self::byOperation($mocks);
+        self::assertSame([['Name' => 'description', 'Values' => ['AWS Lambda VPC ENI-shop-production-console', 'AWS Lambda VPC ENI-shop-production-console-*']]], $by['DescribeNetworkInterfaces'][0]['Filters']);
+        self::assertSame('arco-shop-production', array_column($by['DeleteRole'], 'RoleName')[1], 'the execution role, after the interfaces are gone');
+        self::assertContains(['remove.step_vpc_interfaces', ['functions' => 'shop-production-console']], $steps);
+    }
+
+    public function test_remove_keeps_the_execution_role_while_a_vpc_interface_is_left(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()],
+            'ListVersionsByFunction' => [self::consoleVersions(['1']), new Result(['Versions' => []])],
+            'DescribeNetworkInterfaces' => self::interfaces('eni-1')]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(console: true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['arco-shop-production-network'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'), 'only the operator role');
+        self::assertContains(['remove.vpc_interfaces_pending', ['interfaces' => 'eni-1', 'region' => 'us-east-1', 'role' => 'arco-shop-production']], $steps);
+        self::assertContains('remove.vpc_interfaces_pending', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertContains('GetGroupQuery', $mocks->calls, 'the rest of the remove goes on');
+    }
+
+    public function test_remove_keeps_the_execution_role_when_the_vpc_versions_cannot_be_read(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()],
+            'ListVersionsByFunction' => AwsMocks::error(LambdaException::class, 'ListVersionsByFunction', 'AccessDeniedException', 403, 'denied')]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(console: true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['arco-shop-production-network'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
+        self::assertContains('remove.vpc_interfaces_failed', array_column($steps, 0));
+        self::assertNotContains('DescribeNetworkInterfaces', $mocks->calls);
+    }
+
+    public function test_remove_of_an_environment_without_vpc_reads_no_versions_or_interfaces(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::removal(null));
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
+
+        self::assertSame([], self::only($mocks, 'ListVersionsByFunction', 'DescribeNetworkInterfaces'));
+        self::assertSame(['arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
+    }
+
+    /**
+     * Out of the VPC, the prune deletes the console and worker versions still in it and waits for their interfaces
+     * while the execution role still has the ENI statements (the next deploy drops them), then the connector goes.
+     */
+    public function test_leaving_the_vpc_retires_the_vpc_versions_and_waits_for_their_interfaces_before_the_connector(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, ['GetNetworkConnector' => [self::connector(), self::connectorGone()], 'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
+            'DeleteRolePolicy' => new Result([]), 'DeleteRole' => new Result([]), 'DeleteFunction' => new Result([]),
+            'ListVersionsByFunction' => [self::consoleVersions(['5', '6'], ['$LATEST', '7']), new Result(['Versions' => []])],
+            'DescribeNetworkInterfaces' => [self::interfaces('eni-1'), self::interfaces()]]);
+        $prepared = new PreparedDeploy('rev-2', 'rev-1', 'bucket', 'key', '7', '6', leftoverConnector: true, leftVpc: true);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->leftoverConfig(), $prepared, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        $by = self::byOperation($mocks);
+        $retired = array_values(array_filter($by['DeleteFunction'], fn (array $call) => $call['FunctionName'] === 'shop-production-console' && in_array($call['Qualifier'] ?? null, ['5', '6'], true)));
+        self::assertCount(2, $retired, 'both versions in the VPC; never $LATEST or the live 7');
+        self::assertSame(['shop-production-console', 'shop-production-queue-emails'], array_column($by['ListVersionsByFunction'], 'FunctionName'));
+        $calls = self::only($mocks, 'DescribeNetworkInterfaces', 'DeleteNetworkConnector');
+        self::assertSame(['DescribeNetworkInterfaces', 'DescribeNetworkInterfaces', 'DeleteNetworkConnector'], $calls, 'the interfaces are gone before the connector goes');
+        self::assertContains(['deploy.step_vpc_interfaces', ['functions' => 'shop-production-console']], $steps);
+    }
+
+    public function test_a_vpc_interface_left_after_leaving_the_vpc_is_a_warning_and_the_connector_still_goes(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, ['GetNetworkConnector' => [self::connector(), self::connectorGone()], 'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
+            'DeleteRolePolicy' => new Result([]), 'DeleteRole' => new Result([]), 'DeleteFunction' => new Result([]),
+            'ListVersionsByFunction' => [self::consoleVersions(['5']), new Result(['Versions' => []])],
+            'DescribeNetworkInterfaces' => self::interfaces('eni-1')]);
+        $prepared = new PreparedDeploy('rev-2', 'rev-1', 'bucket', 'key', '7', '6', leftoverConnector: true, leftVpc: true);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->leftoverConfig(), $prepared, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertContains(['deploy.vpc_interfaces_pending', ['interfaces' => 'eni-1', 'region' => 'us-east-1', 'role' => 'arco-shop-production']], $steps);
+        self::assertContains('DeleteNetworkConnector', $mocks->calls);
     }
 
     public function test_remove_deletes_functions_then_connector_then_role(): void

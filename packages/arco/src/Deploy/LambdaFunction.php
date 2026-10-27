@@ -254,6 +254,48 @@ final class LambdaFunction
         return $deleted;
     }
 
+    /**
+     * The versions ($LATEST included) whose VpcConfig names subnets. A missing function has none.
+     *
+     * @return list<string>
+     */
+    public function vpcVersions(string $name): array
+    {
+        $versions = [];
+        $marker = null;
+        try {
+            do {
+                $page = $this->lambda->listVersionsByFunction(['FunctionName' => $name, ...($marker !== null ? ['Marker' => $marker] : [])]);
+                $listed = $page['Versions'] ?? [];
+                foreach (is_array($listed) ? $listed : [] as $version) {
+                    $number = is_array($version) ? ($version['Version'] ?? null) : null;
+                    $subnets = is_array($version) && is_array($version['VpcConfig'] ?? null) ? ($version['VpcConfig']['SubnetIds'] ?? []) : [];
+                    if (is_string($number) && is_array($subnets) && $subnets !== []) {
+                        $versions[] = $number;
+                    }
+                }
+                $marker = is_string($page['NextMarker'] ?? null) && $page['NextMarker'] !== '' ? $page['NextMarker'] : null;
+            } while ($marker !== null);
+        } catch (LambdaException $e) {
+            if ($e->getAwsErrorCode() !== 'ResourceNotFoundException') {
+                throw $e;
+            }
+        }
+        return $versions;
+    }
+
+    /** Deletes one published version; one already gone is not an error. */
+    public function deleteVersion(string $name, string $version): void
+    {
+        try {
+            $this->lambda->deleteFunction(['FunctionName' => $name, 'Qualifier' => $version]);
+        } catch (LambdaException $e) {
+            if ($e->getAwsErrorCode() !== 'ResourceNotFoundException') {
+                throw $e;
+            }
+        }
+    }
+
     public function delete(string $name): void
     {
         try {

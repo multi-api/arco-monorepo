@@ -1266,12 +1266,19 @@ environments never share an operator role.
 Removing `vpc()` (or `vpc(false)`) deploys the environment out of the VPC first. Only after that deploy is
 verified does Arco delete the connector and then the operator role. If the verification fails, the next deploy
 finishes the removal. If the delete itself fails, the deploy still succeeds, the warning prints the
-`aws lambda-core` and `aws iam` commands to run by hand, and later deploys do not try again. The execution role
-keeps the network interface statements until the deploy after the cleanup. Older revisions that pinned the connector
-cannot serve traffic once it is gone; this matters only if you move traffic by hand.
+`aws lambda-core` and `aws iam` commands to run by hand, and later deploys do not try again. Before the connector,
+the same cleanup deletes the console and worker versions still in the VPC (they are no rollback target any more)
+and waits until Lambda has deleted their network interfaces, usually a few minutes and up to about 20: Lambda
+deletes them with the execution role, which keeps the network interface statements until the next deploy. An
+interface still there after 30 minutes is a warning with the command that deletes it. Older revisions that pinned
+the connector cannot serve traffic once it is gone; this matters only if you move traffic by hand.
 
 `arco remove` deletes the Web Function, the console and the workers, then waits until the connector is gone, then
-deletes the operator role. A connector that Arco did not create (its operator role is not Arco's) is left alone.
+deletes the operator role. When the console or a worker was in the VPC, it waits until Lambda has deleted their
+network interfaces before it deletes the execution role (up to about 20 minutes): a role deleted earlier leaves
+them in the VPC for good, where they block deleting its subnets and security groups. If they are still there
+after 30 minutes, or cannot be read, the execution role is kept and the warning prints the commands that finish
+the job. A connector that Arco did not create (its operator role is not Arco's) is left alone.
 `arco info` shows the subnets, security groups, connector id, version and state; `arco info --json` has a `vpc`
 object, or `null`.
 
