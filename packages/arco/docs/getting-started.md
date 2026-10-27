@@ -636,7 +636,9 @@ of its own) and `error.unexpected` (an unexpected exception; `message` is the ex
   `deploy.oac_policy` (params `{function, distribution}`), `deploy.endpoint_protected` (`{function}`, the endpoint
   becomes `IamAuth`), `deploy.endpoint_unprotected` (`{function}`, the endpoint becomes public again) and
   `deploy.oac_revoked` (`{function}`, only when Arco's statement was removed), the warning
-  `deploy.domain_stack_unreadable` (`{stack, function, error}`), the note `deploy.endpoint_unprotected_emulator`
+  `deploy.domain_stack_unreadable` (`{stack, function, error}`), the step `deploy.protection_check` (`{url}`, the
+  health path through the distribution after the switch), the warning `deploy.endpoint_still_public` (`{function}`,
+  a deploy that failed before the switch), the error `deploy.protection_reverted` (`{function, url, answer}`), the note `deploy.endpoint_unprotected_emulator`
   (`{function}`, only behind an emulator endpoint: see [Try your app locally with Floci](local-floci.md)), the errors `deploy.policy_unreadable` and
   `deploy.access_arn_invalid`, and the verification reason `deploy.verify_signed_forbidden` (`{function}`).
 - **Permissions boundary keys** (0.11, only when a boundary is configured or the role has one; see
@@ -805,9 +807,9 @@ With `domain()`, the deploy profile also needs:
 - `lambda:GetResourcePolicy`, `lambda:PutResourcePolicy` on `arn:aws:lambda:*:*:web-function/<app>-*` (0.11.4:
   Arco lets only the environment's CloudFront invoke the endpoint), and `lambda:DeleteResourcePolicy` (only when you
   remove `domain()` and Arco's statement was the only one). `lambda:*WebFunction*` does not match them
-- `lambda:InvokeWebFunctionEndpoint` on `arn:aws:lambda:*:*:web-function/<app>-*/endpoint/*` (0.11.4: the post-deploy
-  `/up` check is a signed request, since only CloudFront and signed callers may invoke the endpoint).
-  `lambda:*WebFunction*` does not match it
+- `lambda:InvokeWebFunctionEndpoint` (0.11.4: the post-deploy `/up` check is a signed request, since only CloudFront
+  and signed callers may invoke the endpoint). The minimal permissions' `lambda:*WebFunction*` already grants it; a
+  scoped profile needs it on `arn:aws:lambda:*:*:web-function/<app>-*/endpoint/*`
 - the Route 53 permissions below when the deploy account also hosts the DNS zones
 
 The DNS profile (`dns('profile')` or `--dns-profile`) needs `route53:ListHostedZonesByName`,
@@ -901,6 +903,11 @@ exactly as the deploy passes it):
   It passes no role to CloudFormation (no `RoleARN`) or to EventBridge, and the role it creates trusts only
   `lambda.amazonaws.com`. If a deploy with the condition fails with a `iam:PassRole` denial, check in CloudTrail
   which service the call named and adjust the value.
+- **`lambda:PutResourcePolicy` lets the profile grant others access to the app's Web Function.** Arco only writes
+  its `ArcoCloudFront` statement, but the action itself accepts any policy, so the profile holder could let another
+  account invoke an `auth('iam')` endpoint or manage the function. This stays within the app's own functions. If
+  that matters to you, condition the action (for example deny it outside your deploy pipeline's role) or watch
+  the policy with IAM Access Analyzer, which reports Web Function policies that grant access outside your account.
 - **The trust policy of a new role is not constrained.** No IAM condition key limits the
   `AssumeRolePolicyDocument` of `iam:CreateRole`, so the profile can create a bounded `arco-*` role that another
   AWS account can assume. That account then has lasting access to everything the boundary allows, and with one

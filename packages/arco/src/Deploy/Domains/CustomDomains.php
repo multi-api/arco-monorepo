@@ -46,8 +46,8 @@ final class CustomDomains
      * @param list<string> $cachedPaths
      * @param array<string, string> $tags
      * @param callable(string, array<string, string|int>): void $step
-     * @param (callable(string): void)|null $onDistribution runs with the distribution id once the stack is
-     *     complete, before any DNS change: AwsDeployer locks the endpoint to the distribution there
+     * @param (callable(string, string): void)|null $onDistribution runs with the distribution id and domain once the
+     *     stack is complete, before any DNS change: AwsDeployer locks the endpoint to the distribution there
      * @return list<string> the domains now served
      */
     public function deploy(AppConfig $config, string $endpointDomain, array $cachedPaths, array $tags, callable $step, ?callable $onDistribution = null): array
@@ -68,7 +68,7 @@ final class CustomDomains
         $outputs = $this->stacks->deploy($stackName, DomainStack::body($template), $tags);
         $distribution = $outputs['DistributionDomain'] ?? throw DeployException::make('domains.distribution_missing', ['stack' => $stackName, 'output' => 'DistributionDomain']);
         if ($onDistribution !== null) {
-            $onDistribution($outputs['DistributionId'] ?? throw DeployException::make('domains.distribution_missing', ['stack' => $stackName, 'output' => 'DistributionId']));
+            $onDistribution($outputs['DistributionId'] ?? throw DeployException::make('domains.distribution_missing', ['stack' => $stackName, 'output' => 'DistributionId']), $distribution);
         }
 
         $step('domains.step_dns', ['distribution' => $distribution]);

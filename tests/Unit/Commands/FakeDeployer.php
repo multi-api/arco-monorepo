@@ -140,7 +140,7 @@ final class FakeDeployer implements Deployer
         }
     }
 
-    public function attachDomains(AppConfig $config, DeployResult $result, array $cachedPaths, ?callable $onStep = null): DeployResult
+    public function attachDomains(AppConfig $config, DeployResult $result, array $cachedPaths, ?callable $onStep = null, string $healthPath = '/up'): DeployResult
     {
         $this->calls[] = 'domains:' . implode(',', $cachedPaths);
         foreach ($this->domainSteps as [$key, $params]) {

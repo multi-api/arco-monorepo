@@ -76,10 +76,22 @@ final class RevisionFactoryTest extends TestCase
             putenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS');
             putenv('AWS_ENDPOINT_URL=not a url');
             self::assertTrue(RevisionFactory::protectsEndpoint($config('public')));
+            // A service the protection involves sent elsewhere (real AWS, say) by its own override keeps it.
+            putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+            foreach (['LAMBDA', 'LAMBDA_WEB', 'CLOUDFRONT', 'CLOUDFORMATION'] as $service) {
+                putenv("AWS_ENDPOINT_URL_$service=https://example.amazonaws.com");
+                self::assertTrue(RevisionFactory::protectsEndpoint($config('public')), $service);
+                putenv("AWS_ENDPOINT_URL_$service=http://localhost:4566/");
+                self::assertFalse(RevisionFactory::protectsEndpoint($config('public')), "$service: the same emulator");
+                putenv("AWS_ENDPOINT_URL_$service");
+            }
             putenv('AWS_ENDPOINT_URL');
             self::assertTrue(RevisionFactory::protectsEndpoint($config('public')));
             self::assertSame('IamAuth', RevisionFactory::authType($config('public')));
         } finally {
+            foreach (['LAMBDA', 'LAMBDA_WEB', 'CLOUDFRONT', 'CLOUDFORMATION'] as $service) {
+                putenv("AWS_ENDPOINT_URL_$service");
+            }
             putenv($saved[0] === false ? 'AWS_ENDPOINT_URL' : "AWS_ENDPOINT_URL=$saved[0]");
             putenv($saved[1] === false ? 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS' : "AWS_IGNORE_CONFIGURED_ENDPOINT_URLS=$saved[1]");
         }

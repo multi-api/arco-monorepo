@@ -4,6 +4,8 @@ namespace Multiapi\Arco\Deploy\Domains;
 
 use Aws\CloudFront\CloudFrontClient;
 use Aws\LambdaWeb\Exception\LambdaWebException;
+use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\GuzzleException;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\DeployException;
 use Multiapi\Arco\Deploy\Sleeper;
@@ -24,8 +26,16 @@ final class CloudFrontAccess
     private const POLICY_SETTLE = 10;
     private const CONFLICT_RETRIES = 3;
 
-    public function __construct(private readonly WebFunctions $web, private readonly CloudFrontClient $cloudFront, private readonly Sleeper $sleeper)
-    {
+    /** How long the site may answer 403 or 5xx through CloudFront after the switch before Arco reverts it. */
+    private const CHECK_SECONDS = 60;
+    private const CHECK_POLL = 5;
+
+    public function __construct(
+        private readonly WebFunctions $web,
+        private readonly CloudFrontClient $cloudFront,
+        private readonly Sleeper $sleeper,
+        private readonly ClientInterface $http,
+    ) {
     }
 
     /**
@@ -34,12 +44,35 @@ final class CloudFrontAccess
      * lets it invoke, and only then the endpoint requires signatures. An endpoint that is already
      * IamAuth (a new environment, or a redeploy) only gets the policy checked.
      *
+     * After the switch, the health path is requested through CloudFront (its default domain, which
+     * answers whatever the DNS says). If it keeps failing, the endpoint goes back to ApplicationManaged,
+     * so the site keeps serving, and the deploy fails saying so.
+     *
      * @param callable(string, array<string, string|int>): void $step
      */
-    public function protect(AppConfig $config, string $distributionId, callable $step): void
+    public function protect(AppConfig $config, string $distributionId, string $distributionDomain, string $healthPath, callable $step): void
+    {
+        $public = false;
+        try {
+            $this->lock($config, $distributionId, $distributionDomain, $healthPath, $step, $public);
+        } catch (\Throwable $e) {
+            if ($public) {
+                // The deploy fails with its own error; this line says the vulnerability 0.11.4 closes is still open.
+                $step('deploy.endpoint_still_public', ['function' => $config->functionName()]);
+            }
+            throw $e;
+        }
+    }
+
+    /**
+     * @param callable(string, array<string, string|int>): void $step
+     * @param bool $public set while the endpoint is (still) ApplicationManaged and the switch has not happened
+     */
+    private function lock(AppConfig $config, string $distributionId, string $distributionDomain, string $healthPath, callable $step, bool &$public): void
     {
         $function = $config->functionName();
         $endpoint = $this->web->endpoint($function) ?? throw DeployException::make('deploy.endpoint_missing', ['function' => $function]);
+        $public = ($endpoint['authType'] ?? null) !== 'IamAuth';
         $functionArn = WebFunctions::text($endpoint['functionArn'] ?? null);
         $endpointArn = WebFunctions::text($endpoint['endpointArn'] ?? null);
         // A grant naming the wrong account or distribution would lock CloudFront out once the endpoint is IamAuth.
@@ -63,7 +96,44 @@ final class CloudFrontAccess
         $step('deploy.endpoint_protected', ['function' => $function]);
         $this->web->waitEndpoint($function);
         $this->web->setAuth($function, 'IamAuth');
+        $public = false;
         $this->web->waitEndpoint($function);
+        $this->checkThroughCloudFront($function, $distributionDomain, $healthPath, $step);
+    }
+
+    /**
+     * Requests the health path through CloudFront, unsigned, as a viewer does. A 403 (Lambda refusing
+     * CloudFront's signature) or a 5xx is retried for about a minute: CloudFront and the policy can take
+     * a moment. Anything else means CloudFront reaches the app. On a persistent failure the endpoint
+     * goes back to ApplicationManaged; the statement and the access control stay (harmless on it).
+     *
+     * @param callable(string, array<string, string|int>): void $step
+     */
+    private function checkThroughCloudFront(string $function, string $distributionDomain, string $healthPath, callable $step): void
+    {
+        $url = "https://$distributionDomain$healthPath";
+        $step('deploy.protection_check', ['url' => $url]);
+        $deadline = $this->sleeper->now() + self::CHECK_SECONDS;
+        while (true) {
+            try {
+                $status = $this->http->request('GET', $url, ['http_errors' => false, 'allow_redirects' => false, 'timeout' => 30, 'version' => '1.1'])->getStatusCode();
+                $answer = (string) $status;
+            } catch (GuzzleException $e) {
+                $status = null;
+                $answer = $e->getMessage();
+            }
+            if ($status !== null && $status !== 403 && $status < 500) {
+                return;
+            }
+            if ($this->sleeper->now() >= $deadline) {
+                break;
+            }
+            $this->sleeper->sleep(self::CHECK_POLL);
+        }
+        $this->web->waitEndpoint($function);
+        $this->web->setAuth($function, 'ApplicationManaged');
+        $this->web->waitEndpoint($function);
+        throw DeployException::make('deploy.protection_reverted', ['function' => $function, 'url' => $url, 'answer' => $answer]);
     }
 
     /**

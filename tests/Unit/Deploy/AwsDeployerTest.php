@@ -618,10 +618,11 @@ final class AwsDeployerTest extends TestCase
         );
         $steps = [];
         $step = function (string $key) use (&$steps): void { $steps[] = $key; };
-        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $site = new \GuzzleHttp\Handler\MockHandler([new \GuzzleHttp\Psr7\Response(200)]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), http: new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($site)]));
 
         $result = $deployer->release($config, new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), $step);
-        $deployer->attachDomains($config, $result, [], $step);
+        $deployer->attachDomains($config, $result, [], $step, '/health');
 
         self::assertSame([
             'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
@@ -637,7 +638,8 @@ final class AwsDeployerTest extends TestCase
         self::assertSame('arn:aws:cloudfront::111111111111:distribution/E123', $policy['Statement'][0]['Condition']['StringEquals']['aws:SourceArn']);
         self::assertSame('IamAuth', $mocks->params[13]['authType']);
         self::assertSame(['deploy.step_traffic', 'domains.step_certificate', 'domains.certificate_using', 'domains.step_distribution',
-            'deploy.oac_policy', 'deploy.endpoint_protected', 'domains.step_dns', 'domains.manual_records', 'domains.manual_record'], $steps);
+            'deploy.oac_policy', 'deploy.endpoint_protected', 'deploy.protection_check', 'domains.step_dns', 'domains.manual_records', 'domains.manual_record'], $steps);
+        self::assertSame('https://d111.cloudfront.net/health', (string) $site->getLastRequest()?->getUri(), 'the preset\'s health path through the distribution, before DNS');
     }
 
     /** Runs $test with AWS_ENDPOINT_URL pointing at an emulator, as Floci deploys do. */
@@ -724,6 +726,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(
             self::webEndpoint('IamAuth', 'rev-1'),
+            self::domainStack('UPDATE_COMPLETE'),                                           // the stack is left
             new Result(['policy' => json_encode(['Version' => '2012-10-17', 'Statement' => [$ours, $foreign]]), 'revisionId' => '0a1b2c3d-1111-2222-3333-444455556666']),
             new Result([]),                                                                  // PutResourcePolicy
             new Result([]),                                                                  // UpdateWebFunctionEndpoint
@@ -733,10 +736,28 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->config(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['GetWebFunctionEndpoint', 'GetResourcePolicy', 'PutResourcePolicy', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
-        self::assertSame([$foreign], json_decode((string) $mocks->params[2]['policy'], true)['Statement'], 'only Arco\'s statement goes');
-        self::assertSame('ApplicationManaged', $mocks->params[3]['authType']);
+        self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'GetResourcePolicy', 'PutResourcePolicy', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+        self::assertSame([$foreign], json_decode((string) $mocks->params[3]['policy'], true)['Statement'], 'only Arco\'s statement goes');
+        self::assertSame('ApplicationManaged', $mocks->params[4]['authType']);
         self::assertSame(['deploy.step_traffic', 'deploy.endpoint_unprotected'], $steps);
+    }
+
+    /**
+     * auth('iam') → auth('public') of an environment that never had domain(): as in 0.11.3, no policy call (the
+     * minimal permissions have none) and no domain() step. The one DescribeStacks finds no stack, hence no
+     * distribution that could hold a grant.
+     */
+    public function test_iam_to_public_without_a_domain_makes_no_policy_call_and_no_domain_step(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::webEndpoint('IamAuth', 'rev-1'), self::noDomainStack(), new Result([]), self::webEndpoint('ApplicationManaged', 'rev-2'));
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->config(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+        self::assertSame('ApplicationManaged', $mocks->params[2]['authType']);
+        self::assertSame(['deploy.step_traffic'], $steps);
     }
 
     private function iamConfig(): AppConfig

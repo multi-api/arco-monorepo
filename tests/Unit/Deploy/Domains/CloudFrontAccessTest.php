@@ -4,6 +4,10 @@ namespace Multiapi\Arco\Tests\Unit\Deploy\Domains;
 
 use Aws\LambdaWeb\Exception\LambdaWebException;
 use Aws\Result;
+use GuzzleHttp\Client;
+use GuzzleHttp\Handler\MockHandler as HttpMock;
+use GuzzleHttp\HandlerStack;
+use GuzzleHttp\Psr7\Response;
 use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
@@ -29,6 +33,7 @@ final class CloudFrontAccessTest extends TestCase
     protected function setUp(): void
     {
         $this->aws = new AwsMocks();
+        $this->http = new HttpMock([]);
     }
 
     protected function assertPostConditions(): void
@@ -38,11 +43,15 @@ final class CloudFrontAccessTest extends TestCase
 
     private Sleeper $sleeper;
 
+    /** The site through CloudFront, after the switch. */
+    private HttpMock $http;
+
     private function access(): CloudFrontAccess
     {
         $clients = $this->aws->clients();
         $this->sleeper = AwsMocks::noSleep();
-        return new CloudFrontAccess(new WebFunctions($clients->lambdaWeb(), AwsMocks::noSleep()), $clients->cloudFront(), $this->sleeper);
+        return new CloudFrontAccess(new WebFunctions($clients->lambdaWeb(), AwsMocks::noSleep()), $clients->cloudFront(), $this->sleeper,
+            new Client(['handler' => HandlerStack::create($this->http)]));
     }
 
     private static function config(): AppConfig
@@ -52,7 +61,7 @@ final class CloudFrontAccessTest extends TestCase
 
     private function protect(): void
     {
-        $this->access()->protect(self::config(), 'E123', function (string $key, array $params): void { $this->steps[] = [$key, $params]; });
+        $this->access()->protect(self::config(), 'E123', 'd111.cloudfront.net', '/up', function (string $key, array $params): void { $this->steps[] = [$key, $params]; });
     }
 
     private static function endpoint(string $authType, string $updateStatus = 'Successful'): Result
@@ -100,6 +109,7 @@ final class CloudFrontAccessTest extends TestCase
             new Result([]),                                                        // UpdateWebFunctionEndpoint
             self::endpoint('IamAuth'),
         );
+        $this->http->append(new Response(200));
 
         $this->protect();
 
@@ -120,8 +130,98 @@ final class CloudFrontAccessTest extends TestCase
         self::assertSame(['functionName' => 'shop-production', 'endpointName' => 'default', 'authType' => 'IamAuth'],
             array_intersect_key($this->aws->params[6], ['functionName' => 1, 'endpointName' => 1, 'authType' => 1]));
         self::assertArrayNotHasKey('revisionWeights', $this->aws->params[6], 'only the auth type changes');
-        self::assertSame(['deploy.oac_policy', 'deploy.endpoint_protected'], array_column($this->steps, 0));
+        self::assertSame(['deploy.oac_policy', 'deploy.endpoint_protected', 'deploy.protection_check'], array_column($this->steps, 0));
         self::assertSame(['function' => 'shop-production', 'distribution' => 'E123'], $this->steps[0][1]);
+        self::assertSame(['url' => 'https://d111.cloudfront.net/up'], $this->steps[2][1]);
+        $request = $this->http->getLastRequest();
+        self::assertSame('https://d111.cloudfront.net/up', (string) $request?->getUri(), 'the site through CloudFront');
+        self::assertFalse((bool) $request?->hasHeader('Authorization'), 'unsigned, as a viewer');
+    }
+
+    /** The responses of an ApplicationManaged endpoint locked after the policy is written. */
+    private function switching(): void
+    {
+        $this->aws->handler->append(
+            self::endpoint('ApplicationManaged'), self::noPolicy(), new Result([]),
+            new Result(['Distribution' => ['Id' => 'E123', 'Status' => 'Deployed']]),
+            self::endpoint('ApplicationManaged'), new Result([]), self::endpoint('IamAuth'),
+        );
+    }
+
+    public function test_a_few_403s_through_cloudfront_after_the_switch_are_waited_out(): void
+    {
+        $this->switching();
+        $this->http->append(new Response(403), new Response(403), new Response(502), new Response(200));
+
+        $this->protect();
+
+        self::assertCount(0, $this->http, 'every answer was read');
+        self::assertNotContains('ApplicationManaged', array_column(array_slice($this->aws->params, 6), 'authType'), 'not reverted');
+        self::assertSame(15.0, $this->sleeper->now() - 1_000_000.0 - 10, 'three pauses of 5 s after the 10 s policy settle');
+    }
+
+    public function test_an_app_answer_other_than_403_or_5xx_counts_as_reached(): void
+    {
+        $this->switching();
+        $this->http->append(new Response(404));
+
+        $this->protect();
+
+        self::assertSame(['GetWebFunctionEndpoint', 'GetResourcePolicy', 'PutResourcePolicy', 'GetDistribution', 'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $this->aws->calls);
+    }
+
+    public function test_a_site_cloudfront_cannot_reach_after_the_switch_is_reverted_to_public_and_fails_the_deploy(): void
+    {
+        $this->switching();
+        $this->aws->handler->append(self::endpoint('IamAuth'), new Result([]), self::endpoint('ApplicationManaged'));
+        $this->http->append(...array_fill(0, 13, new Response(403)));
+
+        try {
+            $this->protect();
+            self::fail('a site CloudFront cannot reach must fail the deploy');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.protection_reverted', $e->key);
+            self::assertSame(['function' => 'shop-production', 'url' => 'https://d111.cloudfront.net/up', 'answer' => '403'], $e->params);
+        }
+
+        self::assertSame(['GetWebFunctionEndpoint', 'GetResourcePolicy', 'PutResourcePolicy', 'GetDistribution',
+            'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
+            'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $this->aws->calls, 'no policy or access control change: harmless on a public endpoint');
+        self::assertSame(['IamAuth', 'ApplicationManaged'], [$this->aws->params[5]['authType'], $this->aws->params[8]['authType']]);
+        self::assertArrayNotHasKey('revisionWeights', $this->aws->params[8]);
+        self::assertSame(60.0, $this->sleeper->now() - 1_000_000.0 - 10, 'about a minute of retries');
+        self::assertCount(0, $this->http, 'thirteen attempts, 5 s apart');
+        self::assertNotContains('deploy.endpoint_still_public', array_column($this->steps, 0), 'the error itself says so');
+    }
+
+    public function test_a_failure_before_the_switch_says_the_endpoint_is_still_public(): void
+    {
+        $this->aws->handler->append(
+            self::endpoint('ApplicationManaged'),
+            AwsMocks::error(LambdaWebException::class, 'GetResourcePolicy', 'AccessDeniedException', 403),
+        );
+
+        try {
+            $this->protect();
+            self::fail('the access error must stop the deploy');
+        } catch (LambdaWebException $e) {
+            self::assertSame('AccessDeniedException', $e->getAwsErrorCode(), 'the original error, with its key');
+        }
+
+        self::assertSame(['deploy.oac_policy', 'deploy.endpoint_still_public'], array_column($this->steps, 0));
+        self::assertSame(['function' => 'shop-production'], $this->steps[1][1]);
+    }
+
+    public function test_a_failure_on_an_iam_endpoint_adds_no_still_public_line(): void
+    {
+        $this->aws->handler->append(self::endpoint('IamAuth'), AwsMocks::error(LambdaWebException::class, 'GetResourcePolicy', 'AccessDeniedException', 403));
+
+        $this->expectException(LambdaWebException::class);
+        try {
+            $this->protect();
+        } finally {
+            self::assertSame(['deploy.oac_policy'], array_column($this->steps, 0));
+        }
     }
 
     public function test_an_iam_endpoint_whose_policy_is_in_place_is_left_alone(): void
@@ -277,7 +377,7 @@ final class CloudFrontAccessTest extends TestCase
         $this->aws->handler->append(new Result(['functionArn' => $functionArn, 'endpointArn' => $endpointArn, 'authType' => 'ApplicationManaged', 'state' => 'Active']));
 
         try {
-            $this->access()->protect(self::config(), $distributionId, fn () => null);
+            $this->access()->protect(self::config(), $distributionId, 'd111.cloudfront.net', '/up', fn () => null);
             self::fail('a malformed ARN must stop the deploy');
         } catch (DeployException $e) {
             self::assertSame('deploy.access_arn_invalid', $e->key);

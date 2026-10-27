@@ -76,7 +76,9 @@ final class RevisionFactory
      */
     public static function protectsEndpoint(AppConfig $config): bool
     {
-        return $config->domains !== [] && Endpoint::override() === null;
+        // Skipped only when the emulator serves every service involved: a per-service override pointing elsewhere
+        // (real AWS, say) keeps the protection. A profile's endpoint_url is not read (see local-floci.md).
+        return $config->domains !== [] && ! Endpoint::servesAll(['lambda', 'lambda_web', 'cloudfront', 'cloudformation']);
     }
 
     /** @return array<string, array<string, int>> */

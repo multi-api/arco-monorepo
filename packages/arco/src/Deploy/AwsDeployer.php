@@ -3,6 +3,8 @@
 namespace Multiapi\Arco\Deploy;
 
 use Closure;
+use GuzzleHttp\Client;
+use GuzzleHttp\ClientInterface;
 use Multiapi\Arco\Arco;
 use Multiapi\Arco\Aws\AwsClients;
 use Aws\Exception\AwsException;
@@ -43,6 +45,8 @@ final class AwsDeployer implements Deployer
         private readonly bool $forceDns = false,
         private readonly bool $force = false,
         private readonly ?DnsProvider $dnsProvider = null,
+        /** HTTP client for the check through CloudFront after the endpoint is locked; null for a default one */
+        private readonly ?ClientInterface $http = null,
     ) {
     }
 
@@ -260,17 +264,18 @@ final class AwsDeployer implements Deployer
 
         $step('deploy.step_traffic', ['revision' => $prepared->revisionId]);
         $current = $web->waitEndpoint($function);
-        if (! RevisionFactory::protectsEndpoint($config) && ($current['authType'] ?? null) === 'IamAuth') {
-            // domain() left arco.php: Arco's CloudFront statement goes before the endpoint takes the configured
-            // auth again. The distribution outlives the deploy (only remove deletes its stack), so with auth('iam')
-            // it would otherwise keep serving the app. An endpoint that is public now never had the statement in
-            // force; an iam one only had it while the domains stack existed, which is the cheap check.
-            // deploy.endpoint_unprotected is printed whether or not a statement was left: the endpoint goes
-            // public either way. deploy.oac_revoked only says something when a statement went.
+        if (! RevisionFactory::protectsEndpoint($config) && ($current['authType'] ?? null) === 'IamAuth' && $this->domainStackLeft($config, $step)) {
+            // domain() left arco.php (or an emulator now serves it): Arco's CloudFront statement goes before the
+            // endpoint takes the configured auth again. The distribution outlives the deploy (only remove deletes
+            // its stack), so with auth('iam') it would otherwise keep serving the app. Without a stack there is no
+            // distribution to invoke the endpoint and nothing to revoke: an auth('iam') → auth('public') change of
+            // an environment that never had domain() makes no policy call, as in 0.11.3.
+            $functionArn = WebFunctions::text($current['functionArn'] ?? null);
             if (RevisionFactory::authType($config) === 'ApplicationManaged') {
                 $step('deploy.endpoint_unprotected', ['function' => $function]);
-                $this->cloudFrontAccess($web)->revoke(WebFunctions::text($current['functionArn'] ?? null));
-            } elseif ($this->domainStackLeft($config, $step) && $this->cloudFrontAccess($web)->revoke(WebFunctions::text($current['functionArn'] ?? null))) {
+                $this->cloudFrontAccess($web)->revoke($functionArn);
+            } elseif ($this->cloudFrontAccess($web)->revoke($functionArn)) {
+                // Printed only when a statement went.
                 $step('deploy.oac_revoked', ['function' => $function]);
             }
         }
@@ -409,7 +414,7 @@ final class AwsDeployer implements Deployer
         return is_string($message) && $message !== '' ? $message : $e->getMessage();
     }
 
-    public function attachDomains(AppConfig $config, DeployResult $result, array $cachedPaths, ?callable $onStep = null): DeployResult
+    public function attachDomains(AppConfig $config, DeployResult $result, array $cachedPaths, ?callable $onStep = null, string $healthPath = '/up'): DeployResult
     {
         if ($config->domains === []) {
             return $result;
@@ -422,7 +427,7 @@ final class AwsDeployer implements Deployer
         }
         $access = $this->cloudFrontAccess(new WebFunctions($this->aws->lambdaWeb(), $this->sleeper));
         $domains = $this->customDomains($config)->deploy($config, $result->domainName, $cachedPaths, self::tags($config), $step,
-            fn (string $distributionId) => $access->protect($config, $distributionId, $step));
+            fn (string $distributionId, string $distributionDomain) => $access->protect($config, $distributionId, $distributionDomain, $healthPath, $step));
         return $result->withDomains($domains);
     }
 
@@ -441,7 +446,7 @@ final class AwsDeployer implements Deployer
 
     private function cloudFrontAccess(WebFunctions $web): CloudFrontAccess
     {
-        return new CloudFrontAccess($web, $this->aws->cloudFront(), $this->sleeper);
+        return new CloudFrontAccess($web, $this->aws->cloudFront(), $this->sleeper, $this->http ?? new Client());
     }
 
     public function hasDomainResources(AppConfig $config): bool
@@ -1209,21 +1214,18 @@ final class AwsDeployer implements Deployer
     }
 
     /**
-     * Domains removed from arco.php may have left their stack behind. Profiles that never used
-     * domains may lack CloudFormation permissions, which then means "no stack".
-     */
-    /**
-     * Whether the domains stack is still there for an auth('iam') environment without domain(). A refused
-     * read is a warning, not a silent "no": if the stack is left, its distribution may still invoke the endpoint.
+     * Whether the domains stack is still there for an environment without domain() whose endpoint is IamAuth.
+     * A refused read is a warning, not a silent "no": if the stack is left, its distribution may still invoke
+     * the endpoint.
      *
      * @param callable(string, array<string, string|int>): void $step
      */
     private function domainStackLeft(AppConfig $config, callable $step): bool
     {
         try {
-            return (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe(DomainStack::stackName($config)) !== null;
+            return $this->domainStack($config) !== null;
         } catch (AwsException $e) {
-            if (! in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
+            if (! self::isAccessDenied($e)) {
                 throw $e;
             }
             $step('deploy.domain_stack_unreadable', ['stack' => DomainStack::stackName($config), 'function' => $config->functionName(), 'error' => self::awsError($e)]);
@@ -1231,9 +1233,24 @@ final class AwsDeployer implements Deployer
         }
     }
 
+    /**
+     * Domains removed from arco.php may have left their stack behind. Profiles that never used
+     * domains may lack CloudFormation permissions, which then means "no stack".
+     */
     private function stackExists(AppConfig $config): bool
     {
-        return $this->tolerateAccessDenied(fn () => (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe(DomainStack::stackName($config)) !== null);
+        return $this->tolerateAccessDenied(fn () => $this->domainStack($config) !== null);
+    }
+
+    /** @return array{status: string, outputs: array<string, string>, tags: array<string, string>}|null */
+    private function domainStack(AppConfig $config): ?array
+    {
+        return (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe(DomainStack::stackName($config));
+    }
+
+    private static function isAccessDenied(AwsException $e): bool
+    {
+        return in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true);
     }
 
     /** @param callable(): bool $check */
@@ -1242,7 +1259,7 @@ final class AwsDeployer implements Deployer
         try {
             return $check();
         } catch (AwsException $e) {
-            if (in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
+            if (self::isAccessDenied($e)) {
                 return false;
             }
             throw $e;

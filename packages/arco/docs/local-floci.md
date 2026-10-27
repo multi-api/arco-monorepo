@@ -50,6 +50,10 @@ recognised endpoint is set, `arco deploy` prints a note naming it (before it loa
 - deploys a `domain()` environment without the CloudFront protection of 0.11.4: no origin access control in the
   domain stack, no resource-policy statement, and the endpoint keeps the auth `auth()` configures (public by default),
   checked with the plain `/up` probe. The deploy says so in one line. On AWS only CloudFront may invoke that endpoint.
+  A service-specific variable (`AWS_ENDPOINT_URL_LAMBDA`, `AWS_ENDPOINT_URL_LAMBDA_WEB`, `AWS_ENDPOINT_URL_CLOUDFRONT`
+  or `AWS_ENDPOINT_URL_CLOUDFORMATION`) that points elsewhere keeps the protection. Arco does not read `endpoint_url`
+  in a profile: a profile that sends those services to real AWS while `AWS_ENDPOINT_URL` points at an emulator
+  deploys without the protection, so keep such profiles out of real deploys.
 
 Nothing changes on real AWS when the variable is unset.
 
