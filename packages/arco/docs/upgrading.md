@@ -6,8 +6,8 @@ Upgrade one minor version at a time when you can, read its section below and the
 `multiapi/arco-laravel` release of the same minor, and from 1.0 any 1.x of one works with any 1.x of the other.
 
 ```bash
-composer require --dev multiapi/arco:^0.11.4
-composer require multiapi/arco-laravel:^0.11
+composer require --dev multiapi/arco:^0.12
+composer require multiapi/arco-laravel:^0.12
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
