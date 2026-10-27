@@ -508,7 +508,7 @@ final class InfoCommandTest extends TestCase
         self::assertSame('schema', array_key_first($json), 'first key, as in info --resources');
         unset($json['schema']);
         self::assertSame(
-            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables', 'permissions_boundary', 'endpoint_auth'],
+            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables', 'permissions_boundary', 'endpoint_auth', 'vpc'],
             array_keys($json),
         );
         $project->restore();
@@ -628,8 +628,39 @@ final class InfoCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--json' => true, '--permissions-boundary' => 'arn:aws:iam::123456789012:policy/flag'], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
         self::assertSame('arn:aws:iam::123456789012:policy/flag', $json['permissions_boundary']);
-        self::assertSame(['permissions_boundary', 'endpoint_auth'], array_slice(array_keys($json), -2), 'appended after tables, then endpoint_auth (0.11.4)');
+        self::assertSame(['permissions_boundary', 'endpoint_auth', 'vpc'], array_slice(array_keys($json), -3), 'appended after tables, then endpoint_auth (0.11.4), vpc (0.12)');
         self::assertArrayNotHasKey('permissionsBoundary', $json['settings'], 'the top-level key carries it; settings keep their keys');
+        $project->restore();
+    }
+
+    public function test_shows_the_vpc_in_text_and_json(): void
+    {
+        $config = str_replace("->concurrency(48)", "->concurrency(48)->vpc(subnets: ['subnet-a1', 'subnet-b2'], securityGroups: ['sg-c3'])", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'staging'], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        self::assertMatchesRegularExpression('/VPC\s+subnets subnet-a1, subnet-b2; security groups sg-c3\s+app *\n/', $tester->getDisplay());
+
+        $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(['subnets' => ['subnet-a1', 'subnet-b2'], 'security_groups' => ['sg-c3']], $json['vpc']);
+        self::assertArrayNotHasKey('vpc', $json['settings']);
+        $project->restore();
+    }
+
+    public function test_without_vpc_the_json_key_is_null_and_the_row_is_a_dash(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/VPC\s+-\s+default *\n/', $tester->getDisplay());
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertArrayHasKey('vpc', $json);
+        self::assertNull($json['vpc']);
         $project->restore();
     }
 
@@ -659,7 +690,7 @@ final class InfoCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--profile' => 'p', '--json' => true], ['interactive' => false]);
 
         $keys = array_keys(json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR));
-        self::assertSame(['tables', 'permissions_boundary', 'endpoint_auth', 'error'], array_slice($keys, -4));
+        self::assertSame(['tables', 'permissions_boundary', 'endpoint_auth', 'vpc', 'error'], array_slice($keys, -5));
         $project->restore();
     }
 

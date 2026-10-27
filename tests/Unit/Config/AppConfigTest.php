@@ -7,6 +7,7 @@ use Multiapi\Arco\Config\QueueConfig;
 use Multiapi\Arco\Config\RuntimeConfig;
 use Multiapi\Arco\Config\StorageConfig;
 use Multiapi\Arco\Config\TableConfig;
+use Multiapi\Arco\Config\VpcConfig;
 use PHPUnit\Framework\TestCase;
 
 final class AppConfigTest extends TestCase
@@ -20,6 +21,7 @@ final class AppConfigTest extends TestCase
             : [$type instanceof \ReflectionNamedType ? $type->getName() : 'mixed'];
         return match (true) {
             in_array(RuntimeConfig::class, $names, true) => (new \ReflectionClass(RuntimeConfig::class))->newInstanceWithoutConstructor(),
+            in_array(VpcConfig::class, $names, true) => new VpcConfig(['subnet-a1'], ['sg-b2']),
             in_array(TableConfig::class, $names, true) => new TableConfig('cache', existing: 'sample-' . $parameter->getName()),
             in_array('array', $names, true) => match ($parameter->getName()) {
                 'queues' => [new QueueConfig('emails')],

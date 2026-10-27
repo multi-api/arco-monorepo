@@ -7,6 +7,7 @@ use Multiapi\Arco\Config\ConfigException;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Config\Runtime;
+use Multiapi\Arco\Config\VpcConfig;
 use PHPUnit\Framework\TestCase;
 
 final class ConfigResolverTest extends TestCase
@@ -492,5 +493,27 @@ final class ConfigResolverTest extends TestCase
         $staging = ConfigResolver::resolve($raw, 'staging');
         self::assertFalse($staging->dnsCloudflare);
         self::assertSame('acme-dns', $staging->dnsProfile);
+    }
+
+    public function test_vpc_resolves_from_the_app_and_an_environment_replaces_or_clears_it(): void
+    {
+        $raw = App::make('shop')
+            ->region('us-east-1')
+            ->vpc(subnets: ['subnet-a1'], securityGroups: ['sg-b2'])
+            ->environment('staging')
+            ->environment('production', fn (Environment $e) => $e->vpc(subnets: ['subnet-c3', 'subnet-d4'], securityGroups: ['sg-e5']))
+            ->environment('local', fn (Environment $e) => $e->vpc(false))
+            ->toArray();
+
+        $staging = ConfigResolver::resolve($raw, 'staging')->vpc;
+        self::assertInstanceOf(VpcConfig::class, $staging);
+        self::assertSame([['subnet-a1'], ['sg-b2']], [$staging->subnets, $staging->securityGroups]);
+        self::assertSame('app', ConfigResolver::resolve($raw, 'staging')->sources['vpc']);
+
+        $production = ConfigResolver::resolve($raw, 'production')->vpc;
+        self::assertSame([['subnet-c3', 'subnet-d4'], ['sg-e5']], [$production?->subnets, $production?->securityGroups]);
+
+        self::assertNull(ConfigResolver::resolve($raw, 'local')->vpc);
+        self::assertNull(ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production')->vpc);
     }
 }
