@@ -414,48 +414,44 @@ final class AwsDeployer implements Deployer
     }
 
     /**
-     * After a verified deploy out of the VPC: deletes the console and worker versions still in it (none is live,
-     * $LATEST already left) and waits until Lambda has deleted their network interfaces. Those versions are no
-     * rollback target any more: the connector goes in the same prune. A failure or a timeout is a warning.
+     * After a verified deploy out of the VPC: deletes the console and worker versions still in it (never the one a
+     * live alias points to, nor $LATEST, which already left) and waits until Lambda has deleted their network
+     * interfaces, also those of a console or worker this deploy deleted. Those versions are no rollback target any
+     * more: the connector goes in the same prune. A failure or a timeout is a warning.
      *
      * @param list<string> $queues queue names
      * @param callable(string, array<string, string|int>): void $step
      */
     private function retireVpcVersions(AppConfig $config, array $queues, callable $step): void
     {
-        $functions = [];
         try {
             $function = new LambdaFunction($this->aws->lambda(), $this->sleeper);
             foreach ($this->vpcVersions($config, $queues) as $name => $versions) {
+                $live = $function->liveVersion($name);
                 foreach ($versions as $version) {
-                    if ($version !== '$LATEST') {
+                    if ($version !== '$LATEST' && $version !== $live) {
                         $function->deleteVersion($name, $version);
                     }
                 }
-                $functions[] = $name;
             }
-            $this->waitInterfaces($config, $functions, 'deploy.', $step);
+            $this->waitInterfaces($config, 'deploy.', $step);
         } catch (AwsException $e) {
-            $step('deploy.vpc_interfaces_failed', ['functions' => implode(', ', $functions === [] ? [$config->consoleFunctionName()] : $functions), 'region' => (string) $config->region, 'error' => self::awsError($e)]);
+            $step('deploy.vpc_interfaces_failed', ['functions' => VpcInterfaces::functions($config), 'region' => (string) $config->region, 'error' => self::awsError($e)]);
         }
     }
 
     /**
-     * Waits until Lambda has deleted the network interfaces of $functions. Whether they are gone; one still there
-     * at the deadline is a warning ({$prefix}vpc_interfaces_pending) with the command that deletes it.
+     * Waits until Lambda has deleted the network interfaces of the environment's console and workers. Whether they
+     * are gone; one still there at the deadline is a warning ({$prefix}vpc_interfaces_pending).
      *
-     * @param list<string> $functions
      * @param 'deploy.'|'remove.' $prefix
      * @param callable(string, array<string, string|int>): void $step
      * @throws AwsException a refused or failed lookup
      */
-    private function waitInterfaces(AppConfig $config, array $functions, string $prefix, callable $step): bool
+    private function waitInterfaces(AppConfig $config, string $prefix, callable $step): bool
     {
-        if ($functions === []) {
-            return true;
-        }
-        $step($prefix . 'step_vpc_interfaces', ['functions' => implode(', ', $functions)]);
-        $left = (new VpcInterfaces($this->aws->ec2(), $this->sleeper))->waitGone($functions);
+        $step($prefix . 'step_vpc_interfaces', ['functions' => VpcInterfaces::functions($config)]);
+        $left = (new VpcInterfaces($this->aws->ec2(), $this->aws->lambda(), $this->sleeper))->waitGone($config);
         if ($left === []) {
             return true;
         }
@@ -639,17 +635,8 @@ final class AwsDeployer implements Deployer
         // Before anything is deleted: a resource another app or environment owns stops the whole remove.
         $webExists = $this->checkRemoval($config, $queues);
         $connector = $this->connectorToRemove($config, $webExists, $step);
-        // Read before the functions go: their network interfaces must be gone before the execution role is.
-        $vpcFunctions = [];
-        if ($config->role === null && RevisionFactory::servesNetworkConnectors() && ($connector || RevisionFactory::usesVpc($config))) {
-            try {
-                $vpcFunctions = array_keys($this->vpcVersions($config, $queues));
-            } catch (AwsException $e) {
-                $step('remove.vpc_interfaces_failed', ['functions' => $config->consoleFunctionName(), 'role' => ExecutionRole::roleName($config), 'region' => (string) $config->region, 'error' => self::awsError($e)]);
-                // Unknown: kept, like interfaces still there.
-                $vpcFunctions = null;
-            }
-        }
+        // Their network interfaces must be gone before the execution role is: Lambda deletes them with it.
+        $waitInterfaces = $config->role === null && RevisionFactory::servesNetworkConnectors() && ($connector || RevisionFactory::usesVpc($config));
         if ($config->domains !== [] || $this->stackExists($config)) {
             $this->customDomains($config)->remove($config, $step);
         }
@@ -668,25 +655,24 @@ final class AwsDeployer implements Deployer
         if ($connector) {
             $this->removeConnector($config, 'remove.', $step);
         }
-        if ($config->role === null && $vpcFunctions !== null && $this->interfacesGoneForRemove($config, $vpcFunctions, $step)) {
+        if ($config->role === null && (! $waitInterfaces || $this->interfacesGoneForRemove($config, $step))) {
             (new ExecutionRole($this->aws->iam()))->delete(ExecutionRole::roleName($config));
         }
         $this->removeGroup($config, $step);
     }
 
     /**
-     * Whether the execution role may go: the network interfaces of the VPC functions remove deleted are gone.
-     * Otherwise the role is kept, with a warning that names the commands for later.
+     * Whether the execution role may go: the network interfaces of the console and workers remove deleted are
+     * gone. Otherwise the role is kept, with a warning that names the commands for later.
      *
-     * @param list<string> $functions
      * @param callable(string, array<string, string|int>): void $step
      */
-    private function interfacesGoneForRemove(AppConfig $config, array $functions, callable $step): bool
+    private function interfacesGoneForRemove(AppConfig $config, callable $step): bool
     {
         try {
-            return $this->waitInterfaces($config, $functions, 'remove.', $step);
+            return $this->waitInterfaces($config, 'remove.', $step);
         } catch (AwsException $e) {
-            $step('remove.vpc_interfaces_failed', ['functions' => implode(', ', $functions), 'role' => ExecutionRole::roleName($config), 'region' => (string) $config->region, 'error' => self::awsError($e)]);
+            $step('remove.vpc_interfaces_failed', ['functions' => VpcInterfaces::functions($config), 'role' => ExecutionRole::roleName($config), 'region' => (string) $config->region, 'error' => self::awsError($e)]);
             return false;
         }
     }

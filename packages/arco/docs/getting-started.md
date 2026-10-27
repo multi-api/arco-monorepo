@@ -871,8 +871,9 @@ With `vpc()` (0.12), the deploy profile also needs:
   actions the minimal permissions already grant on `arn:aws:iam::*:role/arco-*`, so a profile that follows
   them needs nothing more there (a scoped profile must include `arco-<app>-*-network`).
 - `ec2:DescribeSubnets`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs` (resource `*`): classic `VpcConfig` of the
-  console and the workers needs them. `ec2:DescribeNetworkInterfaces` (resource `*`): `arco remove` and the deploy
-  that leaves the VPC wait until Lambda has deleted the console's and the workers' network interfaces.
+  console and the workers needs them. `ec2:DescribeNetworkInterfaces` and `lambda:ListFunctions` (resource `*`): `arco remove` and the deploy that
+  leaves the VPC wait until Lambda has deleted the console's and the workers' network interfaces, except one that
+  another function still uses.
 
 ```json
 [
@@ -895,7 +896,7 @@ With `vpc()` (0.12), the deploy profile also needs:
   {
     "Sid": "ArcoVpcDescribe",
     "Effect": "Allow",
-    "Action": ["ec2:DescribeSubnets", "ec2:DescribeSecurityGroups", "ec2:DescribeVpcs", "ec2:DescribeNetworkInterfaces"],
+    "Action": ["ec2:DescribeSubnets", "ec2:DescribeSecurityGroups", "ec2:DescribeVpcs", "ec2:DescribeNetworkInterfaces", "lambda:ListFunctions"],
     "Resource": "*"
   }
 ]

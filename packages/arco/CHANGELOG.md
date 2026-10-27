@@ -36,7 +36,7 @@ statements first ([Upgrading to 0.12](docs/upgrading.md#upgrading-to-012)).
 - **Added:** new deploy permissions with `vpc()`: `lambda:CreateNetworkConnector`, `lambda:GetNetworkConnector`,
   `lambda:UpdateNetworkConnector`, `lambda:DeleteNetworkConnector`, `lambda:ListNetworkConnectorVersions`,
   `lambda:PassNetworkConnector` on `network-connector:*`, `iam:PassRole` on `arco-<app>-*-network`, and
-  `ec2:DescribeSubnets`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs`, `ec2:DescribeNetworkInterfaces`
+  `ec2:DescribeSubnets`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs`, `ec2:DescribeNetworkInterfaces`, `lambda:ListFunctions`
   ([Permissions for VPC](docs/getting-started.md#permissions-for-vpc)). Arco Cloud's connect template needs them
   for apps that use `vpc()`.
 

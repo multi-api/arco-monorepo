@@ -1269,8 +1269,10 @@ finishes the removal. If the delete itself fails, the deploy still succeeds, the
 `aws lambda-core` and `aws iam` commands to run by hand, and later deploys do not try again. Before the connector,
 the same cleanup deletes the console and worker versions still in the VPC (they are no rollback target any more)
 and waits until Lambda has deleted their network interfaces, usually a few minutes and up to about 20: Lambda
-deletes them with the execution role, which keeps the network interface statements until the next deploy. An
-interface still there after 30 minutes is a warning with the command that deletes it. Older revisions that pinned
+deletes them with the execution role, which keeps the network interface statements until the next deploy. Lambda
+shares one interface among the functions of the account with the same subnets and security groups, so one that
+another function (another environment or app) still uses is not waited for. An interface still there after 30
+minutes is a warning: wait until it is gone before the next deploy. Older revisions that pinned
 the connector cannot serve traffic once it is gone; this matters only if you move traffic by hand.
 
 `arco remove` deletes the Web Function, the console and the workers, then waits until the connector is gone, then

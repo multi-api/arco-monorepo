@@ -24,7 +24,7 @@ To use it:
   `lambda:CreateNetworkConnector`, `lambda:GetNetworkConnector`, `lambda:UpdateNetworkConnector`,
   `lambda:DeleteNetworkConnector`, `lambda:ListNetworkConnectorVersions`, `lambda:PassNetworkConnector` on
   `arn:aws:lambda:<region>:<account>:network-connector:*`; `iam:PassRole` on `arn:aws:iam::<account>:role/arco-<app>-*-network`
-  to `lambda.amazonaws.com`; and `ec2:DescribeSubnets`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs`, `ec2:DescribeNetworkInterfaces`. A service
+  to `lambda.amazonaws.com`; and `ec2:DescribeSubnets`, `ec2:DescribeSecurityGroups`, `ec2:DescribeVpcs`, `ec2:DescribeNetworkInterfaces`, `lambda:ListFunctions`. A service
   that deploys for you (Arco Cloud) needs them in its connect template.
 - **The subnets need a NAT** (or endpoints) for the AWS APIs the app calls; see
   [The VPC needs a NAT](configuration.md#the-vpc-needs-a-nat).
