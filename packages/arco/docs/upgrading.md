@@ -11,6 +11,33 @@ composer require multiapi/arco-laravel:^0.11
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
+## Upgrading to 0.11.4 (security)
+
+Upgrade and redeploy every environment that has `domain()`. Before 0.11.4, the Web Function endpoint of such an
+environment was public: a request sent straight to its `*.lambda-web.<region>.on.aws` URL skipped CloudFront and
+could carry any `X-Forwarded-Host` or `X-Forwarded-For` header, which `arco-laravel` trusts. Environments without
+`domain()` are not changed.
+
+- **Add the new deploy permissions first**, or the deploy stops with an access error (see
+  [Permissions for custom domains](getting-started.md#permissions-for-custom-domains)):
+  `cloudfront:CreateOriginAccessControl`, `cloudfront:GetOriginAccessControl`,
+  `cloudfront:UpdateOriginAccessControl`, `cloudfront:DeleteOriginAccessControl`, and
+  `lambda:GetResourcePolicy`, `lambda:PutResourcePolicy`, `lambda:DeleteResourcePolicy` on
+  `arn:aws:lambda:*:<account>:web-function/<app>-*`. If you scoped the Lambda writes (the account guard), add the
+  three Lambda actions to `ArcoWebFunctionOfTheApp`. A service that deploys for you (Arco Cloud) needs them in its
+  connect template too.
+- **Nothing to change in `arco.php`.** The first deploy updates the domain stack (a CloudFront origin access
+  control, which takes a few minutes), puts a statement in the Web Function's resource policy, waits for the
+  distribution, and then makes the endpoint `IamAuth`. The site stays up during the upgrade; run it under light
+  traffic the first time, because a policy change can take a few seconds to apply.
+- **The raw endpoint URL now answers 403** with `domain()`. Your custom domains are unaffected. If something calls
+  the `*.on.aws` URL directly (a health check, a webhook sender), point it at a custom domain.
+- `auth('iam')` together with `domain()` is allowed now. The post-deploy check uses the platform init report instead
+  of `/up` in these environments.
+- `arco info --json` has the new key `endpoint_auth`.
+- Known residual: `request()->ip()` can still be spoofed through CloudFront with an `X-Forwarded-For` header (see
+  [Protecting the endpoint](configuration.md#protecting-the-endpoint)).
+
 ## Upgrading to 0.11
 
 Nothing is required: 0.11 only adds an opt-in setting. Without a permissions boundary, a deploy makes the same IAM

@@ -530,7 +530,8 @@ never the message texts: those change between releases and depend on the languag
 
 `info --json` also has `dns` (where the DNS records go: `cloudflare`, `route53 (<profile>)`,
 `route53 (deploy account)` or `manual`; `null` without domains) and `tables` (the `table()` tables, a list of
-`{name, table, existing, ttl}`, `[]` without any), both added in 0.10.
+`{name, table, existing, ttl}`, `[]` without any), both added in 0.10. 0.11 added `permissions_boundary`, and 0.11.4
+adds `endpoint_auth` (`IamAuth` or `ApplicationManaged`: the endpoint's effective auth, `IamAuth` with `domain()`), last.
 
 **Resource relations.** In `info --resources --json`, each resource has `relations`: a list of
 `{"type": ..., "target": ...}` from that resource to another, `[]` when there is none or Arco cannot tell.
@@ -629,6 +630,10 @@ of its own) and `error.unexpected` (an unexpected exception; `message` is the ex
   error message) is exactly that value, so a short secret cannot mangle domains, URLs or messages that merely
   contain it. A value that is exactly the app name, the environment name or one of the custom domains is kept as
   it is (so are the result's `app`, `environment` and `domains`).
+- **CloudFront-only endpoint keys** (0.11.4, only with `domain()` or when `domain()` was just removed): the steps
+  `deploy.oac_policy` (params `{function, distribution}`), `deploy.endpoint_protected` (`{function}`, the endpoint
+  becomes `IamAuth`), `deploy.endpoint_unprotected` (`{function}`, the endpoint becomes public again) and
+  `deploy.oac_revoked`, and the errors `deploy.policy_unreadable` and `deploy.access_arn_invalid`.
 - **Permissions boundary keys** (0.11, only when a boundary is configured or the role has one; see
   [Permissions boundary](configuration.md#permissions-boundary)):
   - `deploy.step_role` gains the param `boundary` (the configured policy ARN) next to `role`. Without a boundary
@@ -789,6 +794,12 @@ With `domain()`, the deploy profile also needs:
 - `cloudformation:*Stack*` on `arn:aws:cloudformation:*:*:stack/arco-*`
 - `cloudfront:*Distribution*`, `cloudfront:*Function*`, `cloudfront:TagResource`,
   `cloudfront:UntagResource`, `cloudfront:ListTagsForResource`
+- `cloudfront:CreateOriginAccessControl`, `cloudfront:GetOriginAccessControl`,
+  `cloudfront:UpdateOriginAccessControl`, `cloudfront:DeleteOriginAccessControl` (0.11.4; CloudFormation calls them
+  with the deploy credentials, and `cloudfront:*Distribution*` does not match them)
+- `lambda:GetResourcePolicy`, `lambda:PutResourcePolicy` on `arn:aws:lambda:*:*:web-function/<app>-*` (0.11.4:
+  Arco lets only the environment's CloudFront invoke the endpoint), and `lambda:DeleteResourcePolicy` (only when you
+  remove `domain()` and Arco's statement was the only one). `lambda:*WebFunction*` does not match them
 - the Route 53 permissions below when the deploy account also hosts the DNS zones
 
 The DNS profile (`dns('profile')` or `--dns-profile`) needs `route53:ListHostedZonesByName`,
@@ -935,7 +946,8 @@ deploys several apps, list one resource per app.
     "Action": [
       "lambda:CreateWebFunction", "lambda:CreateWebFunctionRevision", "lambda:UpdateWebFunctionEndpoint",
       "lambda:DeleteWebFunction", "lambda:GetWebFunction", "lambda:GetWebFunctionEndpoint",
-      "lambda:GetWebFunctionRevision", "lambda:ListTags", "lambda:TagResource"
+      "lambda:GetWebFunctionRevision", "lambda:ListTags", "lambda:TagResource",
+      "lambda:GetResourcePolicy", "lambda:PutResourcePolicy", "lambda:DeleteResourcePolicy"
     ],
     "Resource": "arn:aws:lambda:*:<account>:web-function/<app>-*"
   },
