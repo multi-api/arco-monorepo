@@ -193,7 +193,7 @@ final class GenericTableCommandsTest extends TestCase
             ['name' => 'state', 'table' => 'shop-production-state', 'existing' => false, 'ttl' => 'expires_at'],
             ['name' => 'shared', 'table' => 'legacy-table', 'existing' => true, 'ttl' => null],
         ], $json['tables']);
-        self::assertSame(['tables', 'permissions_boundary'], array_slice(array_keys($json), -2), 'tables was added last (0.10); permissions_boundary follows it (0.11)');
+        self::assertSame(['tables', 'permissions_boundary', 'endpoint_auth'], array_slice(array_keys($json), -3), 'tables was added last (0.10); permissions_boundary follows it (0.11), then endpoint_auth (0.11.4)');
     }
 
     public function test_info_json_without_tables_has_an_empty_tables_key(): void
@@ -202,6 +202,6 @@ final class GenericTableCommandsTest extends TestCase
         $tester = $this->run_(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')), ['--env' => 'production', '--json' => true]);
         $json = json_decode($tester->getDisplay(), true);
         self::assertSame([], $json['tables']);
-        self::assertSame(['tables', 'permissions_boundary'], array_slice(array_keys($json), -2));
+        self::assertSame(['tables', 'permissions_boundary', 'endpoint_auth'], array_slice(array_keys($json), -3));
     }
 }

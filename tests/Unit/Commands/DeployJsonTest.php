@@ -196,6 +196,34 @@ final class DeployJsonTest extends TestCase
         self::assertSame('', $tester->getErrorOutput());
     }
 
+    public function test_the_endpoint_protection_steps_of_a_domain_deploy_are_step_events(): void
+    {
+        file_put_contents("$this->project/arco.php", str_replace(
+            "->variables(['APP_ENV' => 'production'])",
+            "->variables(['APP_ENV' => 'production'])->domain('arco.acmeapp.io')->dns(false)",
+            (string) file_get_contents("$this->project/arco.php"),
+        ));
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = $this->existing();
+        $deployer->domainSteps = [
+            ['deploy.oac_policy', ['function' => 'shop-production', 'distribution' => 'E123']],
+            ['deploy.endpoint_protected', ['function' => 'shop-production']],
+        ];
+        $tester = $this->tester($deployer);
+
+        $lines = $this->deploy($tester);
+
+        self::assertSame(0, $tester->getStatusCode());
+        $steps = array_values(array_filter($lines, fn (array $l) => $l['type'] === 'step' && in_array($l['key'], ['deploy.oac_policy', 'deploy.endpoint_protected'], true)));
+        self::assertSame([
+            ['deploy.oac_policy', 'started', ['function' => 'shop-production', 'distribution' => 'E123']],
+            ['deploy.oac_policy', 'done', ['function' => 'shop-production', 'distribution' => 'E123']],
+            ['deploy.endpoint_protected', 'started', ['function' => 'shop-production']],
+            ['deploy.endpoint_protected', 'done', ['function' => 'shop-production']],
+        ], array_map(fn (array $l) => [$l['key'], $l['status'], $l['params']], $steps));
+        self::assertSame(['arco.acmeapp.io'], self::last($lines)['domains']);
+    }
+
     public function test_a_refusal_before_any_step_is_a_single_refused_result_line(): void
     {
         file_put_contents("$this->project/arco.php", str_replace("->variables(['APP_ENV' => 'production'])", "->account('999999999999')", (string) file_get_contents("$this->project/arco.php")));

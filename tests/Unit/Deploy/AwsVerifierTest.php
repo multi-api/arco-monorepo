@@ -11,6 +11,7 @@ use GuzzleHttp\Psr7\Response;
 use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Deploy\AwsVerifier;
 use Multiapi\Arco\Deploy\DeployResult;
 use Multiapi\Arco\Deploy\VerificationResult;
@@ -229,6 +230,23 @@ final class AwsVerifierTest extends TestCase
 
         self::assertTrue($result->ok);
         self::assertNull($result->httpStatus);
+        self::assertSame(800, $result->initDurationMs);
+        self::assertSame([['deploy.cold_start_lookup', ['seconds' => 75]]], $this->steps);
+    }
+
+    public function test_with_a_domain_a_public_auth_environment_is_verified_by_the_init_report_without_probing(): void
+    {
+        $group = self::newInstance(new FakeLogGroup(self::T0 + 10), 'aaa', (self::T0 + 10) * 1000, 800.0, 20);
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->domain('arco.acmeapp.io'))->toArray(), 'production');
+        $http = new HttpMock([]);
+
+        $result = (new AwsVerifier($group->client(), new Client(['handler' => HandlerStack::create($http)]), $group))
+            ->verify($config, $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
+
+        self::assertSame('public', $config->auth);
+        self::assertTrue($result->ok);
+        self::assertNull($result->httpStatus, 'the endpoint is not probed: only CloudFront may invoke it');
+        self::assertNull($http->getLastRequest());
         self::assertSame(800, $result->initDurationMs);
         self::assertSame([['deploy.cold_start_lookup', ['seconds' => 75]]], $this->steps);
     }

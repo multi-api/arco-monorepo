@@ -28,6 +28,8 @@ final class FakeDeployer implements Deployer
     public ?\Throwable $activateError = null;
     /** thrown by attachDomains(), e.g. the DNS profile's credentials expiring mid-deploy */
     public ?\Throwable $domainsError = null;
+    /** @var list<array{0: string, 1: array<string, string|int>}> steps reported by attachDomains(), as AwsDeployer does */
+    public array $domainSteps = [];
     /** thrown by describe(), e.g. expired credentials */
     public ?\Throwable $describeError = null;
     /** answer of consoleExists() */
@@ -141,6 +143,9 @@ final class FakeDeployer implements Deployer
     public function attachDomains(AppConfig $config, DeployResult $result, array $cachedPaths, ?callable $onStep = null): DeployResult
     {
         $this->calls[] = 'domains:' . implode(',', $cachedPaths);
+        foreach ($this->domainSteps as [$key, $params]) {
+            $onStep !== null && $onStep($key, $params);
+        }
         if ($this->domainsError !== null) {
             throw $this->domainsError;
         }

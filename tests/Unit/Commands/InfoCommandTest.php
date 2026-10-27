@@ -508,7 +508,7 @@ final class InfoCommandTest extends TestCase
         self::assertSame('schema', array_key_first($json), 'first key, as in info --resources');
         unset($json['schema']);
         self::assertSame(
-            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables', 'permissions_boundary'],
+            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables', 'permissions_boundary', 'endpoint_auth'],
             array_keys($json),
         );
         $project->restore();
@@ -579,6 +579,27 @@ final class InfoCommandTest extends TestCase
         }
     }
 
+    public function test_with_a_domain_the_effective_endpoint_auth_is_shown(): void
+    {
+        $project = new ProjectFixture(str_replace("->timeout(60)", "->timeout(60)->domain('arco.acmeapp.io')->dns(false)", ProjectFixture::standardConfig()));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        self::assertMatchesRegularExpression('/auth\s+public \(endpoint IamAuth: only CloudFront may invoke it\)/', $tester->getDisplay());
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertSame('IamAuth', $json['endpoint_auth']);
+        self::assertSame('public', $json['settings']['auth'], 'the auth setting keeps its value');
+
+        $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
+        self::assertSame('ApplicationManaged', json_decode($tester->getDisplay(), true)['endpoint_auth']);
+        $tester->execute(['--env' => 'staging'], ['interactive' => false]);
+        self::assertStringNotContainsString('only CloudFront', $tester->getDisplay());
+        $project->restore();
+    }
+
     public function test_shows_the_permissions_boundary_with_its_source(): void
     {
         $app = 'arn:aws:iam::123456789012:policy/app-boundary';
@@ -607,7 +628,7 @@ final class InfoCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--json' => true, '--permissions-boundary' => 'arn:aws:iam::123456789012:policy/flag'], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
         self::assertSame('arn:aws:iam::123456789012:policy/flag', $json['permissions_boundary']);
-        self::assertSame('permissions_boundary', array_key_last($json), 'appended after tables');
+        self::assertSame(['permissions_boundary', 'endpoint_auth'], array_slice(array_keys($json), -2), 'appended after tables, then endpoint_auth (0.11.4)');
         self::assertArrayNotHasKey('permissionsBoundary', $json['settings'], 'the top-level key carries it; settings keep their keys');
         $project->restore();
     }
@@ -638,7 +659,7 @@ final class InfoCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--profile' => 'p', '--json' => true], ['interactive' => false]);
 
         $keys = array_keys(json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR));
-        self::assertSame(['tables', 'permissions_boundary', 'error'], array_slice($keys, -3));
+        self::assertSame(['tables', 'permissions_boundary', 'endpoint_auth', 'error'], array_slice($keys, -4));
         $project->restore();
     }
 

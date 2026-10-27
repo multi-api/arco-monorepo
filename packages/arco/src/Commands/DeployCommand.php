@@ -266,7 +266,8 @@ final class DeployCommand extends ArcoCommand
             }
 
             $success = $this->t('deploy.success', [
-                'url' => $outcome->result->url(),
+                // With domain() only CloudFront may invoke the endpoint: its URL is shown as such, the domains follow.
+                'url' => $outcome->result->url() . ($config->domains === [] ? '' : ' ' . $this->t('deploy.endpoint_cloudfront_only')),
                 'revision' => $outcome->result->revisionId,
                 'cold_start' => $outcome->verification->initDurationMs === null
                     ? $this->t('deploy.cold_start_unknown')

@@ -41,6 +41,33 @@ final class DomainStackTest extends TestCase
         self::assertNotSame($name, DomainStack::functionName($this->config(app: str_repeat('a', 40), env: str_repeat('b', 22) . 'c')));
     }
 
+    public function test_origin_access_control_signs_every_origin_request(): void
+    {
+        $template = $this->template();
+        self::assertSame([
+            'Type' => 'AWS::CloudFront::OriginAccessControl',
+            'Properties' => ['OriginAccessControlConfig' => [
+                'Name' => 'arco-shop-production-oac',
+                'Description' => 'Arco: signs requests to shop/production',
+                'OriginAccessControlOriginType' => 'lambda',
+                'SigningBehavior' => 'always-amz-auth',
+                'SigningProtocol' => 'sigv4',
+            ]],
+        ], $template['Resources']['OriginAccess']);
+        self::assertSame(['Fn::GetAtt' => ['OriginAccess', 'Id']], $template['Resources']['Distribution']['Properties']['DistributionConfig']['Origins'][0]['OriginAccessControlId']);
+        self::assertSame(['Value' => ['Ref' => 'Distribution']], $template['Outputs']['DistributionId'], 'the id the resource policy names');
+    }
+
+    public function test_origin_access_control_names_fit_64_characters_and_stay_unique(): void
+    {
+        $long = $this->config(app: str_repeat('a', 40), env: str_repeat('b', 23));
+        $name = DomainStack::originAccessName($long);
+        self::assertSame(64, strlen($name));
+        self::assertMatchesRegularExpression('/^arco-a+-b+-[0-9a-f]{8}$/', $name);
+        self::assertNotSame(DomainStack::functionName($long), $name);
+        self::assertNotSame($name, DomainStack::originAccessName($this->config(app: str_repeat('a', 40), env: str_repeat('b', 22) . 'c')));
+    }
+
     public function test_distribution(): void
     {
         $template = $this->template();

@@ -186,6 +186,28 @@ final class CustomDomainsTest extends TestCase
         self::assertNotContains('GetChange', $this->dnsAws->calls);
     }
 
+    public function test_the_distribution_callback_runs_once_the_stack_is_complete_and_before_any_dns_write(): void
+    {
+        self::queue($this->aws, self::stackMissing(), self::wildcard(), self::stackMissing(), new Result([]), self::stack('CREATE_COMPLETE'));
+        $this->dnsAws->handler->append(
+            self::zones(),
+            new Result(['ResourceRecordSets' => []]), new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => []]), new Result(['ResourceRecordSets' => []]),
+            new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'PENDING']]),
+            new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'INSYNC']]),
+        );
+        $seen = null;
+
+        $this->domains($this->config())->deploy($this->config(), self::ENDPOINT, [], self::TAGS, $this->step(), function (string $id) use (&$seen): void {
+            $seen = [$id, $this->aws->calls, $this->dnsAws->calls, $this->stepKeys()];
+        });
+
+        self::assertSame('E123', $seen[0] ?? null);
+        self::assertSame(['DescribeStacks', 'ListCertificates', 'DescribeCertificate', 'ListTagsForCertificate', 'DescribeStacks', 'CreateStack', 'DescribeStacks'], $seen[1]);
+        self::assertNotContains('ChangeResourceRecordSets', $seen[2]);
+        self::assertSame(['domains.step_certificate', 'domains.certificate_using', 'domains.step_distribution'], $seen[3]);
+    }
+
     public function test_a_live_record_stops_the_deploy_before_anything_is_created(): void
     {
         self::queue($this->aws, self::stackMissing());

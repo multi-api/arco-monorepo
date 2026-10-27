@@ -42,9 +42,10 @@ final class AwsVerifier implements Verifier
     {
         $reason = null;
         $reasonParams = [];
-        if ($config->auth === 'iam') {
-            // An unsigned probe always gets 403 from an IAM-authenticated endpoint, so the
-            // platform init report is the only signal: it must exist and say success.
+        if (RevisionFactory::authType($config) === 'IamAuth') {
+            // An unsigned probe always gets 403 from an IAM-authenticated endpoint (with domain(), only
+            // CloudFront may invoke it), so the platform init report is the only signal: it must exist
+            // and say success. With domain() this holds even while an upgraded endpoint is still public.
             [$status, $error] = [null, null];
             if ($onStep !== null) {
                 $onStep('deploy.cold_start_lookup', ['seconds' => $this->iamReportSeconds]);

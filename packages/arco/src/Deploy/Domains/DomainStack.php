@@ -10,6 +10,8 @@ final class DomainStack
     public const CACHING_DISABLED = '4135ea2d-6df8-44a3-9df3-4b5a84be39ad';
     public const CACHING_OPTIMIZED = '658327ea-f89d-4fab-a63d-7e88639e58f6';
     public const ALL_VIEWER_EXCEPT_HOST_HEADER = 'b689b0a8-53d0-40ab-baf2-68738e2966ac';
+    /** "Always sign, preserve viewer authorization"; CloudFront rejects always, never and no-override for Web Function origins. */
+    public const SIGNING_BEHAVIOR = 'always-amz-auth';
     private const ORIGIN_ID = 'arco-endpoint';
     private const FUNCTION_CODE = <<<'JS'
         function handler(event) {
@@ -31,7 +33,18 @@ final class DomainStack
     /** CloudFront function names are unique per account and at most 64 characters. */
     public static function functionName(AppConfig $config): string
     {
-        $name = 'arco-' . $config->functionName() . '-host';
+        return self::accountName($config, 'host');
+    }
+
+    /** Origin access control names follow the same rules as function names. */
+    public static function originAccessName(AppConfig $config): string
+    {
+        return self::accountName($config, 'oac');
+    }
+
+    private static function accountName(AppConfig $config, string $suffix): string
+    {
+        $name = 'arco-' . $config->functionName() . '-' . $suffix;
         return strlen($name) <= 64 ? $name : substr($name, 0, 55) . '-' . substr(md5($name), 0, 8);
     }
 
@@ -57,6 +70,8 @@ final class DomainStack
             'Origins' => [[
                 'Id' => self::ORIGIN_ID,
                 'DomainName' => $endpointDomain,
+                // Signs every origin request: with domain() the endpoint is IamAuth and only this distribution may invoke it.
+                'OriginAccessControlId' => ['Fn::GetAtt' => ['OriginAccess', 'Id']],
                 'CustomOriginConfig' => [
                     'OriginProtocolPolicy' => 'https-only',
                     'HTTPSPort' => 443,
@@ -102,6 +117,20 @@ final class DomainStack
                         'FunctionConfig' => [
                             'Comment' => 'Arco: pass the viewer host to the app as X-Forwarded-Host',
                             'Runtime' => 'cloudfront-js-2.0',
+                        ],
+                    ],
+                ],
+                'OriginAccess' => [
+                    'Type' => 'AWS::CloudFront::OriginAccessControl',
+                    'Properties' => [
+                        'OriginAccessControlConfig' => [
+                            'Name' => self::originAccessName($config),
+                            'Description' => "Arco: signs requests to {$config->app}/{$config->environment}",
+                            'OriginAccessControlOriginType' => 'lambda',
+                            // The only behaviour Web Function origins accept: signs, and keeps the viewer's Authorization.
+                            'SigningBehavior' => self::SIGNING_BEHAVIOR,
+                            // HomeRegion endpoints are regional: SigV4, not SigV4a.
+                            'SigningProtocol' => 'sigv4',
                         ],
                     ],
                 ],

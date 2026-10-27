@@ -19,6 +19,7 @@ use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Deploy\AwsDeployer;
 use Multiapi\Arco\Deploy\DeployException;
+use Multiapi\Arco\Deploy\Domains\CloudFrontAccess;
 use Multiapi\Arco\Deploy\ResourcesStack;
 use Multiapi\Arco\Deploy\SchedulerRule;
 use Multiapi\Arco\Deploy\DeployResult;
@@ -561,6 +562,214 @@ final class AwsDeployerTest extends TestCase
         self::assertSame(['GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint', 'UpdateAlias', 'PutFunctionEventInvokeConfig'], $mocks->calls);
         self::assertSame([['revisionId' => 'rev-1', 'weight' => 100]], $mocks->params[1]['revisionWeights']);
         self::assertSame('6', $mocks->params[3]['FunctionVersion']);
+    }
+
+    private const WEB_ARN = 'arn:aws:lambda:us-east-1:111111111111:web-function/shop-production';
+    private const CERTIFICATE = 'arn:aws:acm:us-east-1:111111111111:certificate/0a1b2c3d-1111-2222-3333-444455556666';
+
+    private function domainConfig(): AppConfig
+    {
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e
+            ->domain('arco.acmeapp.io')->dns(false)->certificate(self::CERTIFICATE))->toArray(), 'production');
+    }
+
+    /** @param array<string, mixed> $extra */
+    private static function webEndpoint(string $authType, string $revision, array $extra = []): Result
+    {
+        return new Result([
+            'functionArn' => self::WEB_ARN, 'endpointArn' => self::WEB_ARN . '/endpoint/default', 'authType' => $authType,
+            'state' => 'Active', 'updateStatus' => 'Successful', 'domainName' => 'abc.lambda-web.us-east-1.on.aws',
+            'revisionWeights' => [['revisionId' => $revision, 'weight' => 100]],
+        ] + $extra);
+    }
+
+    private static function domainStack(string $status): Result
+    {
+        return new Result(['Stacks' => [[
+            'StackName' => 'arco-shop-production', 'StackStatus' => $status,
+            'Tags' => self::tagList(self::tags()),
+            'Outputs' => [['OutputKey' => 'DistributionId', 'OutputValue' => 'E123'], ['OutputKey' => 'DistributionDomain', 'OutputValue' => 'd111.cloudfront.net'], ['OutputKey' => 'Aliases', 'OutputValue' => 'arco.acmeapp.io']],
+        ]]]);
+    }
+
+    public function test_an_upgrade_with_a_domain_requires_signatures_only_after_the_distribution_signs_and_may_invoke(): void
+    {
+        $config = $this->domainConfig();
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            // release: traffic moves, the endpoint stays as it is
+            self::webEndpoint('ApplicationManaged', 'rev-1'),
+            new Result([]),                                                                  // UpdateWebFunctionEndpoint
+            self::webEndpoint('ApplicationManaged', 'rev-2'),
+            // attachDomains: the stack puts the origin access control on the origin
+            self::domainStack('UPDATE_COMPLETE'),
+            new Result(['Certificate' => ['CertificateArn' => self::CERTIFICATE, 'DomainName' => 'arco.acmeapp.io', 'SubjectAlternativeNames' => ['arco.acmeapp.io'], 'Status' => 'ISSUED', 'Type' => 'AMAZON_ISSUED', 'KeyAlgorithm' => 'RSA-2048']]),
+            self::domainStack('UPDATE_COMPLETE'),
+            new Result([]),                                                                  // UpdateStack
+            self::domainStack('UPDATE_COMPLETE'),
+            // then the policy, then the endpoint
+            self::webEndpoint('ApplicationManaged', 'rev-2'),
+            AwsMocks::error(LambdaWebException::class, 'GetResourcePolicy', 'ResourceNotFoundException', 404),
+            new Result([]),                                                                  // PutResourcePolicy
+            new Result(['Distribution' => ['Id' => 'E123', 'Status' => 'Deployed']]),
+            self::webEndpoint('ApplicationManaged', 'rev-2'),
+            new Result([]),                                                                  // UpdateWebFunctionEndpoint
+            self::webEndpoint('IamAuth', 'rev-2'),
+        );
+        $steps = [];
+        $step = function (string $key) use (&$steps): void { $steps[] = $key; };
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $result = $deployer->release($config, new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), $step);
+        $deployer->attachDomains($config, $result, [], $step);
+
+        self::assertSame([
+            'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
+            'DescribeStacks', 'DescribeCertificate', 'DescribeStacks', 'UpdateStack', 'DescribeStacks',
+            'GetWebFunctionEndpoint', 'GetResourcePolicy', 'PutResourcePolicy', 'GetDistribution',
+            'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
+        ], $mocks->calls);
+        self::assertSame('ApplicationManaged', $mocks->params[1]['authType'], 'traffic moves without locking the endpoint before CloudFront signs');
+        $template = json_decode((string) $mocks->params[6]['TemplateBody'], true);
+        self::assertSame('always-amz-auth', $template['Resources']['OriginAccess']['Properties']['OriginAccessControlConfig']['SigningBehavior']);
+        self::assertSame(['Fn::GetAtt' => ['OriginAccess', 'Id']], $template['Resources']['Distribution']['Properties']['DistributionConfig']['Origins'][0]['OriginAccessControlId']);
+        $policy = json_decode((string) $mocks->params[10]['policy'], true);
+        self::assertSame('arn:aws:cloudfront::111111111111:distribution/E123', $policy['Statement'][0]['Condition']['StringEquals']['aws:SourceArn']);
+        self::assertSame('IamAuth', $mocks->params[13]['authType']);
+        self::assertSame(['deploy.step_traffic', 'domains.step_certificate', 'domains.certificate_using', 'domains.step_distribution',
+            'deploy.oac_policy', 'deploy.endpoint_protected', 'domains.step_dns', 'domains.manual_records', 'domains.manual_record'], $steps);
+    }
+
+    public function test_with_a_domain_traffic_and_rollback_keep_the_endpoints_auth(): void
+    {
+        foreach (['ApplicationManaged', 'IamAuth'] as $auth) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(
+                self::webEndpoint($auth, 'rev-1'), new Result([]), self::webEndpoint($auth, 'rev-2'),
+                self::webEndpoint($auth, 'rev-2'), new Result([]), self::webEndpoint($auth, 'rev-1'),
+            );
+            $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+            $deployer->release($this->domainConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null));
+            $deployer->rollback($this->domainConfig(), 'rev-1');
+
+            self::assertSame(['GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint', 'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+            self::assertSame([$auth, $auth], [$mocks->params[1]['authType'], $mocks->params[4]['authType']]);
+        }
+    }
+
+    public function test_a_redeploy_with_a_locked_endpoint_only_checks_the_policy(): void
+    {
+        $config = $this->domainConfig();
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::domainStack('UPDATE_COMPLETE'),
+            new Result(['Certificate' => ['CertificateArn' => self::CERTIFICATE, 'DomainName' => 'arco.acmeapp.io', 'SubjectAlternativeNames' => ['arco.acmeapp.io'], 'Status' => 'ISSUED', 'Type' => 'AMAZON_ISSUED', 'KeyAlgorithm' => 'RSA-2048']]),
+            self::domainStack('UPDATE_COMPLETE'),
+            AwsMocks::error(CloudFormationException::class, 'UpdateStack', 'ValidationError', 400, 'No updates are to be performed.'),
+            self::webEndpoint('IamAuth', 'rev-2'),
+            new Result(['policy' => json_encode(['Version' => '2012-10-17', 'Statement' => [CloudFrontAccess::statement(self::WEB_ARN . '/endpoint/default', 'arn:aws:cloudfront::111111111111:distribution/E123')]]), 'revisionId' => '0a1b2c3d-1111-2222-3333-444455556666']),
+        );
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->attachDomains($config, new DeployResult('abc.lambda-web.us-east-1.on.aws', 'rev-2', 'rev-1', 'b', 'k'), []);
+
+        self::assertSame(['DescribeStacks', 'DescribeCertificate', 'DescribeStacks', 'UpdateStack', 'GetWebFunctionEndpoint', 'GetResourcePolicy'], $mocks->calls);
+    }
+
+    public function test_when_domain_leaves_arco_php_the_statement_goes_before_the_endpoint_is_public_again(): void
+    {
+        $foreign = ['Sid' => 'PartnerReads', 'Effect' => 'Allow', 'Principal' => ['AWS' => '222222222222'], 'Action' => 'lambda:GetWebFunction', 'Resource' => self::WEB_ARN];
+        $ours = CloudFrontAccess::statement(self::WEB_ARN . '/endpoint/default', 'arn:aws:cloudfront::111111111111:distribution/E123');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::webEndpoint('IamAuth', 'rev-1'),
+            new Result(['policy' => json_encode(['Version' => '2012-10-17', 'Statement' => [$ours, $foreign]]), 'revisionId' => '0a1b2c3d-1111-2222-3333-444455556666']),
+            new Result([]),                                                                  // PutResourcePolicy
+            new Result([]),                                                                  // UpdateWebFunctionEndpoint
+            self::webEndpoint('ApplicationManaged', 'rev-2'),
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->config(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame(['GetWebFunctionEndpoint', 'GetResourcePolicy', 'PutResourcePolicy', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+        self::assertSame([$foreign], json_decode((string) $mocks->params[2]['policy'], true)['Statement'], 'only Arco\'s statement goes');
+        self::assertSame('ApplicationManaged', $mocks->params[3]['authType']);
+        self::assertSame(['deploy.step_traffic', 'deploy.endpoint_unprotected'], $steps);
+    }
+
+    private function iamConfig(): AppConfig
+    {
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->auth('iam')->environment('production')->toArray(), 'production');
+    }
+
+    private static function noDomainStack(): CloudFormationException
+    {
+        return AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production does not exist');
+    }
+
+    public function test_without_a_domain_traffic_moves_exactly_as_before(): void
+    {
+        // auth('iam') adds one read: whether a domains stack is left whose distribution could still invoke the endpoint.
+        foreach ([[$this->config(), 'ApplicationManaged', []], [$this->iamConfig(), 'IamAuth', ['DescribeStacks']]] as [$config, $auth, $check]) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(self::webEndpoint($auth, 'rev-1'), ...($check === [] ? [] : [self::noDomainStack()]));
+            $mocks->handler->append(new Result([]), self::webEndpoint($auth, 'rev-2'));
+
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($config, new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null));
+
+            self::assertSame(['GetWebFunctionEndpoint', ...$check, 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+            self::assertSame(['functionName' => 'shop-production', 'endpointName' => 'default', 'authType' => $auth, 'autoDeploymentMode' => 'Disabled', 'revisionWeights' => [['revisionId' => 'rev-2', 'weight' => 100]]],
+                array_diff_key($mocks->params[1 + count($check)], ['@http' => 1, '@context' => 1]));
+        }
+    }
+
+    /**
+     * auth('public') + domain() → auth('iam'), or auth('iam') + domain() → auth('iam'): the deploy leaves the
+     * domains stack (only remove deletes it), so its distribution would keep serving the app through the
+     * custom domain unless Arco's statement goes. Both transitions arrive at the same state: an IamAuth endpoint,
+     * no domain() and a stack left behind.
+     */
+    public function test_when_domain_leaves_an_iam_environment_cloudfront_loses_access_and_the_endpoint_stays_iam(): void
+    {
+        $foreign = ['Sid' => 'PartnerReads', 'Effect' => 'Allow', 'Principal' => ['AWS' => '222222222222'], 'Action' => 'lambda:GetWebFunction', 'Resource' => self::WEB_ARN];
+        $ours = CloudFrontAccess::statement(self::WEB_ARN . '/endpoint/default', 'arn:aws:cloudfront::111111111111:distribution/E123');
+        foreach ([[[$ours, $foreign], 'PutResourcePolicy'], [[$ours], 'DeleteResourcePolicy']] as [$statements, $write]) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(
+                self::webEndpoint('IamAuth', 'rev-1'),
+                self::domainStack('UPDATE_COMPLETE'),                                       // the stack is left
+                new Result(['policy' => json_encode(['Version' => '2012-10-17', 'Statement' => $statements]), 'revisionId' => '0a1b2c3d-1111-2222-3333-444455556666']),
+                new Result([]),                                                              // the write
+                new Result([]),                                                              // UpdateWebFunctionEndpoint
+                self::webEndpoint('IamAuth', 'rev-2'),
+            );
+            $steps = [];
+
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->iamConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+            self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'GetResourcePolicy', $write, 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+            if ($write === 'PutResourcePolicy') {
+                self::assertSame([$foreign], json_decode((string) $mocks->params[3]['policy'], true)['Statement'], 'only Arco\'s statement goes');
+            }
+            self::assertSame('IamAuth', $mocks->params[4]['authType']);
+            self::assertSame(['deploy.step_traffic', 'deploy.oac_revoked'], $steps);
+        }
+    }
+
+    public function test_an_iam_environment_without_a_domain_stack_never_reads_the_policy(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::webEndpoint('IamAuth', 'rev-1'),
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // a profile that never used domains
+            new Result([]),
+            self::webEndpoint('IamAuth', 'rev-2'),
+        );
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->iamConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null));
+
+        self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
     }
 
     public function test_without_domains_nothing_about_domains_is_called(): void

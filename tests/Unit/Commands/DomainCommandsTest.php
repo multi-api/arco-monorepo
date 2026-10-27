@@ -59,6 +59,28 @@ final class DomainCommandsTest extends TestCase
         $project->restore();
     }
 
+    public function test_add_to_an_iam_environment_is_allowed(): void
+    {
+        $project = new ProjectFixture(<<<'PHP'
+            <?php
+            use Multiapi\Arco\Config\App;
+            use Multiapi\Arco\Config\Environment;
+
+            return App::make('shop')
+                ->region('us-east-1')
+                ->auth('iam')
+                ->environment('production', fn (Environment $env) => $env->timeout(60));
+            PHP);
+
+        $tester = self::add($project, new FakeZones([]));
+        $tester->execute(['hosts' => ['arco.acmeapp.io'], '--env' => 'production', '--dns' => 'manual'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['arco.acmeapp.io'], self::config($project)->domains);
+        self::assertSame('iam', self::config($project)->auth);
+        $project->restore();
+    }
+
     public function test_add_to_a_bare_environment_whose_zone_is_in_the_deploy_profile(): void
     {
         $project = new ProjectFixture(ProjectFixture::standardConfig());

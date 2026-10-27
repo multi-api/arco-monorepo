@@ -57,9 +57,14 @@ final class RevisionFactory
         ];
     }
 
+    /**
+     * The auth type the endpoint should end up with. With domain() it is IamAuth whatever auth() says:
+     * only the environment's CloudFront distribution, signing through its origin access control, may
+     * invoke it. An existing endpoint switches only once the distribution signs (CloudFrontAccess).
+     */
     public static function authType(AppConfig $config): string
     {
-        return $config->auth === 'iam' ? 'IamAuth' : 'ApplicationManaged';
+        return $config->auth === 'iam' || $config->domains !== [] ? 'IamAuth' : 'ApplicationManaged';
     }
 
     /** @return array<string, array<string, int>> */

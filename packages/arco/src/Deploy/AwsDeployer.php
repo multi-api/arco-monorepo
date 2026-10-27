@@ -12,6 +12,7 @@ use Multiapi\Arco\Config\GenericTableConfig;
 use Multiapi\Arco\Config\StorageConfig;
 use Multiapi\Arco\Config\TableConfig;
 use Multiapi\Arco\Deploy\Domains\Certificates;
+use Multiapi\Arco\Deploy\Domains\CloudFrontAccess;
 use Multiapi\Arco\Deploy\Domains\CustomDomains;
 use Multiapi\Arco\Deploy\Domains\DnsProvider;
 use Multiapi\Arco\Deploy\Domains\DomainStack;
@@ -258,8 +259,21 @@ final class AwsDeployer implements Deployer
         $web = new WebFunctions($this->aws->lambdaWeb(), $this->sleeper);
 
         $step('deploy.step_traffic', ['revision' => $prepared->revisionId]);
-        $web->waitEndpoint($function);
-        $web->route($function, $prepared->revisionId, $config);
+        $current = $web->waitEndpoint($function);
+        if ($config->domains === [] && ($current['authType'] ?? null) === 'IamAuth') {
+            // domain() left arco.php: Arco's CloudFront statement goes before the endpoint takes the configured
+            // auth again. The distribution outlives the deploy (only remove deletes its stack), so with auth('iam')
+            // it would otherwise keep serving the app. An endpoint that is public now never had the statement in
+            // force; an iam one only had it while the domains stack existed, which is the cheap check.
+            if (RevisionFactory::authType($config) === 'ApplicationManaged') {
+                $step('deploy.endpoint_unprotected', ['function' => $function]);
+                $this->cloudFrontAccess($web)->revoke(WebFunctions::text($current['functionArn'] ?? null));
+            } elseif ($this->stackExists($config)) {
+                $step('deploy.oac_revoked', ['function' => $function]);
+                $this->cloudFrontAccess($web)->revoke(WebFunctions::text($current['functionArn'] ?? null));
+            }
+        }
+        $web->route($function, $prepared->revisionId, $config, self::routedAuth($config, $current));
         $endpoint = $web->waitEndpoint($function, 600, $prepared->revisionId);
 
         return new DeployResult(
@@ -338,8 +352,8 @@ final class AwsDeployer implements Deployer
     public function rollback(AppConfig $config, string $revisionId, ?string $consoleVersion = null, array $workerVersions = []): void
     {
         $web = new WebFunctions($this->aws->lambdaWeb(), $this->sleeper);
-        $web->waitEndpoint($config->functionName());
-        $web->route($config->functionName(), $revisionId, $config);
+        $current = $web->waitEndpoint($config->functionName());
+        $web->route($config->functionName(), $revisionId, $config, self::routedAuth($config, $current));
         $web->waitEndpoint($config->functionName(), 600, $revisionId);
         if ($consoleVersion !== null) {
             $this->consoleFunction()->point($config->consoleFunctionName(), $consoleVersion);
@@ -400,8 +414,28 @@ final class AwsDeployer implements Deployer
             return $result;
         }
         $step = $onStep ?? static function (string $key, array $params = []): void {};
-        $domains = $this->customDomains($config)->deploy($config, $result->domainName, $cachedPaths, self::tags($config), $step);
+        $access = $this->cloudFrontAccess(new WebFunctions($this->aws->lambdaWeb(), $this->sleeper));
+        $domains = $this->customDomains($config)->deploy($config, $result->domainName, $cachedPaths, self::tags($config), $step,
+            fn (string $distributionId) => $access->protect($config, $distributionId, $step));
         return $result->withDomains($domains);
+    }
+
+    /**
+     * The auth type traffic moves with. With domain(), the endpoint keeps the one it has: it becomes
+     * IamAuth only once its distribution signs and may invoke it (CloudFrontAccess::protect(), after
+     * the domains stack), so an upgrade never leaves CloudFront unable to reach it.
+     *
+     * @param array<string, mixed> $endpoint
+     */
+    private static function routedAuth(AppConfig $config, array $endpoint): string
+    {
+        $current = $endpoint['authType'] ?? null;
+        return $config->domains !== [] && in_array($current, ['IamAuth', 'ApplicationManaged'], true) ? $current : RevisionFactory::authType($config);
+    }
+
+    private function cloudFrontAccess(WebFunctions $web): CloudFrontAccess
+    {
+        return new CloudFrontAccess($web, $this->aws->cloudFront(), $this->sleeper);
     }
 
     public function hasDomainResources(AppConfig $config): bool

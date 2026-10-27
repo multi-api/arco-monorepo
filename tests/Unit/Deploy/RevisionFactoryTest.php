@@ -46,6 +46,18 @@ final class RevisionFactoryTest extends TestCase
         ], RevisionFactory::initialEndpoint($config));
     }
 
+    public function test_domain_makes_the_endpoint_iam_whatever_auth_says(): void
+    {
+        $config = fn (string $auth, bool $domain) => ConfigResolver::resolve(App::make('shop')->region('us-east-1')->auth($auth)
+            ->environment('production', fn (Environment $e) => $domain ? $e->domain('arco.acmeapp.io') : $e)->toArray(), 'production');
+
+        self::assertSame('ApplicationManaged', RevisionFactory::authType($config('public', false)));
+        self::assertSame('IamAuth', RevisionFactory::authType($config('iam', false)));
+        self::assertSame('IamAuth', RevisionFactory::authType($config('public', true)), 'only CloudFront may invoke it');
+        self::assertSame('IamAuth', RevisionFactory::authType($config('iam', true)));
+        self::assertSame('IamAuth', RevisionFactory::initialEndpoint($config('public', true))['authType'], 'a new environment starts locked');
+    }
+
     public function test_omits_empty_variables_because_lambda_rejects_them(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
