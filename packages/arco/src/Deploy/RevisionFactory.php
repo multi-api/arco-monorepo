@@ -92,7 +92,13 @@ final class RevisionFactory
      */
     public static function usesVpc(AppConfig $config): bool
     {
-        return $config->vpc !== null && ! Endpoint::servesAll(['lambda', 'lambda_web', 'lambda_core']);
+        return $config->vpc !== null && self::servesNetworkConnectors();
+    }
+
+    /** False behind an emulator: it has no network connectors, so Arco neither creates nor looks for one. */
+    public static function servesNetworkConnectors(): bool
+    {
+        return ! Endpoint::servesAll(['lambda', 'lambda_web', 'lambda_core']);
     }
 
     /** @return array<string, array<string, int>> */

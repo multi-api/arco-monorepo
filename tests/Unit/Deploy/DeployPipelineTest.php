@@ -732,6 +732,16 @@ final class DeployPipelineTest extends TestCase
         self::assertSame(['prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
     }
 
+    /** A leftover network connector goes in prune() only (AwsDeployerTest::test_leftover_connector_is_removed_only_after_verification). */
+    public function test_a_failed_verification_never_removes_the_network_connector(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(false), fn () => null);
+
+        self::assertContains('rollback:rev-1', $deployer->calls);
+        self::assertNotContains('prune', $deployer->calls, 'the next deploy finds the connector again and finishes the removal');
+    }
+
     public function test_pruning_runs_last_and_only_after_a_verified_deploy(): void
     {
         $deployer = new FakeDeployer('rev-1', consoleVersion: '7', previousConsoleVersion: '6');

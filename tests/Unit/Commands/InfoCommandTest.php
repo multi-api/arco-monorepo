@@ -650,6 +650,24 @@ final class InfoCommandTest extends TestCase
         $project->restore();
     }
 
+    public function test_shows_the_deployed_network_connector(): void
+    {
+        $config = str_replace("->concurrency(48)", "->concurrency(48)->vpc(subnets: ['subnet-a1'], securityGroups: ['sg-c3'])", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        putenv('AWS_PROFILE=p');
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-staging', 'Active', 'abc.on.aws', 'rev-1', vpc: ['connector' => 'nc-0abc', 'version' => 3, 'state' => 'ACTIVE']);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $status)));
+
+        $tester->execute(['--env' => 'staging'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/VPC\s+subnets subnet-a1; security groups sg-c3; connector nc-0abc v3 ACTIVE\s+app *\n/', $tester->getDisplay());
+
+        $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(['subnets' => ['subnet-a1'], 'security_groups' => ['sg-c3'], 'connector' => 'nc-0abc', 'version' => 3, 'state' => 'ACTIVE'], $json['vpc']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
     public function test_without_vpc_the_json_key_is_null_and_the_row_is_a_dash(): void
     {
         $project = new ProjectFixture(ProjectFixture::standardConfig());

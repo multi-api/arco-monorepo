@@ -175,7 +175,7 @@ final class NetworkConnectors
                 $marker = is_string($page['NextMarker'] ?? null) && $page['NextMarker'] !== '' ? $page['NextMarker'] : null;
             } while ($marker !== null);
         } catch (AwsException $e) {
-            $step('deploy.network_prune_failed', ['connector' => $name, 'error' => self::error($e)]);
+            $step('deploy.network_prune_failed', ['connector' => $name, 'region' => (string) $config->region, 'error' => self::error($e)]);
             return;
         }
         if ($versions === []) {
@@ -190,7 +190,7 @@ final class NetworkConnectors
                 $this->core->deleteNetworkConnector(['Identifier' => $arn]);
             } catch (AwsException $e) {
                 if ($e->getAwsErrorCode() !== 'ResourceNotFoundException') {
-                    $step('deploy.network_prune_failed', ['connector' => $name, 'error' => self::error($e)]);
+                    $step('deploy.network_prune_failed', ['connector' => $name, 'region' => (string) $config->region, 'error' => self::error($e)]);
                 }
             }
         }
@@ -217,6 +217,35 @@ final class NetworkConnectors
         }
         $this->roles->delete(self::operatorRoleName($config));
         $step('deploy.network_removed', ['connector' => $name]);
+    }
+
+    /**
+     * Whether $versionArn (a revision's egressNetworkConnectorArn) is a version of $connector (a GetNetworkConnector
+     * result). AWS names the connector in the ARN by its id (nc-...); its name is accepted too.
+     *
+     * @param array<string, mixed> $connector
+     */
+    public static function pins(array $connector, string $versionArn): bool
+    {
+        $parts = explode(':', $versionArn);
+        if (count($parts) < 7 || $parts[5] !== 'network-connector') {
+            return false;
+        }
+        $arn = self::text($connector['Arn'] ?? null);
+        return in_array($parts[6], array_filter([self::text($connector['Id'] ?? null), self::text($connector['Name'] ?? null)]), true)
+            || ($arn !== '' && ($versionArn === $arn || str_starts_with($versionArn, $arn . ':')));
+    }
+
+    /**
+     * What arco info shows of the connector: its id, latest version and state.
+     *
+     * @param array<string, mixed> $connector
+     * @return array{connector: string, version: int, state: string}
+     */
+    public static function summary(array $connector): array
+    {
+        $id = self::text($connector['Id'] ?? null);
+        return ['connector' => $id !== '' ? $id : self::text($connector['Name'] ?? null), 'version' => self::int($connector['LatestVersion'] ?? null), 'state' => self::text($connector['State'] ?? null)];
     }
 
     /** @return array<string, mixed>|null */

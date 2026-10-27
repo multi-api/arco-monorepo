@@ -116,7 +116,8 @@ final class InfoCommand extends ArcoCommand
                 // Additive (0.11.4), last: the endpoint's auth type, IamAuth with domain() whatever auth says.
                 'endpoint_auth' => RevisionFactory::authType($config),
                 // Additive (0.12), last: the vpc() subnets and security groups; null without vpc().
-                'vpc' => $config->vpc === null ? null : ['subnets' => $config->vpc->subnets, 'security_groups' => $config->vpc->securityGroups],
+                // With a deploy, also the network connector: its id, latest version and state.
+                'vpc' => $config->vpc === null ? null : ['subnets' => $config->vpc->subnets, 'security_groups' => $config->vpc->securityGroups] + ($status->vpc ?? []),
             ] + ($remoteError !== null ? ['error' => $remoteError] : []), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             return $remoteError === null ? self::SUCCESS : self::FAILURE;
         }
@@ -500,6 +501,10 @@ final class InfoCommand extends ArcoCommand
                 $value === 1 => $this->t('logs.retention_one_day'),
                 default => $this->t('logs.retention_days', ['days' => is_int($value) ? $value : 0]),
             },
+            $key === 'vpc' && $value instanceof VpcConfig && $status?->vpc !== null => $this->t('info.vpc_connector', [
+                'vpc' => $this->t('info.vpc', ['subnets' => implode(', ', $value->subnets), 'groups' => implode(', ', $value->securityGroups)]),
+                ...$status->vpc,
+            ]),
             $key === 'vpc' && $value instanceof VpcConfig => $this->t('info.vpc', ['subnets' => implode(', ', $value->subnets), 'groups' => implode(', ', $value->securityGroups)]),
             is_bool($value) => $this->t($value ? 'common.yes' : 'common.no'),
             is_scalar($value) => (string) $value,

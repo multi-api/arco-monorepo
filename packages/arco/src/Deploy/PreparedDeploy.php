@@ -20,6 +20,10 @@ final readonly class PreparedDeploy
         public ?string $binaryKey = null,
         /** @var array<string, array{version: string, previous: ?string}> worker version published for each queue, and the one its live alias pointed to before */
         public array $workerVersions = [],
+        /** the live revision pins Arco's network connector, and vpc() is not set: prune() removes the connector */
+        public bool $leftoverConnector = false,
+        /** @var list<string> connector version ARNs prune() keeps: the one the live revision pinned (the rollback target) and this deploy's */
+        public array $keepConnectorVersions = [],
     ) {
     }
 }
