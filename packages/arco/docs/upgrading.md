@@ -13,8 +13,10 @@ vendor/bin/arco info --env=staging     # validation runs here: errors and deprec
 
 ## Upgrading to 0.12
 
-Nothing is required: 0.12 only adds an opt-in setting, `vpc()`. Without it, a deploy makes the same calls as in
-0.11.5, and the deploy permissions do not change.
+Nothing is required: 0.12 only adds an opt-in setting, `vpc()`. Without it, the deploy permissions do not
+change and no network connector call is made. A deploy and `arco remove` of an existing web function now also read
+its endpoint and live revision (`lambda:GetWebFunctionEndpoint`, `lambda:GetWebFunctionRevision`, which the deploy
+permissions already include), to find a network connector it may still pin.
 
 To use it:
 

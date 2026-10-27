@@ -17,7 +17,9 @@ statements first ([Upgrading to 0.12](docs/upgrading.md#upgrading-to-012)).
   A changed configuration creates a new connector version and new revisions without downtime; old versions are
   pruned after a successful deploy, keeping the ones rollback needs. A connector that ends `FAILED` fails the deploy
   before any revision exists, with the reason translated (wrong subnet or security group, no free IPs, missing role
-  permissions). Removing `vpc()` takes the environment out of the VPC and deletes the connector and operator role
+  permissions) and the manual delete command; the next deploy replaces a failed connector no live revision uses
+  (`deploy.network_replacing`). A connector with the name and another operator role is refused before any change,
+  even with `--force`; the operator role is guarded like the execution role. Removing `vpc()` takes the environment out of the VPC and deletes the connector and operator role
   only after the deploy is verified; if that delete fails, the warning prints the manual commands and later
   deploys do not retry. `arco remove` deletes them too, and leaves a connector Arco did not create alone.
   `arco info` shows the VPC block (`--json`: a `vpc` object or `null`). Behind an emulator endpoint the VPC is
@@ -25,7 +27,7 @@ statements first ([Upgrading to 0.12](docs/upgrading.md#upgrading-to-012)).
   (SSM, Secrets Manager, SQS, S3, DynamoDB, and the runtime binary download); see
   [VPC](docs/configuration.md#vpc). New steps `deploy.step_network`, `deploy.network_waiting`,
   `deploy.network_updated`, `deploy.network_removed`; errors `deploy.network_failed`, `deploy.network_timeout`,
-  `deploy.network_foreign`; warnings `deploy.network_prune_failed`, `deploy.network_cleanup_failed`.
+  `deploy.network_foreign`; warnings `deploy.network_prune_failed`, `deploy.network_cleanup_failed`, `deploy.network_replacing`.
 - **Added:** new deploy permissions with `vpc()`: `lambda:CreateNetworkConnector`, `lambda:GetNetworkConnector`,
   `lambda:UpdateNetworkConnector`, `lambda:DeleteNetworkConnector`, `lambda:ListNetworkConnectorVersions`,
   `lambda:PassNetworkConnector` on `network-connector:*`, `iam:PassRole` on `arco-<app>-*-network`, and

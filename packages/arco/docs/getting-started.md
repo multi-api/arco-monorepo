@@ -1238,6 +1238,15 @@ to `arn:aws-cn:` or `arn:aws-us-gov:`.
       "Condition": {"StringLike": {"kms:ViaService": ["ssm.*.amazonaws.com", "secretsmanager.*.amazonaws.com"]}}
     },
     {
+      "Sid": "ArcoVpcAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateNetworkInterface", "ec2:DescribeNetworkInterfaces", "ec2:DescribeSubnets", "ec2:DeleteNetworkInterface",
+        "ec2:AssignPrivateIpAddresses", "ec2:UnassignPrivateIpAddresses", "ec2:DescribeSecurityGroups", "ec2:CreateTags"
+      ],
+      "Resource": "*"
+    },
+    {
       "Sid": "AppPermissions",
       "Effect": "Allow",
       "Action": ["<the actions of the app's permissions()>"],
@@ -1263,6 +1272,13 @@ to `arn:aws-cn:` or `arn:aws-us-gov:`.
   and every `arco-secret:` (Secrets Manager) reference, have the names you gave them: change the `parameter/` and
   `secret:` resources to cover them (a Secrets Manager name gets a `-??????` suffix, so end the pattern with `*`).
   Without any reference, these three statements and `ArcoDecrypt` are never used.
+- **ArcoVpcAccess** is needed only with `vpc()`; without it, leave it out. The boundary caps two roles there: the
+  execution role (its `ArcoVpcAccess` statement: the first six actions, for the console and the workers) and the
+  network connector's operator role `arco-<app>-<env>-network`, which carries the same boundary (it adds
+  `ec2:DescribeSecurityGroups` and `ec2:CreateTags`; its inline policy limits `ec2:CreateNetworkInterface` and
+  `ec2:CreateTags` to `ec2:ManagedResourceOperator` = `network-connectors.lambda.amazonaws.com`). Without these
+  actions in the boundary the connector ends `FAILED` (`InsufficientRolePermissions`) or the console and workers
+  cannot start in the VPC.
 - **No Lambda statement.** The execution role needs no `lambda:InvokeFunction`: the scheduler rule invokes the
   console through the function's resource policy, people and the deploy invoke it with their own credentials, and
   queue jobs reach the workers through SQS.

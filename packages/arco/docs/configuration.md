@@ -1201,7 +1201,7 @@ environment clears an app-level one. Arco does not create VPCs, subnets, NATs, e
 
 - **The Web Function** gets a Lambda *network connector*, one per environment, named like the function
   (`<app>-<env>`), and its revision pins the connector version. The connector is managed by an operator role
-  `arco-<app>-<env>-network` (at most 64 characters) that Arco creates, tags and guards like the execution role.
+  `arco-<app>-<env>-network` (at most 64 characters; see Ownership below) that Arco creates, tags and guards like the execution role.
   The role trusts `lambda.amazonaws.com`; its inline policy grants `ec2:CreateNetworkInterface` and
   `ec2:CreateTags` (only when `ec2:ManagedResourceOperator` is `network-connectors.lambda.amazonaws.com`), and
   `ec2:DeleteNetworkInterface`, `ec2:DescribeNetworkInterfaces`, `ec2:DescribeSubnets` and
@@ -1249,8 +1249,18 @@ deploy, without downtime. Old connector versions are deleted after a successful 
 those the live and previous revisions pin (the automatic rollback needs them). A failure there is a warning.
 
 A connector that ends `FAILED` fails the deploy before any revision exists, with the reason: a wrong subnet or
-security group, no free IP addresses, or missing operator role permissions. The first connector takes about 4
-minutes to become active.
+security group, no free IP addresses, or missing operator role permissions. Fix `vpc()` and deploy again: a failed
+connector that no live revision uses is deleted and created again (with a warning). One the live revision uses is
+left alone, and the message prints the `aws lambda-core delete-network-connector` command to delete it by hand. The
+first connector takes about 4 minutes to become active.
+
+**Ownership.** Lambda cannot tag a connector, so Arco recognizes its own by the operator role: a connector named
+`<app>-<env>` whose operator role is Arco's `arco-<app>-<env>-network`. With `vpc()`, a connector with that name and
+another operator role stops the deploy before any change, **even with `--force`** (Arco cannot take it over):
+remove or rename it, or change the app or environment name. The operator role is checked like the execution role
+(its tags, `--force` rules as usual) before the deploy writes its policy and before a deploy or `arco remove`
+deletes it. A name longer than 64 characters is shortened and keeps a short hash of `<app>-<env>`, so two
+environments never share an operator role.
 
 Removing `vpc()` (or `vpc(false)`) deploys the environment out of the VPC first. Only after that deploy is
 verified does Arco delete the connector and then the operator role. If the verification fails, the next deploy
