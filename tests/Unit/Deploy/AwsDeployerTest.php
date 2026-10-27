@@ -760,16 +760,52 @@ final class AwsDeployerTest extends TestCase
     public function test_an_iam_environment_without_a_domain_stack_never_reads_the_policy(): void
     {
         $mocks = new AwsMocks();
+        $mocks->handler->append(self::webEndpoint('IamAuth', 'rev-1'), self::noDomainStack(), new Result([]), self::webEndpoint('IamAuth', 'rev-2'));
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->iamConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+        self::assertSame(['deploy.step_traffic'], $steps);
+    }
+
+    public function test_a_refused_domain_stack_read_is_a_warning_and_the_policy_is_not_read(): void
+    {
+        $mocks = new AwsMocks();
         $mocks->handler->append(
             self::webEndpoint('IamAuth', 'rev-1'),
-            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // a profile that never used domains
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403, 'not authorized to perform: cloudformation:DescribeStacks'),
             new Result([]),
             self::webEndpoint('IamAuth', 'rev-2'),
         );
+        $steps = [];
 
-        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->iamConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null));
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->iamConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
 
         self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+        self::assertSame([
+            ['deploy.step_traffic', ['revision' => 'rev-2']],
+            ['deploy.domain_stack_unreadable', ['stack' => 'arco-shop-production', 'function' => 'shop-production', 'error' => 'not authorized to perform: cloudformation:DescribeStacks']],
+        ], $steps);
+        self::assertSame('warning', \Multiapi\Arco\Cli\StepPrinter::kind('deploy.domain_stack_unreadable', []));
+    }
+
+    public function test_a_left_stack_without_arcos_statement_prints_no_revocation(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::webEndpoint('IamAuth', 'rev-1'),
+            self::domainStack('UPDATE_COMPLETE'),
+            AwsMocks::error(LambdaWebException::class, 'GetResourcePolicy', 'ResourceNotFoundException', 404),
+            new Result([]),
+            self::webEndpoint('IamAuth', 'rev-2'),
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->iamConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'GetResourcePolicy', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+        self::assertSame(['deploy.step_traffic'], $steps, 'nothing was revoked');
     }
 
     public function test_without_domains_nothing_about_domains_is_called(): void

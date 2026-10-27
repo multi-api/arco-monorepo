@@ -265,12 +265,13 @@ final class AwsDeployer implements Deployer
             // auth again. The distribution outlives the deploy (only remove deletes its stack), so with auth('iam')
             // it would otherwise keep serving the app. An endpoint that is public now never had the statement in
             // force; an iam one only had it while the domains stack existed, which is the cheap check.
+            // deploy.endpoint_unprotected is printed whether or not a statement was left: the endpoint goes
+            // public either way. deploy.oac_revoked only says something when a statement went.
             if (RevisionFactory::authType($config) === 'ApplicationManaged') {
                 $step('deploy.endpoint_unprotected', ['function' => $function]);
                 $this->cloudFrontAccess($web)->revoke(WebFunctions::text($current['functionArn'] ?? null));
-            } elseif ($this->stackExists($config)) {
+            } elseif ($this->domainStackLeft($config, $step) && $this->cloudFrontAccess($web)->revoke(WebFunctions::text($current['functionArn'] ?? null))) {
                 $step('deploy.oac_revoked', ['function' => $function]);
-                $this->cloudFrontAccess($web)->revoke(WebFunctions::text($current['functionArn'] ?? null));
             }
         }
         $web->route($function, $prepared->revisionId, $config, self::routedAuth($config, $current));
@@ -1206,6 +1207,25 @@ final class AwsDeployer implements Deployer
      * Domains removed from arco.php may have left their stack behind. Profiles that never used
      * domains may lack CloudFormation permissions, which then means "no stack".
      */
+    /**
+     * Whether the domains stack is still there for an auth('iam') environment without domain(). A refused
+     * read is a warning, not a silent "no": if the stack is left, its distribution may still invoke the endpoint.
+     *
+     * @param callable(string, array<string, string|int>): void $step
+     */
+    private function domainStackLeft(AppConfig $config, callable $step): bool
+    {
+        try {
+            return (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe(DomainStack::stackName($config)) !== null;
+        } catch (AwsException $e) {
+            if (! in_array($e->getAwsErrorCode(), ['AccessDenied', 'AccessDeniedException'], true)) {
+                throw $e;
+            }
+            $step('deploy.domain_stack_unreadable', ['stack' => DomainStack::stackName($config), 'function' => $config->functionName(), 'error' => self::awsError($e)]);
+            return false;
+        }
+    }
+
     private function stackExists(AppConfig $config): bool
     {
         return $this->tolerateAccessDenied(fn () => (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe(DomainStack::stackName($config)) !== null);
