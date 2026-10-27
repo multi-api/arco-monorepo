@@ -15,6 +15,7 @@ use Aws\Exception\CredentialsException;
 use GuzzleHttp\Promise\Create;
 use Aws\Iam\IamClient;
 use Aws\Lambda\LambdaClient;
+use Aws\LambdaCore\LambdaCoreClient;
 use Aws\LambdaWeb\LambdaWebClient;
 use Aws\ResourceGroups\ResourceGroupsClient;
 use Aws\ResourceGroupsTaggingAPI\ResourceGroupsTaggingAPIClient;
@@ -203,6 +204,8 @@ final class AwsClients
     public function s3(): S3Client { return $this->sdk->createS3(); }
     public function iam(): IamClient { return $this->sdk->createIam(); }
     public function lambdaWeb(): LambdaWebClient { return $this->sdk->createLambdaWeb(); }
+    /** Lambda Core API: network connectors (vpc()). */
+    public function lambdaCore(): LambdaCoreClient { return $this->sdk->createLambdaCore(); }
     /** @param array<string, mixed> $overrides extra client config (invocations disable retries and raise the HTTP timeout) */
     public function lambda(array $overrides = []): LambdaClient { return $this->sdk->createLambda($overrides); }
     public function ssm(): SsmClient { return $this->sdk->createSsm(); }
