@@ -280,6 +280,20 @@ final class DeployCommandTest extends TestCase
         self::assertStringContainsString('333333333333 (acme-dns)', $display);
         self::assertStringContainsString('https://arco.acmeapp.io', $display);
         self::assertStringContainsString('https://api-arco.acmeapp.io', $display);
+        $flat = (string) preg_replace('/\s+/', ' ', $display);
+        self::assertStringContainsString('https://abc.on.aws (CloudFront only: this URL answers 403 when called directly)', $flat);
+    }
+
+    public function test_without_domains_the_endpoint_url_is_shown_as_before(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester(new FakeDeployer('rev-1', new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1')));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('https://abc.on.aws', $tester->getDisplay());
+        self::assertStringNotContainsString('CloudFront only', $tester->getDisplay());
     }
 
     /** The display of a deploy whose domain step fails with $error. */

@@ -7,11 +7,14 @@ use GuzzleHttp\Exception\ConnectException;
 use GuzzleHttp\Handler\MockHandler as HttpMock;
 use GuzzleHttp\HandlerStack;
 use GuzzleHttp\Psr7\Request;
+use Aws\Credentials\Credentials;
 use GuzzleHttp\Psr7\Response;
 use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Deploy\AwsVerifier;
+use Multiapi\Arco\Deploy\EndpointSigner;
 use Multiapi\Arco\Deploy\DeployResult;
 use Multiapi\Arco\Deploy\VerificationResult;
 use PHPUnit\Framework\TestCase;
@@ -231,6 +234,95 @@ final class AwsVerifierTest extends TestCase
         self::assertNull($result->httpStatus);
         self::assertSame(800, $result->initDurationMs);
         self::assertSame([['deploy.cold_start_lookup', ['seconds' => 75]]], $this->steps);
+    }
+
+    private function domainConfig(string $auth = 'public'): AppConfig
+    {
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-2')->auth($auth)->environment('production', fn (Environment $e) => $e->domain('arco.acmeapp.io'))->toArray(), 'production');
+    }
+
+    private function signedVerifier(FakeLogGroup $group, HttpMock $http): AwsVerifier
+    {
+        $signer = new EndpointSigner(fn () => new Credentials('AKIDEXAMPLE', 'secret', 'session-token'));
+        return new AwsVerifier($group->client(), new Client(['handler' => HandlerStack::create($http)]), $group, signer: $signer);
+    }
+
+    public function test_with_a_domain_the_probe_is_signed_for_lambda_in_the_endpoint_region(): void
+    {
+        foreach (['public', 'iam'] as $auth) {
+            $this->steps = [];
+            $group = new FakeLogGroup(self::T0 + 10);
+            $http = new HttpMock([new Response(200)]);
+
+            $result = $this->signedVerifier($group, $http)->verify($this->domainConfig($auth), $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
+
+            self::assertTrue($result->ok, $auth);
+            self::assertSame(200, $result->httpStatus);
+            self::assertSame([], $group->queries, 'no wait for the init report: the probe decides, as for a public endpoint');
+            self::assertSame([], $this->steps);
+            $request = $http->getLastRequest();
+            self::assertNotNull($request);
+            self::assertSame('https://abc.on.aws/up', (string) $request->getUri());
+            self::assertSame(hash('sha256', ''), $request->getHeaderLine('X-Amz-Content-Sha256'), 'Lambda requires it on every signed request');
+            self::assertSame('session-token', $request->getHeaderLine('X-Amz-Security-Token'));
+            self::assertMatchesRegularExpression(
+                '#^AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/\d{8}/us-east-2/lambda/aws4_request, SignedHeaders=host;x-amz-content-sha256;x-amz-date;x-amz-security-token, Signature=[0-9a-f]{64}$#',
+                $request->getHeaderLine('Authorization'),
+            );
+        }
+    }
+
+    public function test_behind_an_emulator_endpoint_a_domain_is_verified_by_the_unsigned_probe(): void
+    {
+        $group = new FakeLogGroup(self::T0 + 10);
+        $http = new HttpMock([new Response(200)]);
+        $saved = getenv('AWS_ENDPOINT_URL');
+        putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+        try {
+            $result = $this->signedVerifier($group, $http)->verify($this->domainConfig(), $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
+        } finally {
+            putenv($saved === false ? 'AWS_ENDPOINT_URL' : "AWS_ENDPOINT_URL=$saved");
+        }
+
+        self::assertTrue($result->ok);
+        self::assertFalse((bool) $http->getLastRequest()?->hasHeader('Authorization'), 'the endpoint keeps the configured auth (public)');
+    }
+
+    public function test_a_signed_probe_lambda_refuses_names_the_missing_permission(): void
+    {
+        $group = new FakeLogGroup(self::T0 + 10);
+        $http = new HttpMock([new Response(403)]);
+
+        $result = $this->signedVerifier($group, $http)->verify($this->domainConfig(), $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
+
+        self::assertFalse($result->ok);
+        self::assertSame(403, $result->httpStatus);
+        self::assertSame('deploy.verify_signed_forbidden', $result->reason);
+        self::assertSame(['function' => 'shop-production'], $result->reasonParams);
+    }
+
+    public function test_every_probe_attempt_is_signed_again(): void
+    {
+        $group = new FakeLogGroup(self::T0 + 10);
+        $http = new HttpMock([new Response(503), new Response(204)]);
+
+        $result = $this->signedVerifier($group, $http)->verify($this->domainConfig(), $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
+
+        self::assertTrue($result->ok);
+        self::assertSame(204, $result->httpStatus);
+        self::assertStringStartsWith('AWS4-HMAC-SHA256 ', (string) $http->getLastRequest()?->getHeaderLine('Authorization'));
+    }
+
+    public function test_iam_auth_without_a_domain_still_uses_the_init_report_and_needs_no_signer(): void
+    {
+        $group = self::newInstance(new FakeLogGroup(self::T0 + 10), 'aaa', (self::T0 + 10) * 1000, 800.0, 20);
+        $http = new HttpMock([]);
+
+        $result = (new AwsVerifier($group->client(), new Client(['handler' => HandlerStack::create($http)]), $group))
+            ->verify($this->config(iam: true), $this->deployResult(), '/up', self::T0 * 1000, $this->onStep());
+
+        self::assertTrue($result->ok);
+        self::assertNull($http->getLastRequest());
     }
 
     public function test_iam_auth_without_an_init_report_fails_after_about_75_s(): void

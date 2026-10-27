@@ -382,10 +382,11 @@ final class ValidatorTest extends TestCase
         }
     }
 
-    public function test_iam_auth_cannot_use_domains(): void
+    public function test_iam_auth_with_domains_is_valid(): void
     {
+        // domain() makes the endpoint IamAuth anyway: CloudFront signs through its origin access control.
         $app = App::make('shop')->region('us-east-1')->auth('iam')->environment('production', fn (Environment $e) => $e->domain('a.example.com'));
-        self::assertSame(['validation.domain_iam'], $this->errorKeys($app));
+        self::assertSame([], $this->errorKeys($app));
     }
 
     public function test_certificate_must_be_an_acm_arn_in_us_east_1(): void
