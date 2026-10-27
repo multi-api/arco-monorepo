@@ -255,9 +255,10 @@ final class LambdaFunction
     }
 
     /**
-     * The versions ($LATEST included) whose VpcConfig names subnets. A missing function has none.
+     * The versions ($LATEST included) whose VpcConfig names subnets, with those subnets and their security groups
+     * (sorted). A missing function has none.
      *
-     * @return list<string>
+     * @return array<string, array{subnets: list<string>, groups: list<string>}> by version
      */
     public function vpcVersions(string $name): array
     {
@@ -269,9 +270,12 @@ final class LambdaFunction
                 $listed = $page['Versions'] ?? [];
                 foreach (is_array($listed) ? $listed : [] as $version) {
                     $number = is_array($version) ? ($version['Version'] ?? null) : null;
-                    $subnets = is_array($version) && is_array($version['VpcConfig'] ?? null) ? ($version['VpcConfig']['SubnetIds'] ?? []) : [];
-                    if (is_string($number) && is_array($subnets) && $subnets !== []) {
-                        $versions[] = $number;
+                    $vpc = is_array($version) && is_array($version['VpcConfig'] ?? null) ? $version['VpcConfig'] : [];
+                    $subnets = array_values(array_filter(is_array($vpc['SubnetIds'] ?? null) ? $vpc['SubnetIds'] : [], 'is_string'));
+                    $groups = array_values(array_filter(is_array($vpc['SecurityGroupIds'] ?? null) ? $vpc['SecurityGroupIds'] : [], 'is_string'));
+                    sort($groups);
+                    if (is_string($number) && $subnets !== []) {
+                        $versions[$number] = ['subnets' => $subnets, 'groups' => $groups];
                     }
                 }
                 $marker = is_string($page['NextMarker'] ?? null) && $page['NextMarker'] !== '' ? $page['NextMarker'] : null;

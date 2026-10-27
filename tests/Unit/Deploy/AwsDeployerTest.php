@@ -3957,7 +3957,8 @@ final class AwsDeployerTest extends TestCase
             'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
             'DeleteRolePolicy' => new Result([]), 'DeleteRole' => new Result([]),
             'GetGroupQuery' => self::noGroup(),
-            // No network interface of the console or the workers left to wait for.
+            // No console or worker version in a VPC, and no network interface left to wait for.
+            'ListVersionsByFunction' => new Result(['Versions' => []]),
             'DescribeNetworkInterfaces' => new Result(['NetworkInterfaces' => []]),
         ];
     }
@@ -4005,10 +4006,29 @@ final class AwsDeployerTest extends TestCase
         self::assertLessThan(min(array_keys($calls, 'DescribeNetworkInterfaces', true)), max(array_keys($calls, 'DeleteFunction', true)), 'the functions go first');
         self::assertLessThan(max(array_keys($calls, 'DeleteRole', true)), max(array_keys($calls, 'DescribeNetworkInterfaces', true)), 'the execution role goes once the interfaces are gone');
         $by = self::byOperation($mocks);
-        self::assertSame([['Name' => 'description', 'Values' => ['AWS Lambda VPC ENI-shop-production-console', 'AWS Lambda VPC ENI-shop-production-console-*', 'AWS Lambda VPC ENI-shop-production-queue-*']]], $by['DescribeNetworkInterfaces'][0]['Filters']);
+        self::assertSame([['Name' => 'description', 'Values' => ['AWS Lambda VPC ENI-*']], ['Name' => 'subnet-id', 'Values' => ['subnet-a', 'subnet-b']]], $by['DescribeNetworkInterfaces'][0]['Filters'],
+            'by where they ran, not by name: Lambda names a shared interface after the function that made it');
         self::assertSame('ALL', $by['ListFunctions'][0]['FunctionVersion']);
         self::assertSame(['arco-shop-production-network', 'arco-shop-production'], array_column($by['DeleteRole'], 'RoleName'));
         self::assertContains(['remove.step_vpc_interfaces', ['functions' => 'shop-production-console, shop-production-queue-*']], $steps);
+    }
+
+    /** An interface staging made (and named) that production reused: once staging is gone, production's remove waits for it. */
+    public function test_remove_waits_for_a_reused_interface_another_environment_made(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()], 'ListFunctions' => self::functionsInRegion([]),
+            'DescribeNetworkInterfaces' => [new Result(['NetworkInterfaces' => [
+                ['NetworkInterfaceId' => 'eni-1', 'Description' => 'AWS Lambda VPC ENI-shop-staging-console', 'SubnetId' => 'subnet-b', 'Groups' => [['GroupId' => 'sg-1']]],
+                // Same subnet, other groups: another function's interface, never waited for.
+                ['NetworkInterfaceId' => 'eni-9', 'Description' => 'AWS Lambda VPC ENI-billing', 'SubnetId' => 'subnet-b', 'Groups' => [['GroupId' => 'sg-9']]],
+            ]]), new Result(['NetworkInterfaces' => [['NetworkInterfaceId' => 'eni-9', 'Description' => 'AWS Lambda VPC ENI-billing', 'SubnetId' => 'subnet-b', 'Groups' => [['GroupId' => 'sg-9']]]]])]]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(console: true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertCount(2, self::only($mocks, 'DescribeNetworkInterfaces'), 'eni-1 is waited for, eni-9 is not');
+        self::assertSame(['arco-shop-production-network', 'arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
     }
 
     /** Staging and production on the same subnets and groups share one interface: production keeps it, and its role. */
@@ -4089,7 +4109,7 @@ final class AwsDeployerTest extends TestCase
     public function test_leaving_the_vpc_retires_the_vpc_versions_and_waits_for_their_interfaces_before_the_connector(): void
     {
         $mocks = new AwsMocks();
-        self::answer($mocks, ['GetNetworkConnector' => [self::connector(), self::connectorGone()], 'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
+        self::answer($mocks, ['GetNetworkConnector' => [self::connector(), self::connector(), self::connectorGone()], 'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
             'DeleteRolePolicy' => new Result([]), 'DeleteRole' => new Result([]), 'DeleteFunction' => new Result([]),
             // The live alias still on a VPC version (a console that was not activated): never deleted.
             'GetAlias' => new Result(['FunctionVersion' => '6']),
@@ -4118,7 +4138,7 @@ final class AwsDeployerTest extends TestCase
     public function test_leaving_the_vpc_waits_even_when_no_vpc_version_is_left(): void
     {
         $mocks = new AwsMocks();
-        self::answer($mocks, ['GetNetworkConnector' => [self::connector(), self::connectorGone()], 'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
+        self::answer($mocks, ['GetNetworkConnector' => [self::connector(), self::connector(), self::connectorGone()], 'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
             'DeleteRolePolicy' => new Result([]), 'DeleteRole' => new Result([]),
             'ListVersionsByFunction' => new Result(['Versions' => []]), 'ListFunctions' => self::functionsInRegion([]), 'GetAlias' => new Result(['FunctionVersion' => '7']),
             'DescribeNetworkInterfaces' => self::interfaces('eni-1')]);
@@ -4148,15 +4168,15 @@ final class AwsDeployerTest extends TestCase
     public function test_remove_deletes_functions_then_connector_then_role(): void
     {
         $mocks = new AwsMocks();
-        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()]]);
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connector(), self::connectorGone()]]);
         $steps = [];
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(), function (string $key) use (&$steps): void { $steps[] = $key; });
 
         self::assertSame(
-            ['GetNetworkConnector', 'DeleteFunction', 'DeleteWebFunction', 'DeleteNetworkConnector', 'GetNetworkConnector', 'DeleteRolePolicy', 'DeleteRole', 'DeleteRolePolicy', 'DeleteRole'],
+            ['GetNetworkConnector', 'GetNetworkConnector', 'DeleteFunction', 'DeleteWebFunction', 'DeleteNetworkConnector', 'GetNetworkConnector', 'DeleteRolePolicy', 'DeleteRole', 'DeleteRolePolicy', 'DeleteRole'],
             self::only($mocks, 'GetNetworkConnector', 'DeleteFunction', 'DeleteWebFunction', 'DeleteNetworkConnector', 'DeleteRolePolicy', 'DeleteRole'),
-            'ownership first; functions, the connector (until gone), its operator role, then the execution role',
+            'ownership, then where the functions ran; functions, the connector (until gone), its operator role, then the execution role',
         );
         self::assertSame(['arco-shop-production-network', 'arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
         self::assertNotContains('GetWebFunctionRevision', $mocks->calls, 'with vpc() the connector is checked by name');

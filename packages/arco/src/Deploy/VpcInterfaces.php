@@ -32,20 +32,25 @@ final class VpcInterfaces
     }
 
     /**
-     * Waits until Lambda has deleted the interfaces of the environment's console and workers. Lambda describes
-     * each as "AWS Lambda VPC ENI-<function>", the function that made it; one interface serves every function of
-     * the account with the same subnets and security groups, so one that a function of another environment or
-     * app still uses (any version, $LATEST included) is not waited for: it stays, and so does that function's role.
+     * Waits until Lambda has deleted the interfaces the environment's console and workers used: Lambda's interfaces
+     * ("AWS Lambda VPC ENI-...") in one of $networks, the subnets and security groups they ran with. Lambda shares
+     * one interface among the functions of the account with the same subnets and security groups (it keeps the name
+     * of the one that made it), so one that a function of another environment or app still uses (any version) is
+     * not waited for: it stays, and so does that function's role.
      *
+     * @param list<array{subnets: list<string>, groups: list<string>}> $networks groups sorted
      * @return list<string> the interface ids still there at the deadline; [] once they are gone
      * @throws \Aws\Exception\AwsException a refused or failed lookup
      */
-    public function waitGone(AppConfig $config): array
+    public function waitGone(AppConfig $config, array $networks): array
     {
+        if ($networks === []) {
+            return [];
+        }
         $deadline = $this->sleeper->now() + self::TIMEOUT;
         $shared = null;
         while (true) {
-            $left = $this->find($config);
+            $left = $this->find($networks);
             if ($left !== []) {
                 $shared ??= $this->othersInVpc($config);
                 $left = array_keys(array_filter($left, fn (array $interface) => ! self::usedByAny($interface, $shared)));
@@ -57,16 +62,18 @@ final class VpcInterfaces
         }
     }
 
-    /** @return array<string, array{subnet: string, groups: list<string>}> by interface id */
-    private function find(AppConfig $config): array
+    /**
+     * @param list<array{subnets: list<string>, groups: list<string>}> $networks
+     * @return array<string, array{subnet: string, groups: list<string>}> by interface id
+     */
+    private function find(array $networks): array
     {
-        $prefix = 'AWS Lambda VPC ENI-';
-        $descriptions = [$prefix . $config->consoleFunctionName(), $prefix . $config->consoleFunctionName() . '-*', $prefix . $config->functionName() . '-queue-*'];
+        $subnets = array_values(array_unique(array_merge(...array_map(fn (array $network) => $network['subnets'], $networks))));
         $found = [];
         $token = null;
         do {
             $page = $this->ec2->describeNetworkInterfaces([
-                'Filters' => [['Name' => 'description', 'Values' => $descriptions]],
+                'Filters' => [['Name' => 'description', 'Values' => ['AWS Lambda VPC ENI-*']], ['Name' => 'subnet-id', 'Values' => $subnets]],
                 ...($token === null ? [] : ['NextToken' => $token]),
             ]);
             foreach (Aws::maps($page['NetworkInterfaces'] ?? []) as $interface) {
@@ -82,7 +89,10 @@ final class VpcInterfaces
                     }
                 }
                 sort($groups);
-                $found[$id] = ['subnet' => (string) Aws::string($interface['SubnetId'] ?? null), 'groups' => $groups];
+                $candidate = ['subnet' => (string) Aws::string($interface['SubnetId'] ?? null), 'groups' => $groups];
+                if (self::usedByAny($candidate, $networks)) {
+                    $found[$id] = $candidate;
+                }
             }
             $token = Aws::string($page['NextToken'] ?? null);
             $token = $token === '' ? null : $token;
@@ -126,7 +136,7 @@ final class VpcInterfaces
 
     /**
      * @param array{subnet: string, groups: list<string>} $interface
-     * @param list<array{subnets: list<string>, groups: list<string>}> $functions
+     * @param list<array{subnets: list<string>, groups: list<string>}> $functions their subnets and sorted groups
      */
     private static function usedByAny(array $interface, array $functions): bool
     {
