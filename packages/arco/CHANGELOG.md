@@ -16,6 +16,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   interfaces of `remove`, CloudFront and certificates) shows its elapsed time after 10 seconds: a line redrawn in
   place in a terminal (`3 min 05 s elapsed`), one line per minute in CI logs (`3 min elapsed`). `--json` streams
   nothing new: the elapsed time follows from the step's `at`.
+- **Added:** documentation for coding agents: [`docs/agents.md`](docs/agents.md) (running Arco without a terminal,
+  every command and `arco.php` method, workflows, error keys and their fixes), an [`llms.txt`](llms.txt) index, and a
+  Claude Code skill in `skills/arco` (copy it into a project's `.claude/skills/`).
 - **Fixed:** `arco remove` printed the code of a kept bucket (`… was kept in AWS: some`) instead of saying whether
   it still has files. Its steps now print the way `deploy` prints them.
 
