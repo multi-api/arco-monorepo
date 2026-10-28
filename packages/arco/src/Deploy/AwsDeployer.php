@@ -1292,6 +1292,10 @@ final class AwsDeployer implements Deployer
                 // Unreadable or another owner's: the rest of the status still shows.
             }
         }
+        $endpoints = null;
+        if (RevisionFactory::usesVpc($config)) {
+            $endpoints = $config->vpc?->endpointIds() === [] ? [] : $this->endpointStatus($config);
+        }
         $located = $this->located($config);
         return new AppStatus(
             $config->functionName(),
@@ -1307,7 +1311,45 @@ final class AwsDeployer implements Deployer
             $this->queueStatus($config, $located),
             $located?->account,
             $vpc,
+            $endpoints,
         );
+    }
+
+    /**
+     * The gateway endpoint of each service of vpc() as info shows it (read-only: no decider, no write); null when
+     * the plan cannot be read (no EC2 access, a named endpoint that is gone or wrong).
+     *
+     * @return list<array{service: string, id: ?string, arco: bool, environments: ?int, route_tables: list<string>, missing_route_tables: list<string>}>|null
+     */
+    private function endpointStatus(AppConfig $config): ?array
+    {
+        try {
+            $plans = $this->gatewayEndpoints($config)->plan($config);
+        } catch (AwsException|DeployException) {
+            return null;
+        }
+        return array_map(function (EndpointPlan $plan): array {
+            $covering = $plan->covering;
+            usort($covering, fn (array $a, array $b) => $a['id'] <=> $b['id']);
+            $shown = null;
+            foreach ($covering as $endpoint) {
+                if ($endpoint['arco']) {
+                    $shown = $endpoint;
+                    break;
+                }
+            }
+            $shown ??= $covering[0] ?? null;
+            $id = $shown['id'] ?? $plan->target;
+            $arco = $shown !== null ? $shown['arco'] : ($id !== null && $plan->targetIsArco);
+            return [
+                'service' => $plan->service,
+                'id' => $id,
+                'arco' => $arco,
+                'environments' => $arco && $shown !== null ? $shown['uses'] : null,
+                'route_tables' => $plan->routeTables,
+                'missing_route_tables' => $plan->missing,
+            ];
+        }, $plans);
     }
 
     /**

@@ -4303,6 +4303,63 @@ final class AwsDeployerTest extends TestCase
         self::assertNotContains('GetNetworkConnector', $mocks->calls, 'no vpc(): no lambda-core call');
     }
 
+    /** @param array<string, mixed> $ec2 answers of the EC2 reads, by operation */
+    private function describeWithEndpoints(array $ec2, ?AwsMocks &$mocks = null): ?\Multiapi\Arco\Deploy\AppStatus
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [
+            'GetWebFunction' => new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            'GetWebFunctionEndpoint' => new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            'GetNetworkConnector' => self::connector(3),
+        ] + $ec2);
+        return (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->describe($this->endpointsConfig(['s3' => 'vpce-u1', 'dynamodb']));
+    }
+
+    private static function gatewayEndpoint(string $id, string $service, array $tables, array $tags = []): array
+    {
+        return ['VpcEndpointId' => $id, 'State' => 'available', 'VpcEndpointType' => 'Gateway', 'ServiceName' => "com.amazonaws.us-east-1.$service", 'VpcId' => 'vpc-1', 'RouteTableIds' => $tables,
+            'Tags' => array_map(fn (string $k, string $v) => ['Key' => $k, 'Value' => $v], array_keys($tags), $tags)];
+    }
+
+    public function test_describe_reads_the_gateway_endpoints_without_writing(): void
+    {
+        $arco = ['arco:managed' => 'gateway-endpoint', 'arco:uses:shop/production' => '1', 'arco:uses:blog/production' => '1'];
+        $status = $this->describeWithEndpoints([
+            'DescribeSubnets' => new Result(['Subnets' => [['SubnetId' => 'subnet-a', 'VpcId' => 'vpc-1'], ['SubnetId' => 'subnet-b', 'VpcId' => 'vpc-1']]]),
+            'DescribeRouteTables' => new Result(['RouteTables' => [
+                ['RouteTableId' => 'rtb-a', 'Associations' => [['SubnetId' => 'subnet-a', 'Main' => false]]],
+                ['RouteTableId' => 'rtb-b', 'Associations' => [['SubnetId' => 'subnet-b', 'Main' => false]]],
+            ]]),
+            'DescribeVpcEndpoints' => [
+                new Result(['VpcEndpoints' => [self::gatewayEndpoint('vpce-u1', 's3', ['rtb-a'])]]),
+                new Result(['VpcEndpoints' => [self::gatewayEndpoint('vpce-a1', 'dynamodb', ['rtb-a', 'rtb-b'], $arco)]]),
+            ],
+        ], $mocks);
+
+        self::assertSame([
+            ['service' => 's3', 'id' => 'vpce-u1', 'arco' => false, 'environments' => null, 'route_tables' => ['rtb-a', 'rtb-b'], 'missing_route_tables' => ['rtb-b']],
+            ['service' => 'dynamodb', 'id' => 'vpce-a1', 'arco' => true, 'environments' => 2, 'route_tables' => ['rtb-a', 'rtb-b'], 'missing_route_tables' => []],
+        ], $status?->endpoints);
+        self::assertSame([], self::writes($mocks), 'info never writes, and never asks a decider');
+    }
+
+    public function test_describe_endpoints_are_null_when_unreadable_and_empty_without_any(): void
+    {
+        $status = $this->describeWithEndpoints([]);
+        self::assertNull($status?->endpoints, 'AccessDenied on EC2: unreadable, not a failure');
+        self::assertSame(['connector' => 'nc-0abc', 'version' => 3, 'state' => 'ACTIVE'], $status?->vpc);
+
+        $mocks = new AwsMocks();
+        self::answer($mocks, [
+            'GetWebFunction' => new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            'GetWebFunctionEndpoint' => new Result([]),
+            'GetNetworkConnector' => self::connector(3),
+        ]);
+        $status = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->describe($this->vpcConfig());
+        self::assertSame([], $status?->endpoints);
+        self::assertSame([], array_filter($mocks->calls, fn (string $c) => str_contains($c, 'Subnets') || str_contains($c, 'RouteTables') || str_contains($c, 'VpcEndpoints')), 'no endpoints: no EC2 call');
+    }
+
     private static function operatorRole(?array $tags = null): Result
     {
         return new Result(['Role' => ['Arn' => self::OPERATOR_ROLE, 'Tags' => self::tagList($tags ?? self::tags()), 'Description' => 'Execution role managed by Arco']]);

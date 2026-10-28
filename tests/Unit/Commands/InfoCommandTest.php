@@ -645,7 +645,7 @@ final class InfoCommandTest extends TestCase
 
         $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
-        self::assertSame(['subnets' => ['subnet-a1', 'subnet-b2'], 'security_groups' => ['sg-c3']], $json['vpc']);
+        self::assertSame(['subnets' => ['subnet-a1', 'subnet-b2'], 'security_groups' => ['sg-c3'], 'endpoints' => []], $json['vpc']);
         self::assertArrayNotHasKey('vpc', $json['settings']);
         $project->restore();
     }
@@ -663,8 +663,49 @@ final class InfoCommandTest extends TestCase
 
         $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
-        self::assertSame(['subnets' => ['subnet-a1'], 'security_groups' => ['sg-c3'], 'connector' => 'nc-0abc', 'version' => 3, 'state' => 'ACTIVE'], $json['vpc']);
+        self::assertSame(['subnets' => ['subnet-a1'], 'security_groups' => ['sg-c3'], 'connector' => 'nc-0abc', 'version' => 3, 'state' => 'ACTIVE', 'endpoints' => []], $json['vpc']);
         putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_shows_the_gateway_endpoints(): void
+    {
+        $config = str_replace("->concurrency(48)", "->concurrency(48)->vpc(subnets: ['subnet-a1'], securityGroups: ['sg-c3'], endpoints: ['s3' => 'vpce-0a1b2c3d', 'dynamodb'])", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        putenv('AWS_PROFILE=p');
+        $endpoints = [
+            ['service' => 's3', 'id' => 'vpce-0a1b2c3d', 'arco' => false, 'environments' => null, 'route_tables' => ['rtb-a', 'rtb-b'], 'missing_route_tables' => ['rtb-b']],
+            ['service' => 'dynamodb', 'id' => 'vpce-a1', 'arco' => true, 'environments' => 2, 'route_tables' => ['rtb-a'], 'missing_route_tables' => []],
+        ];
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-staging', 'Active', 'abc.on.aws', 'rev-1', vpc: ['connector' => 'nc-0abc', 'version' => 3, 'state' => 'ACTIVE'], endpoints: $endpoints);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $status)));
+
+        $tester->execute(['--env' => 'staging'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/VPC endpoints\s+s3 vpce-0a1b2c3d \(yours\) missing rtb-b · dynamodb vpce-a1 \(Arco, 2 environments\)\s+app *\n/', $tester->getDisplay());
+
+        $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame($endpoints, $json['vpc']['endpoints']);
+        self::assertSame('endpoints', array_key_last($json['vpc']), 'appended after the connector keys');
+
+        $unreadable = new \Multiapi\Arco\Deploy\AppStatus('shop-staging', 'Active', 'abc.on.aws', 'rev-1', vpc: ['connector' => 'nc-0abc', 'version' => 3, 'state' => 'ACTIVE']);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $unreadable)));
+        $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
+        self::assertNull(json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR)['vpc']['endpoints']);
+        $tester->execute(['--env' => 'staging'], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('VPC endpoints', $tester->getDisplay());
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_the_gateway_endpoints_are_empty_without_any_in_vpc(): void
+    {
+        $config = str_replace("->concurrency(48)", "->concurrency(48)->vpc(subnets: ['subnet-a1'], securityGroups: ['sg-c3'])", ProjectFixture::standardConfig());
+        $project = new ProjectFixture($config);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+        $tester->execute(['--env' => 'staging', '--json' => true], ['interactive' => false]);
+        self::assertSame([], json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR)['vpc']['endpoints']);
         $project->restore();
     }
 
