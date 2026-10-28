@@ -16,6 +16,8 @@ final class UploadProgress
     /** @var array<int, int> uploaded bytes by part number */
     private array $parts = [];
     private int $reported = 0;
+    /** Set once the callback threw: a broken progress display never fails the upload. */
+    private bool $broken = false;
 
     /** @param Closure(int, int): void $onProgress receives (bytes sent, file size) */
     public function __construct(private readonly int $total, private readonly Closure $onProgress)
@@ -47,12 +49,24 @@ final class UploadProgress
         $this->report(min(array_sum($this->parts), $this->total));
     }
 
+    /** Megabytes for display: one decimal under 10 MB (no "0 / 0 MB" for a small package), whole above. */
+    public static function megabytes(int $bytes): string
+    {
+        $mb = $bytes / 1048576;
+        return $mb < 10 ? number_format($mb, 1, '.', '') : (string) (int) round($mb);
+    }
+
     private function report(int $sent): void
     {
-        if ($sent <= $this->reported) {
+        if ($this->broken || $sent <= $this->reported) {
             return;
         }
         $this->reported = $sent;
-        ($this->onProgress)($sent, $this->total);
+        try {
+            ($this->onProgress)($sent, $this->total);
+        } catch (\Throwable) {
+            // Guzzle would turn the exception into a failed request: stop reporting instead.
+            $this->broken = true;
+        }
     }
 }
