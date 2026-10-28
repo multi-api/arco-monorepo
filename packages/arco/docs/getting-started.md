@@ -223,7 +223,11 @@ unreadable report fails verification, with a message that says which of the two 
 
 While building, Arco prints each phase (copying the project, `composer install --no-dev`, the
 preset's build commands such as `php artisan event:cache`, writing the zip). Writing the zip shows
-a progress bar in a terminal and `25%`/`50%`/`75%`/`100%` lines in CI logs.
+a progress bar in a terminal and `25%`/`50%`/`75%`/`100%` lines in CI logs. Uploading the package to S3 (and the
+console package, on its own line) shows the same, with the megabytes sent: `48 / 180 MB` next to the bar, or
+`25% (45 / 180 MB)` in CI logs. A step that waits on AWS (the network connector, a VPC update, CloudFront)
+shows how long it has been running after 10 seconds: a `2 min 05 s elapsed` line redrawn in a terminal, and a
+`2 min elapsed` line per minute in CI logs.
 
 The health route must answer with a 2xx status (redirects are not followed). With
 `->auth('iam')` Arco cannot probe the endpoint without signing, so it relies on Lambda's init
@@ -615,10 +619,13 @@ Every line has `schema` (`1`) and `type`, one of:
   - `note`: an informational line, such as the target (`deploy.target`), where the DNS records go
     (`deploy.dns_target`, `deploy.dns_cloudflare`), an endpoint override, or what `remove` lists and keeps
     (`remove.resources`, `remove.resource_kept`).
-- **`progress`**: `key`, `percent` (0 to 100) and `at`. The keys are `build.zip` (writing the package zip) and
-  `binary.download` (downloading the PHP CLI binary of the console function); other keys may be added. Lines
-  of one key come at most once a second, except the last one at `100`, which always comes and may follow the
-  previous line by less than a second. The upload to S3 has no progress line.
+- **`progress`**: `key`, `percent` (0 to 100) and `at`. The keys are `build.zip` (writing the package zip),
+  `binary.download` (downloading the PHP CLI binary of the console function) and `deploy.upload` (uploading the
+  package, or the console package and its runtime binary, to S3); other keys may be added. Lines of one key come
+  at most once a second, except the last one at `100`, which always comes and may follow the previous line by
+  less than a second. A percent lower than the previous line's starts another run of the same key (the runtime
+  binary after the console package). Elapsed time during long waits is not streamed: derive it from the
+  running step's `at`.
 - **`result`**: always the last line, exactly once: `outcome`, `app`, `environment`, `revision`, `url`, `domains`,
   `rolled_back`, `cold_start_ms` and `error`.
   - `app` is `null` when `arco.php` could not be loaded (`environment` is then the `--env` value).
