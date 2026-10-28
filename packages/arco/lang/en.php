@@ -193,6 +193,7 @@ return [
     'deploy.endpoint_created' => 'Created the {service} gateway endpoint {endpoint} for the route tables {route_tables}',
     'deploy.endpoint_routes_added' => 'Added the route tables {route_tables} to the {service} gateway endpoint {endpoint}',
     'deploy.endpoint_reused' => 'The {service} gateway endpoint {endpoint} (yours) already serves the route tables of vpc()',
+    'deploy.endpoint_shared' => 'The {service} gateway endpoint {endpoint} (Arco) already serves the route tables of vpc()',
     'deploy.endpoint_modify_failed' => 'EC2 did not add the route tables to the gateway endpoint {endpoint}. Check the endpoint and deploy again.',
     'deploy.endpoint_conflict' => 'Another deploy changed the {service} gateway endpoint at the same time ({error}), and it still conflicted after reading it again. Nothing is broken: deploy again.',
     'deploy.endpoint_tag_limit' => 'The gateway endpoint {endpoint} already has {max} tags, the most EC2 allows, so one more environment cannot share it. Remove the usage tags (arco:uses:*) of environments that no longer use it, or name another endpoint in vpc().',

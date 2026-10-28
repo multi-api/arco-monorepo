@@ -193,6 +193,7 @@ return [
     'deploy.endpoint_created' => 'Se creó el endpoint de gateway de {service} {endpoint} para las tablas de rutas {route_tables}',
     'deploy.endpoint_routes_added' => 'Se agregaron las tablas de rutas {route_tables} al endpoint de gateway de {service} {endpoint}',
     'deploy.endpoint_reused' => 'El endpoint de gateway de {service} {endpoint} (tuyo) ya sirve las tablas de rutas de vpc()',
+    'deploy.endpoint_shared' => 'El endpoint de gateway de {service} {endpoint} (de Arco) ya sirve las tablas de rutas de vpc()',
     'deploy.endpoint_modify_failed' => 'EC2 no agregó las tablas de rutas al endpoint de gateway {endpoint}. Revisa el endpoint y vuelve a hacer deploy.',
     'deploy.endpoint_conflict' => 'Otro deploy cambió el endpoint de gateway de {service} al mismo tiempo ({error}), y siguió en conflicto tras leerlo de nuevo. Nada está roto: vuelve a hacer deploy.',
     'deploy.endpoint_tag_limit' => 'El endpoint de gateway {endpoint} ya tiene {max} tags, el máximo que permite EC2, así que otro entorno no puede compartirlo. Quita los tags de uso (arco:uses:*) de los entornos que ya no lo usan, o nombra otro endpoint en vpc().',

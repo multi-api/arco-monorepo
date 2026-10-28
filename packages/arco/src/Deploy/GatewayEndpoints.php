@@ -220,6 +220,12 @@ final class GatewayEndpoints
             foreach ($reused as $endpoint) {
                 $step('deploy.endpoint_reused', ['service' => $plan->service, 'endpoint' => $endpoint]);
             }
+            // Arco's own endpoints too: a deploy that changes nothing still says which endpoint serves the service.
+            $shared = $arco;
+            sort($shared);
+            foreach ($shared as $endpoint) {
+                $step('deploy.endpoint_shared', ['service' => $plan->service, 'endpoint' => $endpoint]);
+            }
         }
         $ids = $created === null ? $arco : [...$arco, $created];
         sort($ids);

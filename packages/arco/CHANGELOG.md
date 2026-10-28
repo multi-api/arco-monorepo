@@ -10,8 +10,10 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   runtime binary, whose upload used to print nothing for minutes, upload under their own step,
   `deploy.step_upload_console` (`{size, mb}`, both files counted, one progress run), before `deploy.step_console`,
   which now covers only the console's Lambda update. `deploy.step_upload` gains the param `mb` (the size as printed,
-  e.g. `"4.2"`; `size` stays whole MB). `deploy --json` streams the upload progress under the new progress key
-  `deploy.upload`.
+  e.g. `"4.2"`; `size` stays whole MB). Both are now the zip that is sent, not the unzipped package size that
+  `package.ready` prints, so the step and its bar agree. In CI logs a jump (a runtime binary already in the bucket
+  counts as sent at once) prints only the mark it reached. `deploy --json` streams the upload progress under the new
+  progress key `deploy.upload`.
 - **Added:** a step that waits on AWS (the network connector, the first VPC console update, the VPC network
   interfaces of `remove`, CloudFront and certificates) shows its elapsed time after 10 seconds: a line redrawn in
   place in a terminal (`3 min 05 s elapsed`), one line per minute in CI logs (`3 min elapsed`). `--json` streams
@@ -24,7 +26,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   with `--json` or with `--yes` the deploy fails with `deploy.endpoint_routes_missing` (it never continues silently).
   Arco's endpoints are tagged and shared by the environments of the VPC (`arco:uses:<app>/<env>`) and deleted once
   the last one leaves; route tables are never removed. New steps: `deploy.step_endpoints`, `deploy.endpoint_created`,
-  `deploy.endpoint_routes_added`, `deploy.endpoint_reused`, `deploy.endpoint_released`, `deploy.endpoint_deleted`
+  `deploy.endpoint_routes_added`, `deploy.endpoint_reused`, `deploy.endpoint_shared`, `deploy.endpoint_released`, `deploy.endpoint_deleted`
   (and `remove.endpoint_released`, `_deleted`, `_cleanup_failed`); `deploy.endpoint_skipped`,
   `deploy.endpoint_cleanup_failed` and `deploy.endpoint_record_failed` (warnings); errors `deploy.endpoint_not_found`,
   `_wrong_type`, `_wrong_service`, `_wrong_vpc`, `_vpc_mixed`, `_routes_missing`, `_conflict`, `_tag_limit`, `_timeout`,

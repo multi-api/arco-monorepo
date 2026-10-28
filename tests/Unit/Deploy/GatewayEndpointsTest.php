@@ -461,7 +461,7 @@ final class GatewayEndpointsTest extends TestCase
         $ids = $this->apply($mocks, self::makePlan(EndpointPlan::NONE, [], 'vpce-arco', true, $covering), $steps);
         self::assertSame(['vpce-arco'], $ids);
         self::assertSame(['DescribeVpcEndpoints'], $mocks->calls);
-        self::assertSame([], $steps);
+        self::assertSame([['deploy.endpoint_shared', ['service' => 's3', 'endpoint' => 'vpce-arco']]], $steps, 'a deploy that changes nothing still says which endpoint serves it');
 
         $mocks = new AwsMocks();
         $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a', 'rtb-b'], self::ARCO)]));
@@ -488,6 +488,10 @@ final class GatewayEndpointsTest extends TestCase
         self::assertSame(['vpce-a', 'vpce-b'], $ids);
         self::assertSame(['DescribeVpcEndpoints', 'CreateTags'], $mocks->calls);
         self::assertEqualsCanonicalizing(['vpce-a', 'vpce-b'], $mocks->params[1]['Resources']);
+        self::assertSame([
+            ['deploy.endpoint_shared', ['service' => 's3', 'endpoint' => 'vpce-a']],
+            ['deploy.endpoint_shared', ['service' => 's3', 'endpoint' => 'vpce-b']],
+        ], $steps);
     }
 
     public function test_reused_user_endpoint_reports(): void
@@ -749,6 +753,15 @@ final class GatewayEndpointsTest extends TestCase
         self::assertStringContainsString('your', $en['deploy.endpoint_reused']);
         self::assertStringNotContainsString('{owner}', $es['deploy.endpoint_reused']);
         self::assertMatchesRegularExpression('/tu |tuyo/', $es['deploy.endpoint_reused']);
+    }
+
+    public function test_shared_message_names_arco_in_each_language(): void
+    {
+        $en = require __DIR__ . '/../../../packages/arco/lang/en.php';
+        $es = require __DIR__ . '/../../../packages/arco/lang/es.php';
+        self::assertStringContainsString('Arco', $en['deploy.endpoint_shared']);
+        self::assertStringContainsString('Arco', $es['deploy.endpoint_shared']);
+        self::assertStringContainsString('{endpoint}', $es['deploy.endpoint_shared']);
     }
 
     public function test_create_survives_a_not_found_right_after_creating(): void
