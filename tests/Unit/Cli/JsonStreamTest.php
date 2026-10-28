@@ -147,6 +147,32 @@ final class JsonStreamTest extends TestCase
         self::assertSame([['build.zip', 100], ['binary.download', 0]], array_map(fn (array $l) => [$l['key'], $l['percent']], $progress));
     }
 
+    public function test_the_uploads_are_their_own_progress_key_with_the_event_shape_unchanged(): void
+    {
+        $stream = $this->stream();
+        $stream('deploy.step_upload', ['size' => 48]);
+        $stream('package.progress', ['percent' => 100, 'sent' => 48, 'total' => 48]);
+        $stream('deploy.step_upload_console', ['size' => 180]);
+        $stream('package.progress', ['percent' => 100, 'sent' => 180, 'total' => 180]);
+        $stream('package.progress', ['percent' => 0, 'sent' => 0, 'total' => 90]);   // the runtime binary
+        $stream('package.progress', ['percent' => 100, 'sent' => 90, 'total' => 90]);
+
+        $progress = array_values(array_filter($this->lines(), fn (array $l) => $l['type'] === 'progress'));
+        self::assertSame([['deploy.upload', 100], ['deploy.upload', 100], ['deploy.upload', 0], ['deploy.upload', 100]], array_map(fn (array $l) => [$l['key'], $l['percent']], $progress), 'a second run in one step starts over and still ends at 100');
+        self::assertSame(['schema', 'type', 'key', 'percent', 'at'], array_keys($progress[0]));
+    }
+
+    public function test_tick_writes_nothing(): void
+    {
+        $stream = $this->stream();
+        $stream('deploy.network_waiting');
+        $this->output->fetch();
+        $this->now += 600;
+        $stream->tick();
+
+        self::assertSame('', $this->output->fetch());
+    }
+
     public function test_the_result_is_last_ends_the_running_step_on_success_and_is_sent_once(): void
     {
         $stream = $this->stream();

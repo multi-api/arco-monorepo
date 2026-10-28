@@ -8,9 +8,10 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 /**
  * Prints the onStep callbacks of the build and deploy pipeline. `package.progress` (param
- * `percent`) becomes a progress bar redrawn in place on a terminal, and plain 25/50/75/100%
- * lines otherwise (CI logs, pipes), so long phases never look hung. Keys in WARNINGS are printed
- * as warning blocks instead of bullets.
+ * `percent`, and `sent`/`total` in MB for an upload) becomes a progress bar redrawn in place on a
+ * terminal, and plain 25/50/75/100% lines otherwise (CI logs, pipes), so long phases never look hung.
+ * tick() (called after each wait of the deploy) adds the time the running step has taken, for the
+ * waits that have no progress. Keys in WARNINGS are printed as warning blocks instead of bullets.
  */
 final class StepPrinter
 {
@@ -25,6 +26,8 @@ final class StepPrinter
     /** Codes of a WARNINGS step's `reason` that are a deliberate choice with nothing to act on: printed as bullets. */
     private const BULLET_REASONS = ['deploy.console_downloads_binary' => ['custom_binary']];
     private const MARKS = [25, 50, 75, 100];
+    /** Seconds a step runs before tick() shows its elapsed time. */
+    private const ELAPSED_AFTER = 10;
     /**
      * Params holding a code that is translated with the given key prefix before the step is printed;
      * the code's text gets the step's other params (e.g. {url} and {message}).
@@ -44,25 +47,43 @@ final class StepPrinter
     ];
 
     private ?ProgressBar $bar = null;
+    /** The live "elapsed" line under the running step. */
+    private ?ProgressBar $elapsedBar = null;
     private int $printed = 0;
+    private ?int $percent = null;
+    /** When the running step started; null before the first one. */
+    private ?float $startedAt = null;
+    /** Whole minutes already printed for the running step (plain output). */
+    private int $minutesPrinted = 0;
+    /** @var Closure(): float */
+    private readonly Closure $clock;
 
-    /** @param Closure(string, array<string, string|int>): string $translate */
+    /**
+     * @param Closure(string, array<string, string|int>): string $translate
+     * @param (Closure(): float)|null $clock seconds, for the elapsed time (microtime by default)
+     */
     public function __construct(
         private readonly SymfonyStyle $io,
         private readonly Closure $translate,
         private readonly bool $live,
+        ?Closure $clock = null,
     ) {
+        $this->clock = $clock ?? static fn (): float => microtime(true);
     }
 
     /** @param array<string, string|int> $params */
     public function __invoke(string $key, array $params = []): void
     {
         if ($key === self::PROGRESS) {
-            $this->progress((int) ($params['percent'] ?? 0));
+            $mb = isset($params['sent'], $params['total']) ? ($this->translate)('step.progress_mb', ['sent' => $params['sent'], 'total' => $params['total']]) : null;
+            $this->progress((int) ($params['percent'] ?? 0), $mb);
             return;
         }
         $this->closeBar();
         $this->printed = 0;
+        $this->percent = null;
+        $this->startedAt = ($this->clock)();
+        $this->minutesPrinted = 0;
         $message = self::message($this->translate, $key, $params);
         if (self::kind($key, $params) === 'warning') {
             $this->io->warning($message);
@@ -105,24 +126,78 @@ final class StepPrinter
         return $translate($key, $params);
     }
 
-    private function progress(int $percent): void
+    /**
+     * Shows the running step's elapsed time, for a long wait with no progress of its own: redrawn in
+     * place on a terminal, one line per whole minute otherwise. Nothing in a step's first ten seconds
+     * or while a progress bar runs.
+     */
+    public function tick(): void
+    {
+        if ($this->startedAt === null || $this->percent !== null) {
+            return;
+        }
+        $elapsed = (int) floor(($this->clock)() - $this->startedAt);
+        if ($elapsed < self::ELAPSED_AFTER) {
+            return;
+        }
+        if ($this->live) {
+            if ($this->elapsedBar === null) {
+                $this->elapsedBar = $this->io->createProgressBar(0);
+                $this->elapsedBar->setFormat('    %message%');
+                $this->elapsedBar->setRedrawFrequency(1);
+                $this->elapsedBar->minSecondsBetweenRedraws(0);
+                $this->elapsedBar->setMessage($this->elapsed(self::duration($elapsed)));
+                $this->elapsedBar->start();
+                return;
+            }
+            $this->elapsedBar->setMessage($this->elapsed(self::duration($elapsed)));
+            $this->elapsedBar->display();
+            return;
+        }
+        $minutes = intdiv($elapsed, 60);
+        if ($minutes > $this->minutesPrinted) {
+            $this->minutesPrinted = $minutes;
+            $this->io->writeln('    ' . $this->elapsed("$minutes min"));
+        }
+    }
+
+    private function elapsed(string $time): string
+    {
+        return ($this->translate)('step.elapsed', ['time' => $time]);
+    }
+
+    /** "45 s" under a minute, "3 min 05 s" after (the units read the same in every language). */
+    private static function duration(int $seconds): string
+    {
+        return $seconds < 60 ? "$seconds s" : sprintf('%d min %02d s', intdiv($seconds, 60), $seconds % 60);
+    }
+
+    private function progress(int $percent, ?string $mb): void
     {
         $percent = max(0, min(100, $percent));
+        // A lower percent starts another run in the same step (the runtime binary after the console zip).
+        if ($this->percent !== null && $percent < $this->percent) {
+            $this->printed = 0;
+        }
+        $this->percent = $percent;
         if ($this->live) {
+            $this->closeElapsed();
             if ($this->bar === null) {
                 $this->bar = $this->io->createProgressBar(100);
-                $this->bar->setFormat('    [%bar%] %percent:3s%%');
+                $this->bar->setFormat($mb === null ? '    [%bar%] %percent:3s%%' : '    [%bar%] %percent:3s%% %message%');
+                $this->bar->setMessage((string) $mb);
                 $this->bar->setRedrawFrequency(1);
                 $this->bar->minSecondsBetweenRedraws(0);
                 $this->bar->start();
             }
+            $this->bar->setMessage((string) $mb);
             $this->bar->setProgress($percent);
             return;
         }
         foreach (self::MARKS as $mark) {
             if ($percent >= $mark && $this->printed < $mark) {
                 $this->printed = $mark;
-                $this->io->writeln("    $mark%");
+                $this->io->writeln("    $mark%" . ($mb === null ? '' : " ($mb)"));
             }
         }
     }
@@ -139,6 +214,16 @@ final class StepPrinter
             $this->bar->finish();
             $this->io->newLine();
             $this->bar = null;
+        }
+        $this->closeElapsed();
+    }
+
+    private function closeElapsed(): void
+    {
+        if ($this->elapsedBar !== null) {
+            $this->elapsedBar->finish();
+            $this->io->newLine();
+            $this->elapsedBar = null;
         }
     }
 }

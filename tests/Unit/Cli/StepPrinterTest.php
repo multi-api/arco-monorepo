@@ -11,6 +11,9 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 final class StepPrinterTest extends TestCase
 {
+    /** seconds the printer's clock reads */
+    private float $now = 1000.0;
+
     private function printer(BufferedOutput $output, bool $interactive): StepPrinter
     {
         $input = new ArrayInput([]);
@@ -19,7 +22,141 @@ final class StepPrinterTest extends TestCase
             new SymfonyStyle($input, $output),
             fn (string $key, array $params = []) => $key . ($params === [] ? '' : ' ' . json_encode($params)),
             $interactive && $output->isDecorated(),
+            fn (): float => $this->now,
         );
+    }
+
+    public function test_upload_progress_without_a_terminal_names_the_megabytes(): void
+    {
+        $output = new BufferedOutput();
+        $printer = $this->printer($output, false);
+
+        $printer('deploy.step_upload', ['size' => 48]);
+        foreach ([[10, 5], [25, 12], [60, 29], [100, 48]] as [$percent, $sent]) {
+            $printer('package.progress', ['percent' => $percent, 'sent' => $sent, 'total' => 48]);
+        }
+
+        self::assertSame(
+            "  • deploy.step_upload {\"size\":48}\n"
+            . "    25% (step.progress_mb {\"sent\":12,\"total\":48})\n"
+            . "    50% (step.progress_mb {\"sent\":29,\"total\":48})\n"
+            . "    75% (step.progress_mb {\"sent\":48,\"total\":48})\n"
+            . "    100% (step.progress_mb {\"sent\":48,\"total\":48})\n",
+            $output->fetch(),
+        );
+    }
+
+    public function test_upload_progress_in_a_terminal_shows_the_megabytes_next_to_the_bar(): void
+    {
+        $output = new BufferedOutput(OutputInterface::VERBOSITY_NORMAL, true);
+        $printer = $this->printer($output, true);
+
+        $printer('deploy.step_upload', ['size' => 48]);
+        $printer('package.progress', ['percent' => 50, 'sent' => 24, 'total' => 48]);
+        $printer('deploy.step_role');
+
+        $text = $output->fetch();
+        self::assertMatchesRegularExpression('/ 50% step\.progress_mb \{"sent":24,"total":48\}[^\n]*\n  • deploy\.step_role/', $text);
+    }
+
+    public function test_a_second_progress_run_in_one_step_prints_its_marks_again(): void
+    {
+        $output = new BufferedOutput();
+        $printer = $this->printer($output, false);
+
+        $printer('deploy.step_upload_console', ['size' => 1]);
+        $printer('package.progress', ['percent' => 100]);
+        $printer('package.progress', ['percent' => 30]);
+        $printer('package.progress', ['percent' => 100]);
+
+        self::assertSame("  • deploy.step_upload_console {\"size\":1}\n" . str_repeat("    25%\n    50%\n    75%\n    100%\n", 2), $output->fetch(), 'the runtime binary after the console zip');
+    }
+
+    public function test_tick_prints_nothing_before_a_step_or_in_the_first_ten_seconds(): void
+    {
+        $output = new BufferedOutput(OutputInterface::VERBOSITY_NORMAL, true);
+        $printer = $this->printer($output, true);
+
+        $this->now += 100;
+        $printer->tick();
+        $printer('deploy.network_waiting');
+        $this->now += 9.5;
+        $printer->tick();
+
+        self::assertSame("  • deploy.network_waiting\n", $output->fetch());
+    }
+
+    public function test_tick_in_a_terminal_redraws_the_elapsed_time_under_the_step(): void
+    {
+        $output = new BufferedOutput(OutputInterface::VERBOSITY_NORMAL, true);
+        $printer = $this->printer($output, true);
+
+        $printer('deploy.network_waiting');
+        $this->now += 12;
+        $printer->tick();
+        $this->now += 173;
+        $printer->tick();
+        $printer('deploy.network_updated');
+
+        $text = $output->fetch();
+        self::assertStringContainsString('    step.elapsed {"time":"12 s"}', $text);
+        self::assertStringContainsString("\x1B[", $text, 'redrawn in place');
+        self::assertMatchesRegularExpression('/    step\.elapsed \{"time":"3 min 05 s"\}[^\n]*\n  • deploy\.network_updated/', $text, 'ended before the next step');
+    }
+
+    public function test_finish_ends_the_elapsed_line(): void
+    {
+        $output = new BufferedOutput(OutputInterface::VERBOSITY_NORMAL, true);
+        $printer = $this->printer($output, true);
+
+        $printer('deploy.network_waiting');
+        $this->now += 30;
+        $printer->tick();
+        $printer->finish();
+        $output->writeln('ERROR');
+
+        self::assertMatchesRegularExpression('/"30 s"\}[^\n]*\nERROR/', $output->fetch());
+    }
+
+    public function test_tick_without_a_terminal_prints_one_line_per_whole_minute_and_restarts_with_each_step(): void
+    {
+        $output = new BufferedOutput();
+        $printer = $this->printer($output, false);
+
+        $printer('deploy.network_waiting');
+        foreach ([15, 30, 20, 5, 10, 200] as $seconds) { // 15, 45, 65, 70, 80, 280 s
+            $this->now += $seconds;
+            $printer->tick();
+        }
+        $printer('deploy.network_updated');
+        $this->now += 59;
+        $printer->tick();
+        $this->now += 2;
+        $printer->tick();
+
+        self::assertSame(
+            "  • deploy.network_waiting\n"
+            . "    step.elapsed {\"time\":\"1 min\"}\n"
+            . "    step.elapsed {\"time\":\"4 min\"}\n"
+            . "  • deploy.network_updated\n"
+            . "    step.elapsed {\"time\":\"1 min\"}\n",
+            $output->fetch(),
+        );
+    }
+
+    public function test_tick_draws_nothing_while_a_progress_bar_is_open(): void
+    {
+        foreach ([true, false] as $live) {
+            $output = new BufferedOutput(OutputInterface::VERBOSITY_NORMAL, $live);
+            $printer = $this->printer($output, $live);
+
+            $printer('deploy.step_upload', ['size' => 48]);
+            $printer('package.progress', ['percent' => 40, 'sent' => 19, 'total' => 48]);
+            $this->now += 120;
+            $printer->tick();
+
+            self::assertStringNotContainsString('step.elapsed', $output->fetch(), $live ? 'live' : 'plain');
+        }
     }
 
     public function test_steps_are_printed_as_bullets(): void
