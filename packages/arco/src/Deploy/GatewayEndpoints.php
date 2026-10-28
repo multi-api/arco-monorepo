@@ -147,7 +147,8 @@ final class GatewayEndpoints
 
         if ($named !== null) {
             $endpoint = $endpoints[$named] ?? $this->named($service, $named, $vpcId);
-            $missing = array_values(array_diff($tables, $endpoint['tables']));
+            // A route table belongs to one gateway endpoint per service: what another endpoint serves is not missing.
+            $missing = array_values(array_diff($tables, [...$endpoint['tables'], ...$covered]));
             return self::result($missing, $missing === [] ? EndpointPlan::NONE : EndpointPlan::ASSOCIATE, $named, $endpoint['arco'], ...$context);
         }
 

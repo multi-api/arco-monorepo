@@ -131,6 +131,30 @@ final class GatewayEndpointsTest extends TestCase
         self::assertSame(['DescribeSubnets', 'DescribeRouteTables', 'DescribeVpcEndpoints'], $mocks->calls);
     }
 
+    public function test_named_endpoint_skips_tables_covered_by_another_endpoint(): void
+    {
+        $mocks = new AwsMocks();
+        $this->network($mocks);
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-mine', ['rtb-a']), self::endpoint('vpce-u', ['rtb-b'])]));
+
+        $plan = $this->plan($mocks, $this->config(['s3' => 'vpce-mine']));
+
+        self::assertSame(EndpointPlan::NONE, $plan->action);
+        self::assertSame('vpce-mine', $plan->target);
+        self::assertSame([], $plan->missing);
+
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::subnets('vpc-1', 'vpc-1', 'vpc-1'));
+        $mocks->handler->append(self::tables([['rtb-a', ['subnet-a']], ['rtb-b', ['subnet-b']], ['rtb-c', ['subnet-c']]]));
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-mine', ['rtb-a']), self::endpoint('vpce-u', ['rtb-b'])]));
+
+        $plan = $this->plan($mocks, $this->config(['s3' => 'vpce-mine'], ['subnet-a', 'subnet-b', 'subnet-c']));
+
+        self::assertSame(EndpointPlan::ASSOCIATE, $plan->action);
+        self::assertSame('vpce-mine', $plan->target);
+        self::assertSame(['rtb-c'], $plan->missing);
+    }
+
     public function test_named_arco_endpoint_is_treated_as_arco(): void
     {
         $mocks = new AwsMocks();
