@@ -833,6 +833,14 @@ final class ValidatorTest extends TestCase
         self::assertSame([['key' => 'validation.vpc_endpoint_id', 'params' => ['value' => 'vpce-XYZ']]], $this->vpcErrors(App::make('shop')->vpc(['subnet-a1'], ['sg-b2'], endpoints: ['s3' => 'vpce-XYZ'])));
     }
 
+    public function test_vpc_endpoint_entries_that_are_not_strings_are_reported(): void
+    {
+        self::assertSame([['key' => 'validation.vpc_endpoint_id', 'params' => ['value' => 'null']]], $this->vpcErrors(App::make('shop')->vpc(['subnet-a1'], ['sg-b2'], endpoints: ['s3' => null])));
+        self::assertSame([['key' => 'validation.vpc_endpoint_id', 'params' => ['value' => '["vpce-0abc"]']]], $this->vpcErrors(App::make('shop')->vpc(['subnet-a1'], ['sg-b2'], endpoints: ['s3' => ['vpce-0abc']])));
+        self::assertSame([['key' => 'validation.vpc_endpoint_service', 'params' => ['value' => '42']]], $this->vpcErrors(App::make('shop')->vpc(['subnet-a1'], ['sg-b2'], endpoints: ['s3', 42])));
+        self::assertSame([['key' => 'validation.vpc_endpoint_service', 'params' => ['value' => '{"s3":"vpce-0abc"}']]], $this->vpcErrors(App::make('shop')->vpc(['subnet-a1'], ['sg-b2'], endpoints: [['s3' => 'vpce-0abc']])));
+    }
+
     public function test_vpc_endpoint_services_are_reported_once_when_repeated(): void
     {
         self::assertSame([['key' => 'validation.vpc_endpoint_duplicate', 'params' => ['service' => 's3']]], $this->vpcErrors(App::make('shop')->vpc(['subnet-a1'], ['sg-b2'], endpoints: ['s3', 's3' => 'vpce-0abc'])));

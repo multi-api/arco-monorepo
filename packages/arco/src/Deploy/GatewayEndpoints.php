@@ -50,7 +50,7 @@ final class GatewayEndpoints
     public function plan(AppConfig $config): array
     {
         $vpc = $config->vpc;
-        if ($vpc === null) {
+        if ($vpc === null || $vpc->endpointIds() === []) {
             return [];
         }
         $subnets = $vpc->subnets;
@@ -72,7 +72,7 @@ final class GatewayEndpoints
      * @param array<string, string> $tags Ownership::tags() of the environment, put on a created endpoint
      * @param callable(string, array<string, string|int>): void $step
      * @return list<string> the Arco endpoint ids the environment now relies on, sorted (empty when only the user's cover it)
-     * @throws \LogicException for a plan that still has to be decided (DECIDE)
+     * @throws \LogicException for a plan that still has to be decided (DECIDE) or an ASSOCIATE without a target
      * @throws DeployException deploy.endpoint_conflict, deploy.endpoint_tag_limit, deploy.endpoint_timeout, deploy.endpoint_create_failed
      */
     public function apply(AppConfig $config, EndpointPlan $plan, array $tags, callable $step): array
@@ -80,6 +80,9 @@ final class GatewayEndpoints
         for ($attempt = 0;; $attempt++) {
             if ($plan->action === EndpointPlan::DECIDE) {
                 throw new \LogicException('A plan to decide must be resolved with withAssociate() or withSkip() before apply().');
+            }
+            if ($plan->action === EndpointPlan::ASSOCIATE && $plan->target === null) {
+                throw new \LogicException('A plan to associate needs the endpoint to add the route tables to.');
             }
             try {
                 return $this->applyPlan($config, $plan, $tags, $step);
@@ -188,6 +191,11 @@ final class GatewayEndpoints
             $untagged[] = $id;
         }
 
+        // Before the route tables change: a release that runs meanwhile finds the endpoint in use (a created one is tagged on create).
+        if ($untagged !== []) {
+            $this->ec2->createTags(['Resources' => $untagged, 'Tags' => [['Key' => $usage, 'Value' => '1']]]);
+        }
+
         $created = null;
         if ($plan->action === EndpointPlan::CREATE) {
             $created = $this->create($plan, $tags + [self::MARKER_KEY => self::MARKER_VALUE, $usage => '1'], $step);
@@ -213,10 +221,6 @@ final class GatewayEndpoints
                 $step('deploy.endpoint_reused', ['service' => $plan->service, 'endpoint' => $endpoint]);
             }
         }
-        if ($untagged !== []) {
-            $this->ec2->createTags(['Resources' => $untagged, 'Tags' => [['Key' => $usage, 'Value' => '1']]]);
-        }
-
         $ids = $created === null ? $arco : [...$arco, $created];
         sort($ids);
         return $ids;

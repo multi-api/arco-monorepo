@@ -4807,9 +4807,10 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->config(), $prepared, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
 
-        self::assertSame(['DeleteTags', 'DeleteVpcEndpoints', 'DeleteTags', 'DeleteVpcEndpoints', 'UntagResource'], self::only($mocks, 'DeleteTags', 'DeleteVpcEndpoints', 'TagResource', 'UntagResource'));
+        self::assertSame(['DeleteTags', 'DeleteVpcEndpoints', 'DeleteTags', 'DeleteVpcEndpoints', 'TagResource'], self::only($mocks, 'DeleteTags', 'DeleteVpcEndpoints', 'TagResource', 'UntagResource'));
         self::assertSame([['VpcEndpointIds' => ['vpce-a']], ['VpcEndpointIds' => ['vpce-b']]], self::sent($mocks, 'DeleteVpcEndpoints'));
-        self::assertSame([['resource' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'tagKeys' => [self::RECORD]]], self::sent($mocks, 'UntagResource'));
+        self::assertSame([['resource' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'tags' => [self::RECORD => '']]], self::sent($mocks, 'TagResource'), 'an empty record is the tag set to \'\': lambda:TagResource is all it needs');
+        self::assertSame([], self::sent($mocks, 'UntagResource'));
         self::assertContains(['deploy.endpoint_deleted', ['endpoint' => 'vpce-b']], $steps);
     }
 
@@ -4875,6 +4876,64 @@ final class AwsDeployerTest extends TestCase
             'the record is read with the ownership check, the endpoint released after the functions and before the execution role');
         self::assertContains(['remove.endpoint_deleted', ['endpoint' => 'vpce-a']], $steps);
         self::assertSame([], self::only($mocks, 'TagResource', 'UntagResource'), 'the function and its record are gone');
+    }
+
+    public function test_a_decider_that_leaves_the_plan_to_decide_is_a_logic_error(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::endpointEnvironment(null, self::vpcEndpoints([self::vpcEndpoint('vpce-u1', [])])));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), endpointDecider: fn (\Multiapi\Arco\Deploy\EndpointPlan $plan) => $plan);
+
+        try {
+            $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+            self::fail('expected a LogicException');
+        } catch (\LogicException $e) {
+            self::assertStringContainsString('withAssociate() or withSkip()', $e->getMessage());
+        }
+        self::assertSame([], self::writes($mocks), 'still the read-only phase');
+    }
+
+    public function test_unreadable_function_tags_leave_the_record_alone(): void
+    {
+        $mocks = new AwsMocks();
+        // The Arco endpoint serves everything but has no usage tag of this environment: it is tagged, and would be recorded.
+        self::answer($mocks, [...self::endpointEnvironment(null, self::vpcEndpoints([self::vpcEndpoint('vpce-a', ['rtb-a', 'rtb-b'], self::ARCO_ENDPOINT)])),
+            'ListTags' => AwsMocks::error(LambdaWebException::class, 'ListTags', 'AccessDeniedException', 403, 'not authorized to perform: lambda:ListTags'),
+            'CreateTags' => new Result([])]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: true);
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->endpointsConfig(), $this->package(), null, []);
+
+        self::assertSame(['CreateTags'], self::only($mocks, 'CreateTags', 'TagResource', 'UntagResource'), 'the endpoint is used and tagged, but the record the deploy could not read is not overwritten');
+        self::assertSame(['vpce-a'], $prepared->keepEndpoints);
+        self::assertSame([], $prepared->releaseEndpoints);
+    }
+
+    public function test_a_failed_record_write_is_its_own_warning_naming_the_permission(): void
+    {
+        $denied = AwsMocks::error(LambdaWebException::class, 'TagResource', 'AccessDeniedException', 403, 'not authorized to perform: lambda:TagResource');
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::endpointEnvironment(null, self::vpcEndpoints([self::vpcEndpoint('vpce-a', ['rtb-a', 'rtb-b'], self::ARCO_ENDPOINT + self::USES)])), 'TagResource' => $denied]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $steps = [];
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        $deployer->prepare($this->endpointsConfig(), $this->package(), null, [], function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        $failed = array_values(array_filter($steps, fn (array $step) => $step[0] === 'deploy.endpoint_record_failed'));
+        self::assertCount(1, $failed);
+        self::assertSame(['function', 'error', 'permission'], array_keys($failed[0][1]));
+        self::assertSame('shop-production', $failed[0][1]['function']);
+        self::assertSame('lambda:TagResource', $failed[0][1]['permission']);
+        self::assertNotContains('deploy.tags_not_added', array_column($steps, 0));
+        self::assertContains('deploy.endpoint_record_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertContains('CreateWebFunctionRevision', $mocks->calls, 'the deploy goes on');
+        foreach (['en', 'es'] as $lang) {
+            $text = (new \Multiapi\Arco\Cli\Translator($lang, \Multiapi\Arco\Arco::packageRoot() . '/lang'))->trans('deploy.endpoint_record_failed', $failed[0][1]);
+            self::assertStringContainsString('lambda:TagResource', $text);
+            self::assertStringNotContainsString('{', $text);
+        }
     }
 
     public function test_emulator_skips_endpoints(): void

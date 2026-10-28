@@ -511,6 +511,16 @@ final class ConfigResolverTest extends TestCase
         self::assertSame([], ConfigResolver::resolve($raw, 'production')->vpc?->endpoints);
     }
 
+    public function test_vpc_endpoint_entries_that_are_not_strings_are_kept_for_the_validator(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->vpc(['subnet-a1'], ['sg-b2'], endpoints: ['s3' => null, 'dynamodb' => ['x'], 7])->environment('production')->toArray();
+
+        $vpc = ConfigResolver::resolve($raw, 'production')->vpc;
+
+        self::assertInstanceOf(VpcConfig::class, $vpc);
+        self::assertSame([['service' => 's3', 'id' => 'null'], ['service' => 'dynamodb', 'id' => '["x"]'], ['service' => '7', 'id' => null]], $vpc->endpoints);
+    }
+
     public function test_vpc_resolves_from_the_app_and_an_environment_replaces_or_clears_it(): void
     {
         $raw = App::make('shop')

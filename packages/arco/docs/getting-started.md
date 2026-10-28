@@ -930,7 +930,11 @@ With `vpc()` (0.12), the deploy profile also needs:
 }
 ```
 
-Narrow `Resource` to the resource types above where you want to. Where AWS cannot scope an action to your app
+Narrow `Resource` to the resource types above where you want to. The resource types and the
+`aws:ResourceTag/arco:managed` condition on `ec2:DeleteVpcEndpoints` come from our reading of EC2's actions: check
+them against the Service Authorization Reference for Amazon EC2 before you rely on them. To let `ec2:CreateTags`
+apply only while an endpoint is being created, use the condition `ec2:CreateAction` = `CreateVpcEndpoint`; the usage
+tag Arco puts later on an endpoint that already exists needs `ec2:CreateTags` without it. Where AWS cannot scope an action to your app
 (the endpoints and route tables are shared by the VPC, not owned by one app), the statement stays broad; `Describe*`
 actions only support `*`. `arco remove` needs the same tag and delete actions to release an endpoint.
 

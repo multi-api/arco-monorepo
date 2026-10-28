@@ -25,8 +25,10 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   Arco's endpoints are tagged and shared by the environments of the VPC (`arco:uses:<app>/<env>`) and deleted once
   the last one leaves; route tables are never removed. New steps: `deploy.step_endpoints`, `deploy.endpoint_created`,
   `deploy.endpoint_routes_added`, `deploy.endpoint_reused`, `deploy.endpoint_released`, `deploy.endpoint_deleted`
-  (and `remove.` ones); errors `deploy.endpoint_not_found`, `_wrong_type`, `_wrong_service`, `_wrong_vpc`,
-  `_routes_missing`, `_conflict`, `_tag_limit`. `arco info --json` gains `vpc.endpoints` (`[]` without `endpoints`,
+  (and `remove.endpoint_released`, `_deleted`, `_cleanup_failed`); `deploy.endpoint_skipped`,
+  `deploy.endpoint_cleanup_failed` and `deploy.endpoint_record_failed` (warnings); errors `deploy.endpoint_not_found`,
+  `_wrong_type`, `_wrong_service`, `_wrong_vpc`, `_vpc_mixed`, `_routes_missing`, `_conflict`, `_tag_limit`, `_timeout`,
+  `_create_failed`, `_modify_failed` and `_cancelled`. `arco info --json` gains `vpc.endpoints` (`[]` without `endpoints`,
   `null` when unreadable). Without `endpoints` there are no new calls or permissions
   ([Gateway endpoints](docs/configuration.md#gateway-endpoints)).
 - **Fixed:** `arco remove` printed the code of a kept bucket (`… was kept in AWS: some`) instead of saying whether

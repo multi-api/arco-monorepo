@@ -64,8 +64,8 @@ final class AwsDeployer implements Deployer
     private array $endpointPlans = [];
 
     /**
-     * @var array<string, array{arn: ?string, ids: list<string>}> per web function, its ARN (null while it does not exist) and
-     *      the Arco gateway endpoints its record tag lists (read by checkOwnership())
+     * @var array<string, array{arn: ?string, ids: list<string>}> per web function, its ARN (null while it does not exist or
+     *      its tags were unreadable: no record is written) and the Arco gateway endpoints its record tag lists (read by checkOwnership())
      */
     private array $endpointRecords = [];
 
@@ -117,7 +117,8 @@ final class AwsDeployer implements Deployer
         }
         if (RevisionFactory::servesNetworkConnectors()) {
             // The record comes with the tags just read: no call. Behind an emulator there are no endpoints to use or release.
-            $this->endpointRecords[$config->functionName()] = ['arn' => $web?->arn, 'ids' => self::endpointRecord($web->tags ?? [])];
+            // Tags that could not be read (--force): no ARN, so this deploy writes no record rather than drop the ids it could not see.
+            $this->endpointRecords[$config->functionName()] = ['arn' => $web?->unreadable === null ? $web?->arn : null, 'ids' => self::endpointRecord($web->tags ?? [])];
             if (RevisionFactory::usesVpc($config) && $config->vpc?->endpoints !== []) {
                 // Read-only, and asked (or refused) here: cancelling or failing in CI leaves AWS untouched.
                 $this->endpointPlans[$config->functionName()] = $this->decideEndpoints($config);
@@ -342,6 +343,9 @@ final class AwsDeployer implements Deployer
         foreach ($this->gatewayEndpoints($config)->plan($config) as $plan) {
             if ($plan->action === EndpointPlan::DECIDE) {
                 $plan = $this->endpointDecider === null ? throw DeployException::make('deploy.endpoint_routes_missing', self::routesMissing($config, $plan)) : ($this->endpointDecider)($plan);
+                if ($plan->action === EndpointPlan::DECIDE) {
+                    throw new \LogicException('The endpoint decider must answer with withAssociate() or withSkip().');
+                }
             }
             $plans[] = $plan;
         }
@@ -398,8 +402,9 @@ final class AwsDeployer implements Deployer
     }
 
     /**
-     * Writes the Web Function's record of the Arco gateway endpoints it uses; an empty list takes the tag off. A failure
-     * is a warning: the next deploy writes it again.
+     * Writes the Web Function's record of the Arco gateway endpoints it uses; an empty list sets the tag to ''
+     * (lambda:TagResource, the permission the other tags need), which reads as no endpoints. A failure is a warning:
+     * the next deploy writes it again.
      *
      * @param list<string> $endpointIds
      * @param callable(string, array<string, string|int>): void $step
@@ -407,13 +412,9 @@ final class AwsDeployer implements Deployer
     private function writeEndpointRecord(string $function, string $functionArn, array $endpointIds, callable $step): void
     {
         try {
-            if ($endpointIds === []) {
-                Domains\Aws::call($this->aws->lambdaWeb(), 'UntagResource', ['resource' => $functionArn, 'tagKeys' => [GatewayEndpoints::RECORD_TAG]]);
-            } else {
-                Domains\Aws::call($this->aws->lambdaWeb(), 'TagResource', ['resource' => $functionArn, 'tags' => [GatewayEndpoints::RECORD_TAG => implode(' ', $endpointIds)]]);
-            }
+            Domains\Aws::call($this->aws->lambdaWeb(), 'TagResource', ['resource' => $functionArn, 'tags' => [GatewayEndpoints::RECORD_TAG => implode(' ', $endpointIds)]]);
         } catch (AwsException $e) {
-            $step('deploy.tags_not_added', ['resource' => $function, 'error' => self::awsError($e)]);
+            $step('deploy.endpoint_record_failed', ['function' => $function, 'error' => self::awsError($e), 'permission' => 'lambda:TagResource']);
         }
     }
 
@@ -607,7 +608,7 @@ final class AwsDeployer implements Deployer
         try {
             $web = (new WebFunctions($this->aws->lambdaWeb(), $this->sleeper))->get($function);
         } catch (AwsException $e) {
-            $step('deploy.tags_not_added', ['resource' => $function, 'error' => self::awsError($e)]);
+            $step('deploy.endpoint_record_failed', ['function' => $function, 'error' => self::awsError($e), 'permission' => 'lambda:GetWebFunction']);
             return;
         }
         if ($web !== null) {

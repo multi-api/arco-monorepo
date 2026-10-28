@@ -446,9 +446,9 @@ final class GatewayEndpointsTest extends TestCase
         $ids = $this->apply($mocks, self::makePlan(EndpointPlan::ASSOCIATE, ['rtb-b'], 'vpce-arco', true), $steps);
 
         self::assertSame(['vpce-arco'], $ids);
-        self::assertSame(['DescribeVpcEndpoints', 'ModifyVpcEndpoint', 'CreateTags'], $mocks->calls);
-        self::assertSame(['vpce-arco'], $mocks->params[2]['Resources']);
-        self::assertSame([['Key' => self::USE, 'Value' => '1']], $mocks->params[2]['Tags']);
+        self::assertSame(['DescribeVpcEndpoints', 'CreateTags', 'ModifyVpcEndpoint'], $mocks->calls, 'the usage tag first: a release in between finds the endpoint in use');
+        self::assertSame(['vpce-arco'], $mocks->params[1]['Resources']);
+        self::assertSame([['Key' => self::USE, 'Value' => '1']], $mocks->params[1]['Tags']);
         self::assertSame('deploy.endpoint_routes_added', $steps[0][0]);
     }
 
@@ -524,6 +524,66 @@ final class GatewayEndpointsTest extends TestCase
 
         self::assertSame(['vpce-other'], $ids);
         self::assertSame(['CreateVpcEndpoint', 'DescribeSubnets', 'DescribeRouteTables', 'DescribeVpcEndpoints', 'DescribeVpcEndpoints', 'CreateTags'], $mocks->calls);
+    }
+
+    public function test_a_user_endpoint_that_hits_a_route_conflict_is_not_retried_when_the_replan_needs_a_decision(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(AwsMocks::error(Ec2Exception::class, 'ModifyVpcEndpoint', 'RouteAlreadyExists', 400, 'Route table rtb-b already has a route for the prefix list'));
+        $this->network($mocks);
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-user', ['rtb-a'])]));
+        $steps = [];
+        $decided = (new EndpointPlan('s3', 'vpc-1', ['rtb-a', 'rtb-b'], ['rtb-b'], EndpointPlan::DECIDE, null, false, ['vpce-user'], []))->withAssociate('vpce-user');
+
+        try {
+            $this->apply($mocks, $decided, $steps);
+            self::fail('expected a conflict');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.endpoint_conflict', $e->key);
+        }
+
+        self::assertSame(['ModifyVpcEndpoint', 'DescribeSubnets', 'DescribeRouteTables', 'DescribeVpcEndpoints'], $mocks->calls, 'no second ModifyVpcEndpoint');
+        self::assertSame([], $steps);
+    }
+
+    public function test_a_create_that_conflicts_because_a_user_endpoint_now_covers_the_tables_reuses_it(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(AwsMocks::error(Ec2Exception::class, 'CreateVpcEndpoint', 'RouteAlreadyExists', 400, 'Route table rtb-a already has a route for the prefix list'));
+        $this->network($mocks);
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-user', ['rtb-a', 'rtb-b'])]));
+        $steps = [];
+
+        $ids = $this->apply($mocks, self::makePlan(EndpointPlan::CREATE, ['rtb-a', 'rtb-b']), $steps);
+
+        self::assertSame([], $ids);
+        self::assertSame(['CreateVpcEndpoint', 'DescribeSubnets', 'DescribeRouteTables', 'DescribeVpcEndpoints'], $mocks->calls, "nothing is tagged or modified on the user's endpoint");
+        self::assertSame([['deploy.endpoint_reused', ['service' => 's3', 'endpoint' => 'vpce-user']]], $steps);
+    }
+
+    public function test_an_associate_without_a_target_cannot_be_applied(): void
+    {
+        $mocks = new AwsMocks();
+        $steps = [];
+
+        try {
+            $this->apply($mocks, self::makePlan(EndpointPlan::ASSOCIATE, ['rtb-a']), $steps);
+            self::fail('expected a LogicException');
+        } catch (\LogicException) {
+            self::assertSame([], $mocks->calls);
+        }
+    }
+
+    public function test_plan_without_endpoints_or_vpc_makes_no_call(): void
+    {
+        $mocks = new AwsMocks();
+        $noEndpoints = ConfigResolver::resolve(App::make('shop')->region('us-east-1')
+            ->environment('production', fn ($e) => $e->vpc(subnets: ['subnet-a'], securityGroups: ['sg-1']))->toArray(), 'production');
+        $noVpc = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+
+        self::assertSame([], $this->subject($mocks)->plan($noEndpoints));
+        self::assertSame([], $this->subject($mocks)->plan($noVpc));
+        self::assertSame([], $mocks->calls);
     }
 
     public function test_a_second_conflict_fails(): void
