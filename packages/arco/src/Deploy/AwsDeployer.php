@@ -37,6 +37,9 @@ final class AwsDeployer implements Deployer
      * @param bool $force change name-addressed resources another app or environment owns, or that carry
      *                    no Arco tags (deploy --force); never used by remove
      * @param DnsProvider|null $dnsProvider the DNS provider when it is not Route 53 (dns('cloudflare'))
+     * @param (Closure(EndpointPlan): EndpointPlan)|null $endpointDecider answers a gateway endpoint plan only the user can
+     *        decide (EndpointPlan::DECIDE): withAssociate() or withSkip(), or throws deploy.endpoint_cancelled; null
+     *        (no terminal, --yes, --json) fails the deploy with deploy.endpoint_routes_missing instead
      */
     public function __construct(
         private readonly AwsClients $aws,
@@ -47,6 +50,7 @@ final class AwsDeployer implements Deployer
         private readonly ?DnsProvider $dnsProvider = null,
         /** HTTP client for the check through CloudFront after the endpoint is locked; null for a default one */
         private readonly ?ClientInterface $http = null,
+        private readonly ?Closure $endpointDecider = null,
     ) {
     }
 
@@ -55,6 +59,15 @@ final class AwsDeployer implements Deployer
 
     /** @var array<string, ?string> per web function, the connector version its live revision pins (read by checkOwnership()) */
     private array $liveConnectors = [];
+
+    /** @var array<string, list<EndpointPlan>> per web function, the decided gateway endpoint plans of vpc() (made by checkOwnership()) */
+    private array $endpointPlans = [];
+
+    /**
+     * @var array<string, array{arn: ?string, ids: list<string>}> per web function, its ARN (null while it does not exist) and
+     *      the Arco gateway endpoints its record tag lists (read by checkOwnership())
+     */
+    private array $endpointRecords = [];
 
     public function checkOwnership(AppConfig $config, Closure $onStep): void
     {
@@ -101,6 +114,14 @@ final class AwsDeployer implements Deployer
         if (RevisionFactory::usesVpc($config) || $live !== null) {
             // prepare() rewrites the operator role's policy with vpc(); prune() deletes it with a leftover connector.
             $resources[] = $guard->role($names[] = NetworkConnectors::operatorRoleName($config));
+        }
+        if (RevisionFactory::servesNetworkConnectors()) {
+            // The record comes with the tags just read: no call. Behind an emulator there are no endpoints to use or release.
+            $this->endpointRecords[$config->functionName()] = ['arn' => $web?->arn, 'ids' => self::endpointRecord($web->tags ?? [])];
+            if (RevisionFactory::usesVpc($config) && $config->vpc?->endpoints !== []) {
+                // Read-only, and asked (or refused) here: cancelling or failing in CI leaves AWS untouched.
+                $this->endpointPlans[$config->functionName()] = $this->decideEndpoints($config);
+            }
         }
         $guard->claim($config, array_values(array_filter($resources)), $this->force, $onStep);
         foreach ($names as $name) {
@@ -212,6 +233,14 @@ final class AwsDeployer implements Deployer
             ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags, $region, $step, $config->permissionsBoundary);
         }
 
+        // After the execution role, before the connector and the revision: the new revision's first cold start already reaches S3.
+        ['keep' => $keepEndpoints, 'release' => $releaseEndpoints, 'record' => $endpointRecord] = $this->applyEndpoints($config, $tags, $step);
+        $functionArn = $this->endpointRecords[$function]['arn'] ?? null;
+        if ($endpointRecord !== null && $functionArn !== null) {
+            // Right away: a deploy that fails after this point still finds the usage tags it put through the record.
+            $this->writeEndpointRecord($function, $functionArn, $endpointRecord, $step);
+        }
+
         $connectorArn = null;
         if (RevisionFactory::usesVpc($config)) {
             // Before any revision: a failed connector stops the deploy with the live revision untouched. The operator
@@ -225,7 +254,8 @@ final class AwsDeployer implements Deployer
         $previous = null;
         if ($web->get($function) === null) {
             $step('deploy.step_function', ['function' => $function]);
-            $revisionId = $web->create($function, $revision, RevisionFactory::initialEndpoint($config), $tags, $roleCreated);
+            $created = $endpointRecord === null ? $tags : [...$tags, GatewayEndpoints::RECORD_TAG => implode(' ', $endpointRecord)];
+            $revisionId = $web->create($function, $revision, RevisionFactory::initialEndpoint($config), $created, $roleCreated);
         } else {
             $endpoint = $web->endpoint($function);
             $previous = $endpoint === null ? null : WebFunctions::activeRevision($endpoint);
@@ -295,7 +325,123 @@ final class AwsDeployer implements Deployer
         }
 
         return new PreparedDeploy($revisionId, $previous, $bucket, $key, $consoleVersion, $previousConsole, $consoleKey, $console?->download?->key, $workerVersions,
-            $leftover, array_values(array_unique(array_filter([$liveConnector, $connectorArn], fn (?string $arn) => $arn !== null))), $outOfVpc);
+            $leftover, array_values(array_unique(array_filter([$liveConnector, $connectorArn], fn (?string $arn) => $arn !== null))), $outOfVpc,
+            releaseEndpoints: $releaseEndpoints, keepEndpoints: $keepEndpoints);
+    }
+
+    /**
+     * The gateway endpoint plans checkOwnership() makes, read-only. A plan only the user can decide goes to the decider;
+     * without one the deploy stops here, before anything changed, with what to run or write in arco.php.
+     *
+     * @return list<EndpointPlan>
+     * @throws DeployException deploy.endpoint_routes_missing, deploy.endpoint_cancelled (from the decider), and plan()'s
+     */
+    private function decideEndpoints(AppConfig $config): array
+    {
+        $plans = [];
+        foreach ($this->gatewayEndpoints($config)->plan($config) as $plan) {
+            if ($plan->action === EndpointPlan::DECIDE) {
+                $plan = $this->endpointDecider === null ? throw DeployException::make('deploy.endpoint_routes_missing', self::routesMissing($config, $plan)) : ($this->endpointDecider)($plan);
+            }
+            $plans[] = $plan;
+        }
+        return $plans;
+    }
+
+    /**
+     * deploy.endpoint_routes_missing: with a single user endpoint, the command and the arco.php line name it.
+     *
+     * @return array<string, string>
+     */
+    private static function routesMissing(AppConfig $config, EndpointPlan $plan): array
+    {
+        $only = count($plan->userEndpoints) === 1 ? $plan->userEndpoints[0] : null;
+        return [
+            'service' => $plan->service,
+            'endpoints' => implode(', ', $plan->userEndpoints),
+            'route_tables' => implode(', ', $plan->missing),
+            'command' => $plan->awsCommand($only ?? 'vpce-...', (string) $config->region),
+            'config' => ($only === null ? $plan : $plan->withAssociate($only))->configLine(),
+        ];
+    }
+
+    /**
+     * Carries out the plans checkOwnership() decided (create, associate, usage tags), and compares the endpoints the
+     * environment relies on now with its record: the ones it no longer uses are released by prune(), after the verification.
+     *
+     * @param array<string, string> $tags
+     * @param callable(string, array<string, string|int>): void $step
+     * @return array{keep: list<string>, release: list<string>, record: list<string>|null} record: the ids the Web
+     *         Function's record must list from now on (both kinds until prune() releases), null when it lists them already
+     */
+    private function applyEndpoints(AppConfig $config, array $tags, callable $step): array
+    {
+        $function = $config->functionName();
+        $record = $this->endpointRecords[$function]['ids'] ?? [];
+        $plans = $this->endpointPlans[$function] ?? [];
+        $keep = [];
+        if ($plans !== []) {
+            $step('deploy.step_endpoints', ['services' => implode(', ', array_map(fn (EndpointPlan $plan) => $plan->service, $plans))]);
+            $endpoints = $this->gatewayEndpoints($config);
+            foreach ($plans as $plan) {
+                // The user chose to go on without the endpoint (withSkip()): `missing` is what stays unserved.
+                if ($plan->action === EndpointPlan::NONE && $plan->missing !== []) {
+                    $step('deploy.endpoint_skipped', ['service' => $plan->service, 'route_tables' => implode(', ', $plan->missing)]);
+                    continue;
+                }
+                $keep = [...$keep, ...$endpoints->apply($config, $plan, $tags, $step)];
+            }
+        }
+        $keep = self::endpointIds($keep);
+        $recorded = self::endpointIds([...$record, ...$keep]);
+        return ['keep' => $keep, 'release' => array_values(array_diff($record, $keep)), 'record' => $recorded === $record ? null : $recorded];
+    }
+
+    /**
+     * Writes the Web Function's record of the Arco gateway endpoints it uses; an empty list takes the tag off. A failure
+     * is a warning: the next deploy writes it again.
+     *
+     * @param list<string> $endpointIds
+     * @param callable(string, array<string, string|int>): void $step
+     */
+    private function writeEndpointRecord(string $function, string $functionArn, array $endpointIds, callable $step): void
+    {
+        try {
+            if ($endpointIds === []) {
+                Domains\Aws::call($this->aws->lambdaWeb(), 'UntagResource', ['resource' => $functionArn, 'tagKeys' => [GatewayEndpoints::RECORD_TAG]]);
+            } else {
+                Domains\Aws::call($this->aws->lambdaWeb(), 'TagResource', ['resource' => $functionArn, 'tags' => [GatewayEndpoints::RECORD_TAG => implode(' ', $endpointIds)]]);
+            }
+        } catch (AwsException $e) {
+            $step('deploy.tags_not_added', ['resource' => $function, 'error' => self::awsError($e)]);
+        }
+    }
+
+    /**
+     * The endpoint ids the record tag lists.
+     *
+     * @param array<string, string> $tags the Web Function's tags
+     * @return list<string> sorted
+     */
+    private static function endpointRecord(array $tags): array
+    {
+        return self::endpointIds(preg_split('/\s+/', $tags[GatewayEndpoints::RECORD_TAG] ?? '', -1, PREG_SPLIT_NO_EMPTY) ?: []);
+    }
+
+    /**
+     * @param list<string> $ids
+     * @return list<string> without duplicates, sorted
+     */
+    private static function endpointIds(array $ids): array
+    {
+        $ids = array_values(array_unique($ids));
+        sort($ids);
+        return $ids;
+    }
+
+    private function gatewayEndpoints(AppConfig $config): GatewayEndpoints
+    {
+        return new GatewayEndpoints($this->aws->ec2(), $this->sleeper, (string) $config->region);
     }
 
     /**
@@ -440,6 +586,32 @@ final class AwsDeployer implements Deployer
             $this->removeConnector($config, 'deploy.', $step);
         } elseif (RevisionFactory::usesVpc($config)) {
             $this->networkConnectors()->pruneVersions($config, $prepared->keepConnectorVersions, $step);
+        }
+        if ($prepared->releaseEndpoints !== []) {
+            $this->releaseEndpoints($config, $prepared, $step);
+        }
+    }
+
+    /**
+     * After a verified deploy: releases the gateway endpoints the environment stopped using, then records only the ones
+     * it keeps. When a release failed, the record stays as it is, so the next deploy tries again.
+     *
+     * @param callable(string, array<string, string|int>): void $step
+     */
+    private function releaseEndpoints(AppConfig $config, PreparedDeploy $prepared, callable $step): void
+    {
+        if (! $this->gatewayEndpoints($config)->release($config, $prepared->releaseEndpoints, $step, 'deploy.')) {
+            return;
+        }
+        $function = $config->functionName();
+        try {
+            $web = (new WebFunctions($this->aws->lambdaWeb(), $this->sleeper))->get($function);
+        } catch (AwsException $e) {
+            $step('deploy.tags_not_added', ['resource' => $function, 'error' => self::awsError($e)]);
+            return;
+        }
+        if ($web !== null) {
+            $this->writeEndpointRecord($function, WebFunctions::text($web['functionArn'] ?? null), $prepared->keepEndpoints, $step);
         }
     }
 
@@ -730,7 +902,10 @@ final class AwsDeployer implements Deployer
         $step = $onStep ?? static function (string $key, array $params = []): void {};
         $queues = $this->workerQueues($config, $step);
         // Before anything is deleted: a resource another app or environment owns stops the whole remove.
-        $webExists = $this->checkRemoval($config, $queues);
+        $web = $this->checkRemoval($config, $queues);
+        $webExists = $web !== null;
+        // Read with the ownership check, while the Web Function still carries it; released once the functions are gone.
+        $endpoints = RevisionFactory::servesNetworkConnectors() ? self::endpointRecord($web->tags ?? []) : [];
         $connector = $this->connectorToRemove($config, $webExists, $step);
         // Their network interfaces must be gone before the execution role is: Lambda deletes them with it. Where they
         // ran is read now, while the functions and the connector exist; unreadable, the role is kept.
@@ -760,6 +935,9 @@ final class AwsDeployer implements Deployer
         // After the functions that use it; the execution role after it, like every deploy keeps them.
         if ($connector) {
             $this->removeConnector($config, 'remove.', $step);
+        }
+        if ($endpoints !== []) {
+            $this->gatewayEndpoints($config)->release($config, $endpoints, $step, 'remove.');
         }
         if ($config->role === null && $networks !== null && $this->interfacesGoneForRemove($config, $networks, $step)) {
             (new ExecutionRole($this->aws->iam()))->delete(ExecutionRole::roleName($config));
@@ -885,10 +1063,10 @@ final class AwsDeployer implements Deployer
      * deleted, when one belongs to another app or environment (or carries no sign of Arco).
      *
      * @param list<string> $queues
-     * @return bool whether the web function exists
+     * @return NamedResource|null the web function, null when it does not exist
      * @throws DeployException remove.not_owned, remove.untagged_resource, remove.tags_unreadable
      */
-    private function checkRemoval(AppConfig $config, array $queues): bool
+    private function checkRemoval(AppConfig $config, array $queues): ?NamedResource
     {
         $guard = new OwnershipGuard($this->aws);
         $rule = $guard->schedulerRule(SchedulerRule::name($config));
@@ -909,7 +1087,7 @@ final class AwsDeployer implements Deployer
             $resources[] = $role;
         }
         $guard->checkRemoval($config, array_values(array_filter($resources)));
-        return $web !== null;
+        return $web;
     }
 
     /**
