@@ -10,7 +10,8 @@ use Multiapi\Arco\Deploy\Domains\Aws;
 /**
  * The S3 and DynamoDB gateway endpoints of vpc(): they keep the traffic to those services inside the VPC, where a
  * function without a NAT gateway has no other way out. plan() only reads; it decides per service whether the
- * environment's route tables are served and what to do if they are not.
+ * environment's route tables are served and what to do if they are not. apply() carries a plan out (create or
+ * associate, and the usage tag); release() is how an environment leaves.
  */
 final class GatewayEndpoints
 {
@@ -19,13 +20,16 @@ final class GatewayEndpoints
     /** The Web Function tag that records the endpoints the environment uses (space-separated ids). */
     public const RECORD_TAG = 'arco:gateway-endpoints';
     public const MAX_TAGS = 50;
+    /** Seconds to wait for a new endpoint to become available, and between two checks. */
+    public const AVAILABLE_TIMEOUT = 300;
+    public const POLL = 5;
     private const USAGE_PREFIX = 'arco:uses:';
     /** Endpoints in these states are gone or going: they neither cover route tables nor count as existing. */
     private const IGNORED_STATES = ['deleting', 'deleted', 'failed', 'rejected', 'expired'];
 
     public function __construct(
         private readonly Ec2Client $ec2,
-        private readonly Sleeper $sleeper, // @phpstan-ignore property.onlyWritten (apply() waits on endpoint states with it)
+        private readonly Sleeper $sleeper,
         private readonly string $region,
     ) {
     }
@@ -57,6 +61,248 @@ final class GatewayEndpoints
             $plans[] = $this->planService($service, $named, $vpcId, $tables);
         }
         return $plans;
+    }
+
+    /**
+     * Carries out a plan: creates the endpoint or adds the missing route tables, then puts the environment's usage tag
+     * on every Arco endpoint that serves it (an environment can be served by several: one per subset of route
+     * tables). Never tags an endpoint that is not Arco's. A conflict with a concurrent deploy (the route table now
+     * belongs to another endpoint, or an endpoint went away) is retried once after planning again.
+     *
+     * @param array<string, string> $tags Ownership::tags() of the environment, put on a created endpoint
+     * @param callable(string, array<string, string|int>): void $step
+     * @return list<string> the Arco endpoint ids the environment now relies on, sorted (empty when only the user's cover it)
+     * @throws \LogicException for a plan that still has to be decided (DECIDE)
+     * @throws DeployException deploy.endpoint_conflict, deploy.endpoint_tag_limit, deploy.endpoint_timeout, deploy.endpoint_create_failed
+     */
+    public function apply(AppConfig $config, EndpointPlan $plan, array $tags, callable $step): array
+    {
+        for ($attempt = 0;; $attempt++) {
+            if ($plan->action === EndpointPlan::DECIDE) {
+                throw new \LogicException('A plan to decide must be resolved with withAssociate() or withSkip() before apply().');
+            }
+            try {
+                return $this->applyPlan($config, $plan, $tags, $step);
+            } catch (AwsException $e) {
+                if (! self::retryable($e)) {
+                    throw $e;
+                }
+                $params = ['service' => $plan->service, 'error' => self::error($e)];
+                if ($attempt === 1) {
+                    throw DeployException::make('deploy.endpoint_conflict', $params, $e);
+                }
+                $plan = $this->replan($config, $plan->service) ?? throw DeployException::make('deploy.endpoint_conflict', $params, $e);
+            }
+        }
+    }
+
+    /**
+     * Takes the environment's usage tag off each endpoint, and deletes the Arco endpoints that nobody uses any more.
+     * Route tables stay where they are. Never throws for AWS: a failure is a warning with the manual commands.
+     *
+     * @param list<string> $endpointIds
+     * @param callable(string, array<string, string|int>): void $step
+     * @param 'deploy.'|'remove.' $prefix
+     * @return bool true when every endpoint was released (or was already gone)
+     */
+    public function release(AppConfig $config, array $endpointIds, callable $step, string $prefix): bool
+    {
+        $usage = self::usageTag($config);
+        $released = true;
+        foreach ($endpointIds as $id) {
+            try {
+                $this->releaseOne($id, $usage, $step, $prefix);
+            } catch (AwsException $e) {
+                if (self::notFound($e)) {
+                    continue;
+                }
+                $released = false;
+                $step($prefix . 'endpoint_cleanup_failed', ['endpoint' => $id, 'tag' => $usage, 'region' => $this->region, 'error' => self::error($e)]);
+            }
+        }
+        return $released;
+    }
+
+    /** @param callable(string, array<string, string|int>): void $step */
+    private function releaseOne(string $id, string $usage, callable $step, string $prefix): void
+    {
+        $endpoint = $this->readOne($id);
+        if ($endpoint === null || ! $endpoint['arco']) {
+            return;
+        }
+        $this->ec2->deleteTags(['Resources' => [$id], 'Tags' => [['Key' => $usage]]]);
+        // Read again after untagging: another environment may have tagged it since, or released it at the same time.
+        $endpoint = $this->readOne($id);
+        if ($endpoint === null) {
+            return;
+        }
+        if ($endpoint['uses'] > 0) {
+            $step($prefix . 'endpoint_released', ['endpoint' => $id]);
+            return;
+        }
+        $this->ec2->deleteVpcEndpoints(['VpcEndpointIds' => [$id]]);
+        $step($prefix . 'endpoint_deleted', ['endpoint' => $id]);
+    }
+
+    /**
+     * @param array<string, string> $tags
+     * @param callable(string, array<string, string|int>): void $step
+     * @return list<string>
+     */
+    private function applyPlan(AppConfig $config, EndpointPlan $plan, array $tags, callable $step): array
+    {
+        $usage = self::usageTag($config);
+        $arco = [];
+        foreach ($plan->covering as $endpoint) {
+            if ($endpoint['arco']) {
+                $arco[$endpoint['id']] = true;
+            }
+        }
+        if ($plan->target !== null && $plan->targetIsArco) {
+            $arco[$plan->target] = true;
+        }
+        $arco = array_keys($arco);
+
+        // Read the tags first: a full endpoint stops the deploy before anything is changed.
+        $untagged = [];
+        foreach ($arco === [] ? [] : $this->read($arco) as $id => $endpoint) {
+            if (isset($endpoint['tags'][$usage])) {
+                continue;
+            }
+            if (count($endpoint['tags']) >= self::MAX_TAGS) {
+                throw DeployException::make('deploy.endpoint_tag_limit', ['endpoint' => $id, 'max' => self::MAX_TAGS]);
+            }
+            $untagged[] = $id;
+        }
+
+        $created = null;
+        if ($plan->action === EndpointPlan::CREATE) {
+            $created = $this->create($plan, $tags + [self::MARKER_KEY => self::MARKER_VALUE, $usage => '1'], $step);
+        } elseif ($plan->action === EndpointPlan::ASSOCIATE && $plan->target !== null) {
+            $this->ec2->modifyVpcEndpoint(['VpcEndpointId' => $plan->target, 'AddRouteTableIds' => $plan->missing]);
+            $step('deploy.endpoint_routes_added', ['service' => $plan->service, 'endpoint' => $plan->target, 'route_tables' => implode(', ', $plan->missing)]);
+        } elseif ($plan->action === EndpointPlan::NONE && $plan->target !== null && ! $plan->targetIsArco) {
+            $step('deploy.endpoint_reused', ['service' => $plan->service, 'endpoint' => $plan->target, 'owner' => 'yours']);
+        }
+        if ($untagged !== []) {
+            $this->ec2->createTags(['Resources' => $untagged, 'Tags' => [['Key' => $usage, 'Value' => '1']]]);
+        }
+
+        $ids = $created === null ? $arco : [...$arco, $created];
+        sort($ids);
+        return $ids;
+    }
+
+    /**
+     * @param array<string, string> $tags
+     * @param callable(string, array<string, string|int>): void $step
+     */
+    private function create(EndpointPlan $plan, array $tags, callable $step): string
+    {
+        $result = $this->ec2->createVpcEndpoint([
+            'VpcEndpointType' => 'Gateway',
+            'VpcId' => $plan->vpcId,
+            'ServiceName' => $this->serviceName($plan->service),
+            'RouteTableIds' => $plan->missing,
+            'TagSpecifications' => [[
+                'ResourceType' => 'vpc-endpoint',
+                'Tags' => array_map(fn (string $k, string $v) => ['Key' => $k, 'Value' => $v], array_keys($tags), $tags),
+            ]],
+        ]);
+        $raw = $result['VpcEndpoint'] ?? null;
+        $id = is_array($raw) || $raw instanceof \ArrayAccess ? Aws::string($raw['VpcEndpointId'] ?? null) : null;
+        if ($id === null) {
+            throw new \RuntimeException('CreateVpcEndpoint returned no endpoint id.');
+        }
+        $this->waitAvailable($id);
+        $step('deploy.endpoint_created', ['service' => $plan->service, 'endpoint' => $id, 'route_tables' => implode(', ', $plan->missing)]);
+        return $id;
+    }
+
+    private function waitAvailable(string $id): void
+    {
+        $deadline = $this->sleeper->now() + self::AVAILABLE_TIMEOUT;
+        while (true) {
+            $page = $this->ec2->describeVpcEndpoints(['VpcEndpointIds' => [$id]]);
+            $state = strtolower((string) Aws::string((Aws::maps($page['VpcEndpoints'] ?? [])[0] ?? [])['State'] ?? null));
+            if ($state === 'available') {
+                return;
+            }
+            if (in_array($state, self::IGNORED_STATES, true)) {
+                throw DeployException::make('deploy.endpoint_create_failed', ['endpoint' => $id, 'state' => $state]);
+            }
+            if ($this->sleeper->now() >= $deadline) {
+                throw DeployException::make('deploy.endpoint_timeout', ['endpoint' => $id, 'seconds' => self::AVAILABLE_TIMEOUT]);
+            }
+            $this->sleeper->sleep(self::POLL);
+        }
+    }
+
+    private function replan(AppConfig $config, string $service): ?EndpointPlan
+    {
+        foreach ($this->plan($config) as $plan) {
+            if ($plan->service === $service) {
+                return $plan->action === EndpointPlan::DECIDE ? null : $plan;
+            }
+        }
+        return null;
+    }
+
+    /** @return array{arco: bool, uses: int, tags: array<string, string>}|null */
+    private function readOne(string $id): ?array
+    {
+        foreach ($this->read([$id]) as $endpoint) {
+            return $endpoint;
+        }
+        return null;
+    }
+
+    /**
+     * The live endpoints by id with their tags; an id that is gone or going is left out.
+     *
+     * @param list<string> $ids
+     * @return array<string, array{arco: bool, uses: int, tags: array<string, string>}>
+     */
+    private function read(array $ids): array
+    {
+        $found = [];
+        $page = $this->ec2->describeVpcEndpoints(['VpcEndpointIds' => $ids]);
+        foreach (Aws::maps($page['VpcEndpoints'] ?? []) as $raw) {
+            $endpoint = self::parse($raw);
+            if ($endpoint === null) {
+                continue;
+            }
+            $tags = [];
+            foreach (Aws::maps($raw['Tags'] ?? []) as $tag) {
+                $tags[Aws::string($tag['Key'] ?? null) ?? ''] = Aws::string($tag['Value'] ?? null) ?? '';
+            }
+            $found[$endpoint['id']] = ['arco' => $endpoint['arco'], 'uses' => $endpoint['uses'], 'tags' => $tags];
+        }
+        ksort($found);
+        return $found;
+    }
+
+    /**
+     * What a concurrent deploy can cause: the route table already has a route for the service's prefix list
+     * (EC2 answers `RouteAlreadyExists`, or `InvalidParameter` saying the route exists), or the endpoint
+     * it planned on went away. Reading again fixes both.
+     */
+    private static function retryable(AwsException $e): bool
+    {
+        $code = (string) $e->getAwsErrorCode();
+        return $code === 'RouteAlreadyExists'
+            || str_starts_with($code, 'InvalidVpcEndpointId.NotFound')
+            || ($code === 'InvalidParameter' && preg_match('/\balready\b.*\broute\b|\broute\b.*\balready\b/i', (string) $e->getAwsErrorMessage()) === 1);
+    }
+
+    private static function notFound(AwsException $e): bool
+    {
+        return str_starts_with((string) $e->getAwsErrorCode(), 'InvalidVpcEndpointId.NotFound');
+    }
+
+    private static function error(AwsException $e): string
+    {
+        return trim((string) $e->getAwsErrorCode() . ' ' . (string) $e->getAwsErrorMessage());
     }
 
     /** @param list<string> $subnets */

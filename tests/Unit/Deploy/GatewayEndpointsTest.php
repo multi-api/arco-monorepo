@@ -10,6 +10,7 @@ use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Deploy\DeployException;
 use Multiapi\Arco\Deploy\EndpointPlan;
 use Multiapi\Arco\Deploy\GatewayEndpoints;
+use Multiapi\Arco\Deploy\Ownership;
 use PHPUnit\Framework\TestCase;
 
 final class GatewayEndpointsTest extends TestCase
@@ -346,5 +347,320 @@ final class GatewayEndpointsTest extends TestCase
         self::assertSame(EndpointPlan::NONE, $skip->action);
         self::assertNull($skip->target);
         self::assertSame(['rtb-a'], $skip->missing);
+    }
+    private const OWN = ['arco:app' => 'shop', 'arco:environment' => 'production'];
+    private const USE = 'arco:uses:shop/production';
+
+    /** @param list<array{string, array<string, string|int>}> $steps */
+    private function recorder(array &$steps): \Closure
+    {
+        return function (string $key, array $params = []) use (&$steps): void {
+            $steps[] = [$key, $params];
+        };
+    }
+
+    /** @return array<string, string> */
+    private static function tagParams(array $tags): array
+    {
+        $out = [];
+        foreach ($tags as $tag) {
+            $out[$tag['Key']] = $tag['Value'] ?? null;
+        }
+        return $out;
+    }
+
+    private function apply(AwsMocks $mocks, EndpointPlan $plan, array &$steps, ?AppConfig $config = null): array
+    {
+        $config ??= $this->config();
+        return $this->subject($mocks)->apply($config, $plan, Ownership::tags($config), $this->recorder($steps));
+    }
+
+    private static function makePlan(string $action, array $missing, ?string $target = null, bool $arco = false, array $covering = []): EndpointPlan
+    {
+        return new EndpointPlan('s3', 'vpc-1', ['rtb-a', 'rtb-b'], $missing, $action, $target, $arco, [], $covering);
+    }
+
+    public function test_create_tags_waits_and_sets_usage(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['VpcEndpoint' => ['VpcEndpointId' => 'vpce-new']]));
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-new', ['rtb-a', 'rtb-b'], self::ARCO, 'pending')]));
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-new', ['rtb-a', 'rtb-b'], self::ARCO, 'available')]));
+        $steps = [];
+
+        $ids = $this->apply($mocks, self::makePlan(EndpointPlan::CREATE, ['rtb-a', 'rtb-b']), $steps);
+
+        self::assertSame(['vpce-new'], $ids);
+        self::assertSame(['CreateVpcEndpoint', 'DescribeVpcEndpoints', 'DescribeVpcEndpoints'], $mocks->calls);
+        $create = $mocks->params[0];
+        self::assertSame('Gateway', $create['VpcEndpointType']);
+        self::assertSame('vpc-1', $create['VpcId']);
+        self::assertSame('com.amazonaws.us-east-1.s3', $create['ServiceName']);
+        self::assertSame(['rtb-a', 'rtb-b'], $create['RouteTableIds']);
+        self::assertSame('vpc-endpoint', $create['TagSpecifications'][0]['ResourceType']);
+        self::assertSame(['arco:app' => 'shop', 'arco:environment' => 'production', 'arco:managed' => 'gateway-endpoint', self::USE => '1'], self::tagParams($create['TagSpecifications'][0]['Tags']));
+        self::assertSame(['vpce-new'], $mocks->params[1]['VpcEndpointIds']);
+        self::assertSame([['deploy.endpoint_created', ['service' => 's3', 'endpoint' => 'vpce-new', 'route_tables' => 'rtb-a, rtb-b']]], $steps);
+    }
+
+    public function test_create_that_never_becomes_available_times_out(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['VpcEndpoint' => ['VpcEndpointId' => 'vpce-new']]));
+        for ($i = 0; $i < 70; $i++) {
+            $mocks->handler->append(self::endpoints([self::endpoint('vpce-new', [], self::ARCO, 'pending')]));
+        }
+        $steps = [];
+
+        try {
+            $this->apply($mocks, self::makePlan(EndpointPlan::CREATE, ['rtb-a']), $steps);
+            self::fail('expected a timeout');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.endpoint_timeout', $e->key);
+        }
+    }
+
+    public function test_associate_user_endpoint_adds_no_tag(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result([]));
+        $steps = [];
+
+        $ids = $this->apply($mocks, self::makePlan(EndpointPlan::ASSOCIATE, ['rtb-b'], 'vpce-user', false, [['id' => 'vpce-user', 'arco' => false, 'uses' => 0]]), $steps);
+
+        self::assertSame([], $ids);
+        self::assertSame(['ModifyVpcEndpoint'], $mocks->calls);
+        self::assertSame('vpce-user', $mocks->params[0]['VpcEndpointId']);
+        self::assertSame(['rtb-b'], $mocks->params[0]['AddRouteTableIds']);
+        self::assertSame([['deploy.endpoint_routes_added', ['service' => 's3', 'endpoint' => 'vpce-user', 'route_tables' => 'rtb-b']]], $steps);
+    }
+
+    public function test_associate_arco_endpoint_adds_usage_tag(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO + ['arco:uses:other/x' => '1'])]));
+        $mocks->handler->append(new Result([]));
+        $mocks->handler->append(new Result([]));
+        $steps = [];
+
+        $ids = $this->apply($mocks, self::makePlan(EndpointPlan::ASSOCIATE, ['rtb-b'], 'vpce-arco', true), $steps);
+
+        self::assertSame(['vpce-arco'], $ids);
+        self::assertSame(['DescribeVpcEndpoints', 'ModifyVpcEndpoint', 'CreateTags'], $mocks->calls);
+        self::assertSame(['vpce-arco'], $mocks->params[2]['Resources']);
+        self::assertSame([['Key' => self::USE, 'Value' => '1']], $mocks->params[2]['Tags']);
+        self::assertSame('deploy.endpoint_routes_added', $steps[0][0]);
+    }
+
+    public function test_none_with_arco_target_only_tags_usage_when_missing(): void
+    {
+        $covering = [['id' => 'vpce-arco', 'arco' => true, 'uses' => 1]];
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a', 'rtb-b'], self::ARCO + [self::USE => '1'])]));
+        $steps = [];
+        $ids = $this->apply($mocks, self::makePlan(EndpointPlan::NONE, [], 'vpce-arco', true, $covering), $steps);
+        self::assertSame(['vpce-arco'], $ids);
+        self::assertSame(['DescribeVpcEndpoints'], $mocks->calls);
+        self::assertSame([], $steps);
+
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a', 'rtb-b'], self::ARCO)]));
+        $mocks->handler->append(new Result([]));
+        $this->apply($mocks, self::makePlan(EndpointPlan::NONE, [], 'vpce-arco', true, $covering), $steps);
+        self::assertSame(['DescribeVpcEndpoints', 'CreateTags'], $mocks->calls);
+    }
+
+    public function test_two_arco_endpoints_covering_one_environment_are_both_tagged_and_returned(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::endpoints([
+            self::endpoint('vpce-b', ['rtb-b'], self::ARCO),
+            self::endpoint('vpce-a', ['rtb-a'], self::ARCO),
+        ]));
+        $mocks->handler->append(new Result([]));
+        $steps = [];
+
+        $ids = $this->apply($mocks, self::makePlan(EndpointPlan::NONE, [], 'vpce-b', true, [
+            ['id' => 'vpce-b', 'arco' => true, 'uses' => 0],
+            ['id' => 'vpce-a', 'arco' => true, 'uses' => 0],
+        ]), $steps);
+
+        self::assertSame(['vpce-a', 'vpce-b'], $ids);
+        self::assertSame(['DescribeVpcEndpoints', 'CreateTags'], $mocks->calls);
+        self::assertEqualsCanonicalizing(['vpce-a', 'vpce-b'], $mocks->params[1]['Resources']);
+    }
+
+    public function test_reused_user_endpoint_reports(): void
+    {
+        $mocks = new AwsMocks();
+        $steps = [];
+
+        $ids = $this->apply($mocks, self::makePlan(EndpointPlan::NONE, [], 'vpce-user', false, [['id' => 'vpce-user', 'arco' => false, 'uses' => 0]]), $steps);
+
+        self::assertSame([], $ids);
+        self::assertSame([], $mocks->calls);
+        self::assertSame([['deploy.endpoint_reused', ['service' => 's3', 'endpoint' => 'vpce-user', 'owner' => 'yours']]], $steps);
+    }
+
+    public function test_a_plan_to_decide_cannot_be_applied(): void
+    {
+        $this->expectException(\LogicException::class);
+        $steps = [];
+        $this->apply(new AwsMocks(), self::makePlan(EndpointPlan::DECIDE, ['rtb-a']), $steps);
+    }
+
+    public function test_conflict_is_retried_once_after_replanning(): void
+    {
+        $conflict = fn () => AwsMocks::error(Ec2Exception::class, 'CreateVpcEndpoint', 'RouteAlreadyExists', 400, 'Route table rtb-a already has a route for the prefix list');
+        $mocks = new AwsMocks();
+        $mocks->handler->append($conflict());
+        $this->network($mocks);
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-other', ['rtb-a', 'rtb-b'], self::ARCO)]));
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-other', ['rtb-a', 'rtb-b'], self::ARCO)]));
+        $mocks->handler->append(new Result([]));
+        $steps = [];
+
+        $ids = $this->apply($mocks, self::makePlan(EndpointPlan::CREATE, ['rtb-a', 'rtb-b']), $steps);
+
+        self::assertSame(['vpce-other'], $ids);
+        self::assertSame(['CreateVpcEndpoint', 'DescribeSubnets', 'DescribeRouteTables', 'DescribeVpcEndpoints', 'DescribeVpcEndpoints', 'CreateTags'], $mocks->calls);
+    }
+
+    public function test_a_second_conflict_fails(): void
+    {
+        $conflict = fn () => AwsMocks::error(Ec2Exception::class, 'CreateVpcEndpoint', 'InvalidParameter', 400, 'route table rtb-a already has a route with destination-prefix-list-id pl-1');
+        $mocks = new AwsMocks();
+        $mocks->handler->append($conflict());
+        $this->network($mocks);
+        $mocks->handler->append(self::endpoints([]));
+        $mocks->handler->append($conflict());
+        $steps = [];
+
+        try {
+            $this->apply($mocks, self::makePlan(EndpointPlan::CREATE, ['rtb-a', 'rtb-b']), $steps);
+            self::fail('expected a conflict');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.endpoint_conflict', $e->key);
+        }
+    }
+
+    public function test_other_errors_are_not_retried(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(AwsMocks::error(Ec2Exception::class, 'CreateVpcEndpoint', 'UnauthorizedOperation', 403));
+        $steps = [];
+
+        $this->expectException(Ec2Exception::class);
+        $this->apply($mocks, self::makePlan(EndpointPlan::CREATE, ['rtb-a']), $steps);
+    }
+
+    public function test_tag_limit(): void
+    {
+        $tags = self::ARCO;
+        for ($i = 1; $i < GatewayEndpoints::MAX_TAGS; $i++) {
+            $tags["arco:uses:app$i/env"] = '1';
+        }
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], $tags)]));
+        $steps = [];
+
+        try {
+            $this->apply($mocks, self::makePlan(EndpointPlan::ASSOCIATE, ['rtb-b'], 'vpce-arco', true), $steps);
+            self::fail('expected the tag limit');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.endpoint_tag_limit', $e->key);
+        }
+        self::assertSame(['DescribeVpcEndpoints'], $mocks->calls);
+    }
+
+    public function test_release_untags_and_keeps_shared(): void
+    {
+        $mocks = new AwsMocks();
+        $shared = self::endpoint('vpce-arco', ['rtb-a'], self::ARCO + [self::USE => '1', 'arco:uses:other/x' => '1']);
+        $mocks->handler->append(self::endpoints([$shared]));
+        $mocks->handler->append(new Result([]));
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO + ['arco:uses:other/x' => '1'])]));
+        $steps = [];
+
+        $ok = $this->subject($mocks)->release($this->config(), ['vpce-arco'], $this->recorder($steps), 'deploy.');
+
+        self::assertTrue($ok);
+        self::assertSame(['DescribeVpcEndpoints', 'DeleteTags', 'DescribeVpcEndpoints'], $mocks->calls);
+        self::assertSame(['vpce-arco'], $mocks->params[1]['Resources']);
+        self::assertSame([['Key' => self::USE]], $mocks->params[1]['Tags']);
+        self::assertSame([['deploy.endpoint_released', ['endpoint' => 'vpce-arco']]], $steps);
+    }
+
+    public function test_release_deletes_last_user_after_rereading(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO + [self::USE => '1'])]));
+        $mocks->handler->append(new Result([]));
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO)]));
+        $mocks->handler->append(new Result([]));
+        $steps = [];
+
+        $ok = $this->subject($mocks)->release($this->config(), ['vpce-arco'], $this->recorder($steps), 'remove.');
+
+        self::assertTrue($ok);
+        self::assertSame(['DescribeVpcEndpoints', 'DeleteTags', 'DescribeVpcEndpoints', 'DeleteVpcEndpoints'], $mocks->calls);
+        self::assertSame(['vpce-arco'], $mocks->params[3]['VpcEndpointIds']);
+        self::assertSame([['remove.endpoint_deleted', ['endpoint' => 'vpce-arco']]], $steps);
+    }
+
+    public function test_release_keeps_an_endpoint_another_environment_tagged_in_the_meantime(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO + [self::USE => '1'])]));
+        $mocks->handler->append(new Result([]));
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO + ['arco:uses:late/env' => '1'])]));
+        $steps = [];
+
+        $this->subject($mocks)->release($this->config(), ['vpce-arco'], $this->recorder($steps), 'deploy.');
+
+        self::assertNotContains('DeleteVpcEndpoints', $mocks->calls);
+    }
+
+    public function test_release_never_deletes_without_marker(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-user', ['rtb-a'])]));
+        $steps = [];
+
+        $ok = $this->subject($mocks)->release($this->config(), ['vpce-user'], $this->recorder($steps), 'deploy.');
+
+        self::assertTrue($ok);
+        self::assertSame(['DescribeVpcEndpoints'], $mocks->calls);
+        self::assertSame([], $steps);
+    }
+
+    public function test_release_missing_endpoint_is_success(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(AwsMocks::error(Ec2Exception::class, 'DescribeVpcEndpoints', 'InvalidVpcEndpointId.NotFound', 400));
+        $steps = [];
+
+        self::assertTrue($this->subject($mocks)->release($this->config(), ['vpce-gone'], $this->recorder($steps), 'deploy.'));
+        self::assertSame([], $steps);
+    }
+
+    public function test_release_failure_warns_with_commands(): void
+    {
+        foreach (['deploy.', 'remove.'] as $prefix) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO + [self::USE => '1'])]));
+            $mocks->handler->append(AwsMocks::error(Ec2Exception::class, 'DeleteTags', 'UnauthorizedOperation', 403, 'not allowed'));
+            $mocks->handler->append(self::endpoints([self::endpoint('vpce-two', ['rtb-b'], self::ARCO + [self::USE => '1'])]));
+            $mocks->handler->append(new Result([]));
+            $mocks->handler->append(self::endpoints([self::endpoint('vpce-two', ['rtb-b'], self::ARCO)]));
+            $mocks->handler->append(new Result([]));
+            $steps = [];
+
+            $ok = $this->subject($mocks)->release($this->config(), ['vpce-arco', 'vpce-two'], $this->recorder($steps), $prefix);
+
+            self::assertFalse($ok);
+            self::assertSame([$prefix . 'endpoint_cleanup_failed', ['endpoint' => 'vpce-arco', 'tag' => self::USE, 'region' => 'us-east-1', 'error' => 'UnauthorizedOperation not allowed']], $steps[0]);
+            self::assertSame($prefix . 'endpoint_deleted', $steps[1][0], 'the next endpoint is still released');
+        }
     }
 }
