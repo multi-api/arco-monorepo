@@ -188,7 +188,8 @@ final class StepPrinter
                 $this->bar->setMessage((string) $mb);
                 $this->bar->setRedrawFrequency(1);
                 $this->bar->minSecondsBetweenRedraws(0);
-                $this->bar->start();
+                $this->bar->start(null, $percent);
+                return;
             }
             $this->bar->setMessage((string) $mb);
             $this->bar->setProgress($percent);
