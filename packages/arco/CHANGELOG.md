@@ -6,9 +6,12 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 ## Unreleased
 
 - **Added:** the package uploads to S3 show their progress: a bar with the megabytes sent (`48 / 180 MB`) in a
-  terminal, `25% (45 / 180 MB)` lines in CI logs. The console package upload, which used to print nothing for
-  minutes, has its own step, `deploy.step_upload_console` (`{size}`), and its runtime binary upload shows its
-  progress under it. `deploy --json` streams the upload progress under the new progress key `deploy.upload`.
+  terminal, `25% (45 / 180 MB)` lines in CI logs; sizes under 10 MB have one decimal. The console package and its
+  runtime binary, whose upload used to print nothing for minutes, upload under their own step,
+  `deploy.step_upload_console` (`{size, mb}`, both files counted, one progress run), before `deploy.step_console`,
+  which now covers only the console's Lambda update. `deploy.step_upload` gains the param `mb` (the size as printed,
+  e.g. `"4.2"`; `size` stays whole MB). `deploy --json` streams the upload progress under the new progress key
+  `deploy.upload`.
 - **Added:** a step that waits on AWS (the network connector, the first VPC console update, the VPC network
   interfaces of `remove`, CloudFront and certificates) shows its elapsed time after 10 seconds: a line redrawn in
   place in a terminal (`3 min 05 s elapsed`), one line per minute in CI logs (`3 min elapsed`). `--json` streams

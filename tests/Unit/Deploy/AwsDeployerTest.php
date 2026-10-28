@@ -242,18 +242,20 @@ final class AwsDeployerTest extends TestCase
         self::assertSame('1', $mocks->params[28]['FunctionVersion']);
         self::assertSame('shop/production/', $mocks->params[32]['Prefix']);
         self::assertSame('shop/production/console-', $mocks->params[33]['Prefix']);
-        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'package.progress', 'deploy.step_role', 'deploy.step_function', 'deploy.step_console',
-            'deploy.step_upload_console', 'package.progress', 'package.progress', 'deploy.step_traffic'], $steps);
+        // The uploads come before the console's own step: its Lambda update (minutes in a VPC) gets a fresh bullet
+        // whose elapsed time shows.
+        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'package.progress', 'deploy.step_role', 'deploy.step_function',
+            'deploy.step_upload_console', 'package.progress', 'package.progress', 'deploy.step_console', 'deploy.step_traffic'], $steps);
         // The uploads report what they sent (the mock reports no chunk: the size comes once the upload succeeded).
         self::assertSame([
-            ['deploy.step_upload', ['size' => 0]],
-            ['package.progress', ['percent' => 100, 'sent' => 0, 'total' => 0]],
+            ['deploy.step_upload', ['size' => 0, 'mb' => '0.0']],
+            ['package.progress', ['percent' => 100, 'sent' => '0.0', 'total' => '0.0']],
         ], array_slice($params, 1, 2));
         self::assertSame([
-            ['deploy.step_upload_console', ['size' => 0]],
-            ['package.progress', ['percent' => 100, 'sent' => 0, 'total' => 0]],
-            ['package.progress', ['percent' => 100, 'sent' => 0, 'total' => 0]],
-        ], array_slice($params, 6, 3), 'the console zip, then the runtime binary, under the console upload step');
+            ['deploy.step_upload_console', ['size' => 0, 'mb' => '0.0']],
+            ['package.progress', ['percent' => 78, 'sent' => '0.0', 'total' => '0.0']],
+            ['package.progress', ['percent' => 100, 'sent' => '0.0', 'total' => '0.0']],
+        ], array_slice($params, 5, 3), 'the console zip (11 bytes) and the runtime binary (3 bytes): one progress run');
     }
 
     private const BOUNDARY = 'arn:aws:iam::123456789012:policy/arco-boundary';
@@ -2250,6 +2252,43 @@ final class AwsDeployerTest extends TestCase
         return $by;
     }
 
+    public function test_a_copied_runtime_binary_tops_the_console_upload_up_to_100(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result([]),                                   // HeadBucket
+            new Result([]), new Result([]), new Result([]), new Result([]),
+            new Result(['VersionId' => 'v1']),                // HeadObject (web zip): already there, no progress
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), // GetRole
+            new Result([]),                                   // PutRolePolicy
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+            AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404), new Result(['VersionId' => 'cv1']), // console zip uploaded
+            new Result(['ContentLength' => 3, 'VersionId' => 'bv1']), new Result([]), // binary: HeadObject, CopyObject
+            self::lambdaMissing('GetAlias'), new Result(['FunctionVersion' => '8']),
+            self::lambdaMissing('GetFunctionConfiguration'), self::ready(),
+            self::ready(),
+            new Result(['State' => 'Pending']), new Result([]),
+            self::ready(), self::ready(),
+            new Result([]), self::ready(),
+            new Result(['Version' => '1']), new Result(['Version' => '9']),
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prepare($this->queuesConfig(), $this->package(), $this->console(), ['APP_ENV' => 'production'], function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        $upload = array_search('deploy.step_upload_console', array_column($steps, 0), true);
+        self::assertIsInt($upload);
+        self::assertSame([
+            ['package.progress', ['percent' => 78, 'sent' => '0.0', 'total' => '0.0']],
+            ['package.progress', ['percent' => 100, 'sent' => '0.0', 'total' => '0.0']],
+        ], array_slice($steps, $upload + 1, 2));
+        self::assertNotSame('package.progress', $steps[$upload + 3][0] ?? null);
+    }
+
     public function test_prepare_deploys_one_worker_per_queue_from_the_console_zip_even_with_the_console_off(): void
     {
         $mocks = new AwsMocks();
@@ -3600,7 +3639,7 @@ final class AwsDeployerTest extends TestCase
         $vpc = array_values(array_filter($policy['Statement'], fn (array $s) => ($s['Sid'] ?? null) === 'ArcoVpcAccess'));
         self::assertCount(1, $vpc, 'the execution role may manage the console and workers network interfaces');
         self::assertContains('ec2:CreateNetworkInterface', $vpc[0]['Action']);
-        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_network', 'deploy.step_revision', 'deploy.step_console', 'deploy.step_upload_console'], $steps);
+        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_network', 'deploy.step_revision', 'deploy.step_upload_console', 'deploy.step_console'], $steps);
     }
 
     public function test_failed_connector_creates_no_revision(): void
