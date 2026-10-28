@@ -13,8 +13,7 @@ use Symfony\Component\Console\Output\OutputInterface;
  *   (with `elapsed_ms`) when the next bullet starts or the command succeeds. StepPrinter's warning
  *   blocks are `warning`, its WARNINGS bullets and other informational lines `note`;
  * - `{"type":"progress","key","percent","at"}` for `package.progress`: the first of a run, then at most one a
- *   second, and always 100. A lower percent than the last one starts another run (the runtime binary after
- *   the console zip). The `sent`/`total` MB of an upload are not streamed;
+ *   second, and always 100. The `sent`/`total` MB of an upload are not streamed;
  * - `{"type":"result",...}`: exactly once, always last (see result()).
  *
  * `key` and `params` are API; `message` is the human text in the current language and is not.
@@ -196,8 +195,7 @@ final class JsonStream
     {
         $percent = max(0, min(100, $percent));
         $now = ($this->clock)();
-        $restart = $this->progressPercent !== null && $percent < $this->progressPercent;
-        $due = $this->progressAt === null || $restart || $now - $this->progressAt >= 1.0 || ($percent === 100 && $this->progressPercent !== 100);
+        $due = $this->progressAt === null || $now - $this->progressAt >= 1.0 || ($percent === 100 && $this->progressPercent !== 100);
         if (! $due) {
             return;
         }

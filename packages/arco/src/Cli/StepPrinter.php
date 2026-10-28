@@ -80,12 +80,16 @@ final class StepPrinter
             return;
         }
         $this->closeBar();
-        $this->printed = 0;
-        $this->percent = null;
-        $this->startedAt = ($this->clock)();
-        $this->minutesPrinted = 0;
+        $kind = self::kind($key, $params);
+        // A note (e.g. deploy.upload_retry) is not a step of its own: the running step keeps its progress and start.
+        if ($kind !== 'note') {
+            $this->printed = 0;
+            $this->percent = null;
+            $this->startedAt = ($this->clock)();
+            $this->minutesPrinted = 0;
+        }
         $message = self::message($this->translate, $key, $params);
-        if (self::kind($key, $params) === 'warning') {
+        if ($kind === 'warning') {
             $this->io->warning($message);
             return;
         }
@@ -128,12 +132,12 @@ final class StepPrinter
 
     /**
      * Shows the running step's elapsed time, for a long wait with no progress of its own: redrawn in
-     * place on a terminal, one line per whole minute otherwise. Nothing in a step's first ten seconds
-     * or while a progress bar runs.
+     * place on a terminal, one line per whole minute otherwise. Nothing in a step's first ten seconds,
+     * while a progress bar runs, or after finish(); a bar at 100% is ended first.
      */
     public function tick(): void
     {
-        if ($this->startedAt === null || $this->percent !== null) {
+        if ($this->startedAt === null || ($this->percent !== null && $this->percent < 100)) {
             return;
         }
         $elapsed = (int) floor(($this->clock)() - $this->startedAt);
@@ -141,6 +145,7 @@ final class StepPrinter
             return;
         }
         if ($this->live) {
+            $this->closePercentBar();
             if ($this->elapsedBar === null) {
                 $this->elapsedBar = $this->io->createProgressBar(0);
                 $this->elapsedBar->setFormat('    %message%');
@@ -175,10 +180,6 @@ final class StepPrinter
     private function progress(int $percent, ?string $mb): void
     {
         $percent = max(0, min(100, $percent));
-        // A lower percent starts another run in the same step (the runtime binary after the console zip).
-        if ($this->percent !== null && $percent < $this->percent) {
-            $this->printed = 0;
-        }
         $this->percent = $percent;
         if ($this->live) {
             $this->closeElapsed();
@@ -207,16 +208,23 @@ final class StepPrinter
     public function finish(): void
     {
         $this->closeBar();
+        // What follows (a deploy command's output, an error) is not the step's: no elapsed line under it.
+        $this->startedAt = null;
     }
 
     private function closeBar(): void
+    {
+        $this->closePercentBar();
+        $this->closeElapsed();
+    }
+
+    private function closePercentBar(): void
     {
         if ($this->bar !== null) {
             $this->bar->finish();
             $this->io->newLine();
             $this->bar = null;
         }
-        $this->closeElapsed();
     }
 
     private function closeElapsed(): void

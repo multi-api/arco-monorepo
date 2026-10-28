@@ -59,17 +59,69 @@ final class StepPrinterTest extends TestCase
         self::assertMatchesRegularExpression('/ 50% step\.progress_mb \{"sent":24,"total":48\}[^\n]*\n  • deploy\.step_role/', $text);
     }
 
-    public function test_a_second_progress_run_in_one_step_prints_its_marks_again(): void
+    public function test_a_note_during_an_upload_keeps_its_progress_and_its_start(): void
     {
         $output = new BufferedOutput();
         $printer = $this->printer($output, false);
 
-        $printer('deploy.step_upload_console', ['size' => 1]);
-        $printer('package.progress', ['percent' => 100]);
-        $printer('package.progress', ['percent' => 30]);
-        $printer('package.progress', ['percent' => 100]);
+        $printer('deploy.step_upload', ['size' => 48]);
+        $printer('package.progress', ['percent' => 30, 'sent' => '14', 'total' => '48']);
+        $printer('deploy.upload_retry', ['key' => 'k', 'error' => 'reset', 'seconds' => 5]);
+        $printer('package.progress', ['percent' => 30, 'sent' => '14', 'total' => '48']);
+        $printer('package.progress', ['percent' => 55, 'sent' => '26', 'total' => '48']);
 
-        self::assertSame("  • deploy.step_upload_console {\"size\":1}\n" . str_repeat("    25%\n    50%\n    75%\n    100%\n", 2), $output->fetch(), 'the runtime binary after the console zip');
+        self::assertSame(
+            "  • deploy.step_upload {\"size\":48}\n"
+            . "    25% (step.progress_mb {\"sent\":\"14\",\"total\":\"48\"})\n"
+            . "  • deploy.upload_retry {\"key\":\"k\",\"error\":\"reset\",\"seconds\":5}\n"
+            . "    50% (step.progress_mb {\"sent\":\"26\",\"total\":\"48\"})\n",
+            $output->fetch(),
+            'no 25% again after the retry note',
+        );
+    }
+
+    public function test_a_note_does_not_restart_the_elapsed_time(): void
+    {
+        $output = new BufferedOutput();
+        $printer = $this->printer($output, false);
+
+        $printer('deploy.network_waiting');
+        $this->now += 50;
+        $printer('deploy.boundary_kept');
+        $this->now += 15;
+        $printer->tick();
+
+        self::assertStringContainsString('    step.elapsed {"time":"1 min"}', $output->fetch());
+    }
+
+    public function test_tick_shows_the_elapsed_time_once_the_progress_reached_100(): void
+    {
+        foreach ([true, false] as $live) {
+            $output = new BufferedOutput(OutputInterface::VERBOSITY_NORMAL, $live);
+            $printer = $this->printer($output, $live);
+
+            $printer('deploy.step_upload', ['size' => 48]);
+            $printer('package.progress', ['percent' => 100, 'sent' => '48', 'total' => '48']);
+            $this->now += 61;
+            $printer->tick();
+            $printer('deploy.step_role');
+
+            $text = $output->fetch();
+            self::assertMatchesRegularExpression($live ? '/100%[^\n]*\n    step\.elapsed \{"time":"1 min 01 s"\}[^\n]*\n  • deploy\.step_role/' : '/100%[^\n]*\n    step\.elapsed \{"time":"1 min"\}\n  • deploy\.step_role/', $text, $live ? 'live' : 'plain');
+        }
+    }
+
+    public function test_finish_stops_the_elapsed_time_of_the_last_step(): void
+    {
+        $output = new BufferedOutput();
+        $printer = $this->printer($output, false);
+
+        $printer('deploy.step_commands');
+        $printer->finish();
+        $this->now += 120;
+        $printer->tick();
+
+        self::assertSame("  • deploy.step_commands\n", $output->fetch(), 'nothing under the raw output of a deploy command');
     }
 
     public function test_tick_prints_nothing_before_a_step_or_in_the_first_ten_seconds(): void

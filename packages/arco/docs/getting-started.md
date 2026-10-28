@@ -623,9 +623,7 @@ Every line has `schema` (`1`) and `type`, one of:
   `binary.download` (downloading the PHP CLI binary of the console function) and `deploy.upload` (uploading the
   package, or the console package and its runtime binary, to S3); other keys may be added. Lines of one key come
   at most once a second, except the last one at `100`, which always comes and may follow the previous line by
-  less than a second. A percent lower than the previous line's starts another run of the same key (the runtime
-  binary after the console package). Elapsed time during long waits is not streamed: derive it from the
-  running step's `at`.
+  less than a second. Elapsed time during long waits is not streamed: derive it from the running step's `at`.
 - **`result`**: always the last line, exactly once: `outcome`, `app`, `environment`, `revision`, `url`, `domains`,
   `rolled_back`, `cold_start_ms` and `error`.
   - `app` is `null` when `arco.php` could not be loaded (`environment` is then the `--env` value).
