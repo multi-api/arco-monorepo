@@ -287,6 +287,21 @@ final class RemoveCommandTest extends TestCase
         $project->restore();
     }
 
+    public function test_the_steps_print_like_deploy_steps_with_a_kept_bucket_saying_whether_files_are_left(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->removeSteps = [['remove.storage_kept', ['bucket' => 'shop-production-uploads', 'objects' => 'some']]];
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('The bucket shop-production-uploads was kept in AWS: it still has files.', $display, 'the code is translated, as by deploy');
+        $project->restore();
+    }
+
     public function test_lists_the_tagged_resources_before_asking_for_confirmation(): void
     {
         $project = new ProjectFixture(ProjectFixture::standardConfig());

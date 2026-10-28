@@ -184,8 +184,8 @@ final class AwsDeployer implements Deployer
         $codeBucket->ensure($bucket, $region, $account);
 
         $key = self::prefix($config) . "{$package->hash}.zip";
-        $step('deploy.step_upload', ['size' => (int) round($package->bytes / 1048576)]);
-        $versionId = $codeBucket->upload($bucket, $key, $package->path, $step);
+        $step('deploy.step_upload', self::sizeParams($package->bytes));
+        $versionId = $codeBucket->upload($bucket, $key, $package->path, $step, self::uploadProgress($step));
 
         $tags = self::tags($config);
         $liveConnector = $this->liveConnectors[$function] ?? null;
@@ -243,13 +243,30 @@ final class AwsDeployer implements Deployer
         $workerVersions = [];
         if ($console !== null) {
             // The console zip also runs the queue workers: it is built (and uploaded) when queues exist even if the console is off.
+            $consoleKey = self::consolePrefix($config) . "{$console->package->hash}.zip";
+            // The ~180 MB console zip and the runtime binary upload under their own step, before the console's:
+            // the console's Lambda update (minutes in a VPC) then gets a fresh step whose elapsed time shows.
+            // Both files are one progress run; a file already in the bucket counts as sent once the other is.
+            $zipBytes = $console->package->bytes;
+            $uploadBytes = $zipBytes + ($console->download->bytes ?? 0);
+            $step('deploy.step_upload_console', self::sizeParams($uploadBytes));
+            $progress = self::uploadProgress($step);
+            $sentAny = false;
+            $consoleObject = $codeBucket->upload($bucket, $consoleKey, $console->package->path, $step, function (int $sent) use ($progress, $uploadBytes, &$sentAny): void {
+                $sentAny = true;
+                $progress($sent, $uploadBytes);
+            });
+            if ($console->download !== null) {
+                $codeBucket->uploadBinary($bucket, $console->download->key, $console->download->path, $console->download->bytes, $step, function (int $sent) use ($progress, $uploadBytes, $zipBytes, &$sentAny): void {
+                    $sentAny = true;
+                    $progress($zipBytes + $sent, $uploadBytes);
+                });
+            }
+            if ($sentAny) {
+                $progress($uploadBytes, $uploadBytes);
+            }
             if ($config->consoleEnabled()) {
                 $step('deploy.step_console', ['function' => $config->consoleFunctionName()]);
-            }
-            $consoleKey = self::consolePrefix($config) . "{$console->package->hash}.zip";
-            $consoleObject = $codeBucket->upload($bucket, $consoleKey, $console->package->path, $step);
-            if ($console->download !== null) {
-                $codeBucket->uploadBinary($bucket, $console->download->key, $console->download->path, $console->download->bytes, $step);
             }
             $runtimeVariables = [...$variables, ...self::binaryVariables($bucket, $console)];
             // The console and the workers are updated together (LambdaFunction::deployAll): each runs the
@@ -279,6 +296,39 @@ final class AwsDeployer implements Deployer
 
         return new PreparedDeploy($revisionId, $previous, $bucket, $key, $consoleVersion, $previousConsole, $consoleKey, $console?->download?->key, $workerVersions,
             $leftover, array_values(array_unique(array_filter([$liveConnector, $connectorArn], fn (?string $arn) => $arn !== null))), $outOfVpc);
+    }
+
+    /**
+     * `size` (whole MB, the --json API since 0.x) and `mb` (the text the step prints).
+     *
+     * @return array{size: int, mb: string}
+     */
+    private static function sizeParams(int $bytes): array
+    {
+        return ['size' => (int) round($bytes / 1048576), 'mb' => UploadProgress::megabytes($bytes)];
+    }
+
+    /**
+     * Turns CodeBucket's bytes sent into package.progress steps (percent, and sent/total in MB), one per
+     * whole percent, like DeployPipeline::downloadProgress().
+     *
+     * @param callable(string, array<string, string|int>): void $step
+     * @return Closure(int, int): void
+     */
+    private static function uploadProgress(callable $step): Closure
+    {
+        $last = null;
+        return static function (int $sent, int $total) use ($step, &$last): void {
+            if ($total <= 0) {
+                return;
+            }
+            $percent = (int) floor(min($sent, $total) * 100 / $total);
+            if ($percent === $last) {
+                return;
+            }
+            $last = $percent;
+            $step('package.progress', ['percent' => $percent, 'sent' => UploadProgress::megabytes(min($sent, $total)), 'total' => UploadProgress::megabytes($total)]);
+        };
     }
 
     /**

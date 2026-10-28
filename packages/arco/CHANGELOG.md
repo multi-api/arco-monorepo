@@ -3,6 +3,22 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## Unreleased
+
+- **Added:** the package uploads to S3 show their progress: a bar with the megabytes sent (`48 / 180 MB`) in a
+  terminal, `25% (45 / 180 MB)` lines in CI logs; sizes under 10 MB have one decimal. The console package and its
+  runtime binary, whose upload used to print nothing for minutes, upload under their own step,
+  `deploy.step_upload_console` (`{size, mb}`, both files counted, one progress run), before `deploy.step_console`,
+  which now covers only the console's Lambda update. `deploy.step_upload` gains the param `mb` (the size as printed,
+  e.g. `"4.2"`; `size` stays whole MB). `deploy --json` streams the upload progress under the new progress key
+  `deploy.upload`.
+- **Added:** a step that waits on AWS (the network connector, the first VPC console update, the VPC network
+  interfaces of `remove`, CloudFront and certificates) shows its elapsed time after 10 seconds: a line redrawn in
+  place in a terminal (`3 min 05 s elapsed`), one line per minute in CI logs (`3 min elapsed`). `--json` streams
+  nothing new: the elapsed time follows from the step's `at`.
+- **Fixed:** `arco remove` printed the code of a kept bucket (`… was kept in AWS: some`) instead of saying whether
+  it still has files. Its steps now print the way `deploy` prints them.
+
 ## 0.12.0
 
 New opt-in setting in `arco.php`: `vpc()`. Without it nothing changes. To use it, the deploy permissions need new
