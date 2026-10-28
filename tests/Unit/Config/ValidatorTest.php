@@ -784,4 +784,44 @@ final class ValidatorTest extends TestCase
         self::assertTrue($result->isValid());
         self::assertSame(['validation.domain_settings_unused'], array_map(fn (array $w) => $w['key'], $result->warnings));
     }
+
+    /** @return list<array{key: string, params: array<string, string|int>}> */
+    private function vpcErrors(App $app): array
+    {
+        $config = ConfigResolver::resolve($app->region('us-east-1')->environment('production')->toArray(), 'production');
+        return array_values(array_filter((new Validator())->validate($config, sys_get_temp_dir())->errors, fn (array $e) => str_starts_with($e['key'], 'validation.vpc_')));
+    }
+
+    public function test_vpc_with_one_subnet_and_one_security_group_is_valid(): void
+    {
+        self::assertSame([], $this->vpcErrors(App::make('shop')->vpc(subnets: ['subnet-a1'], securityGroups: ['sg-b2'])));
+        self::assertSame([], $this->vpcErrors(App::make('shop')->vpc(subnets: array_map(fn (int $i) => "subnet-$i", range(1, 16)), securityGroups: ['sg-1', 'sg-2', 'sg-3', 'sg-4', 'sg-5'])));
+    }
+
+    public function test_vpc_subnet_count_must_be_1_to_16(): void
+    {
+        self::assertSame([['key' => 'validation.vpc_subnets_count', 'params' => ['count' => 0]]], $this->vpcErrors(App::make('shop')->vpc(subnets: [], securityGroups: ['sg-b2'])));
+        self::assertSame([['key' => 'validation.vpc_subnets_count', 'params' => ['count' => 17]]], $this->vpcErrors(App::make('shop')->vpc(subnets: array_map(fn (int $i) => "subnet-$i", range(1, 17)), securityGroups: ['sg-b2'])));
+    }
+
+    public function test_vpc_security_group_count_must_be_1_to_5(): void
+    {
+        self::assertSame([['key' => 'validation.vpc_security_groups_count', 'params' => ['count' => 0]]], $this->vpcErrors(App::make('shop')->vpc(subnets: ['subnet-a1'])));
+        self::assertSame([['key' => 'validation.vpc_security_groups_count', 'params' => ['count' => 6]]], $this->vpcErrors(App::make('shop')->vpc(subnets: ['subnet-a1'], securityGroups: array_map(fn (int $i) => "sg-$i", range(1, 6)))));
+    }
+
+    public function test_vpc_ids_must_look_like_subnet_and_security_group_ids(): void
+    {
+        self::assertSame([['key' => 'validation.vpc_id', 'params' => ['value' => 'subnet_x']]], $this->vpcErrors(App::make('shop')->vpc(subnets: ['subnet_x'], securityGroups: ['sg-b2'])));
+        self::assertSame([['key' => 'validation.vpc_id', 'params' => ['value' => 'sg_1']]], $this->vpcErrors(App::make('shop')->vpc(subnets: ['subnet-a1'], securityGroups: ['sg_1'])));
+        self::assertSame([['key' => 'validation.vpc_id', 'params' => ['value' => "subnet-a1\n"]]], $this->vpcErrors(App::make('shop')->vpc(subnets: ["subnet-a1\n"], securityGroups: ['sg-b2'])), 'no trailing newline');
+    }
+
+    public function test_vpc_repeated_ids_are_reported_once(): void
+    {
+        self::assertSame(
+            [['key' => 'validation.vpc_duplicate', 'params' => ['value' => 'subnet-a1']], ['key' => 'validation.vpc_duplicate', 'params' => ['value' => 'sg-b2']]],
+            $this->vpcErrors(App::make('shop')->vpc(subnets: ['subnet-a1', 'subnet-a1', 'subnet-a1'], securityGroups: ['sg-b2', 'sg-b2'])),
+        );
+    }
 }

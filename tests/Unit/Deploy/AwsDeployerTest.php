@@ -99,6 +99,17 @@ final class AwsDeployerTest extends TestCase
         ];
     }
 
+    /** @return list<Result> the live revision rev-1, which pins no network connector (read after the ownership checks) */
+    private static function liveRevision(): array
+    {
+        return [
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['state' => 'Active', 'serviceConfig' => ['executionRoleArn' => 'arn:role']]),
+        ];
+    }
+
+    private const LIVE_REVISION = ['GetWebFunctionEndpoint', 'GetWebFunctionRevision'];
+
     /** @param array<string, string>|null $tags */
     private static function roleTags(?array $tags = null, ?string $description = 'Execution role managed by Arco'): Result
     {
@@ -888,7 +899,7 @@ final class AwsDeployerTest extends TestCase
             AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400),
             self::lambdaMissing('GetFunctionConfiguration'),
             ...self::webTags(),
-            self::roleTags(),
+            self::roleTags(), ...self::liveRevision(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
             AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400), // no events: access, no rule
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // no resources stack
@@ -902,9 +913,9 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole',
+        self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION,
             'DescribeStacks', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery'], $mocks->calls);
-        self::assertSame('shop-production-console', $mocks->params[9]['FunctionName']);
+        self::assertSame('shop-production-console', $mocks->params[11]['FunctionName']);
         self::assertSame(['remove.scheduler_unreadable', 'remove.step_console', 'remove.step_function'], $steps, 'an unreadable rule is a warning, and the remove goes on');
         self::assertContains('remove.scheduler_unreadable', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
@@ -916,7 +927,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
-            self::noRule(), ...self::lambdaTags('shop-production-console', null, 'Arco console function (Arco 0.8.1)'), ...self::webTags(), self::roleTags(),
+            self::noRule(), ...self::lambdaTags('shop-production-console', null, 'Arco console function (Arco 0.8.1)'), ...self::webTags(), self::roleTags(), ...self::liveRevision(),
             new Result(['Stacks' => [['StackName' => 'arco-shop-production', 'StackStatus' => 'CREATE_COMPLETE', 'Tags' => [['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']], 'Outputs' => [['OutputKey' => 'DistributionDomain', 'OutputValue' => 'd1.cloudfront.net']]]]]),
             new Result(['Stacks' => [['StackName' => 'arco-shop-production', 'StackStatus' => 'CREATE_COMPLETE']]]),
             new Result([]),                                                                     // DeleteStack
@@ -934,7 +945,7 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($config, function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole',
+        self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION,
             'DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListCertificates', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery'], $mocks->calls);
         self::assertSame(['remove.step_distribution', 'remove.step_console', 'remove.step_function'], $steps);
     }
@@ -994,7 +1005,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
-            self::noRule(), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(),
+            self::noRule(), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(), ...self::liveRevision(),
             $stack('CREATE_COMPLETE'),                                                          // stack exists?
             $stack('CREATE_COMPLETE'),                                                          // CustomDomains::remove
             $stack('CREATE_COMPLETE'), new Result([]),                                          // Stacks::delete
@@ -1075,7 +1086,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
-            ...self::ruleTags(), ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(),
+            ...self::ruleTags(), ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
             new Result(['Name' => 'arco-shop-production-scheduler']),                          // DescribeRule
             new Result(['FailedEntryCount' => 0]), new Result([]), new Result([]),              // RemoveTargets, DeleteRule, RemovePermission
@@ -1090,10 +1101,10 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['GetResources', 'DescribeRule', 'ListTagsForResource', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole',
+        self::assertSame(['GetResources', 'DescribeRule', 'ListTagsForResource', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION,
             'DescribeStacks', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery'], $mocks->calls);
-        self::assertSame('arco-shop-production-scheduler', $mocks->params[11]['Name']);
-        self::assertSame('shop-production-console', $mocks->params[14]['FunctionName']);
+        self::assertSame('arco-shop-production-scheduler', $mocks->params[13]['Name']);
+        self::assertSame('shop-production-console', $mocks->params[16]['FunctionName']);
         self::assertSame(['remove.step_scheduler', 'remove.step_console', 'remove.step_function'], $steps);
     }
 
@@ -2135,7 +2146,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
-            self::noRule(), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(),
+            self::noRule(), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(), ...self::liveRevision(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // domains stack
             self::noRule(),
             self::resourcesStack(),
@@ -2159,8 +2170,9 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(self::noGroup());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
 
+        // remove reads the live revision too (does it pin a connector?); nothing else is new.
         self::assertSame([
-            'GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole',
+            'GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION,
             'DescribeStacks', 'DescribeRule',
             'DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListObjectsV2', 'DescribeTable',
             'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery',
@@ -2583,7 +2595,7 @@ final class AwsDeployerTest extends TestCase
             // ownership: no rule, the workers (reports never deployed), console, web function, role
             self::noRule(),
             ...self::lambdaTags('shop-production-queue-emails'), self::lambdaMissing('GetFunctionConfiguration'), ...self::lambdaTags('shop-production-queue-gone'),
-            ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(),
+            ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production does not exist'), // domains stack
             self::noRule(),
             // emails
@@ -2612,7 +2624,7 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([
             'GetResources',
             'DescribeRule', 'GetFunctionConfiguration', 'ListTags', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'ListTags',
-            'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole',
+            'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION,
             'DescribeStacks', 'DescribeRule',
             'ListEventSourceMappings', 'DeleteEventSourceMapping', 'DeleteFunction',
             'ListEventSourceMappings', 'DeleteFunction',
@@ -2620,7 +2632,7 @@ final class AwsDeployerTest extends TestCase
             'DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'GetQueueAttributes',
             'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery',
         ], $mocks->calls);
-        self::assertSame('shop-production-console', $mocks->params[27]['FunctionName'], 'the console goes after the workers and the stack');
+        self::assertSame('shop-production-console', $mocks->params[29]['FunctionName'], 'the console goes after the workers and the stack');
         self::assertSame([
             ['remove.step_worker', ['queue' => 'emails', 'function' => 'shop-production-queue-emails']],
             ['remove.step_worker', ['queue' => 'reports', 'function' => 'shop-production-queue-reports']],
@@ -2639,7 +2651,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'InvalidParameterException', 400, 'Rate exceeded'),
-            self::noRule(), ...self::lambdaTags('shop-production-queue-emails'), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(),
+            self::noRule(), ...self::lambdaTags('shop-production-queue-emails'), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(), ...self::liveRevision(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
             self::noRule(),
             new Result(['EventSourceMappings' => []]), new Result([]),                          // emails: mappings, DeleteFunction
@@ -2677,11 +2689,12 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(...[
             self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console'), ...self::lambdaTags('shop-production-queue-emails'), ...self::ruleTags(),
             new Result(['Stacks' => [['StackName' => 'arco-shop-production-resources', 'StackStatus' => 'CREATE_COMPLETE', 'Tags' => self::tagList(self::tags())]]]),
+            ...self::liveRevision(),
         ]);
 
         $steps = self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep()), $this->fullConfig());
 
-        self::assertSame(['GetRole', 'GetWebFunction', 'ListTags', 'GetFunctionConfiguration', 'ListTags', 'GetFunctionConfiguration', 'ListTags', 'DescribeRule', 'ListTagsForResource', 'DescribeStacks'], $mocks->calls);
+        self::assertSame(['GetRole', 'GetWebFunction', 'ListTags', 'GetFunctionConfiguration', 'ListTags', 'GetFunctionConfiguration', 'ListTags', 'DescribeRule', 'ListTagsForResource', 'DescribeStacks', ...self::LIVE_REVISION], $mocks->calls, 'then the live revision, for its network connector');
         self::assertSame('arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', $mocks->params[2]['resource']);
         self::assertSame('arn:aws:lambda:us-east-1:111111111111:function:shop-production-queue-emails', $mocks->params[6]['Resource']);
         self::assertSame([], $steps);
@@ -2812,6 +2825,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['Name' => 'arco-shop-production-scheduler', 'Arn' => 'arn:rule', 'Description' => 'Arco: schedule:run every 1 min on shop-production-console:live']),
             new Result(['Tags' => []]),
             self::noStack(),                                                                  // DescribeStacks: no resources stack yet
+            ...self::liveRevision(),
             new Result([]), new Result([]), new Result([]), new Result([]), new Result([]), // TagRole, TagResource x4
         ]);
 
@@ -2820,14 +2834,14 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([
             'GetRole', 'GetWebFunction', 'ListTags', 'GetWebFunctionEndpoint', 'GetWebFunctionRevision',
             'GetFunctionConfiguration', 'ListTags', 'GetFunctionConfiguration', 'ListTags', 'DescribeRule', 'ListTagsForResource', 'DescribeStacks',
-            'TagRole', 'TagResource', 'TagResource', 'TagResource', 'TagResource',
+            ...self::LIVE_REVISION, 'TagRole', 'TagResource', 'TagResource', 'TagResource', 'TagResource',
         ], $mocks->calls);
         $tags = self::tags();
-        self::assertSame(['RoleName' => 'arco-shop-production', 'Tags' => self::tagList($tags)], array_diff_key($mocks->params[12], ['@http' => 1, '@context' => 1]));
-        self::assertSame(['resource' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'tags' => $tags], array_diff_key($mocks->params[13], ['@http' => 1, '@context' => 1]));
-        self::assertSame(['Resource' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console', 'Tags' => $tags], array_diff_key($mocks->params[14], ['@http' => 1, '@context' => 1]));
-        self::assertSame(['Resource' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-queue-emails', 'Tags' => $tags], array_diff_key($mocks->params[15], ['@http' => 1, '@context' => 1]));
-        self::assertSame(['ResourceARN' => 'arn:rule', 'Tags' => self::tagList($tags)], array_diff_key($mocks->params[16], ['@http' => 1, '@context' => 1]));
+        self::assertSame(['RoleName' => 'arco-shop-production', 'Tags' => self::tagList($tags)], array_diff_key($mocks->params[14], ['@http' => 1, '@context' => 1]));
+        self::assertSame(['resource' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'tags' => $tags], array_diff_key($mocks->params[15], ['@http' => 1, '@context' => 1]));
+        self::assertSame(['Resource' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console', 'Tags' => $tags], array_diff_key($mocks->params[16], ['@http' => 1, '@context' => 1]));
+        self::assertSame(['Resource' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-queue-emails', 'Tags' => $tags], array_diff_key($mocks->params[17], ['@http' => 1, '@context' => 1]));
+        self::assertSame(['ResourceARN' => 'arn:rule', 'Tags' => self::tagList($tags)], array_diff_key($mocks->params[18], ['@http' => 1, '@context' => 1]));
         $added = fn (string $resource) => ['deploy.tags_added', ['resource' => $resource, 'app' => 'shop', 'environment' => 'production']];
         self::assertSame([$added('arco-shop-production'), $added('shop-production'), $added('shop-production-console'), $added('shop-production-queue-emails'), $added('arco-shop-production-scheduler')], $steps);
         self::assertNotContains('deploy.tags_added', \Multiapi\Arco\Cli\StepPrinter::WARNINGS, 'a note, not a warning');
@@ -2853,10 +2867,10 @@ final class AwsDeployerTest extends TestCase
         self::assertNotContains('TagResource', $mocks->calls);
 
         $mocks = new AwsMocks();
-        $mocks->handler->append(...[...$responses(), new Result([])]);
+        $mocks->handler->append(...[...$responses(), ...self::liveRevision(), new Result([])]);
         $steps = self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: true), $this->config());
 
-        self::assertSame('TagResource', $mocks->calls[array_key_last($mocks->calls)], 'taken over: tagged for this environment');
+        self::assertSame([...self::LIVE_REVISION, 'TagResource'], array_slice($mocks->calls, -3), 'taken over: tagged for this environment');
         self::assertSame([['deploy.ownership_forced', ['resource' => 'shop-production', 'app' => 'shop', 'environment' => 'production']]], $steps);
         self::assertContains('deploy.ownership_forced', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
@@ -2864,12 +2878,12 @@ final class AwsDeployerTest extends TestCase
     public function test_force_deploys_over_another_owners_resource_and_retags_it_with_a_warning(): void
     {
         $mocks = new AwsMocks();
-        $mocks->handler->append(...[self::noRole(), ...self::webTags(self::tags('shop', 'staging')), self::lambdaMissing('GetFunctionConfiguration'), self::noRule(), new Result([])]);
+        $mocks->handler->append(...[self::noRole(), ...self::webTags(self::tags('shop', 'staging')), self::lambdaMissing('GetFunctionConfiguration'), self::noRule(), ...self::liveRevision(), new Result([])]);
 
         $steps = self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: true), $this->config());
 
-        self::assertSame(['GetRole', 'GetWebFunction', 'ListTags', 'GetFunctionConfiguration', 'DescribeRule', 'TagResource'], $mocks->calls);
-        self::assertSame(self::tags(), $mocks->params[5]['tags']);
+        self::assertSame(['GetRole', 'GetWebFunction', 'ListTags', 'GetFunctionConfiguration', 'DescribeRule', ...self::LIVE_REVISION, 'TagResource'], $mocks->calls);
+        self::assertSame(self::tags(), $mocks->params[7]['tags']);
         self::assertSame([['deploy.ownership_forced', ['resource' => 'shop-production', 'app' => 'shop', 'environment' => 'production']]], $steps);
     }
 
@@ -2887,7 +2901,7 @@ final class AwsDeployerTest extends TestCase
         }
 
         $mocks = new AwsMocks();
-        $mocks->handler->append(...[self::roleTags(), self::webTags()[0], $denied(), self::lambdaMissing('GetFunctionConfiguration'), self::noRule()]);
+        $mocks->handler->append(...[self::roleTags(), self::webTags()[0], $denied(), self::lambdaMissing('GetFunctionConfiguration'), self::noRule(), ...self::liveRevision()]);
         $steps = self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: true), $this->config());
         self::assertNotContains('TagResource', $mocks->calls);
         self::assertSame([['deploy.ownership_forced', ['resource' => 'shop-production', 'app' => 'shop', 'environment' => 'production']]], $steps);
@@ -3000,7 +3014,7 @@ final class AwsDeployerTest extends TestCase
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->console()->scheduler(5)->environment('production')->toArray(), 'production');
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
-            self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console'), ...self::ruleTags(),
+            self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console'), ...self::ruleTags(), ...self::liveRevision(),
             new Result(['AliasArn' => 'arn:alias', 'FunctionVersion' => '7']),
             new Result(['Name' => 'arco-shop-production-scheduler', 'State' => 'ENABLED']),
             new Result(['RuleArn' => 'arn:rule']), new Result(['FailedEntryCount' => 0]), new Result([]),
@@ -3057,7 +3071,7 @@ final class AwsDeployerTest extends TestCase
     {
         $denied = fn () => AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400, 'not authorized');
         $mocks = new AwsMocks();
-        $mocks->handler->append(...[self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console'), $denied(),
+        $mocks->handler->append(...[self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console'), $denied(), ...self::liveRevision(),
             $denied(), self::lambdaMissing('GetPolicy'),                                         // syncScheduler (off): reads the rule again
         ]);
         $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
@@ -3065,7 +3079,7 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([], self::ownershipSteps($deployer, $this->consoleConfig()));
         $deployer->syncScheduler($this->consoleConfig(), fn () => null);
 
-        self::assertSame(['GetRole', 'GetWebFunction', 'ListTags', 'GetFunctionConfiguration', 'ListTags', 'DescribeRule', 'DescribeRule', 'GetPolicy'], $mocks->calls);
+        self::assertSame(['GetRole', 'GetWebFunction', 'ListTags', 'GetFunctionConfiguration', 'ListTags', 'DescribeRule', ...self::LIVE_REVISION, 'DescribeRule', 'GetPolicy'], $mocks->calls);
         self::assertNotContains('DeleteRule', $mocks->calls);
     }
 
@@ -3194,7 +3208,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]), self::noRule(),
-            ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(),
+            ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // domains stack
             self::noRule(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // resources stack
@@ -3506,5 +3520,900 @@ final class AwsDeployerTest extends TestCase
             'arn:aws:dynamodb:us-east-1:111111111111:table/Shared',
             'arn:aws:dynamodb:us-east-1:111111111111:table/Shared/index/*',
         ], $bySid['ArcoAppTables']['Resource']);
+    }
+
+
+    private const CONNECTOR_VERSION = 'arn:aws:lambda:us-east-1:111111111111:network-connector:shop-production:3';
+
+    private function vpcConfig(bool $console = false, ?string $role = null): AppConfig
+    {
+        $app = App::make('shop')->region('us-east-1');
+        if ($console) {
+            $app = $app->console();
+        }
+        if ($role !== null) {
+            $app = $app->role($role);
+        }
+        return ConfigResolver::resolve($app->environment('production', fn (Environment $e) => $e->vpc(subnets: ['subnet-a', 'subnet-b'], securityGroups: ['sg-1']))->toArray(), 'production');
+    }
+
+    /** @return list<Result> the reads and writes of NetworkConnectors::ensure() for an unchanged connector */
+    private static function connectorReady(): array
+    {
+        return [
+            new Result(['Arn' => 'arn:connector', 'Name' => 'shop-production', 'OperatorRole' => 'arn:aws:iam::111111111111:role/arco-shop-production-network', 'State' => 'ACTIVE',
+                'LatestVersionArn' => self::CONNECTOR_VERSION, 'LatestVersion' => 3,
+                'Configuration' => ['VpcEgressConfiguration' => ['SubnetIds' => ['subnet-b', 'subnet-a'], 'SecurityGroupIds' => ['sg-1'], 'NetworkProtocol' => 'IPv4', 'AssociatedComputeResourceTypes' => ['WebFunction']]]]),
+            new Result(['Role' => ['Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production-network']]), // GetRole (operator)
+            new Result([]),                                                                                  // PutRolePolicy (operator)
+        ];
+    }
+
+    public function test_vpc_deploy_order(): void
+    {
+        $ready = fn () => new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']);
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), // GetRole
+            new Result([]),                                   // PutRolePolicy
+            ...self::connectorReady(),
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+            new Result(['VersionId' => 'cv1']),               // HeadObject (console zip)
+            new Result(['ContentLength' => 3, 'VersionId' => 'bv1']),
+            new Result([]),                                   // CopyObject
+            new Result(['FunctionVersion' => '6']),           // GetAlias
+            $ready(), $ready(), new Result([]), $ready(), new Result([]), $ready(), new Result(['Version' => '7']),
+        ]);
+        $steps = [];
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->prepare($this->vpcConfig(console: true), $this->package(), $this->console(), [], function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame([
+            ...self::UNTIL_THE_ROLE, 'GetRole', 'PutRolePolicy',
+            'GetNetworkConnector', 'GetRole', 'PutRolePolicy',
+            'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision',
+            'HeadObject', 'HeadObject', 'CopyObject',
+            'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion',
+        ], $mocks->calls, 'role, connector, revision, then the console');
+        $revision = array_search('CreateWebFunctionRevision', $mocks->calls, true);
+        self::assertSame(self::CONNECTOR_VERSION, $mocks->params[$revision]['serviceConfig']['egressNetworkConnectorArn']);
+        $update = array_search('UpdateFunctionConfiguration', $mocks->calls, true);
+        self::assertSame(['SubnetIds' => ['subnet-a', 'subnet-b'], 'SecurityGroupIds' => ['sg-1']], $mocks->params[$update]['VpcConfig']);
+        $policy = json_decode($mocks->params[array_search('PutRolePolicy', $mocks->calls, true)]['PolicyDocument'], true);
+        $vpc = array_values(array_filter($policy['Statement'], fn (array $s) => ($s['Sid'] ?? null) === 'ArcoVpcAccess'));
+        self::assertCount(1, $vpc, 'the execution role may manage the console and workers network interfaces');
+        self::assertContains('ec2:CreateNetworkInterface', $vpc[0]['Action']);
+        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_network', 'deploy.step_revision', 'deploy.step_console'], $steps);
+    }
+
+    public function test_failed_connector_creates_no_revision(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
+            new Result([]),
+            self::connectorGone(),
+            new Result(['Role' => ['Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production-network']]),
+            new Result([]),
+            new Result(['Arn' => 'arn:connector', 'Name' => 'shop-production', 'VersionArn' => self::CONNECTOR_VERSION, 'State' => 'PENDING']), // CreateNetworkConnector
+            new Result(['Arn' => 'arn:connector', 'Name' => 'shop-production', 'OperatorRole' => 'arn:aws:iam::111111111111:role/arco-shop-production-network', 'State' => 'FAILED',
+                'StateReason' => 'bad', 'StateReasonCode' => 'InvalidSubnet', 'Configuration' => ['VpcEgressConfiguration' => ['SubnetIds' => ['subnet-b', 'subnet-a'], 'SecurityGroupIds' => ['sg-1']]]]),
+        ]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        try {
+            $deployer->prepare($this->vpcConfig(), $this->package(), null, []);
+            self::fail('the deploy should stop on the failed connector');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.network_failed', $e->key);
+        }
+
+        self::assertNotContains('CreateWebFunctionRevision', $mocks->calls);
+        self::assertNotContains('CreateWebFunction', $mocks->calls);
+        self::assertNotContains('UpdateWebFunctionEndpoint', $mocks->calls);
+    }
+
+    public function test_environment_without_vpc_makes_no_network_calls(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
+            new Result([]),
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        ]);
+        $steps = [];
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->prepare($this->config(), $this->package(), null, [], function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame([...self::UNTIL_THE_ROLE, 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision'], $mocks->calls);
+        $revision = array_search('CreateWebFunctionRevision', $mocks->calls, true);
+        self::assertArrayNotHasKey('egressNetworkConnectorArn', $mocks->params[$revision]['serviceConfig']);
+        self::assertStringNotContainsString('ArcoVpcAccess', (string) $mocks->params[array_search('PutRolePolicy', $mocks->calls, true)]['PolicyDocument']);
+        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_revision'], $steps);
+    }
+
+    public function test_emulator_skips_vpc_with_note(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
+            new Result([]),
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        ]);
+        $steps = [];
+
+        self::behindEmulator(function () use ($mocks, &$steps): void {
+            $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+            $deployer->prepare($this->vpcConfig(), $this->package(), null, [], function (string $key) use (&$steps): void { $steps[] = $key; });
+        });
+
+        self::assertNotContains('GetNetworkConnector', $mocks->calls);
+        self::assertNotContains('CreateNetworkConnector', $mocks->calls);
+        self::assertContains('deploy.vpc_unsupported_emulator', $steps);
+        self::assertNotContains('deploy.step_network', $steps);
+        $revision = array_search('CreateWebFunctionRevision', $mocks->calls, true);
+        self::assertArrayNotHasKey('egressNetworkConnectorArn', $mocks->params[$revision]['serviceConfig']);
+        self::assertStringNotContainsString('ArcoVpcAccess', (string) $mocks->params[array_search('PutRolePolicy', $mocks->calls, true)]['PolicyDocument']);
+        self::assertSame('note', \Multiapi\Arco\Cli\StepPrinter::kind('deploy.vpc_unsupported_emulator', []));
+    }
+
+    public function test_with_a_custom_role_the_operator_role_is_still_created_and_the_execution_role_untouched(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::untilTheRole(),
+            ...self::connectorReady(),
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        ]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->prepare($this->vpcConfig(role: 'arn:aws:iam::111111111111:role/mine'), $this->package(), null, []);
+
+        self::assertSame([...self::UNTIL_THE_ROLE, 'GetNetworkConnector', 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision'], $mocks->calls);
+        $role = array_search('PutRolePolicy', $mocks->calls, true);
+        self::assertSame('arco-shop-production-network', $mocks->params[$role]['RoleName'], 'only the operator role is written');
+        self::assertSame('arn:aws:iam::111111111111:role/mine', $mocks->params[array_search('CreateWebFunctionRevision', $mocks->calls, true)]['serviceConfig']['executionRoleArn']);
+    }
+
+    private const OPERATOR_ROLE = 'arn:aws:iam::111111111111:role/arco-shop-production-network';
+
+    /**
+     * Answers every call by its operation name, so a test lists what AWS returns instead of the exact order of
+     * the calls (it asserts the order it cares about on $mocks->calls). A list answers its calls in turn and
+     * repeats its last entry; anything else is answered as is. An operation with no answer is refused like a
+     * missing permission, so every step that warns on it warns.
+     *
+     * @param array<string, mixed> $answers operation => Result|\Exception or a list of them
+     */
+    private static function answer(AwsMocks $mocks, array $answers): void
+    {
+        $answers += ['GetCallerIdentity' => new Result(['Account' => '111111111111'])];
+        $dispatch = static function (\Aws\CommandInterface $command) use (&$answers): mixed {
+            $name = $command->getName();
+            if (! array_key_exists($name, $answers)) {
+                return AwsMocks::error(LambdaException::class, $name, 'AccessDeniedException', 403, "no answer for $name");
+            }
+            if (! is_array($answers[$name])) {
+                return $answers[$name];
+            }
+            return count($answers[$name]) > 1 ? array_shift($answers[$name]) : $answers[$name][0];
+        };
+        for ($i = 0; $i < 300; $i++) {
+            $mocks->handler->append($dispatch);
+        }
+    }
+
+    /** @param array<string, mixed> $extra */
+    private static function connector(int $version = 3, string $role = self::OPERATOR_ROLE, array $extra = []): Result
+    {
+        return new Result([
+            'Arn' => 'arn:aws:lambda:us-east-1:111111111111:network-connector:shop-production', 'Name' => 'shop-production', 'Id' => 'nc-0abc',
+            'OperatorRole' => $role, 'State' => 'ACTIVE',
+            'LatestVersionArn' => "arn:aws:lambda:us-east-1:111111111111:network-connector:shop-production:$version", 'LatestVersion' => $version,
+            'Configuration' => ['VpcEgressConfiguration' => ['SubnetIds' => ['subnet-a', 'subnet-b'], 'SecurityGroupIds' => ['sg-1'], 'NetworkProtocol' => 'IPv4', 'AssociatedComputeResourceTypes' => ['WebFunction']]],
+            ...$extra,
+        ]);
+    }
+
+    private static function connectorGone(): \Aws\LambdaCore\Exception\LambdaCoreException
+    {
+        return AwsMocks::error(\Aws\LambdaCore\Exception\LambdaCoreException::class, 'GetNetworkConnector', 'ResourceNotFoundException', 404);
+    }
+
+    /**
+     * What a deploy of an existing environment reads and writes, for answer(): the ownership reads (all owned),
+     * the bucket and upload, the execution role, the web function with its live revision rev-1 (pinning
+     * $liveConnector), and the console and workers, which exist.
+     *
+     * @return array<string, mixed>
+     */
+    private static function existingEnvironment(?string $liveConnector): array
+    {
+        $function = new Result(['FunctionName' => 'shop-production-console', 'FunctionArn' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console',
+            'Description' => 'Arco console function', 'State' => 'Active', 'LastUpdateStatus' => 'Successful']);
+        return [
+            'GetCallerIdentity' => new Result(['Account' => '111111111111']),
+            'HeadBucket' => new Result([]), 'PutPublicAccessBlock' => new Result([]), 'PutBucketPolicy' => new Result([]),
+            'PutBucketVersioning' => new Result([]), 'PutBucketLifecycleConfiguration' => new Result([]),
+            'HeadObject' => new Result(['VersionId' => 'v1', 'ContentLength' => 3]), 'CopyObject' => new Result([]),
+            'GetRole' => [self::roleTags(), new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1'], ...self::tagList(self::tags())]]])],
+            'PutRolePolicy' => new Result([]),
+            // lambda (Tags) and lambda-web (tags) share the operation name
+            'ListTags' => new Result(['Tags' => self::tags(), 'tags' => self::tags()]),
+            'GetWebFunction' => new Result(['functionName' => 'shop-production', 'functionArn' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'state' => 'Active']),
+            'GetWebFunctionEndpoint' => new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            'GetWebFunctionRevision' => new Result(['state' => 'Active', 'serviceConfig' => $liveConnector === null ? ['executionRoleArn' => 'arn:role'] : ['executionRoleArn' => 'arn:role', 'egressNetworkConnectorArn' => $liveConnector]]),
+            'CreateWebFunctionRevision' => new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            'GetFunctionConfiguration' => $function,
+            'DescribeRule' => self::noRule(),
+            'DescribeStacks' => new Result(['Stacks' => [['StackName' => 'arco-shop-production-resources', 'StackStatus' => 'CREATE_COMPLETE', 'Tags' => self::tagList(self::tags())]]]),
+            'GetAlias' => new Result(['FunctionVersion' => '6']),
+            'UpdateFunctionCode' => new Result([]), 'UpdateFunctionConfiguration' => new Result([]), 'PublishVersion' => new Result(['Version' => '7']),
+        ];
+    }
+
+    private function leftoverConfig(): AppConfig
+    {
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->console()->queue('emails')->environment('production', fn (Environment $e) => $e->account('111111111111'))->toArray(), 'production');
+    }
+
+    /** @return list<string> the calls among $operations, in order */
+    private static function only(AwsMocks $mocks, string ...$operations): array
+    {
+        return array_values(array_filter($mocks->calls, fn (string $call) => in_array($call, $operations, true)));
+    }
+
+    /**
+     * vpc() left arco.php while the live revision still pins the connector. The deploy takes the new revision,
+     * the console and the workers out of the VPC and keeps the ENI statements (an automatic rollback goes back
+     * to VPC versions); only prune(), which the pipeline reaches after a verified deploy (DeployPipelineTest::
+     * test_a_failed_verification_never_removes_the_network_connector), deletes the connector, then its role.
+     */
+    public function test_leftover_connector_is_removed_only_after_verification(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment(self::CONNECTOR_VERSION), 'GetNetworkConnector' => self::connector()]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $steps = [];
+
+        $deployer->checkOwnership($this->leftoverConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->leftoverConfig(), $this->package(), $this->console(), [], function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertTrue($prepared->leftoverConnector);
+        self::assertTrue($prepared->leftVpc, 'prune() retires the console and worker versions still in the VPC');
+        $by = self::byOperation($mocks);
+        self::assertArrayNotHasKey('egressNetworkConnectorArn', $by['CreateWebFunctionRevision'][0]['serviceConfig']);
+        self::assertSame(['shop-production-console', 'shop-production-queue-emails'], array_column($by['UpdateFunctionConfiguration'], 'FunctionName'));
+        foreach ($by['UpdateFunctionConfiguration'] as $update) {
+            self::assertSame(['SubnetIds' => [], 'SecurityGroupIds' => []], $update['VpcConfig'], 'the console and the workers leave the VPC');
+        }
+        self::assertStringContainsString('ArcoVpcAccess', (string) $by['PutRolePolicy'][0]['PolicyDocument'], 'a rollback to a VPC console or worker version still works');
+        self::assertSame([], self::only($mocks, 'DeleteNetworkConnector', 'DeleteRole', 'DeleteRolePolicy', 'CreateNetworkConnector', 'UpdateNetworkConnector'));
+        self::assertNotContains('deploy.step_network', $steps);
+
+        $mocks = new AwsMocks();
+        self::answer($mocks, ['GetNetworkConnector' => [self::connector(), self::connectorGone()], 'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
+            'DeleteRolePolicy' => new Result([]), 'DeleteRole' => new Result([])]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->leftoverConfig(), $prepared, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['GetNetworkConnector', 'DeleteNetworkConnector', 'GetNetworkConnector', 'DeleteRolePolicy', 'DeleteRole'], self::only($mocks, 'GetNetworkConnector', 'DeleteNetworkConnector', 'DeleteRolePolicy', 'DeleteRole'));
+        $by = self::byOperation($mocks);
+        self::assertSame('shop-production', $by['DeleteNetworkConnector'][0]['Identifier']);
+        self::assertSame('arco-shop-production-network', $by['DeleteRole'][0]['RoleName'], 'the operator role, never the execution role');
+        self::assertContains(['deploy.network_removed', ['connector' => 'shop-production']], $steps);
+    }
+
+    public function test_a_live_revision_pinning_the_connector_by_its_id_is_a_leftover_too(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment('arn:aws:lambda:us-east-1:111111111111:network-connector:nc-0abc:3'), 'GetNetworkConnector' => self::connector()]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->leftoverConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->leftoverConfig(), $this->package(), null, []);
+
+        self::assertTrue($prepared->leftoverConnector, 'AWS names the connector by its id in a version ARN');
+    }
+
+    public function test_a_live_revision_without_a_connector_makes_no_network_connector_call(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::existingEnvironment(null));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->leftoverConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->leftoverConfig(), $this->package(), $this->console(), []);
+        $deployer->prune($this->leftoverConfig(), $prepared);
+
+        self::assertFalse($prepared->leftoverConnector);
+        self::assertSame([], $prepared->keepConnectorVersions);
+        self::assertSame([], array_values(array_filter($mocks->calls, fn (string $call) => str_contains($call, 'NetworkConnector'))));
+        self::assertStringNotContainsString('ArcoVpcAccess', (string) self::byOperation($mocks)['PutRolePolicy'][0]['PolicyDocument']);
+        self::assertArrayNotHasKey('VpcConfig', self::byOperation($mocks)['UpdateFunctionConfiguration'][0], 'a function that never was in a VPC gets no VpcConfig');
+    }
+
+    public function test_a_foreign_connector_pinned_by_the_live_revision_is_left_alone_with_a_warning(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment(self::CONNECTOR_VERSION), 'GetNetworkConnector' => self::connector(role: 'arn:aws:iam::111111111111:role/someone-else')]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $steps = [];
+
+        $deployer->checkOwnership($this->leftoverConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->leftoverConfig(), $this->package(), null, [], function (string $key) use (&$steps): void { $steps[] = $key; });
+        $deployer->prune($this->leftoverConfig(), $prepared);
+
+        self::assertFalse($prepared->leftoverConnector);
+        self::assertContains('deploy.network_foreign_kept', $steps);
+        self::assertContains('deploy.network_foreign_kept', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertNotContains('DeleteNetworkConnector', $mocks->calls);
+    }
+
+    public function test_a_failed_leftover_cleanup_is_a_warning_with_the_manual_commands(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, ['GetNetworkConnector' => self::connector(),
+            'DeleteNetworkConnector' => AwsMocks::error(\Aws\LambdaCore\Exception\LambdaCoreException::class, 'DeleteNetworkConnector', 'AccessDeniedException', 403, 'not allowed')]);
+        $steps = [];
+        $prepared = new PreparedDeploy('rev-2', 'rev-1', 'arco-111111111111-us-east-1', 'shop/production/a.zip', null, null, leftoverConnector: true);
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->leftoverConfig(), $prepared, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        $failed = array_values(array_filter($steps, fn (array $s) => $s[0] === 'deploy.network_cleanup_failed'));
+        self::assertCount(1, $failed);
+        self::assertSame(['connector' => 'shop-production', 'role' => 'arco-shop-production-network', 'region' => 'us-east-1', 'error' => 'AccessDeniedException not allowed'], $failed[0][1]);
+        self::assertContains('deploy.network_cleanup_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertNotContains('DeleteRole', $mocks->calls, 'the role stays while the connector uses it');
+        foreach (['en', 'es'] as $lang) {
+            $text = (new \Multiapi\Arco\Cli\Translator($lang, \Multiapi\Arco\Arco::packageRoot() . '/lang'))->trans('deploy.network_cleanup_failed', $failed[0][1]);
+            self::assertStringContainsString('aws lambda-core delete-network-connector --identifier shop-production --region us-east-1', $text);
+            self::assertStringContainsString('aws iam delete-role --role-name arco-shop-production-network', $text);
+        }
+    }
+
+    public function test_prune_keeps_live_previous_and_new_versions(): void
+    {
+        $base = 'arn:aws:lambda:us-east-1:111111111111:network-connector:shop-production';
+        $mocks = new AwsMocks();
+        self::answer($mocks, [
+            ...self::existingEnvironment("$base:2"),
+            'GetRole' => [self::roleTags(), self::operatorRole(), new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1'], ...self::tagList(self::tags())]]]), self::operatorRole()],
+            'GetNetworkConnector' => self::connector(3),
+        ]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->vpcConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->vpcConfig(), $this->package(), null, []);
+
+        self::assertFalse($prepared->leftoverConnector);
+        self::assertSame(["$base:2", "$base:3"], $prepared->keepConnectorVersions, 'the live revision (the rollback target) and the new one');
+
+        $mocks = new AwsMocks();
+        self::answer($mocks, [
+            'ListNetworkConnectorVersions' => new Result(['NetworkConnectorVersions' => [
+                ['VersionArn' => "$base:1", 'Version' => 1], ['VersionArn' => "$base:2", 'Version' => 2], ['VersionArn' => "$base:3", 'Version' => 3],
+            ]]),
+            'DeleteNetworkConnector' => new Result([]),
+        ]);
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->vpcConfig(), $prepared);
+
+        self::assertSame(["$base:1"], array_column(self::byOperation($mocks)['DeleteNetworkConnector'], 'Identifier'));
+        self::assertNotContains('DeleteRole', $mocks->calls);
+    }
+
+    public function test_emulator_reads_no_live_connector_and_prunes_no_versions(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::existingEnvironment(self::CONNECTOR_VERSION));
+
+        self::behindEmulator(function () use ($mocks): void {
+            $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+            $deployer->checkOwnership($this->vpcConfig(), fn () => null);
+            $prepared = $deployer->prepare($this->vpcConfig(), $this->package(), null, []);
+            $deployer->prune($this->vpcConfig(), $prepared);
+            self::assertFalse($prepared->leftoverConnector);
+        });
+
+        self::assertSame([], array_values(array_filter($mocks->calls, fn (string $call) => str_contains($call, 'NetworkConnector'))));
+    }
+
+    /** @return array<string, mixed> what a remove of shop/production reads and deletes, for answer() */
+    private static function removal(?string $liveConnector): array
+    {
+        return [
+            'GetResources' => new Result(['ResourceTagMappingList' => []]),
+            'DescribeRule' => self::noRule(),
+            'GetFunctionConfiguration' => self::lambdaMissing('GetFunctionConfiguration'),
+            'GetWebFunction' => [new Result(['functionName' => 'shop-production', 'functionArn' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'state' => 'Active']),
+                AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404)],
+            'ListTags' => new Result(['tags' => self::tags()]),
+            'GetRole' => self::roleTags(),
+            'GetWebFunctionEndpoint' => new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            'GetWebFunctionRevision' => new Result(['state' => 'Active', 'serviceConfig' => $liveConnector === null ? [] : ['egressNetworkConnectorArn' => $liveConnector]]),
+            'DescribeStacks' => AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+            'DeleteFunction' => self::lambdaMissing('DeleteFunction'),
+            'DeleteWebFunction' => new Result([]),
+            'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
+            'DeleteRolePolicy' => new Result([]), 'DeleteRole' => new Result([]),
+            'GetGroupQuery' => self::noGroup(),
+            // No console or worker version in a VPC, and no network interface left to wait for.
+            'ListVersionsByFunction' => new Result(['Versions' => []]),
+            'DescribeNetworkInterfaces' => new Result(['NetworkInterfaces' => []]),
+        ];
+    }
+
+    /** @param list<string> $vpcVersions the console versions still in a VPC */
+    private static function consoleVersions(array $vpcVersions, array $outside = []): Result
+    {
+        $vpc = ['SubnetIds' => ['subnet-a'], 'SecurityGroupIds' => ['sg-1'], 'VpcId' => 'vpc-1'];
+        return new Result(['Versions' => [
+            ...array_map(fn (string $v) => ['Version' => $v, 'VpcConfig' => $vpc], $vpcVersions),
+            ...array_map(fn (string $v) => ['Version' => $v, 'VpcConfig' => ['SubnetIds' => [], 'SecurityGroupIds' => []]], $outside),
+        ]]);
+    }
+
+    private static function interfaces(string ...$ids): Result
+    {
+        return new Result(['NetworkInterfaces' => array_map(fn (string $id) => ['NetworkInterfaceId' => $id, 'Description' => 'AWS Lambda VPC ENI-shop-production-console',
+            'SubnetId' => 'subnet-a', 'Groups' => [['GroupId' => 'sg-1']]], $ids)]);
+    }
+
+    /** @param list<array{0: string, 1: list<string>, 2: list<string>}> $functions name, subnets, groups */
+    private static function functionsInRegion(array $functions): Result
+    {
+        return new Result(['Functions' => array_map(fn (array $f) => ['FunctionName' => $f[0], 'Version' => '$LATEST',
+            'VpcConfig' => ['SubnetIds' => $f[1], 'SecurityGroupIds' => $f[2]]], $functions)]);
+    }
+
+    /**
+     * Lambda deletes a VPC function's network interface with the function's execution role, up to about 20 minutes
+     * after the function is gone: a role deleted earlier leaves the interface in the VPC for good.
+     */
+    public function test_remove_waits_for_the_vpc_interfaces_before_the_execution_role(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()],
+            // A function remove just deleted may still be listed: it never counts as another user of the interface.
+            'ListFunctions' => self::functionsInRegion([['shop-production-console', ['subnet-a'], ['sg-1']], ['other-app', ['subnet-b'], ['sg-1']]]),
+            'DescribeNetworkInterfaces' => [self::interfaces('eni-1'), self::interfaces()]]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(console: true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        $calls = $mocks->calls;
+        self::assertSame(['DescribeNetworkInterfaces', 'DescribeNetworkInterfaces'], self::only($mocks, 'DescribeNetworkInterfaces'));
+        self::assertLessThan(min(array_keys($calls, 'DescribeNetworkInterfaces', true)), max(array_keys($calls, 'DeleteFunction', true)), 'the functions go first');
+        self::assertLessThan(max(array_keys($calls, 'DeleteRole', true)), max(array_keys($calls, 'DescribeNetworkInterfaces', true)), 'the execution role goes once the interfaces are gone');
+        $by = self::byOperation($mocks);
+        self::assertSame([['Name' => 'description', 'Values' => ['AWS Lambda VPC ENI-*']], ['Name' => 'subnet-id', 'Values' => ['subnet-a', 'subnet-b']]], $by['DescribeNetworkInterfaces'][0]['Filters'],
+            'by where they ran, not by name: Lambda names a shared interface after the function that made it');
+        self::assertSame('ALL', $by['ListFunctions'][0]['FunctionVersion']);
+        self::assertSame(['arco-shop-production-network', 'arco-shop-production'], array_column($by['DeleteRole'], 'RoleName'));
+        self::assertContains(['remove.step_vpc_interfaces', ['functions' => 'shop-production-console, shop-production-queue-*']], $steps);
+    }
+
+    /** An interface staging made (and named) that production reused: once staging is gone, production's remove waits for it. */
+    public function test_remove_waits_for_a_reused_interface_another_environment_made(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()], 'ListFunctions' => self::functionsInRegion([]),
+            'DescribeNetworkInterfaces' => [new Result(['NetworkInterfaces' => [
+                ['NetworkInterfaceId' => 'eni-1', 'Description' => 'AWS Lambda VPC ENI-shop-staging-console', 'SubnetId' => 'subnet-b', 'Groups' => [['GroupId' => 'sg-1']]],
+                // Same subnet, other groups: another function's interface, never waited for.
+                ['NetworkInterfaceId' => 'eni-9', 'Description' => 'AWS Lambda VPC ENI-billing', 'SubnetId' => 'subnet-b', 'Groups' => [['GroupId' => 'sg-9']]],
+            ]]), new Result(['NetworkInterfaces' => [['NetworkInterfaceId' => 'eni-9', 'Description' => 'AWS Lambda VPC ENI-billing', 'SubnetId' => 'subnet-b', 'Groups' => [['GroupId' => 'sg-9']]]]])]]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(console: true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertCount(2, self::only($mocks, 'DescribeNetworkInterfaces'), 'eni-1 is waited for, eni-9 is not');
+        self::assertSame(['arco-shop-production-network', 'arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
+    }
+
+    /** Staging and production on the same subnets and groups share one interface: production keeps it, and its role. */
+    public function test_remove_does_not_wait_for_an_interface_another_function_still_uses(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()],
+            'ListFunctions' => self::functionsInRegion([['shop-staging-console', ['subnet-b', 'subnet-a'], ['sg-1']]]),
+            'DescribeNetworkInterfaces' => self::interfaces('eni-1')]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(console: true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['DescribeNetworkInterfaces'], self::only($mocks, 'DescribeNetworkInterfaces'), 'no waiting');
+        self::assertSame(['arco-shop-production-network', 'arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
+        self::assertNotContains('remove.vpc_interfaces_pending', array_column($steps, 0));
+    }
+
+    public function test_remove_keeps_the_execution_role_while_a_vpc_interface_is_left(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()],
+            'ListFunctions' => self::functionsInRegion([]), 'DescribeNetworkInterfaces' => self::interfaces('eni-1')]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(console: true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['arco-shop-production-network'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'), 'only the operator role');
+        self::assertContains(['remove.vpc_interfaces_pending', ['interfaces' => 'eni-1', 'region' => 'us-east-1', 'role' => 'arco-shop-production']], $steps);
+        self::assertContains('remove.vpc_interfaces_pending', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertContains('GetGroupQuery', $mocks->calls, 'the rest of the remove goes on');
+        self::assertSame(1, count(self::only($mocks, 'ListFunctions')), 'the other functions are read once');
+    }
+
+    public function test_remove_keeps_the_execution_role_when_the_interfaces_cannot_be_read(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()],
+            'DescribeNetworkInterfaces' => AwsMocks::error(LambdaException::class, 'DescribeNetworkInterfaces', 'UnauthorizedOperation', 403, 'denied')]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(console: true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['arco-shop-production-network'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
+        self::assertContains('remove.vpc_interfaces_failed', array_column($steps, 0));
+        self::assertContains('remove.vpc_interfaces_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
+    public function test_remove_of_an_environment_without_vpc_reads_no_interfaces(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::removal(null));
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
+
+        self::assertSame([], self::only($mocks, 'ListVersionsByFunction', 'DescribeNetworkInterfaces', 'ListFunctions'));
+        self::assertSame(['arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
+    }
+
+    public function test_the_interface_listing_follows_next_token(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connectorGone()], 'ListFunctions' => self::functionsInRegion([]),
+            'DescribeNetworkInterfaces' => [new Result(['NetworkInterfaces' => [], 'NextToken' => 'page-2']), self::interfaces('eni-2'), new Result(['NetworkInterfaces' => []])]]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(console: true), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        $by = self::byOperation($mocks);
+        self::assertSame('page-2', $by['DescribeNetworkInterfaces'][1]['NextToken']);
+        self::assertCount(3, $by['DescribeNetworkInterfaces'], 'eni-2 on the second page is waited for');
+    }
+
+    /**
+     * Out of the VPC, the prune deletes the console and worker versions still in it and waits for their interfaces
+     * while the execution role still has the ENI statements (the next deploy drops them), then the connector goes.
+     */
+    public function test_leaving_the_vpc_retires_the_vpc_versions_and_waits_for_their_interfaces_before_the_connector(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, ['GetNetworkConnector' => [self::connector(), self::connector(), self::connectorGone()], 'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
+            'DeleteRolePolicy' => new Result([]), 'DeleteRole' => new Result([]), 'DeleteFunction' => new Result([]),
+            // The live alias still on a VPC version (a console that was not activated): never deleted.
+            'GetAlias' => new Result(['FunctionVersion' => '6']),
+            // Read by the version prune (it keeps these few) and by the retire step.
+            'ListVersionsByFunction' => self::consoleVersions(['5', '6'], ['$LATEST', '7']),
+            'ListFunctions' => self::functionsInRegion([]),
+            'DescribeNetworkInterfaces' => [self::interfaces('eni-1'), self::interfaces()]]);
+        $prepared = new PreparedDeploy('rev-2', 'rev-1', 'bucket', 'key', '7', '6', leftoverConnector: true, leftVpc: true);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $steps = [];
+
+        $deployer->prune($this->leftoverConfig(), $prepared, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        $by = self::byOperation($mocks);
+        $qualifiers = array_column(array_filter($by['DeleteFunction'], fn (array $call) => $call['FunctionName'] === 'shop-production-console'), 'Qualifier');
+        self::assertContains('5', $qualifiers, 'a version in the VPC goes');
+        self::assertNotContains('6', $qualifiers, 'never the version the live alias points to');
+        self::assertNotContains('$LATEST', $qualifiers);
+        self::assertNotContains('7', $qualifiers);
+        $calls = self::only($mocks, 'DescribeNetworkInterfaces', 'DeleteNetworkConnector');
+        self::assertSame(['DescribeNetworkInterfaces', 'DescribeNetworkInterfaces', 'DeleteNetworkConnector'], $calls, 'the interfaces are gone before the connector goes');
+        self::assertContains(['deploy.step_vpc_interfaces', ['functions' => 'shop-production-console, shop-production-queue-*']], $steps);
+    }
+
+    /** A worker this deploy deleted has no version left to list, but its interface is still waited for. */
+    public function test_leaving_the_vpc_waits_even_when_no_vpc_version_is_left(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, ['GetNetworkConnector' => [self::connector(), self::connector(), self::connectorGone()], 'DeleteNetworkConnector' => new Result(['State' => 'DELETING']),
+            'DeleteRolePolicy' => new Result([]), 'DeleteRole' => new Result([]),
+            'ListVersionsByFunction' => new Result(['Versions' => []]), 'ListFunctions' => self::functionsInRegion([]), 'GetAlias' => new Result(['FunctionVersion' => '7']),
+            'DescribeNetworkInterfaces' => self::interfaces('eni-1')]);
+        $prepared = new PreparedDeploy('rev-2', 'rev-1', 'bucket', 'key', '7', '6', leftoverConnector: true, leftVpc: true);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->leftoverConfig(), $prepared, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertContains(['deploy.vpc_interfaces_pending', ['interfaces' => 'eni-1', 'region' => 'us-east-1', 'role' => 'arco-shop-production']], $steps);
+        self::assertContains('deploy.vpc_interfaces_pending', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertContains('DeleteNetworkConnector', $mocks->calls, 'the connector still goes');
+    }
+
+    public function test_leaving_the_vpc_with_a_foreign_connector_still_retires_the_vpc_versions(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, ['DeleteFunction' => new Result([]), 'ListVersionsByFunction' => self::consoleVersions(['5']), 'GetAlias' => new Result(['FunctionVersion' => '7']),
+            'ListFunctions' => self::functionsInRegion([]), 'DescribeNetworkInterfaces' => self::interfaces()]);
+        $prepared = new PreparedDeploy('rev-2', 'rev-1', 'bucket', 'key', '7', '6', leftoverConnector: false, leftVpc: true);
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->leftoverConfig(), $prepared, fn () => null);
+
+        self::assertContains('DescribeNetworkInterfaces', $mocks->calls);
+        self::assertNotContains('DeleteNetworkConnector', $mocks->calls);
+    }
+
+    public function test_remove_deletes_functions_then_connector_then_role(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => [self::connector(), self::connector(), self::connectorGone()]]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(), function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame(
+            ['GetNetworkConnector', 'GetNetworkConnector', 'DeleteFunction', 'DeleteWebFunction', 'DeleteNetworkConnector', 'GetNetworkConnector', 'DeleteRolePolicy', 'DeleteRole', 'DeleteRolePolicy', 'DeleteRole'],
+            self::only($mocks, 'GetNetworkConnector', 'DeleteFunction', 'DeleteWebFunction', 'DeleteNetworkConnector', 'DeleteRolePolicy', 'DeleteRole'),
+            'ownership, then where the functions ran; functions, the connector (until gone), its operator role, then the execution role',
+        );
+        self::assertSame(['arco-shop-production-network', 'arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
+        self::assertNotContains('GetWebFunctionRevision', $mocks->calls, 'with vpc() the connector is checked by name');
+        self::assertSame(['remove.step_console', 'remove.step_function', 'remove.step_network', 'deploy.network_removed', 'remove.step_vpc_interfaces'], $steps);
+    }
+
+    public function test_remove_without_vpc_deletes_the_connector_the_live_revision_pins(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(self::CONNECTOR_VERSION), 'GetNetworkConnector' => [self::connector(), self::connectorGone()]]);
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
+
+        self::assertSame(['DeleteWebFunction', 'DeleteNetworkConnector'], self::only($mocks, 'DeleteWebFunction', 'DeleteNetworkConnector'));
+    }
+
+    public function test_remove_without_vpc_or_a_pinned_connector_makes_no_network_connector_call(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::removal(null));
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
+
+        self::assertSame([], array_values(array_filter($mocks->calls, fn (string $call) => str_contains($call, 'NetworkConnector'))));
+        self::assertSame(['arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
+    }
+
+    public function test_remove_leaves_foreign_connector(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => self::connector(role: 'arn:aws:iam::111111111111:role/someone-else')]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertNotContains('DeleteNetworkConnector', $mocks->calls);
+        self::assertSame(['arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'), 'nor its operator role');
+        self::assertContains(['remove.network_foreign_kept', ['connector' => 'shop-production', 'role' => 'arco-shop-production-network']], $steps);
+        self::assertContains('remove.network_foreign_kept', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertContains('remove.step_function', array_column($steps, 0), 'the rest of the remove goes on');
+    }
+
+    public function test_a_failed_connector_removal_is_a_warning_with_the_manual_commands(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => self::connector(),
+            'DeleteNetworkConnector' => AwsMocks::error(\Aws\LambdaCore\Exception\LambdaCoreException::class, 'DeleteNetworkConnector', 'AccessDeniedException', 403, 'not allowed')]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig(), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertContains(['remove.network_failed', ['connector' => 'shop-production', 'role' => 'arco-shop-production-network', 'region' => 'us-east-1', 'error' => 'AccessDeniedException not allowed']], $steps);
+        self::assertContains('remove.network_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertSame(['arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
+    }
+
+    public function test_describe_reads_the_connector_with_vpc(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [
+            'GetWebFunction' => new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            'GetWebFunctionEndpoint' => new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            'GetNetworkConnector' => self::connector(3),
+        ]);
+
+        $status = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->describe($this->vpcConfig());
+
+        self::assertSame(['connector' => 'nc-0abc', 'version' => 3, 'state' => 'ACTIVE'], $status?->vpc);
+
+        $mocks = new AwsMocks();
+        self::answer($mocks, ['GetWebFunction' => new Result(['functionName' => 'shop-production', 'state' => 'Active']), 'GetWebFunctionEndpoint' => new Result([])]);
+        self::assertNull((new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->describe($this->config())?->vpc);
+        self::assertNotContains('GetNetworkConnector', $mocks->calls, 'no vpc(): no lambda-core call');
+    }
+
+    private static function operatorRole(?array $tags = null): Result
+    {
+        return new Result(['Role' => ['Arn' => self::OPERATOR_ROLE, 'Tags' => self::tagList($tags ?? self::tags()), 'Description' => 'Execution role managed by Arco']]);
+    }
+
+    /** @return list<string> the calls that change something */
+    private static function writes(AwsMocks $mocks): array
+    {
+        return array_values(array_filter($mocks->calls, fn (string $call) => ! preg_match('/^(Get|List|Describe|Head)/', $call)));
+    }
+
+    public function test_with_vpc_another_owners_operator_role_is_refused_before_any_change(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment(null), 'GetNetworkConnector' => self::connector(),
+            'GetRole' => [self::roleTags(), self::operatorRole(self::tags('other', 'staging'))]]);
+
+        try {
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->checkOwnership($this->vpcConfig(), fn () => null);
+            self::fail('the operator role belongs to another environment');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.not_owned', $e->key);
+            self::assertSame('arco-shop-production-network', $e->params['resource']);
+        }
+        self::assertSame([], self::writes($mocks));
+    }
+
+    public function test_a_leftover_connector_checks_its_operator_role_too(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment(self::CONNECTOR_VERSION), 'GetNetworkConnector' => self::connector(),
+            'GetRole' => [self::roleTags(), self::operatorRole(self::tags('other', 'staging'))]]);
+
+        try {
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->checkOwnership($this->leftoverConfig(), fn () => null);
+            self::fail('prune() would delete another environment\'s role');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.not_owned', $e->key);
+            self::assertSame('arco-shop-production-network', $e->params['resource']);
+        }
+        self::assertSame([], self::writes($mocks));
+    }
+
+    public function test_with_vpc_a_foreign_connector_is_refused_before_any_change_even_with_force(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment(null), 'GetNetworkConnector' => self::connector(role: 'arn:aws:iam::111111111111:role/someone-else'),
+            'ListTags' => new Result(['Tags' => [], 'tags' => []])]);
+
+        try {
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: true))->checkOwnership($this->vpcConfig(), fn () => null);
+            self::fail('lambda-core cannot tag a connector: --force cannot take it over');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.network_foreign', $e->key);
+        }
+        self::assertSame([], self::writes($mocks), 'not even the tags --force would add');
+    }
+
+    public function test_remove_refuses_another_owners_operator_role_before_deleting_anything(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null), 'GetNetworkConnector' => self::connector(),
+            'GetRole' => [self::roleTags(), self::operatorRole(self::tags('other', 'staging'))]]);
+
+        try {
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->vpcConfig());
+            self::fail('the operator role belongs to another environment');
+        } catch (DeployException $e) {
+            self::assertSame('remove.not_owned', $e->key);
+            self::assertSame('arco-shop-production-network', $e->params['resource']);
+        }
+        self::assertSame([], self::only($mocks, 'DeleteFunction', 'DeleteWebFunction', 'DeleteNetworkConnector', 'DeleteRolePolicy', 'DeleteRole', 'DeleteRule', 'DeleteStack'));
+    }
+
+    public function test_a_failed_connector_the_live_revision_pins_stops_the_deploy(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment(self::CONNECTOR_VERSION), 'GetRole' => [self::roleTags(), self::operatorRole(),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), self::operatorRole()],
+            'GetNetworkConnector' => self::connector(extra: ['State' => 'FAILED', 'StateReasonCode' => 'InvalidSubnet'])]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->vpcConfig(), fn () => null);
+        try {
+            $deployer->prepare($this->vpcConfig(), $this->package(), null, []);
+            self::fail('the live revision serves through it');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.network_failed', $e->key);
+        }
+        self::assertSame([], self::only($mocks, 'DeleteNetworkConnector', 'CreateNetworkConnector', 'CreateWebFunctionRevision'));
+    }
+
+    public function test_out_of_the_vpc_even_when_the_pinned_connector_is_not_arcos(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment(self::CONNECTOR_VERSION), 'GetNetworkConnector' => self::connector(role: 'arn:aws:iam::111111111111:role/someone-else'),
+            'GetRole' => [self::roleTags(), self::noRole(), new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]])]]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->leftoverConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->leftoverConfig(), $this->package(), $this->console(), []);
+
+        self::assertFalse($prepared->leftoverConnector, 'not Arco\'s: never deleted');
+        $by = self::byOperation($mocks);
+        foreach ($by['UpdateFunctionConfiguration'] as $update) {
+            self::assertSame(['SubnetIds' => [], 'SecurityGroupIds' => []], $update['VpcConfig'], 'vpc() is gone: the console and the workers leave the VPC');
+        }
+        self::assertStringContainsString('ArcoVpcAccess', (string) $by['PutRolePolicy'][0]['PolicyDocument'], 'a rollback to a VPC console or worker version still works');
+    }
+
+    public function test_the_console_update_is_retried_while_the_new_vpc_statements_propagate(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment(null), 'GetNetworkConnector' => self::connector(),
+            'GetRole' => [self::roleTags(), self::operatorRole(), new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]), self::operatorRole()],
+            'UpdateFunctionConfiguration' => [
+                AwsMocks::error(LambdaException::class, 'UpdateFunctionConfiguration', 'InvalidParameterValueException', 400, 'The provided execution role does not have permissions to call CreateNetworkInterface on EC2'),
+                new Result([]),
+            ]]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->vpcConfig(console: true), fn () => null);
+        $prepared = $deployer->prepare($this->vpcConfig(console: true), $this->package(), $this->console(), []);
+
+        self::assertSame('7', $prepared->consoleVersion);
+        self::assertCount(2, self::byOperation($mocks)['UpdateFunctionConfiguration'], 'the role gained ArcoVpcAccess in this deploy: retried like a new role');
+    }
+
+    /**
+     * An environment without vpc() makes exactly the calls it made before 0.12, plus the lambda-web reads of
+     * the live revision: no lambda-core call, no operator role, no new permission.
+     */
+    public function test_an_environment_without_vpc_makes_no_new_kind_of_call(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment(null),
+            'ListObjectsV2' => new Result(['Contents' => []]), 'ListObjectVersions' => new Result([]), 'GetResources' => new Result(['ResourceTagMappingList' => []])]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->config(), fn () => null);
+        $prepared = $deployer->prepare($this->config(), $this->package(), null, []);
+        $deployer->prune($this->config(), $prepared);
+
+        self::assertSame([
+            'GetRole', 'GetWebFunction', 'ListTags', 'GetFunctionConfiguration', 'ListTags', 'DescribeRule', 'GetWebFunctionEndpoint', 'GetWebFunctionRevision',
+            'GetCallerIdentity', 'HeadBucket', 'PutPublicAccessBlock', 'PutBucketPolicy', 'PutBucketVersioning', 'PutBucketLifecycleConfiguration', 'HeadObject',
+            'GetRole', 'PutRolePolicy',
+            'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision',
+            'ListObjectsV2', 'GetResources', 'ListObjectsV2',
+        ], $mocks->calls);
+
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::removal(null));
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
+
+        // remove reads the live revision too (does it pin a connector?); nothing else is new.
+        self::assertSame([
+            'GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole',
+            'GetWebFunctionEndpoint', 'GetWebFunctionRevision',
+            'DescribeStacks', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction',
+            'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery',
+        ], $mocks->calls);
     }
 }

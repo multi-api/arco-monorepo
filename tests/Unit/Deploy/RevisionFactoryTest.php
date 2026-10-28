@@ -114,4 +114,36 @@ final class RevisionFactoryTest extends TestCase
         $set = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->concurrency(16)->environment('production')->toArray(), 'production');
         self::assertSame(16, RevisionFactory::revision($set, 'b', 'k.zip', null, 'arn:role', [])['serviceConfig']['maxConcurrencyPerEnvironment']);
     }
+
+    private static function vpcConfig(bool $vpc = true): \Multiapi\Arco\Config\AppConfig
+    {
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $vpc ? $e->vpc(subnets: ['subnet-a'], securityGroups: ['sg-1']) : $e)->toArray(), 'production');
+    }
+
+    public function test_the_connector_arn_is_pinned_only_when_given(): void
+    {
+        $with = RevisionFactory::revision(self::vpcConfig(), 'b', 'k.zip', null, 'arn:role', [], 'arn:connector:3');
+        self::assertSame('arn:connector:3', $with['serviceConfig']['egressNetworkConnectorArn']);
+
+        $without = RevisionFactory::revision(self::vpcConfig(), 'b', 'k.zip', null, 'arn:role', []);
+        self::assertArrayNotHasKey('egressNetworkConnectorArn', $without['serviceConfig']);
+    }
+
+    public function test_uses_vpc_needs_vpc_and_no_emulator_serving_lambda(): void
+    {
+        $saved = [getenv('AWS_ENDPOINT_URL'), getenv('AWS_ENDPOINT_URL_LAMBDA_CORE')];
+        try {
+            putenv('AWS_ENDPOINT_URL');
+            self::assertTrue(RevisionFactory::usesVpc(self::vpcConfig()));
+            self::assertFalse(RevisionFactory::usesVpc(self::vpcConfig(false)));
+
+            putenv('AWS_ENDPOINT_URL=http://localhost:4566');
+            self::assertFalse(RevisionFactory::usesVpc(self::vpcConfig()), 'the emulator serves lambda and lambda_web');
+            putenv('AWS_ENDPOINT_URL_LAMBDA_CORE=https://example.amazonaws.com');
+            self::assertTrue(RevisionFactory::usesVpc(self::vpcConfig()), 'lambda-core sent to real AWS keeps the VPC');
+        } finally {
+            putenv($saved[0] === false ? 'AWS_ENDPOINT_URL' : "AWS_ENDPOINT_URL=$saved[0]");
+            putenv($saved[1] === false ? 'AWS_ENDPOINT_URL_LAMBDA_CORE' : "AWS_ENDPOINT_URL_LAMBDA_CORE=$saved[1]");
+        }
+    }
 }

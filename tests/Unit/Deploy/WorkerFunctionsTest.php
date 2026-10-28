@@ -165,4 +165,15 @@ final class WorkerFunctionsTest extends TestCase
         self::assertContains('deploy.worker_mapping_removed', array_column($steps, 0), 'a mapping already gone is still reported as removed');
         self::assertNotContains('deploy.worker_mapping_removed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS, 'a step, not a warning');
     }
+
+    public function test_settings_carry_the_vpc_config_detach_empties_it_and_none_leaves_it_out(): void
+    {
+        $vpc = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e->vpc(subnets: ['subnet-a'], securityGroups: ['sg-1', 'sg-2']))->toArray(), 'production');
+        $plain = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+        $queue = new QueueConfig('emails');
+
+        self::assertSame(['SubnetIds' => ['subnet-a'], 'SecurityGroupIds' => ['sg-1', 'sg-2']], WorkerFunctions::settings($vpc, $queue, 'arn:role', [])['VpcConfig']);
+        self::assertSame(['SubnetIds' => [], 'SecurityGroupIds' => []], WorkerFunctions::settings($plain, $queue, 'arn:role', [], true)['VpcConfig']);
+        self::assertArrayNotHasKey('VpcConfig', WorkerFunctions::settings($plain, $queue, 'arn:role', []));
+    }
 }
