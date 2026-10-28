@@ -1190,8 +1190,8 @@ app sees. Do not rely on `request()->ip()` for rate limiting, audit logs or allo
 ## VPC
 
 ```php
-Environment::make('staging')
-    ->vpc(subnets: ['subnet-0abc1234'], securityGroups: ['sg-0abc1234']);
+->environment('staging', fn (Environment $env) => $env
+    ->vpc(subnets: ['subnet-0abc1234'], securityGroups: ['sg-0abc1234']))
 ```
 
 `vpc()` (0.12) puts every compute piece of the environment inside your VPC, so the app can reach private

@@ -382,8 +382,8 @@ To let the app reach private resources (a database in a private subnet, ElastiCa
 `vpc()` to the app or an environment:
 
 ```php
-Environment::make('staging')
-    ->vpc(subnets: ['subnet-0abc1234', 'subnet-0def5678'], securityGroups: ['sg-0abc1234']);
+->environment('staging', fn (Environment $env) => $env
+    ->vpc(subnets: ['subnet-0abc1234', 'subnet-0def5678'], securityGroups: ['sg-0abc1234']))
 ```
 
 Before you deploy:
