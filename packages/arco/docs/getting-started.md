@@ -392,8 +392,9 @@ Before you deploy:
    NAT instance, or the AWS calls fail. Arco calls SSM and Secrets Manager (`arco-ssm:` / `arco-secret:`
    references), SQS (jobs), S3 and DynamoDB (gateway endpoints are enough for these two), and a console or worker
    without `bin/php` downloads the runtime binary from the code bucket (S3). See
-   [The VPC needs a NAT](configuration.md#the-vpc-needs-a-nat). Gateway endpoints for S3 and DynamoDB created by
-   Arco are planned for a later release.
+   [The VPC needs a NAT](configuration.md#the-vpc-needs-a-nat). For S3 and DynamoDB alone you can skip the NAT:
+   add `endpoints: ['s3', 'dynamodb']` and Arco creates or reuses free gateway endpoints
+   ([Gateway endpoints](configuration.md#gateway-endpoints)).
 2. **Pick a security group** that allows the egress you need (to the database port, and 443 for the AWS APIs).
 3. **Add the deploy permissions** ([Permissions for VPC](#permissions-for-vpc)).
 
@@ -906,6 +907,32 @@ With `vpc()` (0.12), the deploy profile also needs:
   }
 ]
 ```
+
+**With `endpoints`** (0.12.1) the deploy profile also needs these, and only then:
+
+- `ec2:DescribeRouteTables`, `ec2:DescribeVpcEndpoints` (resource `*`);
+- `ec2:CreateVpcEndpoint`, on `vpc/*`, `vpc-endpoint/*` and `route-table/*`;
+- `ec2:ModifyVpcEndpoint`, on `vpc-endpoint/*` and `route-table/*`;
+- `ec2:DeleteVpcEndpoints`, on `vpc-endpoint/*`, which you can scope with the condition
+  `aws:ResourceTag/arco:managed` = `gateway-endpoint`, so Arco can delete only endpoints it created;
+- `ec2:CreateTags`, on `vpc-endpoint/*` (for the tags put on creation, and for the usage tags on an endpoint that
+  exists), and `ec2:DeleteTags`, on `vpc-endpoint/*`.
+
+```json
+{
+  "Sid": "ArcoGatewayEndpoints",
+  "Effect": "Allow",
+  "Action": [
+    "ec2:DescribeRouteTables", "ec2:DescribeVpcEndpoints", "ec2:CreateVpcEndpoint", "ec2:ModifyVpcEndpoint",
+    "ec2:DeleteVpcEndpoints", "ec2:CreateTags", "ec2:DeleteTags"
+  ],
+  "Resource": "*"
+}
+```
+
+Narrow `Resource` to the resource types above where you want to. Where AWS cannot scope an action to your app
+(the endpoints and route tables are shared by the VPC, not owned by one app), the statement stays broad; `Describe*`
+actions only support `*`. `arco remove` needs the same tag and delete actions to release an endpoint.
 
 `arco remove` of an environment that uses `vpc()` needs the connector delete and the IAM role actions too. A service
 that deploys for you (Arco Cloud) needs these in its connect template. Without them the deploy stops with an AWS

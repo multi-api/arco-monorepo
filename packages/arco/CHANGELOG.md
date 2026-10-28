@@ -16,6 +16,19 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   interfaces of `remove`, CloudFront and certificates) shows its elapsed time after 10 seconds: a line redrawn in
   place in a terminal (`3 min 05 s elapsed`), one line per minute in CI logs (`3 min elapsed`). `--json` streams
   nothing new: the elapsed time follows from the step's `at`.
+- **Added:** `->vpc(subnets: [...], securityGroups: [...], endpoints: [...])` makes sure S3 and/or DynamoDB go through
+  free gateway endpoints, so a VPC without a NAT still reaches the code bucket, `storage()`, `cache()`, `table()` and
+  the failed-jobs table. `endpoints: ['s3', 'dynamodb']` creates what is missing, reuses what exists and never deletes
+  an endpoint it did not create; `'s3' => 'vpce-...'` names your own endpoint and lets Arco add the missing route
+  tables to it. When the VPC has only endpoints of yours that miss route tables, a terminal asks what to do; in CI,
+  with `--json` or with `--yes` the deploy fails with `deploy.endpoint_routes_missing` (it never continues silently).
+  Arco's endpoints are tagged and shared by the environments of the VPC (`arco:uses:<app>/<env>`) and deleted once
+  the last one leaves; route tables are never removed. New steps: `deploy.step_endpoints`, `deploy.endpoint_created`,
+  `deploy.endpoint_routes_added`, `deploy.endpoint_reused`, `deploy.endpoint_released`, `deploy.endpoint_deleted`
+  (and `remove.` ones); errors `deploy.endpoint_not_found`, `_wrong_type`, `_wrong_service`, `_wrong_vpc`,
+  `_routes_missing`, `_conflict`, `_tag_limit`. `arco info --json` gains `vpc.endpoints` (`[]` without `endpoints`,
+  `null` when unreadable). Without `endpoints` there are no new calls or permissions
+  ([Gateway endpoints](docs/configuration.md#gateway-endpoints)).
 - **Fixed:** `arco remove` printed the code of a kept bucket (`… was kept in AWS: some`) instead of saying whether
   it still has files. Its steps now print the way `deploy` prints them.
 
