@@ -191,7 +191,8 @@ final class AwsDeployerTest extends TestCase
             new Result(['Contents' => [['Key' => 'runtime/1.13.0-r1/frankenphp', 'LastModified' => new \DateTimeImmutable('1969-01-01')]]]), // ListObjectsV2 (runtime binaries)
         );
         $steps = [];
-        $record = function (string $key) use (&$steps): void { $steps[] = $key; };
+        $params = [];
+        $record = function (string $key, array $values = []) use (&$steps, &$params): void { $steps[] = $key; $params[] = [$key, $values]; };
         $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
         $console = $this->console();
 
@@ -241,7 +242,18 @@ final class AwsDeployerTest extends TestCase
         self::assertSame('1', $mocks->params[28]['FunctionVersion']);
         self::assertSame('shop/production/', $mocks->params[32]['Prefix']);
         self::assertSame('shop/production/console-', $mocks->params[33]['Prefix']);
-        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_function', 'deploy.step_console', 'deploy.step_traffic'], $steps);
+        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'package.progress', 'deploy.step_role', 'deploy.step_function', 'deploy.step_console',
+            'deploy.step_upload_console', 'package.progress', 'package.progress', 'deploy.step_traffic'], $steps);
+        // The uploads report what they sent (the mock reports no chunk: the size comes once the upload succeeded).
+        self::assertSame([
+            ['deploy.step_upload', ['size' => 0]],
+            ['package.progress', ['percent' => 100, 'sent' => 0, 'total' => 0]],
+        ], array_slice($params, 1, 2));
+        self::assertSame([
+            ['deploy.step_upload_console', ['size' => 0]],
+            ['package.progress', ['percent' => 100, 'sent' => 0, 'total' => 0]],
+            ['package.progress', ['percent' => 100, 'sent' => 0, 'total' => 0]],
+        ], array_slice($params, 6, 3), 'the console zip, then the runtime binary, under the console upload step');
     }
 
     private const BOUNDARY = 'arn:aws:iam::123456789012:policy/arco-boundary';
@@ -3588,7 +3600,7 @@ final class AwsDeployerTest extends TestCase
         $vpc = array_values(array_filter($policy['Statement'], fn (array $s) => ($s['Sid'] ?? null) === 'ArcoVpcAccess'));
         self::assertCount(1, $vpc, 'the execution role may manage the console and workers network interfaces');
         self::assertContains('ec2:CreateNetworkInterface', $vpc[0]['Action']);
-        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_network', 'deploy.step_revision', 'deploy.step_console'], $steps);
+        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_network', 'deploy.step_revision', 'deploy.step_console', 'deploy.step_upload_console'], $steps);
     }
 
     public function test_failed_connector_creates_no_revision(): void

@@ -185,7 +185,7 @@ final class AwsDeployer implements Deployer
 
         $key = self::prefix($config) . "{$package->hash}.zip";
         $step('deploy.step_upload', ['size' => (int) round($package->bytes / 1048576)]);
-        $versionId = $codeBucket->upload($bucket, $key, $package->path, $step);
+        $versionId = $codeBucket->upload($bucket, $key, $package->path, $step, self::uploadProgress($step));
 
         $tags = self::tags($config);
         $liveConnector = $this->liveConnectors[$function] ?? null;
@@ -247,9 +247,11 @@ final class AwsDeployer implements Deployer
                 $step('deploy.step_console', ['function' => $config->consoleFunctionName()]);
             }
             $consoleKey = self::consolePrefix($config) . "{$console->package->hash}.zip";
-            $consoleObject = $codeBucket->upload($bucket, $consoleKey, $console->package->path, $step);
+            // The ~180 MB console zip is the longest upload: its own line, so the progress is not read as the console update's.
+            $step('deploy.step_upload_console', ['size' => (int) round($console->package->bytes / 1048576)]);
+            $consoleObject = $codeBucket->upload($bucket, $consoleKey, $console->package->path, $step, self::uploadProgress($step));
             if ($console->download !== null) {
-                $codeBucket->uploadBinary($bucket, $console->download->key, $console->download->path, $console->download->bytes, $step);
+                $codeBucket->uploadBinary($bucket, $console->download->key, $console->download->path, $console->download->bytes, $step, self::uploadProgress($step));
             }
             $runtimeVariables = [...$variables, ...self::binaryVariables($bucket, $console)];
             // The console and the workers are updated together (LambdaFunction::deployAll): each runs the
@@ -279,6 +281,29 @@ final class AwsDeployer implements Deployer
 
         return new PreparedDeploy($revisionId, $previous, $bucket, $key, $consoleVersion, $previousConsole, $consoleKey, $console?->download?->key, $workerVersions,
             $leftover, array_values(array_unique(array_filter([$liveConnector, $connectorArn], fn (?string $arn) => $arn !== null))), $outOfVpc);
+    }
+
+    /**
+     * Turns CodeBucket's bytes sent into package.progress steps (percent, and sent/total in MB), one per
+     * whole percent, like DeployPipeline::downloadProgress().
+     *
+     * @param callable(string, array<string, string|int>): void $step
+     * @return Closure(int, int): void
+     */
+    private static function uploadProgress(callable $step): Closure
+    {
+        $last = null;
+        return static function (int $sent, int $total) use ($step, &$last): void {
+            if ($total <= 0) {
+                return;
+            }
+            $percent = (int) floor(min($sent, $total) * 100 / $total);
+            if ($percent === $last) {
+                return;
+            }
+            $last = $percent;
+            $step('package.progress', ['percent' => $percent, 'sent' => (int) round($sent / 1048576), 'total' => (int) round($total / 1048576)]);
+        };
     }
 
     /**
