@@ -62,6 +62,8 @@ final class DeployCommand extends ArcoCommand
     private Closure $consoleFactory;
     /** --json: the deployer of the running deploy, which knows whether AWS changed */
     private ?ChangeTrackingDeployer $tracked = null;
+    /** @var (Closure(): void)|null the step printer's (or stream's) tick, called after each wait of the default deployer and verifier */
+    private ?Closure $onSleep = null;
 
     public function __construct(
         ?Closure $awsFactory = null,
@@ -75,8 +77,8 @@ final class DeployCommand extends ArcoCommand
     ) {
         $this->awsFactory = $awsFactory ?? fn (?string $profile, string $region) => new AwsClients($profile, $region);
         $this->pipeline = $pipeline ?? DeployPipeline::default();
-        $this->deployerFactory = $deployerFactory ?? fn (AwsClients $aws, ?AwsClients $dns = null, bool $forceDns = false, bool $force = false, ?DnsProvider $dnsProvider = null) => new AwsDeployer($aws, new Sleeper(), $dns, $forceDns, $force, $dnsProvider);
-        $this->verifierFactory = $verifierFactory ?? fn (AwsClients $aws) => new AwsVerifier($aws->logs(), new Client(), new Sleeper(), signer: EndpointSigner::for($aws));
+        $this->deployerFactory = $deployerFactory ?? fn (AwsClients $aws, ?AwsClients $dns = null, bool $forceDns = false, bool $force = false, ?DnsProvider $dnsProvider = null) => new AwsDeployer($aws, new Sleeper(function (): void { $this->onSleep?->__invoke(); }), $dns, $forceDns, $force, $dnsProvider);
+        $this->verifierFactory = $verifierFactory ?? fn (AwsClients $aws) => new AwsVerifier($aws->logs(), new Client(), new Sleeper(function (): void { $this->onSleep?->__invoke(); }), signer: EndpointSigner::for($aws));
         $this->presets = $presets ?? PresetRegistry::default();
         $this->consoleFactory = $consoleFactory ?? fn (AwsClients $aws, AppConfig $config) => new LambdaConsole($aws->lambda(LambdaConsole::clientOptions($config)));
         $this->cloudflareFactory = $cloudflareFactory;
@@ -132,6 +134,7 @@ final class DeployCommand extends ArcoCommand
     private function deploy(InputInterface $input, OutputInterface $output, SymfonyStyle $io, ?JsonStream $stream): int
     {
         $steps = $stream ?? new StepPrinter($io, $this->t(...), $input->isInteractive() && $output->isDecorated());
+        $this->onSleep = $steps->tick(...);
         /** @var list<string> $ran deploy commands that ran, for the messages of a later failure */
         $ran = [];
         $config = null;
