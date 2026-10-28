@@ -196,11 +196,17 @@ final class StepPrinter
             $this->bar->setProgress($percent);
             return;
         }
+        // Only the highest mark reached: a jump (a file already in the bucket counts as sent at once) prints one line,
+        // not the marks in between with the bytes of the end.
+        $reached = null;
         foreach (self::MARKS as $mark) {
             if ($percent >= $mark && $this->printed < $mark) {
-                $this->printed = $mark;
-                $this->io->writeln("    $mark%" . ($mb === null ? '' : " ($mb)"));
+                $reached = $mark;
             }
+        }
+        if ($reached !== null) {
+            $this->printed = $reached;
+            $this->io->writeln("    $reached%" . ($mb === null ? '' : " ($mb)"));
         }
     }
 

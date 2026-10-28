@@ -206,7 +206,7 @@ final class AwsDeployer implements Deployer
         $codeBucket->ensure($bucket, $region, $account);
 
         $key = self::prefix($config) . "{$package->hash}.zip";
-        $step('deploy.step_upload', self::sizeParams($package->bytes));
+        $step('deploy.step_upload', self::sizeParams(self::fileBytes($package)));
         $versionId = $codeBucket->upload($bucket, $key, $package->path, $step, self::uploadProgress($step));
 
         $tags = self::tags($config);
@@ -278,7 +278,7 @@ final class AwsDeployer implements Deployer
             // The ~180 MB console zip and the runtime binary upload under their own step, before the console's:
             // the console's Lambda update (minutes in a VPC) then gets a fresh step whose elapsed time shows.
             // Both files are one progress run; a file already in the bucket counts as sent once the other is.
-            $zipBytes = $console->package->bytes;
+            $zipBytes = self::fileBytes($console->package);
             $uploadBytes = $zipBytes + ($console->download->bytes ?? 0);
             $step('deploy.step_upload_console', self::sizeParams($uploadBytes));
             $progress = self::uploadProgress($step);
@@ -443,6 +443,13 @@ final class AwsDeployer implements Deployer
     private function gatewayEndpoints(AppConfig $config): GatewayEndpoints
     {
         return new GatewayEndpoints($this->aws->ec2(), $this->sleeper, (string) $config->region);
+    }
+
+    /** What the upload sends: the zip on disk, not Package::$bytes (the unzipped size the Lambda limits check). */
+    private static function fileBytes(Package $package): int
+    {
+        $bytes = @filesize($package->path);
+        return $bytes === false ? $package->bytes : $bytes;
     }
 
     /**

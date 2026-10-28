@@ -46,7 +46,8 @@ final class AwsDeployerTest extends TestCase
     {
         $file = TempPaths::file('pkg');
         file_put_contents((string) $file, 'zip');
-        return new Package((string) $file, str_repeat('a', 64), 3);
+        // Package::$bytes is the unzipped size (the Lambda limits); the upload sends the 3-byte file.
+        return new Package((string) $file, str_repeat('a', 64), 5 * 1048576);
     }
 
     private static function lambdaMissing(string $operation): LambdaException
@@ -146,7 +147,8 @@ final class AwsDeployerTest extends TestCase
         file_put_contents($zip, 'console-zip');
         $binary = (string) TempPaths::file('bin');
         file_put_contents($binary, 'ELF');
-        return new ConsoleArtifacts(new Package($zip, str_repeat('c', 64), 11), new ConsoleDownload($binary, (string) hash_file('sha256', $binary), 3, 'runtime/1.13.0-r1/frankenphp'));
+        // Unzipped 7 MB, an 11-byte file: the upload progress counts the file.
+        return new ConsoleArtifacts(new Package($zip, str_repeat('c', 64), 7 * 1048576), new ConsoleDownload($binary, (string) hash_file('sha256', $binary), 3, 'runtime/1.13.0-r1/frankenphp'));
     }
 
     public function test_first_deploy(): void
