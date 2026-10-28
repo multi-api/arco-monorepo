@@ -207,29 +207,158 @@ final class CodeBucketTest extends TestCase
         unlink($file);
     }
 
+    public function test_a_single_put_reports_the_bytes_sent_and_ends_at_the_file_size(): void
+    {
+        $file = (string) TempPaths::file('pkg');
+        file_put_contents($file, str_repeat('a', 100));
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404),
+            function (CommandInterface $command) {
+                $progress = $command['@http']['progress'];
+                $progress(0, 0, 100, 0);
+                $progress(0, 0, 100, 40);
+                $progress(0, 0, 100, 40);
+                $progress(0, 0, 100, 60);
+                return new Result(['VersionId' => 'v1']); // the SDK may not report the last chunk
+            },
+        );
+        $sent = [];
+
+        $version = (new CodeBucket($mocks->clients()->s3()))
+            ->upload('b', 'k.zip', $file, null, function (int $bytes, int $total) use (&$sent): void { $sent[] = [$bytes, $total]; });
+
+        self::assertSame('v1', $version);
+        self::assertSame([[40, 100], [60, 100], [100, 100]], $sent, 'only changes are reported, and the size once the upload succeeded');
+        unlink($file);
+    }
+
+    public function test_an_existing_object_reports_no_progress(): void
+    {
+        $file = (string) TempPaths::file('pkg');
+        file_put_contents($file, 'zip');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['VersionId' => 'v1']));
+
+        (new CodeBucket($mocks->clients()->s3()))->upload('b', 'k.zip', $file, null, fn () => self::fail('nothing uploaded'));
+
+        self::assertSame(['HeadObject'], $mocks->calls);
+        unlink($file);
+    }
+
+    public function test_a_multipart_upload_reports_the_sum_of_its_parts(): void
+    {
+        [$mocks, $file] = self::multipart([], progress: true);
+        $sent = [];
+
+        (new CodeBucket($mocks->clients(overrides: ['retries' => 0])->s3(), AwsMocks::noSleep()))
+            ->upload('b', 'k.zip', $file, null, function (int $bytes, int $total) use (&$sent): void { $sent[] = [$bytes, $total]; });
+
+        self::assertProgress($sent, 17 * 1024 * 1024);
+        self::assertCount(8, $sent, 'half and all of each of the four parts');
+        unlink($file);
+    }
+
+    public function test_progress_survives_a_part_retry_without_going_backwards(): void
+    {
+        [$mocks, $file] = self::multipart(['2' => 1], progress: true);
+        $sent = [];
+
+        (new CodeBucket($mocks->clients(overrides: ['retries' => 0])->s3(), AwsMocks::noSleep()))
+            ->upload('b', 'k.zip', $file, null, function (int $bytes, int $total) use (&$sent): void { $sent[] = [$bytes, $total]; });
+
+        self::assertProgress($sent, 17 * 1024 * 1024);
+        // Parts 1, 3 and 4 are not sent again: their bytes stay counted, so the retried part completes the total.
+        self::assertSame(17 * 1024 * 1024, $sent[count($sent) - 1][0]);
+        unlink($file);
+    }
+
+    public function test_a_retried_single_put_never_reports_less_than_before(): void
+    {
+        $file = (string) TempPaths::file('pkg');
+        file_put_contents($file, str_repeat('a', 100));
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404),
+            function (CommandInterface $command) {
+                $command['@http']['progress'](0, 0, 100, 70);
+                return new S3Exception('cURL error 56: Recv failure', $command, ['connection_error' => true]);
+            },
+            function (CommandInterface $command) {
+                $command['@http']['progress'](0, 0, 100, 30);
+                $command['@http']['progress'](0, 0, 100, 90);
+                $command['@http']['progress'](0, 0, 100, 100);
+                return new Result(['VersionId' => 'v2']);
+            },
+        );
+        $sent = [];
+
+        (new CodeBucket($mocks->clients(overrides: ['retries' => 0])->s3(), AwsMocks::noSleep()))
+            ->upload('b', 'k.zip', $file, null, function (int $bytes) use (&$sent): void { $sent[] = $bytes; });
+
+        self::assertSame([70, 90, 100], $sent);
+        unlink($file);
+    }
+
+    public function test_a_runtime_binary_upload_reports_progress(): void
+    {
+        $file = (string) TempPaths::file('bin');
+        file_put_contents($file, 'ELF');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404), new Result([]));
+        $sent = [];
+
+        (new CodeBucket($mocks->clients()->s3()))->uploadBinary('b', 'runtime/x/frankenphp', $file, 3, null, function (int $bytes, int $total) use (&$sent): void { $sent[] = [$bytes, $total]; });
+
+        self::assertSame([[3, 3]], $sent);
+        unlink($file);
+    }
+
+    /** @param list<array{int, int}> $sent */
+    private static function assertProgress(array $sent, int $size): void
+    {
+        self::assertNotEmpty($sent);
+        $previous = 0;
+        foreach ($sent as [$bytes, $total]) {
+            self::assertSame($size, $total);
+            self::assertGreaterThan($previous, $bytes, 'monotonic, and only changes are reported');
+            self::assertLessThanOrEqual($size, $bytes);
+            $previous = $bytes;
+        }
+        self::assertSame($size, $previous);
+    }
+
     /**
-     * A 17 MB package (four 5 MB parts) whose parts fail as listed: part number => failed attempts.
+     * A 17 MB package (four 5 MB parts) whose parts fail as listed: part number => failed attempts. With
+     * $progress, each attempt reports half its part sent, and a successful one then all of it.
      *
      * @param array<string, int> $fail
      * @return array{AwsMocks, string, object{count: int}}
      */
-    private static function multipart(array $fail, bool $denied = false): array
+    private static function multipart(array $fail, bool $denied = false, bool $progress = false): array
     {
         $file = (string) TempPaths::file('pkg');
         file_put_contents($file, str_repeat('a', 17 * 1024 * 1024));
         $failures = new class { public int $count = 0; };
         $attempts = [];
-        $respond = function (CommandInterface $command) use ($fail, $denied, $failures, &$attempts) {
+        $respond = function (CommandInterface $command) use ($fail, $denied, $progress, $failures, &$attempts) {
             return match ($command->getName()) {
                 'CreateMultipartUpload' => new Result(['UploadId' => 'u1']),
-                'UploadPart' => (function () use ($command, $fail, $denied, $failures, &$attempts) {
+                'UploadPart' => (function () use ($command, $fail, $denied, $progress, $failures, &$attempts) {
                     $part = (string) $command['PartNumber'];
                     $attempts[$part] = ($attempts[$part] ?? 0) + 1;
+                    $size = (int) $command['ContentLength'];
+                    if ($progress) {
+                        $command['@http']['progress'](0, 0, $size, intdiv($size, 2));
+                    }
                     if ($attempts[$part] <= ($fail[$part] ?? 0)) {
                         $failures->count++;
                         return $denied
                             ? new S3Exception('Access Denied', $command, ['code' => 'AccessDenied', 'message' => 'Access Denied', 'response' => new \GuzzleHttp\Psr7\Response(403)])
                             : new S3Exception('cURL error 56: Recv failure: Connection reset by peer', $command, ['connection_error' => true]);
+                    }
+                    if ($progress) {
+                        $command['@http']['progress'](0, 0, $size, $size);
                     }
                     return new Result(['ETag' => '"e' . $part . '"']);
                 })(),
