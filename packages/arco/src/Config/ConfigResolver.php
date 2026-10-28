@@ -216,7 +216,13 @@ final class ConfigResolver
             return null;
         }
         $strings = static fn (mixed $list): array => is_array($list) ? array_values(array_filter($list, 'is_string')) : [];
-        return new VpcConfig($strings($value['subnets'] ?? []), $strings($value['securityGroups'] ?? []));
+        $endpoints = [];
+        foreach (is_array($value['endpoints'] ?? null) ? $value['endpoints'] : [] as $key => $entry) {
+            if (is_string($entry)) {
+                $endpoints[] = is_int($key) ? ['service' => $entry, 'id' => null] : ['service' => $key, 'id' => $entry];
+            }
+        }
+        return new VpcConfig($strings($value['subnets'] ?? []), $strings($value['securityGroups'] ?? []), $endpoints);
     }
 
     /**
