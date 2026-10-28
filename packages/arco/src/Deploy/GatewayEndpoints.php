@@ -111,37 +111,50 @@ final class GatewayEndpoints
         $released = true;
         foreach ($endpointIds as $id) {
             try {
-                $this->releaseOne($id, $usage, $step, $prefix);
+                $error = $this->releaseOne($id, $usage, $step, $prefix);
             } catch (AwsException $e) {
-                if (self::notFound($e)) {
-                    continue;
-                }
+                $error = self::notFound($e) ? null : self::error($e);
+            }
+            if ($error !== null) {
                 $released = false;
-                $step($prefix . 'endpoint_cleanup_failed', ['endpoint' => $id, 'tag' => $usage, 'region' => $this->region, 'error' => self::error($e)]);
+                $step($prefix . 'endpoint_cleanup_failed', ['endpoint' => $id, 'tag' => $usage, 'region' => $this->region, 'error' => $error]);
             }
         }
         return $released;
     }
 
-    /** @param callable(string, array<string, string|int>): void $step */
-    private function releaseOne(string $id, string $usage, callable $step, string $prefix): void
+    /**
+     * @param callable(string, array<string, string|int>): void $step
+     * @return string|null why the endpoint could not be released (an `Unsuccessful` item of DeleteVpcEndpoints), null when it was
+     */
+    private function releaseOne(string $id, string $usage, callable $step, string $prefix): ?string
     {
         $endpoint = $this->readOne($id);
         if ($endpoint === null || ! $endpoint['arco']) {
-            return;
+            return null;
         }
         $this->ec2->deleteTags(['Resources' => [$id], 'Tags' => [['Key' => $usage]]]);
         // Read again after untagging: another environment may have tagged it since, or released it at the same time.
         $endpoint = $this->readOne($id);
         if ($endpoint === null) {
-            return;
+            return null;
         }
         if ($endpoint['uses'] > 0) {
             $step($prefix . 'endpoint_released', ['endpoint' => $id]);
-            return;
+            return null;
         }
-        $this->ec2->deleteVpcEndpoints(['VpcEndpointIds' => [$id]]);
+        // EC2 reports a delete it refused per id in `Unsuccessful`, without throwing.
+        $result = $this->ec2->deleteVpcEndpoints(['VpcEndpointIds' => [$id]]);
+        foreach (Aws::maps($result['Unsuccessful'] ?? []) as $item) {
+            $error = Aws::maps([$item['Error'] ?? null])[0] ?? [];
+            $code = (string) Aws::string($error['Code'] ?? null);
+            if (str_starts_with($code, 'InvalidVpcEndpointId.NotFound')) {
+                return null;
+            }
+            return trim($code . ' ' . (string) Aws::string($error['Message'] ?? null));
+        }
         $step($prefix . 'endpoint_deleted', ['endpoint' => $id]);
+        return null;
     }
 
     /**
@@ -179,10 +192,26 @@ final class GatewayEndpoints
         if ($plan->action === EndpointPlan::CREATE) {
             $created = $this->create($plan, $tags + [self::MARKER_KEY => self::MARKER_VALUE, $usage => '1'], $step);
         } elseif ($plan->action === EndpointPlan::ASSOCIATE && $plan->target !== null) {
-            $this->ec2->modifyVpcEndpoint(['VpcEndpointId' => $plan->target, 'AddRouteTableIds' => $plan->missing]);
+            $modified = $this->ec2->modifyVpcEndpoint(['VpcEndpointId' => $plan->target, 'AddRouteTableIds' => $plan->missing]);
+            if (($modified['Return'] ?? true) === false) {
+                throw DeployException::make('deploy.endpoint_modify_failed', ['endpoint' => $plan->target]);
+            }
             $step('deploy.endpoint_routes_added', ['service' => $plan->service, 'endpoint' => $plan->target, 'route_tables' => implode(', ', $plan->missing)]);
-        } elseif ($plan->action === EndpointPlan::NONE && $plan->target !== null && ! $plan->targetIsArco) {
-            $step('deploy.endpoint_reused', ['service' => $plan->service, 'endpoint' => $plan->target, 'owner' => 'yours']);
+        } elseif ($plan->action === EndpointPlan::NONE) {
+            $reused = [];
+            foreach ($plan->covering as $endpoint) {
+                if (! $endpoint['arco']) {
+                    $reused[$endpoint['id']] = true;
+                }
+            }
+            if ($plan->target !== null && ! $plan->targetIsArco) {
+                $reused[$plan->target] = true;
+            }
+            $reused = array_keys($reused);
+            sort($reused);
+            foreach ($reused as $endpoint) {
+                $step('deploy.endpoint_reused', ['service' => $plan->service, 'endpoint' => $endpoint]);
+            }
         }
         if ($untagged !== []) {
             $this->ec2->createTags(['Resources' => $untagged, 'Tags' => [['Key' => $usage, 'Value' => '1']]]);
@@ -223,7 +252,15 @@ final class GatewayEndpoints
     {
         $deadline = $this->sleeper->now() + self::AVAILABLE_TIMEOUT;
         while (true) {
-            $page = $this->ec2->describeVpcEndpoints(['VpcEndpointIds' => [$id]]);
+            try {
+                $page = $this->ec2->describeVpcEndpoints(['VpcEndpointIds' => [$id]]);
+            } catch (AwsException $e) {
+                // Right after CreateVpcEndpoint EC2 can still answer NotFound for the new id: not there yet.
+                if (! self::notFound($e)) {
+                    throw $e;
+                }
+                $page = ['VpcEndpoints' => []];
+            }
             $state = strtolower((string) Aws::string((Aws::maps($page['VpcEndpoints'] ?? [])[0] ?? [])['State'] ?? null));
             if ($state === 'available') {
                 return;

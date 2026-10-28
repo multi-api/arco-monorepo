@@ -499,7 +499,7 @@ final class GatewayEndpointsTest extends TestCase
 
         self::assertSame([], $ids);
         self::assertSame([], $mocks->calls);
-        self::assertSame([['deploy.endpoint_reused', ['service' => 's3', 'endpoint' => 'vpce-user', 'owner' => 'yours']]], $steps);
+        self::assertSame([['deploy.endpoint_reused', ['service' => 's3', 'endpoint' => 'vpce-user']]], $steps);
     }
 
     public function test_a_plan_to_decide_cannot_be_applied(): void
@@ -661,6 +661,89 @@ final class GatewayEndpointsTest extends TestCase
             self::assertFalse($ok);
             self::assertSame([$prefix . 'endpoint_cleanup_failed', ['endpoint' => 'vpce-arco', 'tag' => self::USE, 'region' => 'us-east-1', 'error' => 'UnauthorizedOperation not allowed']], $steps[0]);
             self::assertSame($prefix . 'endpoint_deleted', $steps[1][0], 'the next endpoint is still released');
+        }
+    }
+    public function test_user_endpoints_covering_without_a_named_target_are_reported(): void
+    {
+        $mocks = new AwsMocks();
+        $steps = [];
+
+        $ids = $this->apply($mocks, self::makePlan(EndpointPlan::NONE, [], null, false, [
+            ['id' => 'vpce-u2', 'arco' => false, 'uses' => 0],
+            ['id' => 'vpce-u1', 'arco' => false, 'uses' => 0],
+        ]), $steps);
+
+        self::assertSame([], $ids);
+        self::assertSame([], $mocks->calls);
+        self::assertSame([
+            ['deploy.endpoint_reused', ['service' => 's3', 'endpoint' => 'vpce-u1']],
+            ['deploy.endpoint_reused', ['service' => 's3', 'endpoint' => 'vpce-u2']],
+        ], $steps);
+    }
+
+    public function test_reused_message_names_the_owner_in_each_language(): void
+    {
+        $en = require __DIR__ . '/../../../packages/arco/lang/en.php';
+        $es = require __DIR__ . '/../../../packages/arco/lang/es.php';
+        self::assertStringNotContainsString('{owner}', $en['deploy.endpoint_reused']);
+        self::assertStringContainsString('your', $en['deploy.endpoint_reused']);
+        self::assertStringNotContainsString('{owner}', $es['deploy.endpoint_reused']);
+        self::assertMatchesRegularExpression('/tu |tuyo/', $es['deploy.endpoint_reused']);
+    }
+
+    public function test_create_survives_a_not_found_right_after_creating(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['VpcEndpoint' => ['VpcEndpointId' => 'vpce-new']]));
+        $mocks->handler->append(AwsMocks::error(Ec2Exception::class, 'DescribeVpcEndpoints', 'InvalidVpcEndpointId.NotFound', 400));
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-new', ['rtb-a'], self::ARCO, 'available')]));
+        $steps = [];
+
+        $ids = $this->apply($mocks, self::makePlan(EndpointPlan::CREATE, ['rtb-a']), $steps);
+
+        self::assertSame(['vpce-new'], $ids);
+        self::assertSame(['CreateVpcEndpoint', 'DescribeVpcEndpoints', 'DescribeVpcEndpoints'], $mocks->calls);
+    }
+
+    public function test_release_reports_an_unsuccessful_delete(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO + [self::USE => '1'])]));
+        $mocks->handler->append(new Result([]));
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO)]));
+        $mocks->handler->append(new Result(['Unsuccessful' => [['ResourceId' => 'vpce-arco', 'Error' => ['Code' => 'DependencyViolation', 'Message' => 'in use']]]]));
+        $steps = [];
+
+        $ok = $this->subject($mocks)->release($this->config(), ['vpce-arco'], $this->recorder($steps), 'deploy.');
+
+        self::assertFalse($ok);
+        self::assertSame([['deploy.endpoint_cleanup_failed', ['endpoint' => 'vpce-arco', 'tag' => self::USE, 'region' => 'us-east-1', 'error' => 'DependencyViolation in use']]], $steps);
+    }
+
+    public function test_release_unsuccessful_not_found_is_success(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO + [self::USE => '1'])]));
+        $mocks->handler->append(new Result([]));
+        $mocks->handler->append(self::endpoints([self::endpoint('vpce-arco', ['rtb-a'], self::ARCO)]));
+        $mocks->handler->append(new Result(['Unsuccessful' => [['ResourceId' => 'vpce-arco', 'Error' => ['Code' => 'InvalidVpcEndpointId.NotFound', 'Message' => 'gone']]]]));
+        $steps = [];
+
+        self::assertTrue($this->subject($mocks)->release($this->config(), ['vpce-arco'], $this->recorder($steps), 'deploy.'));
+        self::assertSame([], $steps);
+    }
+
+    public function test_associate_that_returns_false_fails(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['Return' => false]));
+        $steps = [];
+
+        try {
+            $this->apply($mocks, self::makePlan(EndpointPlan::ASSOCIATE, ['rtb-b'], 'vpce-user'), $steps);
+            self::fail('expected a failure');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.endpoint_modify_failed', $e->key);
         }
     }
 }
