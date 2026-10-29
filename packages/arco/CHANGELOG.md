@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## 0.12.1
+## Unreleased
 
 - **Added:** the config layer, a JSON document merged over `arco.php` (or used alone when there is no `arco.php`),
   for tools that manage queues, buckets, tables, variables and domains outside your code. `--config-layer=<path>` and
@@ -29,6 +29,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   and `options` (the resolved options of its queue, bucket, table or setting, `null` when none), and gains the top-level
   keys `variables` (`[{name, source}]`, never values) and `config` (`[{kind, name, source, options}]` for everything
   the configuration declares, deployed or not). They are present with or without a layer.
+## 0.12.1
+
 - **Added:** the package uploads to S3 show their progress: a bar with the megabytes sent (`48 / 180 MB`) in a
   terminal, `25% (45 / 180 MB)` lines in CI logs; sizes under 10 MB have one decimal. The console package and its
   runtime binary, whose upload used to print nothing for minutes, upload under their own step,
