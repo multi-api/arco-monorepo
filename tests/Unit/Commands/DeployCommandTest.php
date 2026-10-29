@@ -14,6 +14,7 @@ use Multiapi\Arco\Commands\DeployCommand;
 use Multiapi\Arco\Console\CommandResult;
 use Multiapi\Arco\Deploy\AppStatus;
 use Multiapi\Arco\Deploy\DeployPipeline;
+use Multiapi\Arco\Deploy\EndpointPlan;
 use Multiapi\Arco\Deploy\Domains\CloudflareDns;
 use Multiapi\Arco\Deploy\Domains\DnsProvider;
 use Multiapi\Arco\Package\Packager;
@@ -84,15 +85,24 @@ final class DeployCommandTest extends TestCase
     private array $factoryCalls = [];
     /** @var list<bool> --force (ownership override) per deployer built */
     private array $ownershipForced = [];
+    /** @var list<?\Closure> the endpoint decider each deployer was built with */
+    private array $deciders = [];
+    /** a plan the factory hands to the decider as soon as it has one, as AwsDeployer does while checking ownership */
+    private ?EndpointPlan $decide = null;
+    private ?EndpointPlan $decided = null;
 
     private function tester(FakeDeployer $deployer, bool $verifies = true, ?int $initMs = 800, ?FakeConsole $console = null, ?PresetRegistry $presets = null): CommandTester
     {
         $command = new DeployCommand(
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $this->aws, 'credentials' => false]),
             pipeline: new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager()),
-            deployerFactory: function (AwsClients $aws, ?AwsClients $dns, bool $force, bool $forceOwnership = false) use ($deployer) {
+            deployerFactory: function (AwsClients $aws, ?AwsClients $dns, bool $force, bool $forceOwnership = false, ?DnsProvider $dnsProvider = null, ?\Closure $decider = null) use ($deployer) {
                 $this->factoryCalls[] = [$aws->profile, $dns?->profile, $force];
                 $this->ownershipForced[] = $forceOwnership;
+                $this->deciders[] = $decider;
+                if ($decider !== null && $this->decide !== null) {
+                    $this->decided = $decider($this->decide);
+                }
                 return $deployer;
             },
             verifierFactory: fn () => new FakeVerifier($verifies, $initMs),
@@ -120,6 +130,80 @@ final class DeployCommandTest extends TestCase
         self::assertStringContainsString('https://abc.on.aws', $display);
         self::assertStringContainsString("'acme-prod'", (string) file_get_contents("$this->project/.arco/local.php"));
         self::assertStringContainsString("->account('222222222222')", (string) file_get_contents("$this->project/arco.php"));
+    }
+
+    private function decidePlan(): EndpointPlan
+    {
+        return new EndpointPlan('s3', 'vpc-1', ['rtb-1', 'rtb-2'], ['rtb-2'], EndpointPlan::DECIDE, null, false, ['vpce-aaa', 'vpce-bbb'], []);
+    }
+
+    public function test_decider_given_only_when_interactive_without_yes_or_json(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']), new Result(['Account' => '222222222222']), new Result(['Account' => '222222222222']), new Result(['Account' => '222222222222']));
+        $args = ['--env' => 'production', '--profile' => 'acme-prod'];
+        foreach ([[$args + ['--yes' => true], ['interactive' => true]], [$args, ['interactive' => false]], [$args + ['--yes' => true, '--json' => true], ['interactive' => false]]] as [$input, $options]) {
+            $this->deciders = [];
+            $tester = $this->tester(new FakeDeployer());
+            $tester->execute($input, $options);
+            self::assertSame([null], $this->deciders, json_encode($input) . json_encode($options));
+        }
+        $this->deciders = [];
+        $tester = $this->tester(new FakeDeployer());
+        $tester->setInputs(['yes', 'no']);
+        $tester->execute($args);
+        self::assertCount(1, $this->deciders);
+        self::assertInstanceOf(\Closure::class, $this->deciders[0]);
+    }
+
+    public function test_question_offers_associate_continue_cancel(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $this->decide = $this->decidePlan();
+        $tester = $this->tester(new FakeDeployer());
+        // the factory asks first in this test: choose the second endpoint, confirm creation, decline the account lock
+        $tester->setInputs(['vpce-bbb', 'yes', 'no']);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod']);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('The route tables rtb-2 of vpc() have no s3 gateway endpoint', $display);
+        self::assertStringContainsString('Add the route tables to vpce-aaa', $display);
+        self::assertStringContainsString('Add the route tables to vpce-bbb', $display);
+        self::assertStringContainsString('Go on without a gateway endpoint for them', $display);
+        self::assertStringContainsString('Cancel the deploy: change nothing', $display);
+        self::assertStringContainsString("endpoints: ['s3' => 'vpce-bbb']", $display);
+        self::assertSame(EndpointPlan::ASSOCIATE, $this->decided?->action);
+        self::assertSame('vpce-bbb', $this->decided->target);
+    }
+
+    public function test_skip_continues_and_hints_the_first_endpoint(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $this->decide = $this->decidePlan();
+        $tester = $this->tester(new FakeDeployer());
+        $tester->setInputs(['@skip', 'yes', 'no']);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(EndpointPlan::NONE, $this->decided?->action);
+        self::assertStringContainsString("endpoints: ['s3' => 'vpce-aaa']", $tester->getDisplay());
+    }
+
+    public function test_cancel_exits_non_zero_without_changes(): void
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $this->decide = $this->decidePlan();
+        $deployer = new FakeDeployer();
+        $tester = $this->tester($deployer);
+        $tester->setInputs(['@cancel']);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod']);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('Deploy cancelled: nothing was changed.', $display);
+        self::assertStringContainsString("endpoints: ['s3' => 'vpce-aaa']", $display);
+        self::assertNull($this->decided);
+        self::assertSame([], $deployer->calls);
     }
 
     public function test_account_lock_stops_deploys_to_another_account(): void

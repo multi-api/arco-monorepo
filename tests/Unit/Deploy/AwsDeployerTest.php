@@ -46,7 +46,8 @@ final class AwsDeployerTest extends TestCase
     {
         $file = TempPaths::file('pkg');
         file_put_contents((string) $file, 'zip');
-        return new Package((string) $file, str_repeat('a', 64), 3);
+        // Package::$bytes is the unzipped size (the Lambda limits); the upload sends the 3-byte file.
+        return new Package((string) $file, str_repeat('a', 64), 5 * 1048576);
     }
 
     private static function lambdaMissing(string $operation): LambdaException
@@ -146,7 +147,8 @@ final class AwsDeployerTest extends TestCase
         file_put_contents($zip, 'console-zip');
         $binary = (string) TempPaths::file('bin');
         file_put_contents($binary, 'ELF');
-        return new ConsoleArtifacts(new Package($zip, str_repeat('c', 64), 11), new ConsoleDownload($binary, (string) hash_file('sha256', $binary), 3, 'runtime/1.13.0-r1/frankenphp'));
+        // Unzipped 7 MB, an 11-byte file: the upload progress counts the file.
+        return new ConsoleArtifacts(new Package($zip, str_repeat('c', 64), 7 * 1048576), new ConsoleDownload($binary, (string) hash_file('sha256', $binary), 3, 'runtime/1.13.0-r1/frankenphp'));
     }
 
     public function test_first_deploy(): void
@@ -4303,6 +4305,63 @@ final class AwsDeployerTest extends TestCase
         self::assertNotContains('GetNetworkConnector', $mocks->calls, 'no vpc(): no lambda-core call');
     }
 
+    /** @param array<string, mixed> $ec2 answers of the EC2 reads, by operation */
+    private function describeWithEndpoints(array $ec2, ?AwsMocks &$mocks = null): ?\Multiapi\Arco\Deploy\AppStatus
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [
+            'GetWebFunction' => new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            'GetWebFunctionEndpoint' => new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            'GetNetworkConnector' => self::connector(3),
+        ] + $ec2);
+        return (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->describe($this->endpointsConfig(['s3' => 'vpce-u1', 'dynamodb']));
+    }
+
+    private static function gatewayEndpoint(string $id, string $service, array $tables, array $tags = []): array
+    {
+        return ['VpcEndpointId' => $id, 'State' => 'available', 'VpcEndpointType' => 'Gateway', 'ServiceName' => "com.amazonaws.us-east-1.$service", 'VpcId' => 'vpc-1', 'RouteTableIds' => $tables,
+            'Tags' => array_map(fn (string $k, string $v) => ['Key' => $k, 'Value' => $v], array_keys($tags), $tags)];
+    }
+
+    public function test_describe_reads_the_gateway_endpoints_without_writing(): void
+    {
+        $arco = ['arco:managed' => 'gateway-endpoint', 'arco:uses:shop/production' => '1', 'arco:uses:blog/production' => '1'];
+        $status = $this->describeWithEndpoints([
+            'DescribeSubnets' => new Result(['Subnets' => [['SubnetId' => 'subnet-a', 'VpcId' => 'vpc-1'], ['SubnetId' => 'subnet-b', 'VpcId' => 'vpc-1']]]),
+            'DescribeRouteTables' => new Result(['RouteTables' => [
+                ['RouteTableId' => 'rtb-a', 'Associations' => [['SubnetId' => 'subnet-a', 'Main' => false]]],
+                ['RouteTableId' => 'rtb-b', 'Associations' => [['SubnetId' => 'subnet-b', 'Main' => false]]],
+            ]]),
+            'DescribeVpcEndpoints' => [
+                new Result(['VpcEndpoints' => [self::gatewayEndpoint('vpce-u1', 's3', ['rtb-a'])]]),
+                new Result(['VpcEndpoints' => [self::gatewayEndpoint('vpce-a1', 'dynamodb', ['rtb-a', 'rtb-b'], $arco)]]),
+            ],
+        ], $mocks);
+
+        self::assertSame([
+            ['service' => 's3', 'id' => 'vpce-u1', 'arco' => false, 'environments' => null, 'route_tables' => ['rtb-a', 'rtb-b'], 'missing_route_tables' => ['rtb-b']],
+            ['service' => 'dynamodb', 'id' => 'vpce-a1', 'arco' => true, 'environments' => 2, 'route_tables' => ['rtb-a', 'rtb-b'], 'missing_route_tables' => []],
+        ], $status?->endpoints);
+        self::assertSame([], self::writes($mocks), 'info never writes, and never asks a decider');
+    }
+
+    public function test_describe_endpoints_are_null_when_unreadable_and_empty_without_any(): void
+    {
+        $status = $this->describeWithEndpoints([]);
+        self::assertNull($status?->endpoints, 'AccessDenied on EC2: unreadable, not a failure');
+        self::assertSame(['connector' => 'nc-0abc', 'version' => 3, 'state' => 'ACTIVE'], $status?->vpc);
+
+        $mocks = new AwsMocks();
+        self::answer($mocks, [
+            'GetWebFunction' => new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            'GetWebFunctionEndpoint' => new Result([]),
+            'GetNetworkConnector' => self::connector(3),
+        ]);
+        $status = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->describe($this->vpcConfig());
+        self::assertSame([], $status?->endpoints);
+        self::assertSame([], array_filter($mocks->calls, fn (string $c) => str_contains($c, 'Subnets') || str_contains($c, 'RouteTables') || str_contains($c, 'VpcEndpoints')), 'no endpoints: no EC2 call');
+    }
+
     private static function operatorRole(?array $tags = null): Result
     {
         return new Result(['Role' => ['Arn' => self::OPERATOR_ROLE, 'Tags' => self::tagList($tags ?? self::tags()), 'Description' => 'Execution role managed by Arco']]);
@@ -4466,5 +4525,444 @@ final class AwsDeployerTest extends TestCase
             'DescribeStacks', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction',
             'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery',
         ], $mocks->calls);
+    }
+
+    private const EC2_ENDPOINT_CALLS = ['DescribeSubnets', 'DescribeRouteTables', 'DescribeVpcEndpoints', 'CreateVpcEndpoint', 'ModifyVpcEndpoint', 'CreateTags', 'DeleteTags', 'DeleteVpcEndpoints'];
+    private const RECORD = 'arco:gateway-endpoints';
+
+    /** @param array<int|string, string> $endpoints as vpc() takes them */
+    private function endpointsConfig(array $endpoints = ['s3']): AppConfig
+    {
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')
+            ->environment('production', fn (Environment $e) => $e->vpc(subnets: ['subnet-a', 'subnet-b'], securityGroups: ['sg-1'], endpoints: $endpoints))->toArray(), 'production');
+    }
+
+    /** @param list<string> $tables @param array<string, string> $tags */
+    private static function vpcEndpoint(string $id, array $tables, array $tags = [], string $service = 's3'): array
+    {
+        return ['VpcEndpointId' => $id, 'State' => 'available', 'VpcEndpointType' => 'Gateway', 'ServiceName' => "com.amazonaws.us-east-1.$service", 'VpcId' => 'vpc-1',
+            'RouteTableIds' => $tables, 'Tags' => self::tagList($tags)];
+    }
+
+    /** @param list<array<string, mixed>> $endpoints */
+    private static function vpcEndpoints(array $endpoints): Result
+    {
+        return new Result(['VpcEndpoints' => $endpoints]);
+    }
+
+    private const ARCO_ENDPOINT = ['arco:managed' => 'gateway-endpoint'];
+    private const USES = ['arco:uses:shop/production' => '1'];
+
+    /**
+     * An existing VPC environment, for answer(): owned, with its live revision on the connector, subnet-a on rtb-a and
+     * subnet-b on rtb-b in vpc-1, and the Web Function's tags (with $record as its endpoint record).
+     *
+     * @param list<Result>|Result $endpoints what DescribeVpcEndpoints answers, in turn
+     * @return array<string, mixed>
+     */
+    private static function endpointEnvironment(?string $record, array|Result $endpoints): array
+    {
+        $tags = self::tags() + ($record === null ? [] : [self::RECORD => $record]);
+        return [
+            ...self::existingEnvironment(self::CONNECTOR_VERSION),
+            'GetRole' => [self::roleTags(), self::operatorRole(), new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1'], ...self::tagList(self::tags())]]]), self::operatorRole()],
+            'GetNetworkConnector' => self::connector(3),
+            'ListTags' => new Result(['Tags' => self::tags(), 'tags' => $tags]),
+            'DescribeSubnets' => new Result(['Subnets' => [['SubnetId' => 'subnet-a', 'VpcId' => 'vpc-1'], ['SubnetId' => 'subnet-b', 'VpcId' => 'vpc-1']]]),
+            'DescribeRouteTables' => new Result(['RouteTables' => [
+                ['RouteTableId' => 'rtb-a', 'Associations' => [['SubnetId' => 'subnet-a', 'Main' => false]]],
+                ['RouteTableId' => 'rtb-b', 'Associations' => [['SubnetId' => 'subnet-b', 'Main' => false]]],
+            ]]),
+            'DescribeVpcEndpoints' => $endpoints,
+            'TagResource' => new Result([]), 'UntagResource' => new Result([]),
+        ];
+    }
+
+    /** @return list<array<string, mixed>> the params of each $operation call, without the SDK's own (@http, @context) */
+    private static function sent(AwsMocks $mocks, string $operation): array
+    {
+        return array_map(fn (array $params) => array_filter($params, fn (string $key) => ! str_starts_with($key, '@'), ARRAY_FILTER_USE_KEY), self::byOperation($mocks)[$operation] ?? []);
+    }
+
+    /** @return list<string> the calls made after the first $from */
+    private static function callsFrom(AwsMocks $mocks, int $from, string ...$operations): array
+    {
+        return array_values(array_filter(array_slice($mocks->calls, $from), fn (string $call) => in_array($call, $operations, true)));
+    }
+
+    public function test_endpoints_are_planned_before_any_change(): void
+    {
+        $mocks = new AwsMocks();
+        // Only the user's endpoint exists, and it serves neither route table.
+        self::answer($mocks, self::endpointEnvironment(null, self::vpcEndpoints([self::vpcEndpoint('vpce-u1', [])])));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        try {
+            $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+            self::fail('expected deploy.endpoint_routes_missing');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.endpoint_routes_missing', $e->key);
+            self::assertSame([
+                'service' => 's3',
+                'endpoints' => 'vpce-u1',
+                'route_tables' => 'rtb-a, rtb-b',
+                'command' => 'aws ec2 modify-vpc-endpoint --region us-east-1 --vpc-endpoint-id vpce-u1 --add-route-table-ids rtb-a rtb-b',
+                'config' => "endpoints: ['s3' => 'vpce-u1']",
+            ], $e->params);
+            foreach (['en', 'es'] as $lang) {
+                $text = (new \Multiapi\Arco\Cli\Translator($lang, \Multiapi\Arco\Arco::packageRoot() . '/lang'))->trans($e->key, $e->params);
+                self::assertStringContainsString($e->params['command'], $text);
+                self::assertStringContainsString($e->params['config'], $text);
+            }
+        }
+        self::assertSame([], self::writes($mocks), 'no S3, IAM, EC2 or Lambda write');
+        self::assertSame(['DescribeSubnets', 'DescribeRouteTables', 'DescribeVpcEndpoints'], self::only($mocks, ...self::EC2_ENDPOINT_CALLS));
+    }
+
+    public function test_decider_is_asked_and_its_choice_applied(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::endpointEnvironment(null, self::vpcEndpoints([self::vpcEndpoint('vpce-u1', [])])), 'ModifyVpcEndpoint' => new Result(['Return' => true])]);
+        $asked = [];
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), endpointDecider: function (\Multiapi\Arco\Deploy\EndpointPlan $plan) use (&$asked) {
+            $asked[] = $plan;
+            return $plan->withAssociate('vpce-u1');
+        });
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        self::assertSame([], self::writes($mocks), 'asking changes nothing');
+        $deployer->prepare($this->endpointsConfig(), $this->package(), null, []);
+
+        self::assertCount(1, $asked);
+        self::assertSame(\Multiapi\Arco\Deploy\EndpointPlan::DECIDE, $asked[0]->action);
+        self::assertSame(['vpce-u1'], $asked[0]->userEndpoints);
+        self::assertSame([['VpcEndpointId' => 'vpce-u1', 'AddRouteTableIds' => ['rtb-a', 'rtb-b']]], self::sent($mocks, 'ModifyVpcEndpoint'));
+        self::assertSame([], self::only($mocks, 'CreateTags', 'TagResource', 'UntagResource'), "the user's endpoint is never tagged, and there is nothing to record");
+    }
+
+    public function test_a_cancelled_question_changes_nothing(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::endpointEnvironment(null, self::vpcEndpoints([self::vpcEndpoint('vpce-u1', [])])));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), endpointDecider: fn () => throw DeployException::make('deploy.endpoint_cancelled'));
+
+        try {
+            $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+            self::fail('expected deploy.endpoint_cancelled');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.endpoint_cancelled', $e->key);
+        }
+        self::assertSame([], self::writes($mocks));
+    }
+
+    public function test_skip_warns(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::endpointEnvironment(null, self::vpcEndpoints([self::vpcEndpoint('vpce-u1', [])])));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), endpointDecider: fn (\Multiapi\Arco\Deploy\EndpointPlan $plan) => $plan->withSkip());
+        $steps = [];
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        $deployer->prepare($this->endpointsConfig(), $this->package(), null, [], function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertContains(['deploy.endpoint_skipped', ['service' => 's3', 'route_tables' => 'rtb-a, rtb-b']], $steps);
+        self::assertContains('deploy.endpoint_skipped', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertSame([], self::only($mocks, 'ModifyVpcEndpoint', 'CreateVpcEndpoint', 'CreateTags', 'TagResource'));
+        self::assertContains('CreateWebFunctionRevision', $mocks->calls, 'the deploy goes on');
+    }
+
+    public function test_endpoints_applied_after_role_before_connector(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::endpointEnvironment(null, [self::vpcEndpoints([]), self::vpcEndpoints([self::vpcEndpoint('vpce-new', ['rtb-a', 'rtb-b'], self::ARCO_ENDPOINT + self::USES)])]),
+            'CreateVpcEndpoint' => new Result(['VpcEndpoint' => ['VpcEndpointId' => 'vpce-new', 'State' => 'pending']])]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $steps = [];
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        $from = count($mocks->calls);
+        $prepared = $deployer->prepare($this->endpointsConfig(), $this->package(), null, [], function (string $key) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame(
+            ['PutRolePolicy', 'CreateVpcEndpoint', 'DescribeVpcEndpoints', 'TagResource', 'GetNetworkConnector', 'PutRolePolicy', 'CreateWebFunctionRevision'],
+            self::callsFrom($mocks, $from, 'PutRolePolicy', 'CreateVpcEndpoint', 'DescribeVpcEndpoints', 'GetNetworkConnector', 'TagResource', 'CreateWebFunctionRevision'),
+            'execution role, endpoints and their record, connector, then the revision',
+        );
+        self::assertSame(['deploy.step_bucket', 'deploy.step_upload', 'deploy.step_role', 'deploy.step_endpoints', 'deploy.endpoint_created', 'deploy.step_network', 'deploy.step_revision'], $steps);
+        self::assertSame([['resource' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'tags' => [self::RECORD => 'vpce-new']]], self::sent($mocks, 'TagResource'));
+        self::assertSame(['vpce-new'], $prepared->keepEndpoints);
+        self::assertSame([], $prepared->releaseEndpoints);
+    }
+
+    public function test_record_tag_on_create_and_on_existing_function(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::endpointEnvironment(null, [self::vpcEndpoints([]), self::vpcEndpoints([self::vpcEndpoint('vpce-new', ['rtb-a', 'rtb-b'], self::ARCO_ENDPOINT + self::USES)])]),
+            'GetWebFunction' => self::noWeb(),
+            'CreateVpcEndpoint' => new Result(['VpcEndpoint' => ['VpcEndpointId' => 'vpce-new']]),
+            'CreateWebFunction' => new Result(['revision' => ['revisionId' => 'rev-1']])]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        $deployer->prepare($this->endpointsConfig(), $this->package(), null, []);
+
+        self::assertSame(self::tags() + [self::RECORD => 'vpce-new'], self::byOperation($mocks)['CreateWebFunction'][0]['tags'], 'a new function is created with its record');
+        self::assertNotContains('TagResource', $mocks->calls);
+
+        // Already recorded, already served by it: no lambda-web tag call.
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::endpointEnvironment('vpce-a', self::vpcEndpoints([self::vpcEndpoint('vpce-a', ['rtb-a', 'rtb-b'], self::ARCO_ENDPOINT + self::USES)])));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->endpointsConfig(), $this->package(), null, []);
+
+        self::assertSame([], self::only($mocks, 'TagResource', 'UntagResource', 'CreateTags', 'CreateVpcEndpoint', 'ModifyVpcEndpoint'));
+        self::assertSame(['vpce-a'], $prepared->keepEndpoints);
+        self::assertSame([], $prepared->releaseEndpoints);
+    }
+
+    public function test_no_endpoint_calls_without_endpoints_or_record(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::endpointEnvironment(null, self::vpcEndpoints([])),
+            'ListObjectsV2' => new Result(['Contents' => []]), 'ListObjectVersions' => new Result([]), 'GetResources' => new Result(['ResourceTagMappingList' => []]),
+            'ListNetworkConnectorVersions' => new Result(['NetworkConnectorVersions' => []])]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $steps = [];
+
+        $deployer->checkOwnership($this->vpcConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->vpcConfig(), $this->package(), null, [], function (string $key) use (&$steps): void { $steps[] = $key; });
+        $deployer->prune($this->vpcConfig(), $prepared);
+
+        self::assertSame([], self::only($mocks, ...self::EC2_ENDPOINT_CALLS, ...['TagResource', 'UntagResource']));
+        self::assertNotContains('deploy.step_endpoints', $steps);
+        self::assertSame([], $prepared->keepEndpoints);
+        self::assertSame([], $prepared->releaseEndpoints);
+    }
+
+    public function test_removed_service_is_released_after_verification(): void
+    {
+        $mocks = new AwsMocks();
+        // The record has the S3 (vpce-a) and DynamoDB (vpce-b) endpoints; arco.php keeps only s3.
+        self::answer($mocks, self::endpointEnvironment('vpce-a vpce-b', self::vpcEndpoints([self::vpcEndpoint('vpce-a', ['rtb-a', 'rtb-b'], self::ARCO_ENDPOINT + self::USES)])));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->endpointsConfig(), $this->package(), null, []);
+
+        self::assertSame(['vpce-a'], $prepared->keepEndpoints);
+        self::assertSame(['vpce-b'], $prepared->releaseEndpoints);
+        self::assertSame([], self::only($mocks, 'DeleteTags', 'DeleteVpcEndpoints', 'TagResource', 'UntagResource'), 'nothing is released before the verification');
+
+        $mocks = new AwsMocks();
+        self::answer($mocks, [
+            // Another environment still uses vpce-b: it stays.
+            'DescribeVpcEndpoints' => [self::vpcEndpoints([self::vpcEndpoint('vpce-b', ['rtb-a'], self::ARCO_ENDPOINT + self::USES + ['arco:uses:shop/staging' => '1'], 'dynamodb')]),
+                self::vpcEndpoints([self::vpcEndpoint('vpce-b', ['rtb-a'], self::ARCO_ENDPOINT + ['arco:uses:shop/staging' => '1'], 'dynamodb')])],
+            'DeleteTags' => new Result([]),
+            'GetWebFunction' => new Result(['functionName' => 'shop-production', 'functionArn' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'state' => 'Active']),
+            'TagResource' => new Result([]),
+            'ListObjectsV2' => new Result(['Contents' => []]), 'ListObjectVersions' => new Result([]), 'GetResources' => new Result(['ResourceTagMappingList' => []]),
+            'ListNetworkConnectorVersions' => new Result(['NetworkConnectorVersions' => []]),
+        ]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->endpointsConfig(), $prepared, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['DeleteTags', 'TagResource'], self::only($mocks, 'DeleteTags', 'DeleteVpcEndpoints', 'TagResource', 'UntagResource'));
+        self::assertSame([['Resources' => ['vpce-b'], 'Tags' => [['Key' => 'arco:uses:shop/production']]]], self::sent($mocks, 'DeleteTags'));
+        self::assertSame([['resource' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'tags' => [self::RECORD => 'vpce-a']]], self::sent($mocks, 'TagResource'));
+        self::assertContains(['deploy.endpoint_released', ['endpoint' => 'vpce-b']], $steps);
+    }
+
+    /** @return array<string, mixed> what prune() reads besides the endpoints, for answer() */
+    private static function pruneReads(): array
+    {
+        return [
+            'GetWebFunction' => new Result(['functionName' => 'shop-production', 'functionArn' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'state' => 'Active']),
+            'TagResource' => new Result([]), 'UntagResource' => new Result([]), 'DeleteTags' => new Result([]), 'DeleteVpcEndpoints' => new Result(['Unsuccessful' => []]),
+            'ListObjectsV2' => new Result(['Contents' => []]), 'ListObjectVersions' => new Result([]), 'GetResources' => new Result(['ResourceTagMappingList' => []]),
+            'ListNetworkConnectorVersions' => new Result(['NetworkConnectorVersions' => []]),
+        ];
+    }
+
+    public function test_leaving_vpc_releases_everything_from_record(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::existingEnvironment(null), 'ListTags' => new Result(['Tags' => self::tags(), 'tags' => self::tags() + [self::RECORD => 'vpce-a vpce-b']])]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->config(), fn () => null);
+        $prepared = $deployer->prepare($this->config(), $this->package(), null, []);
+
+        self::assertSame([], $prepared->keepEndpoints);
+        self::assertSame(['vpce-a', 'vpce-b'], $prepared->releaseEndpoints);
+        self::assertSame([], self::only($mocks, ...self::EC2_ENDPOINT_CALLS, ...['TagResource', 'UntagResource']), 'nothing before the verification');
+
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::pruneReads(), 'DescribeVpcEndpoints' => [
+            self::vpcEndpoints([self::vpcEndpoint('vpce-a', ['rtb-a'], self::ARCO_ENDPOINT + self::USES)]), self::vpcEndpoints([self::vpcEndpoint('vpce-a', ['rtb-a'], self::ARCO_ENDPOINT)]),
+            self::vpcEndpoints([self::vpcEndpoint('vpce-b', ['rtb-a'], self::ARCO_ENDPOINT + self::USES, 'dynamodb')]), self::vpcEndpoints([self::vpcEndpoint('vpce-b', ['rtb-a'], self::ARCO_ENDPOINT, 'dynamodb')]),
+        ]]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->config(), $prepared, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['DeleteTags', 'DeleteVpcEndpoints', 'DeleteTags', 'DeleteVpcEndpoints', 'TagResource'], self::only($mocks, 'DeleteTags', 'DeleteVpcEndpoints', 'TagResource', 'UntagResource'));
+        self::assertSame([['VpcEndpointIds' => ['vpce-a']], ['VpcEndpointIds' => ['vpce-b']]], self::sent($mocks, 'DeleteVpcEndpoints'));
+        self::assertSame([['resource' => 'arn:aws:lambda:us-east-1:111111111111:web-function:shop-production', 'tags' => [self::RECORD => '']]], self::sent($mocks, 'TagResource'), 'an empty record is the tag set to \'\': lambda:TagResource is all it needs');
+        self::assertSame([], self::sent($mocks, 'UntagResource'));
+        self::assertContains(['deploy.endpoint_deleted', ['endpoint' => 'vpce-b']], $steps);
+    }
+
+    public function test_moving_vpc_releases_old_endpoint(): void
+    {
+        $mocks = new AwsMocks();
+        // The subnets are now in vpc-1, which has no S3 endpoint; the record names the one of the old VPC.
+        self::answer($mocks, [...self::endpointEnvironment('vpce-old', [self::vpcEndpoints([]), self::vpcEndpoints([self::vpcEndpoint('vpce-new', ['rtb-a', 'rtb-b'], self::ARCO_ENDPOINT + self::USES)])]),
+            'CreateVpcEndpoint' => new Result(['VpcEndpoint' => ['VpcEndpointId' => 'vpce-new']])]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->endpointsConfig(), $this->package(), null, []);
+
+        self::assertSame(['vpce-new'], $prepared->keepEndpoints);
+        self::assertSame(['vpce-old'], $prepared->releaseEndpoints);
+        self::assertSame([self::RECORD => 'vpce-new vpce-old'], self::byOperation($mocks)['TagResource'][0]['tags'], 'both stay recorded until the old one is released');
+        self::assertNotContains('DeleteTags', $mocks->calls);
+
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::pruneReads(), 'DescribeVpcEndpoints' => [
+            new Result(['VpcEndpoints' => [['VpcEndpointId' => 'vpce-old', 'State' => 'available', 'VpcEndpointType' => 'Gateway', 'ServiceName' => 'com.amazonaws.us-east-1.s3', 'VpcId' => 'vpc-0',
+                'RouteTableIds' => ['rtb-0'], 'Tags' => self::tagList(self::ARCO_ENDPOINT + self::USES)]]]),
+            new Result(['VpcEndpoints' => [['VpcEndpointId' => 'vpce-old', 'State' => 'available', 'VpcEndpointType' => 'Gateway', 'ServiceName' => 'com.amazonaws.us-east-1.s3', 'VpcId' => 'vpc-0',
+                'RouteTableIds' => ['rtb-0'], 'Tags' => self::tagList(self::ARCO_ENDPOINT)]]]),
+        ]]);
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->endpointsConfig(), $prepared);
+
+        self::assertSame([['VpcEndpointIds' => ['vpce-old']]], self::sent($mocks, 'DeleteVpcEndpoints'));
+        self::assertSame([self::RECORD => 'vpce-new'], self::sent($mocks, 'TagResource')[0]['tags']);
+    }
+
+    public function test_release_failure_keeps_record(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::pruneReads(),
+            'DescribeVpcEndpoints' => self::vpcEndpoints([self::vpcEndpoint('vpce-b', ['rtb-a'], self::ARCO_ENDPOINT + self::USES)]),
+            'DeleteTags' => AwsMocks::error(\Aws\Ec2\Exception\Ec2Exception::class, 'DeleteTags', 'UnauthorizedOperation', 403, 'denied')]);
+        $prepared = new PreparedDeploy('rev-2', 'rev-1', 'bucket', 'shop/production/a.zip', null, null, releaseEndpoints: ['vpce-b'], keepEndpoints: ['vpce-a']);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->endpointsConfig(), $prepared, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertContains(['deploy.endpoint_cleanup_failed', ['endpoint' => 'vpce-b', 'tag' => 'arco:uses:shop/production', 'region' => 'us-east-1', 'error' => 'UnauthorizedOperation denied']], $steps);
+        self::assertContains('deploy.endpoint_cleanup_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertSame([], self::only($mocks, 'GetWebFunction', 'TagResource', 'UntagResource'), 'the record stays as it is: the next deploy tries again');
+    }
+
+    public function test_remove_releases_after_functions(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::removal(null),
+            'ListTags' => new Result(['tags' => self::tags() + [self::RECORD => 'vpce-a']]),
+            'DescribeVpcEndpoints' => [self::vpcEndpoints([self::vpcEndpoint('vpce-a', ['rtb-a'], self::ARCO_ENDPOINT + self::USES)]), self::vpcEndpoints([self::vpcEndpoint('vpce-a', ['rtb-a'], self::ARCO_ENDPOINT)])],
+            'DeleteTags' => new Result([]), 'DeleteVpcEndpoints' => new Result(['Unsuccessful' => []])]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['ListTags', 'DeleteWebFunction', 'DeleteTags', 'DeleteVpcEndpoints', 'DeleteRole'],
+            self::only($mocks, 'ListTags', 'DeleteWebFunction', 'DeleteTags', 'DeleteVpcEndpoints', 'DeleteRole'),
+            'the record is read with the ownership check, the endpoint released after the functions and before the execution role');
+        self::assertContains(['remove.endpoint_deleted', ['endpoint' => 'vpce-a']], $steps);
+        self::assertSame([], self::only($mocks, 'TagResource', 'UntagResource'), 'the function and its record are gone');
+    }
+
+    public function test_a_decider_that_leaves_the_plan_to_decide_is_a_logic_error(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::endpointEnvironment(null, self::vpcEndpoints([self::vpcEndpoint('vpce-u1', [])])));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), endpointDecider: fn (\Multiapi\Arco\Deploy\EndpointPlan $plan) => $plan);
+
+        try {
+            $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+            self::fail('expected a LogicException');
+        } catch (\LogicException $e) {
+            self::assertStringContainsString('withAssociate() or withSkip()', $e->getMessage());
+        }
+        self::assertSame([], self::writes($mocks), 'still the read-only phase');
+    }
+
+    public function test_unreadable_function_tags_leave_the_record_alone(): void
+    {
+        $mocks = new AwsMocks();
+        // The Arco endpoint serves everything but has no usage tag of this environment: it is tagged, and would be recorded.
+        self::answer($mocks, [...self::endpointEnvironment(null, self::vpcEndpoints([self::vpcEndpoint('vpce-a', ['rtb-a', 'rtb-b'], self::ARCO_ENDPOINT)])),
+            'ListTags' => AwsMocks::error(LambdaWebException::class, 'ListTags', 'AccessDeniedException', 403, 'not authorized to perform: lambda:ListTags'),
+            'CreateTags' => new Result([])]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: true);
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        $prepared = $deployer->prepare($this->endpointsConfig(), $this->package(), null, []);
+
+        self::assertSame(['CreateTags'], self::only($mocks, 'CreateTags', 'TagResource', 'UntagResource'), 'the endpoint is used and tagged, but the record the deploy could not read is not overwritten');
+        self::assertSame(['vpce-a'], $prepared->keepEndpoints);
+        self::assertSame([], $prepared->releaseEndpoints);
+    }
+
+    public function test_a_failed_record_write_is_its_own_warning_naming_the_permission(): void
+    {
+        $denied = AwsMocks::error(LambdaWebException::class, 'TagResource', 'AccessDeniedException', 403, 'not authorized to perform: lambda:TagResource');
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::endpointEnvironment(null, self::vpcEndpoints([self::vpcEndpoint('vpce-a', ['rtb-a', 'rtb-b'], self::ARCO_ENDPOINT + self::USES)])), 'TagResource' => $denied]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+        $steps = [];
+
+        $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+        $deployer->prepare($this->endpointsConfig(), $this->package(), null, [], function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        $failed = array_values(array_filter($steps, fn (array $step) => $step[0] === 'deploy.endpoint_record_failed'));
+        self::assertCount(1, $failed);
+        self::assertSame(['function', 'error', 'permission'], array_keys($failed[0][1]));
+        self::assertSame('shop-production', $failed[0][1]['function']);
+        self::assertSame('lambda:TagResource', $failed[0][1]['permission']);
+        self::assertNotContains('deploy.tags_not_added', array_column($steps, 0));
+        self::assertContains('deploy.endpoint_record_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertContains('CreateWebFunctionRevision', $mocks->calls, 'the deploy goes on');
+        foreach (['en', 'es'] as $lang) {
+            $text = (new \Multiapi\Arco\Cli\Translator($lang, \Multiapi\Arco\Arco::packageRoot() . '/lang'))->trans('deploy.endpoint_record_failed', $failed[0][1]);
+            self::assertStringContainsString('lambda:TagResource', $text);
+            self::assertStringNotContainsString('{', $text);
+        }
+    }
+
+    public function test_emulator_skips_endpoints(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::endpointEnvironment('vpce-a', self::vpcEndpoints([])), 'GetRole' => [self::roleTags(), new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]])]]);
+        $steps = [];
+
+        self::behindEmulator(function () use ($mocks, &$steps): void {
+            $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), endpointDecider: fn () => throw new \LogicException('never asked'));
+            $deployer->checkOwnership($this->endpointsConfig(), fn () => null);
+            $prepared = $deployer->prepare($this->endpointsConfig(), $this->package(), null, [], function (string $key) use (&$steps): void { $steps[] = $key; });
+            self::assertSame([], $prepared->releaseEndpoints);
+        });
+
+        self::assertSame([], self::only($mocks, ...self::EC2_ENDPOINT_CALLS, ...['TagResource', 'UntagResource']));
+        self::assertContains('deploy.vpc_unsupported_emulator', $steps);
+        self::assertNotContains('deploy.step_endpoints', $steps);
+    }
+
+    public function test_new_endpoint_keys_are_translated(): void
+    {
+        foreach (['deploy.step_endpoints', 'deploy.endpoint_routes_missing', 'deploy.endpoint_skipped', 'deploy.endpoint_cancelled'] as $key) {
+            foreach (['en', 'es'] as $lang) {
+                $lines = require \Multiapi\Arco\Arco::packageRoot() . "/lang/$lang.php";
+                self::assertArrayHasKey($key, $lines, "$lang: $key");
+            }
+        }
     }
 }

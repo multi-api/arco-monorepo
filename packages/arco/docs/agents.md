@@ -301,7 +301,7 @@ an environment).
 | `domain(string\|array)` | none | Up to 10 lowercase hostnames, no wildcards; CloudFront + ACM (us-east-1) + DNS |
 | `dns(string\|false)` | Route 53 of the deploy account | `'<profile>'` (Route 53 in another account), `'cloudflare'` (token in `CLOUDFLARE_API_TOKEN`), `false` (Arco prints the records) |
 | `certificate(string $arn)` | looked up or requested | Issued ACM certificate in us-east-1 covering every domain |
-| `vpc(array\|false $subnets, array $securityGroups = [])` | none | `vpc(subnets: ['subnet-...'], securityGroups: ['sg-...'])`: 1 to 16 subnets, 1 to 5 security groups; `vpc(false)` clears an app-level one. See [VPC](#add-a-vpc) |
+| `vpc(array\|false $subnets, array $securityGroups = [], array $endpoints = [])` | none | `vpc(subnets: ['subnet-...'], securityGroups: ['sg-...'])`: 1 to 16 subnets, 1 to 5 security groups; `endpoints: ['s3', 'dynamodb']` (or `'s3' => 'vpce-...'` for the user's own endpoint) routes S3/DynamoDB through free gateway endpoints; `vpc(false)` clears an app-level one. See [VPC](#add-a-vpc) |
 | `runtime(callable)` | PHP 8.5 | See below |
 
 ### Runtime (`->runtime(fn (Runtime $r) => $r->...)`)
@@ -394,27 +394,34 @@ For an app that must reach RDS, ElastiCache or another private resource:
 1. Get from the user the subnet ids (two Availability Zones for production) and a security group allowing the
    egress the app needs (database port, 443).
 2. Make sure the subnets have a **NAT gateway** (or VPC endpoints): a function in a VPC has no internet, and the app
-   calls SSM and Secrets Manager (secret references), SQS, S3 and DynamoDB at runtime. Arco does not check routing; a
-   missing NAT shows up as timeouts.
+   calls SSM and Secrets Manager (secret references), SQS, S3 and DynamoDB at runtime. For S3 and DynamoDB add
+   `endpoints: ['s3', 'dynamodb']`: Arco creates or reuses free gateway endpoints (never deletes one it did not
+   create). SSM, Secrets Manager and SQS still need a NAT or interface endpoints the user creates. Arco does not check
+   that routing; a missing NAT shows up as timeouts.
 3. Make sure the deploy profile has the [VPC permissions](getting-started.md#permissions-for-vpc)
    (`lambda:*NetworkConnector*`, `lambda:PassNetworkConnector`, `iam:PassRole` on `arco-<app>-*-network`,
-   `ec2:Describe*` for subnets, security groups, VPCs and network interfaces, `lambda:ListFunctions`).
+   `ec2:Describe*` for subnets, security groups, VPCs and network interfaces, `lambda:ListFunctions`; with
+   `endpoints`, also `ec2:DescribeRouteTables`, `ec2:DescribeVpcEndpoints`, `ec2:CreateVpcEndpoint`,
+   `ec2:ModifyVpcEndpoint`, `ec2:DeleteVpcEndpoints`, `ec2:CreateTags`, `ec2:DeleteTags`).
 4. Edit `arco.php` (no CLI command for this):
    ```php
    ->environment('production', fn (Environment $env) => $env
-       ->vpc(subnets: ['subnet-0abc1234', 'subnet-0def5678'], securityGroups: ['sg-0abc1234']))
+       ->vpc(subnets: ['subnet-0abc1234', 'subnet-0def5678'], securityGroups: ['sg-0abc1234'],
+           endpoints: ['s3', 'dynamodb']))
    ```
 5. Validate, then deploy. The first deploy creates the network connector and waits about 4 minutes. `arco info`
-   shows the connector id and state (`vpc` in `--json`).
+   shows the connector id and state, and the gateway endpoints (`vpc` and `vpc.endpoints` in `--json`).
+   If the VPC only has the user's own endpoint and it misses some route tables, a deploy without a terminal (`-n`,
+   `--json`, `--yes`) fails with `deploy.endpoint_routes_missing`; the message gives the `aws ec2 modify-vpc-endpoint`
+   command and the `endpoints: ['s3' => 'vpce-...']` line. Ask the user which one; never pick for them.
 6. To leave the VPC remove `vpc()` (or `->vpc(false)` on the environment) and deploy: Arco deletes the connector
    and its operator role after the deploy is verified, and may wait up to about 20 minutes for Lambda to delete the
-   network interfaces.
+   network interfaces. Arco's gateway endpoints are shared by the environments of the VPC and deleted when the last
+   one leaves; route tables are never removed.
 
 With `role()`, the user must add the network interface permissions (`AWSLambdaVPCAccessExecutionRole`) to that
-role. Floci skips `vpc()` with the note `deploy.vpc_unsupported_emulator`. Details: [VPC](configuration.md#vpc).
-
-<!-- 0.12.1: vpc(..., endpoints: [...]) for S3/DynamoDB gateway endpoints is on branch feat/gateway-endpoints.
-     Document it here (step 2 and the vpc() row above) once that branch is merged. -->
+role. Floci skips `vpc()` with the note `deploy.vpc_unsupported_emulator`. Details: [VPC](configuration.md#vpc),
+[Gateway endpoints](configuration.md#gateway-endpoints).
 
 ### Add a custom domain
 
@@ -591,6 +598,10 @@ not. The most common ones:
 | `cloudflare.token_missing`, `cloudflare.token_rejected`, `cloudflare.zone_missing` | `dns('cloudflare')` without a usable token or zone | The user sets `CLOUDFLARE_API_TOKEN` (Zone → DNS → Edit, Zone → Zone → Read) |
 | `deploy.network_failed` | The VPC connector ended `FAILED` (bad subnet or security group, no free IPs) | Fix `vpc()` and deploy again |
 | `deploy.network_timeout` | The connector was not ready in time | Deploy again once it settles |
+| `deploy.endpoint_routes_missing` | Only the user's own S3/DynamoDB gateway endpoint exists and it misses route tables; no terminal to ask | Show the user both fixes from the message (the `aws ec2 modify-vpc-endpoint` command, or naming the endpoint in `vpc()`); let them choose |
+| `deploy.endpoint_not_found`, `_wrong_type`, `_wrong_service`, `_wrong_vpc`, `_vpc_mixed` | A `vpce-...` in `endpoints` is not a gateway endpoint for that service in the subnets' VPC, or the subnets span VPCs | Fix the id (or use the service name to let Arco manage it), or use subnets of one VPC |
+| `deploy.endpoint_conflict`, `deploy.endpoint_timeout` | Another deploy changed the endpoint at the same time, or it was not available in time | Deploy again |
+| `deploy.endpoint_tag_limit` | About 47 environments already share the endpoint (EC2's 50-tag limit) | Remove stale `arco:uses:*` tags, or name another endpoint |
 | `deploy.boundary_denied` | IAM denied a role write under a permissions boundary | The boundary passed must be exactly the one the account requires; ask the account owner |
 
 Warnings whose message starts with "The deploy is live and verified" (`deploy.scheduler_failed`,

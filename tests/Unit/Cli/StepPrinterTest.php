@@ -40,8 +40,26 @@ final class StepPrinterTest extends TestCase
             "  • deploy.step_upload {\"size\":48}\n"
             . "    25% (step.progress_mb {\"sent\":12,\"total\":48})\n"
             . "    50% (step.progress_mb {\"sent\":29,\"total\":48})\n"
-            . "    75% (step.progress_mb {\"sent\":48,\"total\":48})\n"
             . "    100% (step.progress_mb {\"sent\":48,\"total\":48})\n",
+            $output->fetch(),
+            'a jump past 75% prints only the mark it reached, not 75% with the bytes of 100%',
+        );
+    }
+
+    public function test_a_jump_to_the_end_prints_only_100_without_a_terminal(): void
+    {
+        $output = new BufferedOutput();
+        $printer = $this->printer($output, false);
+
+        // The console zip is sent, then the runtime binary is already in the bucket and counts as sent at once.
+        $printer('deploy.step_upload_console', ['size' => 179]);
+        $printer('package.progress', ['percent' => 25, 'sent' => 45, 'total' => 179]);
+        $printer('package.progress', ['percent' => 100, 'sent' => 179, 'total' => 179]);
+
+        self::assertSame(
+            "  • deploy.step_upload_console {\"size\":179}\n"
+            . "    25% (step.progress_mb {\"sent\":45,\"total\":179})\n"
+            . "    100% (step.progress_mb {\"sent\":179,\"total\":179})\n",
             $output->fetch(),
         );
     }
