@@ -33,6 +33,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `_create_failed`, `_modify_failed` and `_cancelled`. `arco info --json` gains `vpc.endpoints` (`[]` without `endpoints`,
   `null` when unreadable). Without `endpoints` there are no new calls or permissions
   ([Gateway endpoints](docs/configuration.md#gateway-endpoints)).
+- **Added:** documentation for coding agents: [`docs/agents.md`](docs/agents.md) (running Arco without a terminal,
+  every command and `arco.php` method, workflows, error keys and their fixes), an [`llms.txt`](llms.txt) index, and a
+  Claude Code skill in `skills/arco` (copy it into a project's `.claude/skills/`).
 - **Fixed:** `arco remove` printed the code of a kept bucket (`… was kept in AWS: some`) instead of saying whether
   it still has files. Its steps now print the way `deploy` prints them.
 
