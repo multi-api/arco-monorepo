@@ -421,7 +421,7 @@ final class InfoCommand extends ArcoCommand
     {
         $s = $config->sources;
         return [
-            'region' => [$config->region, 'app'],
+            'region' => [$config->region, $s['region'] ?? 'app'],
             'account' => [$config->account, $s['account']],
             'profile' => [$config->profile, $s['profile']],
             'concurrency' => [$config->concurrency, $s['concurrency']],
@@ -437,7 +437,7 @@ final class InfoCommand extends ArcoCommand
             'consoleTimeout' => [$config->consoleTimeout, $s['consoleTimeout']],
             'protected' => [$config->isProtected(), $s['protected']],
             'deployCommands' => [$config->deployCommands === [] ? null : implode('; ', $config->deployCommands), $s['deployCommands']],
-            'permissions' => [count($config->permissions), $config->permissions === [] ? 'default' : 'app/environment'],
+            'permissions' => [count($config->permissions), $config->permissions === [] ? 'default' : ($s['permissions'] ?? 'app/environment')],
             'permissionsBoundary' => [$config->permissionsBoundary, $s['permissionsBoundary']],
             'vpc' => [$config->vpc, $s['vpc']],
             'domains' => [$config->domains === [] ? null : implode(', ', $config->domains), $s['domains']],

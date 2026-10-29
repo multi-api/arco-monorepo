@@ -83,6 +83,9 @@ final readonly class ConfigLayer
         if (! is_array($environments) || count($environments) !== 1) {
             throw self::invalid('/environments', 'expected exactly one environment');
         }
+        if (array_is_list($environments)) {
+            throw self::invalid('/environments', 'expected an object keyed by environment name');
+        }
         $environment = (string) array_key_first($environments);
         $entry = $environments[array_key_first($environments)];
         $base = '/environments/' . self::pointer($environment);

@@ -62,8 +62,8 @@ final class ConfigResolver
     }
 
     /**
-     * What arco.php would hold for a config layer used without one: the app, its region and the layer's
-     * environment, everything else Arco's defaults.
+     * What arco.php would hold for a config layer used without one: the app and the layer's environment,
+     * everything else Arco's defaults. Both name and region must be in the layer; resolve() takes the region from it.
      *
      * @return array<string, mixed>
      */
@@ -75,7 +75,8 @@ final class ConfigResolver
         if ($layer->region === null) {
             throw ConfigException::make('config.layer_missing', ['key' => 'region']);
         }
-        return App::make($layer->name)->region($layer->region)->environment($layer->environment)->toArray();
+        // The region is left to the layer, so it is reported as the layer's (source cloud).
+        return App::make($layer->name)->environment($layer->environment)->toArray();
     }
 
     /**
@@ -161,6 +162,8 @@ final class ConfigResolver
             }
             $region ??= $layer->region;
         }
+        // Only the layer set it (also without arco.php: layerOnly() leaves the region to the layer).
+        $sources['region'] = $region !== null && ! isset($raw['region']) ? 'cloud' : 'app';
 
         $variables = [...$appVariables, ...$env['variables']];
         foreach (array_keys($variables) as $key) {
@@ -265,6 +268,11 @@ final class ConfigResolver
         $logRetention = $setting('logRetention');
         $permissionsBoundary = $setting('permissionsBoundary');
         $vpc = self::vpc($setting('vpc'));
+
+        if ([...$appPermissions, ...($env['permissions'] ?? [])] === [] && ($cloud['permissions'] ?? []) !== []) {
+            // Only when the layer alone has statements: info shows arco.php's as app/environment.
+            $sources['permissions'] = 'cloud';
+        }
 
         $errors = array_merge(...array_values($conflicts));
         if ($errors !== []) {

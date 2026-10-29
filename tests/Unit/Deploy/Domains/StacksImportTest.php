@@ -188,6 +188,68 @@ final class StacksImportTest extends TestCase
         }
     }
 
+    public function test_an_empty_stack_left_in_review_is_deleted_before_the_import(): void
+    {
+        // An earlier IMPORT on a new stack that was interrupted: REVIEW_IN_PROGRESS never moves on by itself.
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stack('REVIEW_IN_PROGRESS'),
+            self::stack('REVIEW_IN_PROGRESS'),                    // Stacks::delete
+            new Result([]),                                       // DeleteStack
+            self::missing(),
+            new Result(['Id' => 'cs']),
+            new Result(['Status' => 'CREATE_COMPLETE']),
+            new Result([]),
+            new Result(['ExecutionStatus' => 'EXECUTE_COMPLETE']),
+            self::stack('IMPORT_COMPLETE'),
+        );
+
+        $this->import($mocks);
+
+        self::assertSame(['DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks'], $mocks->calls, 'no wait on a status that never changes');
+    }
+
+    public function test_a_failed_import_after_a_review_stack_deletes_the_empty_stack_it_creates(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stack('REVIEW_IN_PROGRESS'),
+            self::stack('REVIEW_IN_PROGRESS'),
+            new Result([]),                                       // DeleteStack
+            self::missing(),
+            new Result(['Id' => 'cs']),
+            new Result(['Status' => 'FAILED', 'StatusReason' => 'no']),
+            new Result([]),                                       // DeleteChangeSet
+            new Result([]),                                       // DeleteStack
+        );
+
+        try {
+            $this->import($mocks);
+            self::fail('expected deploy.import_failed');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.import_failed', $e->key);
+        }
+        self::assertSame(['DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'DeleteChangeSet', 'DeleteStack'], $mocks->calls);
+    }
+
+    public function test_deploy_replaces_an_empty_stack_left_in_review(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stack('REVIEW_IN_PROGRESS'),
+            self::stack('REVIEW_IN_PROGRESS'),                    // Stacks::delete
+            new Result([]),                                       // DeleteStack
+            self::missing(),
+            new Result([]),                                       // CreateStack
+            new Result(['Stacks' => [['StackName' => self::NAME, 'StackStatus' => 'CREATE_COMPLETE', 'Outputs' => [['OutputKey' => 'Queue', 'OutputValue' => 'url']]]]]),
+        );
+
+        $outputs = (new Stacks($mocks->clients()->cloudFormation(), AwsMocks::noSleep()))->deploy(self::NAME, '{"Resources":{}}', ['arco:app' => 'shop']);
+
+        self::assertSame(['Queue' => 'url'], $outputs);
+        self::assertSame(['DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'CreateStack', 'DescribeStacks'], $mocks->calls);
+    }
+
     public function test_a_stack_that_is_not_updatable_is_refused_before_the_change_set(): void
     {
         $mocks = new AwsMocks();

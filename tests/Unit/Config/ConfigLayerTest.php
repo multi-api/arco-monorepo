@@ -133,6 +133,13 @@ final class ConfigLayerTest extends TestCase
         $this->invalid(['schema' => 1], '/environments');
     }
 
+    public function test_environments_must_be_an_object_not_a_list(): void
+    {
+        // [ {...} ] would otherwise name the environment "0".
+        $this->invalid(['schema' => 1, 'environments' => [['settings' => ['timeout' => 30]]]], '/environments');
+        $this->invalid('{"schema": 1, "environments": [{}]}', '/environments');
+    }
+
     public function test_unknown_keys_are_refused(): void
     {
         $this->invalid($this->layer([], ['exclude' => []]), '/exclude');

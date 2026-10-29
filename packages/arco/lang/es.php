@@ -237,6 +237,7 @@ return [
     'deploy.queue_updated' => 'Cola {queue}: {name} al día',
     'deploy.queue_changed' => 'Cola {queue}: {name} actualizada',
     'deploy.step_import' => 'Importando {count} recursos conservados en el stack de recursos {stack}',
+    'deploy.step_import_one' => 'Importando 1 recurso conservado en el stack de recursos {stack}',
     'deploy.queue_adopted' => 'Cola {queue}: adoptada {name}, con sus mensajes',
     'deploy.import_failed' => 'CloudFormation no pudo importar los recursos conservados en el stack {stack}: {reason}. La importación no se aplicó (CloudFormation revierte una importación fallida), no se cambió nada más y los recursos siguen en AWS con sus datos. Corrige la causa y vuelve a desplegar.',
     'deploy.variable_overridden' => 'Tu variables() en arco.php define {key}, así que se usa tu valor en vez del que Arco pondría por los recursos que declaraste.',

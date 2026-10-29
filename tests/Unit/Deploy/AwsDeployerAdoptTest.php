@@ -246,7 +246,7 @@ final class AwsDeployerAdoptTest extends TestCase
         self::assertSame($deployed['Outputs'], $template['Outputs']);
         self::assertSame([
             ['deploy.step_resources', ['stack' => self::STACK]],
-            ['deploy.step_import', ['stack' => self::STACK, 'count' => 1]],
+            ['deploy.step_import_one', ['stack' => self::STACK, 'count' => 1]],
             ['deploy.queue_changed', ['queue' => 'emails', 'name' => 'shop-production-emails']],
         ], $steps);
     }
@@ -443,6 +443,74 @@ final class AwsDeployerAdoptTest extends TestCase
         }
         self::assertSame(['DescribeStacks', 'DescribeStackResources', 'GetQueueUrl', 'ListQueueTags', 'GetTemplate'], $mocks->calls);
         self::assertFalse($deployer->changed(), 'a refusal before any change');
+    }
+
+    public function test_a_stack_left_in_review_has_no_running_template(): void
+    {
+        // An interrupted import on a new stack leaves it empty in REVIEW_IN_PROGRESS: nothing to read, nothing refused.
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stack('REVIEW_IN_PROGRESS'),
+            new Result(['StackResources' => []]),
+            new Result(['QueueUrl' => self::QUEUE_URL]),
+            new Result(['Tags' => self::tags('queue:emails')]),
+            new Result(['QueueUrl' => self::DLQ_URL]),
+            new Result(['Tags' => self::tags('queue:emails:dlq')]),
+        );
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->checkAdoptions(self::adoptQueue(), fn () => null);
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'GetQueueUrl', 'ListQueueTags', 'GetQueueUrl', 'ListQueueTags'], $mocks->calls, 'no GetTemplate');
+    }
+
+    public function test_an_import_replaces_a_stack_left_in_review(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stack('REVIEW_IN_PROGRESS'),
+            new Result(['StackResources' => []]),
+            new Result(['QueueUrl' => self::QUEUE_URL]),
+            new Result(['Tags' => self::tags('queue:emails')]),
+            new Result(['QueueUrl' => self::DLQ_URL]),
+            new Result(['Tags' => self::tags('queue:emails:dlq')]),
+            self::stack('REVIEW_IN_PROGRESS'),                     // Stacks::import
+            self::stack('REVIEW_IN_PROGRESS'),                     // Stacks::delete
+            new Result([]),                                        // DeleteStack
+            ...self::importThenUpdate(),
+        );
+
+        $steps = self::deployResources($mocks, self::adoptQueue());
+
+        self::assertSame([
+            'DescribeStacks', 'DescribeStackResources', 'GetQueueUrl', 'ListQueueTags', 'GetQueueUrl', 'ListQueueTags',
+            'DescribeStacks', 'DescribeStacks', 'DeleteStack',
+            'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks',
+            'DescribeStacks', 'UpdateStack', 'DescribeStacks',
+        ], $mocks->calls);
+        self::assertContains(['deploy.queue_adopted', ['queue' => 'emails', 'name' => 'shop-production-emails']], $steps);
+    }
+
+    public function test_a_deploy_without_imports_replaces_a_stack_left_in_review(): void
+    {
+        $mocks = new AwsMocks();
+        $missing = AwsMocks::error(SqsException::class, 'GetQueueUrl', 'AWS.SimpleQueueService.NonExistentQueue', 400);
+        $mocks->handler->append(
+            self::stack('REVIEW_IN_PROGRESS'),
+            new Result(['StackResources' => []]),
+            $missing,
+            $missing,
+            self::stack('REVIEW_IN_PROGRESS'),                     // Stacks::deploy
+            self::stack('REVIEW_IN_PROGRESS'),                     // Stacks::delete
+            new Result([]),                                        // DeleteStack
+            self::stackMissing(),
+            new Result([]),                                        // CreateStack
+            self::stack('CREATE_COMPLETE'),
+        );
+
+        $steps = self::deployResources($mocks, self::adoptQueue());
+
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'GetQueueUrl', 'GetQueueUrl', 'DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'CreateStack', 'DescribeStacks'], $mocks->calls, 'no GetTemplate');
+        self::assertSame('deploy.queue_created', $steps[1][0]);
     }
 
     public function test_check_adoptions_makes_no_call_without_adopt_entries(): void

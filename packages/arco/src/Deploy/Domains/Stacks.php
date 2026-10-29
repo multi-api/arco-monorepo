@@ -15,6 +15,11 @@ final class Stacks
     private const SUCCESS = ['CREATE_COMPLETE', 'UPDATE_COMPLETE'];
     /** States UpdateStack accepts. */
     private const UPDATABLE = ['CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE', 'IMPORT_COMPLETE', 'IMPORT_ROLLBACK_COMPLETE'];
+    /**
+     * States of a stack that holds no resource and can only be deleted: a first creation that rolled back, or
+     * the REVIEW_IN_PROGRESS a change set on a new stack leaves when it is never executed.
+     */
+    public const EMPTY = ['ROLLBACK_COMPLETE', 'ROLLBACK_FAILED', 'REVIEW_IN_PROGRESS'];
 
     /** @param string $keys prefix of the error keys (failed, not_updatable): the domain flows keep their own wording */
     public function __construct(private readonly CloudFormationClient $cloudFormation, private readonly Sleeper $sleeper, private readonly string $keys = 'stack.')
@@ -73,11 +78,11 @@ final class Stacks
     public function deploy(string $name, string $body, array $tags, int $timeout = 1800): array
     {
         $stack = $this->stack($name);
-        if ($stack !== null && str_ends_with((string) Aws::string($stack['StackStatus'] ?? null), '_IN_PROGRESS')) {
+        if (self::busy($stack)) {
             $stack = $this->waitStable($name, $timeout);
         }
-        // A first creation that rolled back can only be deleted.
-        if ($stack !== null && in_array($stack['StackStatus'] ?? null, ['ROLLBACK_COMPLETE', 'ROLLBACK_FAILED'], true)) {
+        // A first creation that rolled back, or an empty stack left by an interrupted import, can only be deleted.
+        if ($stack !== null && in_array($stack['StackStatus'] ?? null, self::EMPTY, true)) {
             $this->delete($name, $timeout);
             $stack = null;
         }
@@ -125,10 +130,10 @@ final class Stacks
     public function import(string $name, string $body, array $resources, array $tags, int $timeout = 1800): void
     {
         $stack = $this->stack($name);
-        if ($stack !== null && str_ends_with((string) Aws::string($stack['StackStatus'] ?? null), '_IN_PROGRESS')) {
+        if (self::busy($stack)) {
             $stack = $this->waitStable($name, $timeout);
         }
-        if ($stack !== null && in_array($stack['StackStatus'] ?? null, ['ROLLBACK_COMPLETE', 'ROLLBACK_FAILED'], true)) {
+        if ($stack !== null && in_array($stack['StackStatus'] ?? null, self::EMPTY, true)) {
             $this->delete($name, $timeout);
             $stack = null;
         }
@@ -217,7 +222,7 @@ final class Stacks
     public function delete(string $name, int $timeout = 1800): void
     {
         $stack = $this->stack($name);
-        if ($stack !== null && str_ends_with((string) Aws::string($stack['StackStatus'] ?? null), '_IN_PROGRESS')) {
+        if (self::busy($stack)) {
             $stack = $this->waitStable($name, $timeout);
         }
         if ($stack === null) {
@@ -230,12 +235,24 @@ final class Stacks
         }
     }
 
-    /** @return array<string, mixed>|null the stack once no operation is in progress; null when it no longer exists */
+    /**
+     * Whether an operation runs on the stack, one that ends by itself. REVIEW_IN_PROGRESS (a change set on a
+     * new stack that was never executed) does not: it stays until the stack is deleted.
+     *
+     * @param array<string, mixed>|null $stack
+     */
+    private static function busy(?array $stack): bool
+    {
+        $status = $stack === null ? '' : (string) Aws::string($stack['StackStatus'] ?? null);
+        return str_ends_with($status, '_IN_PROGRESS') && $status !== 'REVIEW_IN_PROGRESS';
+    }
+
+    /** @return array<string, mixed>|null the stack once no operation is in progress (or left in review); null when it no longer exists */
     private function waitStable(string $name, int $timeout): ?array
     {
         for ($waited = 0; ; $waited += self::POLL) {
             $stack = $this->stack($name);
-            if ($stack === null || ! str_ends_with((string) Aws::string($stack['StackStatus'] ?? null), '_IN_PROGRESS')) {
+            if (! self::busy($stack)) {
                 return $stack;
             }
             if ($waited >= $timeout) {

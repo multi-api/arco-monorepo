@@ -262,6 +262,17 @@ final class ConfigResolverLayerTest extends TestCase
         self::assertSame([], $config->notes);
     }
 
+    public function test_region_source(): void
+    {
+        self::assertSame('app', ConfigResolver::resolve(self::raw(), 'production')->sources['region'], 'without a layer');
+        self::assertSame('app', ConfigResolver::resolve(self::raw(), 'production', self::layer([]))->sources['region'], 'arco.php has it too');
+        $noRegion = App::make('shop')->environment('production')->toArray();
+        self::assertSame('cloud', ConfigResolver::resolve($noRegion, 'production', self::layer([]))->sources['region']);
+        $layer = self::layer([]);
+        $config = ConfigResolver::resolve(ConfigResolver::layerOnly($layer), 'production', $layer);
+        self::assertSame(['us-east-1', 'cloud'], [$config->region, $config->sources['region']], 'without arco.php');
+    }
+
     public function test_layer_only(): void
     {
         $layer = self::layer(['queues' => ['emails' => []]]);

@@ -194,8 +194,8 @@ final class AwsDeployer implements Deployer
     }
 
     /**
-     * The template the stack runs, kept unchanged by an import; null for a stack to create (none, or one whose
-     * creation rolled back and is deleted first).
+     * The template the stack runs, kept unchanged by an import; null for a stack to create (none, or an empty
+     * one deleted first: its creation rolled back, or an interrupted import left it in REVIEW_IN_PROGRESS).
      *
      * @param array{status: string}|null $stack
      * @return array<string, mixed>|null
@@ -203,7 +203,7 @@ final class AwsDeployer implements Deployer
      */
     private static function deployedTemplate(Stacks $stacks, string $name, ?array $stack): ?array
     {
-        if ($stack === null || in_array($stack['status'], ['ROLLBACK_COMPLETE', 'ROLLBACK_FAILED'], true)) {
+        if ($stack === null || in_array($stack['status'], Stacks::EMPTY, true)) {
             return null;
         }
         return $stacks->template($name) ?? throw DeployException::make('deploy.import_failed', ['stack' => $name, 'reason' => 'cloudformation:GetTemplate']);
@@ -1673,12 +1673,13 @@ final class AwsDeployer implements Deployer
             $adopted = [];
             if ($imports === []) {
                 // What the stack runs now, to say which resources this update changes. Unknown: reported as changed.
-                $changed = $stack === null ? [] : ResourcesStack::changedResources($stacks->template($name), $template);
+                // A stack left in review holds nothing yet (and no template to read).
+                $changed = $stack === null || $stack['status'] === 'REVIEW_IN_PROGRESS' ? [] : ResourcesStack::changedResources($stacks->template($name), $template);
             } else {
                 // The import must keep the running template as it is: it cannot be guessed.
                 $deployed = self::deployedTemplate($stacks, $name, $stack);
                 $changed = $deployed === null ? [] : ResourcesStack::changedResources($deployed, $template);
-                $onStep('deploy.step_import', ['stack' => $name, 'count' => count($imports)]);
+                $onStep(count($imports) === 1 ? 'deploy.step_import_one' : 'deploy.step_import', ['stack' => $name, 'count' => count($imports)]);
                 $stacks->import($name, ResourcesStack::body(ResourcesStack::importTemplate($config, $deployed, array_column($imports, 'LogicalResourceId'))), $imports, self::tags($config));
                 $adopted = array_fill_keys(array_column($imports, 'LogicalResourceId'), true);
             }

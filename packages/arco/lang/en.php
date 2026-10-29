@@ -237,6 +237,7 @@ return [
     'deploy.queue_updated' => 'Queue {queue}: {name} up to date',
     'deploy.queue_changed' => 'Queue {queue}: {name} updated',
     'deploy.step_import' => 'Importing {count} retained resources into the resources stack {stack}',
+    'deploy.step_import_one' => 'Importing 1 retained resource into the resources stack {stack}',
     'deploy.queue_adopted' => 'Queue {queue}: adopted {name}, with its messages',
     'deploy.import_failed' => 'CloudFormation could not import the retained resources into the stack {stack}: {reason}. The import was not applied (CloudFormation rolls a failed import back), nothing else was changed, and the resources stay in AWS with their data. Fix the cause and deploy again.',
     'deploy.variable_overridden' => 'Your variables() in arco.php set {key}, so your value is used instead of the one Arco would set for the resources you declared.',

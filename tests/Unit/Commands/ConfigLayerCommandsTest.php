@@ -306,6 +306,41 @@ final class ConfigLayerCommandsTest extends TestCase
         self::assertMatchesRegularExpression('/timeout\s+90\s+cloud/', $tester->getDisplay());
     }
 
+    public function test_info_table_shows_cloud_for_region_and_permissions_from_the_layer(): void
+    {
+        $this->project();
+        $layer = $this->layer(['permissions' => [['Effect' => 'Allow', 'Action' => 's3:GetObject', 'Resource' => '*']]]);
+
+        $tester = $this->infoTester();
+        $tester->execute(['--config-layer' => $layer], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertMatchesRegularExpression('/region\s+us-east-1\s+cloud *\n/', $tester->getDisplay());
+        self::assertMatchesRegularExpression('/permissions\s+1\s+cloud *\n/', $tester->getDisplay());
+    }
+
+    public function test_info_table_keeps_app_sources_when_arco_php_has_them(): void
+    {
+        $this->project(<<<'PHP'
+            <?php
+            use Multiapi\Arco\Config\App;
+            use Multiapi\Arco\Config\Environment;
+
+            return App::make('shop')
+                ->region('us-east-1')
+                ->permissions([['Effect' => 'Allow', 'Action' => 'sqs:SendMessage', 'Resource' => '*']])
+                ->environment('production');
+            PHP);
+        $layer = $this->layer(['permissions' => [['Effect' => 'Allow', 'Action' => 's3:GetObject', 'Resource' => '*']]]);
+
+        $tester = $this->infoTester();
+        $tester->execute(['--config-layer' => $layer], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertMatchesRegularExpression('/region\s+us-east-1\s+app *\n/', $tester->getDisplay());
+        self::assertMatchesRegularExpression('/permissions\s+2\s+app\/environment *\n/', $tester->getDisplay());
+    }
+
     public function test_without_layer_and_arco_php_is_config_not_found(): void
     {
         $this->project();

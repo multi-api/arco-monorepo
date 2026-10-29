@@ -162,8 +162,8 @@ interface Deployer
      *         deploy.resource_replaced when a name would change. After the stack fails:
      *         deploy.public_blocked or deploy.public_policy_denied for a refused public bucket policy;
      *         deploy.import_failed when importing the resources of `adopt` entries fails (steps
-     *         deploy.step_import, then deploy.queue_adopted, deploy.storage_adopted or deploy.generic_table_adopted
-     *         instead of the *_created step)
+     *         deploy.step_import, or deploy.step_import_one for one resource, then deploy.queue_adopted,
+     *         deploy.storage_adopted or deploy.generic_table_adopted instead of the *_created step)
      */
     public function deployResources(AppConfig $config, Closure $onStep): void;
 
