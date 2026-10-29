@@ -24,7 +24,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   (`{stack, count}`; `deploy.step_import_one` with the same params for one resource), `deploy.queue_adopted`, `deploy.storage_adopted` and `deploy.generic_table_adopted`; new error
   `deploy.import_failed` (`{stack, reason}`). New deploy permissions: `cloudformation:CreateChangeSet`,
   `DescribeChangeSet`, `ExecuteChangeSet`, `DeleteChangeSet` on `stack/arco-*` (and the tag and describe reads in
-  [Permissions](docs/getting-started.md#permissions-for-queues)); nothing is needed without `adopt`.
+  [Permissions](docs/getting-started.md#permissions-for-queues)); nothing is needed without `adopt`. A resources
+  stack left in `REVIEW_IN_PROGRESS` by an interrupted import is deleted and created again by the next deploy, after
+  the ownership check (it holds no resources).
 - **Added:** `arco info --resources --json` gives every resource `source` (`arco.php`, `cloud`, `default` or `null`)
   and `options` (the resolved options of its queue, bucket, table or setting, `null` when none), and gains the top-level
   keys `variables` (`[{name, source}]`, never values) and `config` (`[{kind, name, source, options}]` for everything

@@ -177,7 +177,12 @@ An import uses a CloudFormation `IMPORT` change set: the step `deploy.step_impor
 `deploy.generic_table_adopted` (`{table, name}`) per resource instead of `_created`. Imported resources keep their
 data and are `Retain` during the import; the normal deploy then applies every option (bucket policy, redrive, TTL)
 and the usual retention policy. If CloudFormation cannot import, it rolls the import back and the deploy fails with
-`deploy.import_failed` (`{stack, reason}`); the resources stay in AWS with their data. `deploy.import_failed` is also
+`deploy.import_failed` (`{stack, reason}`); the resources stay in AWS with their data. An import into a resources
+stack that does not exist yet creates the stack first in `REVIEW_IN_PROGRESS`; if that import is cut short (the
+process or the CI job is killed, an AWS call fails), the next deploy finds the stack still in that state, holding no
+resources, and deletes and creates it again after the usual ownership check. Do not run two deploys of the same
+environment at once: the second one can take the first one's stack in review for an abandoned one, and the first
+import then fails (nothing is lost; deploy again). `deploy.import_failed` is also
 the refusal of the checks, with `reason` `cloudformation:GetTemplate`, when an import is due and the template the
 resources stack runs cannot be read (the import must keep it as it is): nothing is written. A read the profile is
 denied during the checks is reported like it is without `adopt`: `deploy.lookup_denied` (`{permission, name}`) for a
