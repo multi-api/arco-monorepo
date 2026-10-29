@@ -14,6 +14,7 @@ use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\AppConfig;
+use Multiapi\Arco\Config\ConfigLayer;
 use Multiapi\Arco\Config\GenericTableConfig;
 use Multiapi\Arco\Deploy\RevisionFactory;
 use Multiapi\Arco\Config\PermissionsBoundary;
@@ -55,7 +56,8 @@ final class InfoCommand extends ArcoCommand
             ->addOption('profile', 'p', InputOption::VALUE_REQUIRED, 'AWS profile to use')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Print JSON')
             ->addOption('resources', null, InputOption::VALUE_NONE, 'List every AWS resource tagged for the environment')
-            ->addOption(PermissionsBoundary::OPTION, null, InputOption::VALUE_REQUIRED, 'Show the permissions boundary as deploy would use it with this flag');
+            ->addOption(PermissionsBoundary::OPTION, null, InputOption::VALUE_REQUIRED, 'Show the permissions boundary as deploy would use it with this flag')
+            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, 'JSON config layer merged over arco.php (or used without it); also ARCO_CONFIG_LAYER');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
