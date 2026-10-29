@@ -148,35 +148,8 @@ final class ConfigResolver
             }
         }
 
-        $name = self::nullableString($raw['name'] ?? null) ?? '';
-        $region = self::nullableString($raw['region'] ?? null);
-        if ($layer?->name !== null) {
-            if ($name !== '' && $name !== $layer->name) {
-                $conflicts['name'][] = self::conflict('name', $layer->name);
-            }
-            $name = $name !== '' ? $name : $layer->name;
-        }
-        if ($layer?->region !== null) {
-            if ($region !== null && $region !== $layer->region) {
-                $conflicts['region'][] = self::conflict('region', $layer->region);
-            }
-            $region ??= $layer->region;
-        }
-        // Only the layer set it (also without arco.php: layerOnly() leaves the region to the layer).
-        $sources['region'] = $region !== null && ! isset($raw['region']) ? 'cloud' : 'app';
-
-        $variables = [...$appVariables, ...$env['variables']];
-        foreach (array_keys($variables) as $key) {
-            $sources["variable:$key"] = array_key_exists($key, $env['variables']) ? 'environment' : 'app';
-        }
-        foreach ($cloud['variables'] ?? [] as $key => $value) {
-            if (! array_key_exists($key, $variables)) {
-                $variables[$key] = $value;
-                $sources["variable:$key"] = 'cloud';
-            } elseif ($variables[$key] !== $value) {
-                $conflicts['variable'][] = self::conflict('variable', (string) $key);
-            }
-        }
+        [$name, $region] = self::layerNameAndRegion($raw, $layer, $sources, $conflicts);
+        $variables = self::layerVariables($appVariables, $env['variables'], $cloud['variables'] ?? [], $sources, $conflicts);
         /** @var \Closure(string): (string|int|null) $runtimeValue */
         $runtimeValue = static function (string $key) use ($appRuntime, $env, &$sources): mixed {
             if (array_key_exists($key, $env['runtime'])) {
@@ -449,6 +422,66 @@ final class ConfigResolver
             }
         }
         return [$merged, $adopted];
+    }
+
+    /**
+     * The app name and region: arco.php's, else the layer's; a layer value that differs from arco.php's is a
+     * conflict. Also records the region's source.
+     *
+     * @param array<string, mixed> $raw
+     * @param array<string, string> $sources
+     * @param array<string, list<array{key: string, params: array<string, string>}>> $conflicts
+     * @return array{string, ?string}
+     */
+    private static function layerNameAndRegion(array $raw, ?ConfigLayer $layer, array &$sources, array &$conflicts): array
+    {
+        $name = self::nullableString($raw['name'] ?? null) ?? '';
+        $region = self::nullableString($raw['region'] ?? null);
+        if ($layer?->name !== null) {
+            if ($name !== '' && $name !== $layer->name) {
+                $conflicts['name'][] = self::conflict('name', $layer->name);
+            }
+            $name = $name !== '' ? $name : $layer->name;
+        }
+        if ($layer?->region !== null) {
+            if ($region !== null && $region !== $layer->region) {
+                $conflicts['region'][] = self::conflict('region', $layer->region);
+            }
+            $region ??= $layer->region;
+        }
+        // Only the layer set it (also without arco.php: layerOnly() leaves the region to the layer).
+        $sources['region'] = $region !== null && ! isset($raw['region']) ? 'cloud' : 'app';
+
+        return [$name, $region];
+    }
+
+    /**
+     * The variables: the app's, the environment's over them, then the layer's new names; a layer value that
+     * differs from what arco.php resolves to is a conflict. Also records each variable's source.
+     *
+     * @param array<string, string> $app
+     * @param array<string, string> $env
+     * @param array<string, string> $layer
+     * @param array<string, string> $sources
+     * @param array<string, list<array{key: string, params: array<string, string>}>> $conflicts
+     * @return array<string, string>
+     */
+    private static function layerVariables(array $app, array $env, array $layer, array &$sources, array &$conflicts): array
+    {
+        $variables = [...$app, ...$env];
+        foreach (array_keys($variables) as $key) {
+            $sources["variable:$key"] = array_key_exists($key, $env) ? 'environment' : 'app';
+        }
+        foreach ($layer as $key => $value) {
+            if (! array_key_exists($key, $variables)) {
+                $variables[$key] = $value;
+                $sources["variable:$key"] = 'cloud';
+            } elseif ($variables[$key] !== $value) {
+                $conflicts['variable'][] = self::conflict('variable', (string) $key);
+            }
+        }
+
+        return $variables;
     }
 
     /** @return array{key: string, params: array<string, string>} */

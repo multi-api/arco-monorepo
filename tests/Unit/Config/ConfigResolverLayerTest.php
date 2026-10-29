@@ -148,6 +148,25 @@ final class ConfigResolverLayerTest extends TestCase
         self::assertSame('default', $unset->sources['timeout']);
     }
 
+    public function test_layer_is_compared_with_the_environment_value_that_overrides_the_app(): void
+    {
+        $raw = self::raw(
+            fn (App $a) => $a->scheduler(1)->variables(['MAIL' => 'app']),
+            fn (Environment $e) => $e->scheduler(5)->variables(['MAIL' => 'env']),
+        );
+
+        $config = ConfigResolver::resolve($raw, 'production', self::layer(['settings' => ['scheduler' => 5], 'variables' => ['MAIL' => 'env']]));
+        self::assertSame(5, $config->scheduler);
+        self::assertSame('environment', $config->sources['scheduler']);
+        self::assertSame('env', $config->variables['MAIL']);
+        self::assertSame('environment', $config->sources['variable:MAIL']);
+
+        self::assertSame(
+            [self::conflict('setting', 'scheduler'), self::conflict('variable', 'MAIL')],
+            self::conflicts($raw, self::layer(['settings' => ['scheduler' => 1], 'variables' => ['MAIL' => 'app']])),
+        );
+    }
+
     public function test_equal_vpc_in_another_key_order_is_not_a_conflict(): void
     {
         $raw = self::raw(env: fn (Environment $e) => $e->vpc(['subnet-a', 'subnet-b'], ['sg-1'], ['s3']));
