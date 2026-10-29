@@ -66,7 +66,7 @@ final class TaggedResources
                     'arn' => $arn,
                     'retained' => ! self::removed($config, $type, $name, $tags),
                     'relations' => [],
-                    ...ConfigItems::forResource($config, $type, $name, $tags),
+                    ...ConfigItems::forResource($config, $type, $name, $tags, SchedulerRule::name($config), DomainStack::functionName($config)),
                 ];
             }
             $token = Aws::string($page['PaginationToken'] ?? null);

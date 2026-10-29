@@ -2,9 +2,6 @@
 
 namespace Multiapi\Arco\Config;
 
-use Multiapi\Arco\Deploy\Domains\DomainStack;
-use Multiapi\Arco\Deploy\SchedulerRule;
-
 /**
  * What the resolved config declares, item by item, with where each item comes from and its resolved options
  * (`toArray()` key names, defaults included): the `config`, `variables` and per-resource `source`/`options`
@@ -74,11 +71,14 @@ final class ConfigItems
      * (`queue:<name>`, `queue:<name>:dlq`, `storage:<name>`, `table:<name>`, `cache`, `failed-jobs`), by the names
      * Arco gives otherwise. What Arco always makes (web function, execution role, log groups, stacks, Resource
      * Group) is `default` without options; a resource whose item is no longer in the config is `null`/`null`.
+     * The scheduler rule and CloudFront function names are the deployer's, so the caller passes them.
      *
      * @param array<string, string> $tags
+     * @param string $schedulerRule the name Arco gives the scheduler rule (SchedulerRule::name())
+     * @param string $cloudFrontFunction the name Arco gives the CloudFront function (DomainStack::functionName())
      * @return array{source: ?string, options: ?array<string, mixed>}
      */
-    public static function forResource(AppConfig $config, string $type, string $name, array $tags): array
+    public static function forResource(AppConfig $config, string $type, string $name, array $tags, string $schedulerRule, string $cloudFrontFunction): array
     {
         $tag = $tags['arco:resource'] ?? null;
         if ($tag !== null) {
@@ -92,11 +92,11 @@ final class ConfigItems
             'sqs' => self::queueByName($config, $name),
             's3' => self::storageByName($config, $name),
             'dynamodb:table' => self::tableByName($config, $name),
-            'events:rule' => $name === SchedulerRule::name($config) && $config->scheduler !== null
+            'events:rule' => $name === $schedulerRule && $config->scheduler !== null
                 ? self::found(self::source($config, 'scheduler'), ['scheduler' => $config->scheduler]) : self::none(),
             'lambda:network-connector' => $config->vpc !== null ? self::found(self::source($config, 'vpc'), self::vpcOptions($config->vpc)) : self::none(),
             'cloudfront:distribution', 'acm:certificate' => self::domains($config),
-            'cloudfront:function' => $name === DomainStack::functionName($config) ? self::domains($config) : self::none(),
+            'cloudfront:function' => $name === $cloudFrontFunction ? self::domains($config) : self::none(),
             'iam:role', 'logs:log-group', 'cloudformation:stack', 'resource-groups:group' => ['source' => 'default', 'options' => null],
             default => self::none(),
         };
@@ -218,7 +218,8 @@ final class ConfigItems
 
     /**
      * The distribution, its certificate and CloudFront function serve every domain: `arco.php` when any domain
-     * comes from it, else `cloud`; none when no domain is configured any more.
+     * comes from it, `cloud` when every domain is the layer's, else `default`; none when no domain is
+     * configured any more.
      *
      * @return array{source: ?string, options: ?array<string, mixed>}
      */
@@ -228,7 +229,12 @@ final class ConfigItems
             return self::none();
         }
         $sources = array_map(static fn (string $domain): string => self::source($config, "domain:$domain"), $config->domains);
-        return self::found(in_array('arco.php', $sources, true) ? 'arco.php' : 'cloud', [
+        $source = match (true) {
+            in_array('arco.php', $sources, true) => 'arco.php',
+            array_unique($sources) === ['cloud'] => 'cloud',
+            default => 'default',
+        };
+        return self::found($source, [
             'domains' => $config->domains,
             'dns' => self::dns($config),
             'certificate' => $config->certificate,

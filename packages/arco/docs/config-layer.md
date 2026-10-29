@@ -200,7 +200,8 @@ are in [Permissions for queues](getting-started.md#permissions-for-queues) and
   environment but no longer in the configuration, such as a retained queue); and `options`: the resolved options of
   the item the resource belongs to (`toArray()` key names, defaults included), or `null`. A queue's DLQ and worker
   function carry their queue's options. A distribution, its certificate (also a reused one) and its CloudFront
-  function carry the domains: `{domains, dns, certificate}`, with `arco.php` as source if any domain comes from there.
+  function carry the domains: `{domains, dns, certificate}`, with `arco.php` as source if any domain comes from there,
+  `cloud` if every domain comes from the layer.
   The console function reports the stored value: `console: null` when only the scheduler turns the console on.
 - `variables`: `[{"name", "source"}]`, sorted by name. Never values.
 - `config`: every item the resolved configuration declares, deployed or not, `[{kind, name, source, options}]` with

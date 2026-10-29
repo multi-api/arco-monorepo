@@ -133,23 +133,49 @@ final class ConfigItemsTest extends TestCase
         $config = self::config(fn (Environment $e) => $e->queue('emails')->console()->scheduler()->domain('a.com')->vpc(['subnet-1'], ['sg-1']));
         $queue = ConfigItems::list($config)[0]['options'];
 
-        self::assertSame(['source' => 'arco.php', 'options' => $queue], ConfigItems::forResource($config, 'sqs', 'whatever', ['arco:resource' => 'queue:emails']));
-        self::assertSame(['source' => 'arco.php', 'options' => $queue], ConfigItems::forResource($config, 'sqs', 'whatever', ['arco:resource' => 'queue:emails:dlq']));
-        self::assertSame(['source' => 'arco.php', 'options' => $queue], ConfigItems::forResource($config, 'sqs', 'shop-production-emails-dlq', []), 'by name without the tag');
-        self::assertSame(['source' => 'arco.php', 'options' => $queue], ConfigItems::forResource($config, 'lambda:function', 'shop-production-queue-emails', []));
-        self::assertSame(['source' => null, 'options' => null], ConfigItems::forResource($config, 'sqs', 'x', ['arco:resource' => 'queue:gone']));
-        self::assertSame(['source' => null, 'options' => null], ConfigItems::forResource($config, 'lambda:function', 'shop-production-queue-gone', []));
-        self::assertSame(['source' => 'default', 'options' => null], ConfigItems::forResource($config, 'lambda:function', 'shop-production', []));
-        self::assertSame('arco.php', ConfigItems::forResource($config, 'lambda:function', 'shop-production-console', [])['source']);
-        self::assertSame(['scheduler' => 1], ConfigItems::forResource($config, 'events:rule', 'arco-shop-production-scheduler', [])['options']);
-        self::assertSame(['subnets' => ['subnet-1'], 'securityGroups' => ['sg-1'], 'endpoints' => []], ConfigItems::forResource($config, 'lambda:network-connector', 'nc-1', [])['options']);
+        self::assertSame(['source' => 'arco.php', 'options' => $queue], self::forResource($config, 'sqs', 'whatever', ['arco:resource' => 'queue:emails']));
+        self::assertSame(['source' => 'arco.php', 'options' => $queue], self::forResource($config, 'sqs', 'whatever', ['arco:resource' => 'queue:emails:dlq']));
+        self::assertSame(['source' => 'arco.php', 'options' => $queue], self::forResource($config, 'sqs', 'shop-production-emails-dlq', []), 'by name without the tag');
+        self::assertSame(['source' => 'arco.php', 'options' => $queue], self::forResource($config, 'lambda:function', 'shop-production-queue-emails', []));
+        self::assertSame(['source' => null, 'options' => null], self::forResource($config, 'sqs', 'x', ['arco:resource' => 'queue:gone']));
+        self::assertSame(['source' => null, 'options' => null], self::forResource($config, 'lambda:function', 'shop-production-queue-gone', []));
+        self::assertSame(['source' => 'default', 'options' => null], self::forResource($config, 'lambda:function', 'shop-production', []));
+        self::assertSame('arco.php', self::forResource($config, 'lambda:function', 'shop-production-console', [])['source']);
+        self::assertSame(['scheduler' => 1], self::forResource($config, 'events:rule', 'arco-shop-production-scheduler', [])['options']);
+        self::assertSame(['subnets' => ['subnet-1'], 'securityGroups' => ['sg-1'], 'endpoints' => []], self::forResource($config, 'lambda:network-connector', 'nc-1', [])['options']);
         $domains = ['source' => 'arco.php', 'options' => ['domains' => ['a.com'], 'dns' => null, 'certificate' => null]];
-        self::assertSame($domains, ConfigItems::forResource($config, 'cloudfront:distribution', 'E1', []));
-        self::assertSame($domains, ConfigItems::forResource($config, 'acm:certificate', 'abc', []));
-        self::assertSame($domains, ConfigItems::forResource($config, 'cloudfront:function', 'arco-shop-production-host', []));
+        self::assertSame($domains, self::forResource($config, 'cloudfront:distribution', 'E1', []));
+        self::assertSame($domains, self::forResource($config, 'acm:certificate', 'abc', []));
+        self::assertSame($domains, self::forResource($config, 'cloudfront:function', 'arco-shop-production-host', []));
         foreach (['iam:role', 'logs:log-group', 'cloudformation:stack', 'resource-groups:group'] as $type) {
-            self::assertSame(['source' => 'default', 'options' => null], ConfigItems::forResource($config, $type, 'arco-shop-production', []), $type);
+            self::assertSame(['source' => 'default', 'options' => null], self::forResource($config, $type, 'arco-shop-production', []), $type);
         }
-        self::assertSame(['source' => null, 'options' => null], ConfigItems::forResource($config, 'ssm:parameter', '/shop/production/key', []));
+        self::assertSame(['source' => null, 'options' => null], self::forResource($config, 'ssm:parameter', '/shop/production/key', []));
+    }
+
+    public function test_domain_resources_are_cloud_only_when_every_domain_is(): void
+    {
+        $config = self::config(layer: ['domains' => ['a.com', 'b.com']]);
+        self::assertSame('cloud', self::forResource($config, 'cloudfront:distribution', 'E1', [])['source']);
+
+        // A domain whose source is missing is Arco's default, so the domains are not all the layer's.
+        $sources = $config->sources;
+        unset($sources['domain:b.com']);
+        $partial = new AppConfig(...[...get_object_vars($config), 'sources' => $sources]);
+        self::assertSame('default', self::forResource($partial, 'cloudfront:distribution', 'E1', [])['source']);
+        self::assertSame('default', self::forResource($partial, 'acm:certificate', 'abc', [])['source']);
+        self::assertSame('default', self::forResource($partial, 'cloudfront:function', 'arco-shop-production-host', [])['source']);
+
+        $mixed = self::config(fn (Environment $e) => $e->domain('a.com'), ['domains' => ['b.com']]);
+        self::assertSame('arco.php', self::forResource($mixed, 'cloudfront:distribution', 'E1', [])['source']);
+    }
+
+    /**
+     * @param array<string, string> $tags
+     * @return array{source: ?string, options: ?array<string, mixed>}
+     */
+    private static function forResource(AppConfig $config, string $type, string $name, array $tags): array
+    {
+        return ConfigItems::forResource($config, $type, $name, $tags, 'arco-shop-production-scheduler', 'arco-shop-production-host');
     }
 }

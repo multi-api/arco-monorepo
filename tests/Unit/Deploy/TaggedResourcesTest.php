@@ -342,4 +342,37 @@ final class TaggedResourcesTest extends TestCase
         self::assertSame('arco.php', $distribution(ConfigResolver::resolve($both, 'production', $layer(['domains' => ['b.com']])))[0]);
         self::assertSame([null, null], $distribution(ConfigResolver::resolve($raw, 'production')), 'no domains configured any more');
     }
+
+    public function test_resources_matched_by_name_carry_source_and_options(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e->console())->toArray();
+        $config = ConfigResolver::resolve($raw, 'production', new ConfigLayer('layer.json', 'shop', 'us-east-1', 'production', [
+            'settings' => ['scheduler' => 5, 'vpc' => ['subnets' => ['subnet-1'], 'securityGroups' => ['sg-1']]],
+            'domains' => ['b.com'],
+        ]));
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['ResourceTagMappingList' => [
+                self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production-console'),
+                self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-scheduler'),
+                self::mapping('arn:aws:events:us-east-1:111111111111:rule/someone-elses-rule'),
+                self::mapping('arn:aws:lambda:us-east-1:111111111111:network-connector:nc-1a2b'),
+                self::mapping('arn:aws:cloudfront::111111111111:function/arco-shop-production-host'),
+                self::mapping('arn:aws:cloudfront::111111111111:function/someone-elses-function'),
+            ]]),
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
+        );
+
+        $byName = [];
+        foreach (self::subject($mocks)->list($config) as $resource) {
+            $byName[$resource['type'] . ' ' . $resource['name']] = ['source' => $resource['source'], 'options' => $resource['options']];
+        }
+
+        self::assertSame(['source' => 'arco.php', 'options' => ['console' => true, 'consoleTimeout' => 900, 'consoleMemory' => 2048]], $byName['lambda:function shop-production-console']);
+        self::assertSame(['source' => 'cloud', 'options' => ['scheduler' => 5]], $byName['events:rule arco-shop-production-scheduler']);
+        self::assertSame(['source' => null, 'options' => null], $byName['events:rule someone-elses-rule']);
+        self::assertSame(['source' => 'cloud', 'options' => ['subnets' => ['subnet-1'], 'securityGroups' => ['sg-1'], 'endpoints' => []]], $byName['lambda:network-connector nc-1a2b']);
+        self::assertSame(['source' => 'cloud', 'options' => ['domains' => ['b.com'], 'dns' => null, 'certificate' => null]], $byName['cloudfront:function arco-shop-production-host']);
+        self::assertSame(['source' => null, 'options' => null], $byName['cloudfront:function someone-elses-function']);
+    }
 }
