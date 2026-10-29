@@ -7,6 +7,7 @@ use Aws\Iam\Exception\IamException;
 use Aws\Result;
 use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\AppConfig;
+use Multiapi\Arco\Config\ConfigLayer;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Deploy\OwnershipGuard;
 use Multiapi\Arco\Deploy\TaggedResources;
@@ -232,7 +233,7 @@ final class TaggedResourcesTest extends TestCase
 
         $resources = self::subject($mocks)->list($this->config());
 
-        self::assertSame([['type' => 'iam:role', 'name' => 'arco-shop-production', 'arn' => 'arn:aws:iam::111111111111:role/arco-shop-production', 'retained' => false, 'relations' => []]], $resources);
+        self::assertSame([['type' => 'iam:role', 'name' => 'arco-shop-production', 'arn' => 'arn:aws:iam::111111111111:role/arco-shop-production', 'retained' => false, 'relations' => [], 'source' => 'default', 'options' => null]], $resources);
     }
 
     public function test_a_missing_or_denied_role_is_not_listed_and_does_not_fail(): void
@@ -285,6 +286,60 @@ final class TaggedResourcesTest extends TestCase
             'arn' => 'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-state',
             'retained' => true,
             'relations' => [],
+            'source' => 'arco.php',
+            'options' => ['ttl' => 'expires_at', 'existing' => null],
         ]], self::subject($mocks)->list($config));
+    }
+
+    public function test_resources_carry_source_and_options(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e
+            ->queue('emails', timeout: 120)
+            ->domain('shop.example.com'))->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['ResourceTagMappingList' => [
+                self::mapping('arn:aws:sqs:us-east-1:111111111111:shop-production-emails', extra: ['arco:resource' => 'queue:emails']),
+                self::mapping('arn:aws:sqs:us-east-1:111111111111:shop-production-emails-dlq', extra: ['arco:resource' => 'queue:emails:dlq']),
+                self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production-queue-emails'),
+                self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production'),
+                self::mapping('arn:aws:sqs:us-east-1:111111111111:shop-production-old', extra: ['arco:resource' => 'queue:old']),
+                self::mapping('arn:aws:cloudfront::111111111111:distribution/E1ABC'),
+            ]]),
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
+        );
+
+        $byName = [];
+        foreach (self::subject($mocks)->list($config) as $resource) {
+            $byName[$resource['type'] . ' ' . $resource['name']] = ['source' => $resource['source'], 'options' => $resource['options']];
+        }
+
+        $queue = ['source' => 'arco.php', 'options' => ['timeout' => 120, 'memory' => 1024, 'maxInstances' => null, 'batchSize' => 1, 'tries' => 3, 'dlq' => true, 'fifo' => false, 'existing' => null, 'default' => true]];
+        self::assertSame($queue, $byName['sqs shop-production-emails']);
+        self::assertSame($queue, $byName['sqs shop-production-emails-dlq']);
+        self::assertSame($queue, $byName['lambda:function shop-production-queue-emails']);
+        self::assertSame(['source' => 'default', 'options' => null], $byName['lambda:function shop-production']);
+        self::assertSame(['source' => null, 'options' => null], $byName['sqs shop-production-old'], 'retained, no longer in the config');
+        self::assertSame(['source' => 'arco.php', 'options' => ['domains' => ['shop.example.com'], 'dns' => null, 'certificate' => null]], $byName['cloudfront:distribution E1ABC']);
+    }
+
+    public function test_the_distribution_is_cloud_when_no_domain_comes_from_arco_php(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->environment('production')->toArray();
+        $layer = static fn (array $entry): ConfigLayer => new ConfigLayer('layer.json', 'shop', 'us-east-1', 'production', $entry);
+        $distribution = static function (AppConfig $config): array {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(
+                new Result(['ResourceTagMappingList' => [self::mapping('arn:aws:cloudfront::111111111111:distribution/E1ABC')]]),
+                AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
+            );
+            $resource = self::subject($mocks)->list($config)[0];
+            return [$resource['source'], $resource['options']];
+        };
+
+        self::assertSame(['cloud', ['domains' => ['b.com'], 'dns' => null, 'certificate' => null]], $distribution(ConfigResolver::resolve($raw, 'production', $layer(['domains' => ['b.com']]))));
+        $both = App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e->domain('a.com'))->toArray();
+        self::assertSame('arco.php', $distribution(ConfigResolver::resolve($both, 'production', $layer(['domains' => ['b.com']])))[0]);
+        self::assertSame([null, null], $distribution(ConfigResolver::resolve($raw, 'production')), 'no domains configured any more');
     }
 }

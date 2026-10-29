@@ -3348,7 +3348,7 @@ final class AwsDeployerTest extends TestCase
 
         $resources = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->resources($this->config());
 
-        self::assertSame([['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true, 'relations' => []]], $resources);
+        self::assertSame([['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true, 'relations' => [], 'source' => null, 'options' => null]], $resources);
         self::assertSame(['GetResources', 'GetRole'], $mocks->calls);
     }
 
