@@ -188,6 +188,7 @@ final class AwsDeployerAdoptTest extends TestCase
             ['deploy.step_resources', ['stack' => self::STACK]],
             ['deploy.step_import', ['stack' => self::STACK, 'count' => 2]],
             ['deploy.queue_adopted', ['queue' => 'emails', 'name' => 'shop-production-emails']],
+            ['deploy.queue_dlq_adopted', ['queue' => 'emails', 'name' => 'shop-production-emails-dlq']],
         ], $steps);
     }
 
@@ -248,6 +249,7 @@ final class AwsDeployerAdoptTest extends TestCase
             ['deploy.step_resources', ['stack' => self::STACK]],
             ['deploy.step_import_one', ['stack' => self::STACK, 'count' => 1]],
             ['deploy.queue_changed', ['queue' => 'emails', 'name' => 'shop-production-emails']],
+            ['deploy.queue_dlq_adopted', ['queue' => 'emails', 'name' => 'shop-production-emails-dlq']],
         ], $steps);
     }
 
@@ -380,6 +382,20 @@ final class AwsDeployerAdoptTest extends TestCase
         );
 
         self::expectError($mocks, self::config(['tables' => ['state' => ['adopt' => true]]]), 'deploy.generic_table_retained');
+        self::assertNoCloudFormationWrite($mocks->calls);
+    }
+
+    public function test_a_table_whose_arn_cannot_be_read_keeps_the_retained_error(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackMissing(),
+            new Result(['Table' => ['TableName' => 'shop-production-state']]),
+            new Result(['Table' => ['TableName' => 'shop-production-state']]),   // no TableArn
+        );
+
+        self::expectError($mocks, self::config(['tables' => ['state' => ['adopt' => true]]]), 'deploy.generic_table_retained');
+        self::assertNotContains('ListTagsOfResource', $mocks->calls);
         self::assertNoCloudFormationWrite($mocks->calls);
     }
 

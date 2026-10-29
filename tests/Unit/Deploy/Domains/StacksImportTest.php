@@ -168,6 +168,86 @@ final class StacksImportTest extends TestCase
         self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks', 'DescribeStacks', 'DescribeStacks'], $mocks->calls);
     }
 
+    private static function stackAt(string $status, string $updated): Result
+    {
+        return new Result(['Stacks' => [['StackName' => self::NAME, 'StackStatus' => $status, 'LastUpdatedTime' => $updated]]]);
+    }
+
+    private static function changeSetGone(): CloudFormationException
+    {
+        return AwsMocks::error(CloudFormationException::class, 'DescribeChangeSet', 'ChangeSetNotFound', 404);
+    }
+
+    public function test_an_earlier_import_complete_is_not_taken_for_this_import(): void
+    {
+        // The stack ends an earlier adoption in IMPORT_COMPLETE; this import then fails and rolls back.
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackAt('IMPORT_COMPLETE', '2026-10-01T10:00:00Z'),
+            new Result(['Id' => 'cs']),
+            new Result(['Status' => 'CREATE_COMPLETE']),
+            new Result([]),                                       // ExecuteChangeSet
+            self::changeSetGone(),
+            self::stackAt('IMPORT_COMPLETE', '2026-10-01T10:00:00Z'), // not started yet: the earlier import's status
+            self::stackAt('IMPORT_ROLLBACK_COMPLETE', '2026-10-28T12:00:00Z'),
+            new Result(['StackEvents' => [
+                ['LogicalResourceId' => self::NAME, 'ResourceStatus' => 'IMPORT_ROLLBACK_COMPLETE'],
+                ['LogicalResourceId' => 'QueueEmails', 'ResourceStatus' => 'IMPORT_FAILED', 'ResourceStatusReason' => 'tags differ'],
+                ['LogicalResourceId' => self::NAME, 'ResourceStatus' => 'IMPORT_IN_PROGRESS'],
+            ]]),
+        );
+
+        try {
+            $this->import($mocks);
+            self::fail('expected deploy.import_failed');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.import_failed', $e->key);
+            self::assertSame(['stack' => self::NAME, 'reason' => 'QueueEmails: tags differ'], $e->params);
+        }
+    }
+
+    public function test_a_newer_import_complete_after_an_earlier_one_is_accepted(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackAt('IMPORT_COMPLETE', '2026-10-01T10:00:00Z'),
+            new Result(['Id' => 'cs']),
+            new Result(['Status' => 'CREATE_COMPLETE']),
+            new Result([]),
+            self::changeSetGone(),
+            self::stackAt('IMPORT_COMPLETE', '2026-10-28T12:00:00Z'),
+        );
+
+        $this->import($mocks);
+
+        self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks'], $mocks->calls);
+    }
+
+    public function test_a_change_set_gone_without_running_is_an_import_failure(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stackAt('UPDATE_COMPLETE', '2026-10-01T10:00:00Z'),
+            new Result(['Id' => 'cs']),
+            new Result(['Status' => 'CREATE_COMPLETE']),
+            new Result([]),
+            self::changeSetGone(),
+            self::stackAt('UPDATE_COMPLETE', '2026-10-01T10:00:00Z'),
+            self::stackAt('UPDATE_COMPLETE', '2026-10-01T10:00:00Z'),
+            self::stackAt('UPDATE_COMPLETE', '2026-10-01T10:00:00Z'),
+        );
+
+        try {
+            (new Stacks($mocks->clients()->cloudFormation(), AwsMocks::noSleep()))->import(self::NAME, '{}', self::resources(), [], 30);
+            self::fail('expected deploy.import_failed');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.import_failed', $e->key);
+            self::assertSame(self::NAME, $e->params['stack']);
+            self::assertStringContainsString('change set', (string) $e->params['reason']);
+        }
+        self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks', 'DescribeStacks', 'DescribeStacks'], $mocks->calls);
+    }
+
     public function test_a_change_set_that_never_gets_ready_is_cleaned_up(): void
     {
         foreach ([[self::stack('UPDATE_COMPLETE'), ['DeleteChangeSet']], [self::missing(), ['DeleteChangeSet', 'DeleteStack']]] as [$before, $cleanup]) {

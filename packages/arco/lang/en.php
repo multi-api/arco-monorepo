@@ -239,6 +239,7 @@ return [
     'deploy.step_import' => 'Importing {count} retained resources into the resources stack {stack}',
     'deploy.step_import_one' => 'Importing 1 retained resource into the resources stack {stack}',
     'deploy.queue_adopted' => 'Queue {queue}: adopted {name}, with its messages',
+    'deploy.queue_dlq_adopted' => 'Queue {queue}: adopted the dead-letter queue {name}, with its messages',
     'deploy.import_failed' => 'CloudFormation could not import the retained resources into the stack {stack}: {reason}. The import was not applied (CloudFormation rolls a failed import back), nothing else was changed, and the resources stay in AWS with their data. Fix the cause and deploy again.',
     'deploy.variable_overridden' => 'Your variables() in arco.php set {key}, so your value is used instead of the one Arco would set for the resources you declared.',
     'deploy.queue_now_existing' => 'The queue {queue} is no longer managed by Arco: it stays in AWS with its messages, and its worker reads it as the existing queue {as}.',

@@ -163,7 +163,8 @@ interface Deployer
      *         deploy.public_blocked or deploy.public_policy_denied for a refused public bucket policy;
      *         deploy.import_failed when importing the resources of `adopt` entries fails (steps
      *         deploy.step_import, or deploy.step_import_one for one resource, then deploy.queue_adopted,
-     *         deploy.storage_adopted or deploy.generic_table_adopted instead of the *_created step)
+     *         deploy.storage_adopted or deploy.generic_table_adopted instead of the *_created step, and
+     *         deploy.queue_dlq_adopted after the queue's step for an imported dead-letter queue)
      */
     public function deployResources(AppConfig $config, Closure $onStep): void;
 

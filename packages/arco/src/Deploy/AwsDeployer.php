@@ -303,7 +303,8 @@ final class AwsDeployer implements Deployer
 
     /**
      * Whether a resource's tags say it is this environment's $resource: arco:app and arco:environment equal,
-     * arco:resource equal when present. Tags that cannot be read prove nothing.
+     * arco:resource equal when present. Tags that cannot be read (an AWS error, an answer without what
+     * the read needs) prove nothing.
      *
      * @param Closure(): array<string, string> $read
      */
@@ -311,7 +312,7 @@ final class AwsDeployer implements Deployer
     {
         try {
             $tags = $read();
-        } catch (AwsException) {
+        } catch (AwsException|\UnexpectedValueException) {
             return false;
         }
         return ($tags['arco:app'] ?? null) === $config->app
@@ -1692,6 +1693,10 @@ final class AwsDeployer implements Deployer
                 $id = ResourcesStack::logicalId($queue->name);
                 $key = isset($adopted[$id]) ? 'deploy.queue_adopted' : (! isset($owned[$id]) ? 'deploy.queue_created' : (self::isChanged($changed, $id) ? 'deploy.queue_changed' : 'deploy.queue_updated'));
                 $onStep($key, ['queue' => $queue->name, 'name' => $queue->physicalName($config)]);
+                $dlq = $queue->dlqName($config);
+                if ($dlq !== null && isset($adopted[ResourcesStack::dlqLogicalId($queue->name)])) {
+                    $onStep('deploy.queue_dlq_adopted', ['queue' => $queue->name, 'name' => $dlq]);
+                }
             }
             foreach ($storage as $bucket) {
                 $id = ResourcesStack::bucketLogicalId($bucket->name);

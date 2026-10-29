@@ -172,24 +172,25 @@ resources that were not made by Arco.
   reports `changed: false`).
 
 An import uses a CloudFormation `IMPORT` change set: the step `deploy.step_import` (`{stack, count}`;
-`deploy.step_import_one`, same params, when there is one resource), then
-`deploy.queue_adopted` (`{queue, name}`), `deploy.storage_adopted` (`{storage, bucket}`) or
-`deploy.generic_table_adopted` (`{table, name}`) per resource instead of `_created`. Imported resources keep their
-data and are `Retain` during the import; the normal deploy then applies every option (bucket policy, redrive, TTL)
-and the usual retention policy. If CloudFormation cannot import, it rolls the import back and the deploy fails with
-`deploy.import_failed` (`{stack, reason}`); the resources stay in AWS with their data. An import into a resources
-stack that does not exist yet creates the stack first in `REVIEW_IN_PROGRESS`; if that import is cut short (the
-process or the CI job is killed, an AWS call fails), the next deploy finds the stack still in that state, holding no
-resources, and deletes and creates it again after the usual ownership check. Do not run two deploys of the same
-environment at once: the second one can take the first one's stack in review for an abandoned one, and the first
-import then fails (nothing is lost; deploy again). `deploy.import_failed` is also
-the refusal of the checks, with `reason` `cloudformation:GetTemplate`, when an import is due and the template the
-resources stack runs cannot be read (the import must keep it as it is): nothing is written. A read the profile is
-denied during the checks is reported like it is without `adopt`: `deploy.lookup_denied` (`{permission, name}`) for a
-refused `dynamodb:DescribeTable`, `deploy.bucket_taken` for a refused `s3:HeadBucket`, and the usual retained refusal
-for tags that cannot be read. The permissions an import needs
-are in [Permissions for queues](getting-started.md#permissions-for-queues) and
-[for storage and tables](getting-started.md#permissions-for-storage-and-tables).
+`deploy.step_import_one`, same params, when there is one resource), then `deploy.queue_adopted` (`{queue, name}`),
+`deploy.storage_adopted` (`{storage, bucket}`) or `deploy.generic_table_adopted` (`{table, name}`) per resource
+instead of `_created`. An imported dead-letter queue adds `deploy.queue_dlq_adopted` (`{queue, name}`, `name` being
+the DLQ) after its queue's step, which is `deploy.queue_adopted` when the queue was imported too, else its usual
+`_updated` or `_changed`. Imported resources keep their data and are `Retain` during the import; the normal deploy
+then applies every option (bucket policy, redrive, TTL) and the usual retention policy. If CloudFormation cannot
+import, it rolls the import back and the deploy fails with `deploy.import_failed` (`{stack, reason}`); the resources
+stay in AWS with their data. An import into a resources stack that does not exist yet creates the stack first in
+`REVIEW_IN_PROGRESS`; if that import is cut short (the process or the CI job is killed, an AWS call fails), the next
+deploy finds the stack still in that state, holding no resources, and deletes and creates it again after the usual
+ownership check. Do not run two deploys of the same environment at once: the second one can take the first one's
+stack in review for an abandoned one, and the first import then fails (nothing is lost; deploy again).
+`deploy.import_failed` is also the refusal of the checks, with `reason` `cloudformation:GetTemplate`, when an import
+is due and the template the resources stack runs cannot be read (the import must keep it as it is): nothing is
+written. A read the profile is denied during the checks is reported like it is without `adopt`:
+`deploy.lookup_denied` (`{permission, name}`) for a refused `dynamodb:DescribeTable`, `deploy.bucket_taken` for a
+refused `s3:HeadBucket`, and the usual retained refusal for tags that cannot be read. The permissions an import
+needs are in [Permissions for queues](getting-started.md#permissions-for-queues) and [for storage and
+tables](getting-started.md#permissions-for-storage-and-tables).
 
 ## Inventory
 

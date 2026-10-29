@@ -141,6 +141,8 @@ final class Stacks
             throw DeployException::make($this->keys . 'not_updatable', ['stack' => $name, 'status' => (string) Aws::string($stack['StackStatus'] ?? null)]);
         }
 
+        // The stack as the import finds it (a new one waits in review), to tell its result from an earlier state.
+        $before = $stack === null ? ['REVIEW_IN_PROGRESS', ''] : [(string) Aws::string($stack['StackStatus']), self::updatedAt($stack)];
         $changeSet = ['StackName' => $name, 'ChangeSetName' => 'arco-import-' . (int) $this->sleeper->now()];
         Aws::call($this->cloudFormation, 'CreateChangeSet', [
             ...$changeSet,
@@ -189,19 +191,52 @@ final class Stacks
             }
             $this->sleeper->sleep(self::CHANGE_SET_POLL);
         }
-        $stack = $this->waitStable($name, $timeout);
-        // Without the change set to ask, a status other than an import's is the one from before it started.
-        for ($waited = 0; $gone && $stack !== null && ! str_starts_with((string) Aws::string($stack['StackStatus'] ?? null), 'IMPORT_'); $waited += self::POLL) {
-            if ($waited >= $timeout) {
-                throw DeployException::make('deploy.timeout', ['what' => "stack $name"]);
-            }
-            $this->sleeper->sleep(self::POLL);
-            $stack = $this->waitStable($name, $timeout);
-        }
+        $stack = $gone ? $this->waitForImport($name, $before, $timeout) : $this->waitStable($name, $timeout);
         $status = $stack === null ? 'DELETED' : (string) Aws::string($stack['StackStatus'] ?? null);
         if ($status !== 'IMPORT_COMPLETE') {
             throw DeployException::make('deploy.import_failed', ['stack' => $name, 'reason' => $stack === null ? $status : $this->failureReason($name)]);
         }
+    }
+
+    /**
+     * The stack once the import whose change set CloudFormation already removed has ended. Without the change
+     * set to ask, the stack is only taken as the result once it moved on from $before (an IMPORT_* operation
+     * seen, another status or a newer LastUpdatedTime): right after ExecuteChangeSet it may still show the
+     * status from before, an earlier import's IMPORT_COMPLETE included. A stack still as it was when the wait
+     * ends never ran the import: deploy.import_failed.
+     *
+     * @param array{string, string} $before the status and LastUpdatedTime before ExecuteChangeSet
+     * @return array<string, mixed>|null null when the stack no longer exists
+     */
+    private function waitForImport(string $name, array $before, int $timeout): ?array
+    {
+        $importing = false;
+        for ($waited = 0; ; $waited += self::POLL) {
+            $stack = $this->stack($name);
+            $status = $stack === null ? null : (string) Aws::string($stack['StackStatus'] ?? null);
+            $importing = $importing || ($status !== null && str_starts_with($status, 'IMPORT_') && self::busy($stack));
+            $moved = $importing || $stack === null || [$status, self::updatedAt($stack)] !== $before;
+            if ($moved && ! self::busy($stack)) {
+                return $stack;
+            }
+            if ($waited >= $timeout) {
+                throw $moved
+                    ? DeployException::make('deploy.timeout', ['what' => "stack $name"])
+                    : DeployException::make('deploy.import_failed', ['stack' => $name, 'reason' => 'the change set was removed without running']);
+            }
+            $this->sleeper->sleep(self::POLL);
+        }
+    }
+
+    /** @param array<string, mixed> $stack the stack's LastUpdatedTime as text ('' when it was never updated) */
+    private static function updatedAt(array $stack): string
+    {
+        $time = $stack['LastUpdatedTime'] ?? null;
+        return match (true) {
+            $time instanceof \DateTimeInterface => $time->format(\DateTimeInterface::RFC3339_EXTENDED),
+            is_string($time) => $time,
+            default => '',
+        };
     }
 
     /**
