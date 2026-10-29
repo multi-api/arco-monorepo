@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.12.1
 
 - **Added:** the config layer, a JSON document merged over `arco.php` (or used alone when there is no `arco.php`),
   for tools that manage queues, buckets, tables, variables and domains outside your code. `--config-layer=<path>` and
