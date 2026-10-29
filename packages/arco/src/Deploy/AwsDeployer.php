@@ -1674,8 +1674,8 @@ final class AwsDeployer implements Deployer
             $adopted = [];
             if ($imports === []) {
                 // What the stack runs now, to say which resources this update changes. Unknown: reported as changed.
-                // A stack left in review holds nothing yet (and no template to read).
-                $changed = $stack === null || $stack['status'] === 'REVIEW_IN_PROGRESS' ? [] : ResourcesStack::changedResources($stacks->template($name), $template);
+                // An empty stack (left in review, or its creation rolled back) holds nothing and is about to be replaced.
+                $changed = $stack === null || in_array($stack['status'], Stacks::EMPTY, true) ? [] : ResourcesStack::changedResources($stacks->template($name), $template);
             } else {
                 // The import must keep the running template as it is: it cannot be guessed.
                 $deployed = self::deployedTemplate($stacks, $name, $stack);
