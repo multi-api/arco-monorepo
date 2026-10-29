@@ -72,6 +72,7 @@ final class AwsDeployerAdoptTest extends TestCase
             new Result(['Id' => 'cs']),                            // CreateChangeSet
             new Result(['Status' => 'CREATE_COMPLETE']),           // DescribeChangeSet
             new Result([]),                                        // ExecuteChangeSet
+            new Result(['ExecutionStatus' => 'EXECUTE_COMPLETE']), // DescribeChangeSet
             self::stack('IMPORT_COMPLETE'),
             self::stack('IMPORT_COMPLETE'),                        // Stacks::deploy
             new Result([]),                                        // UpdateStack
@@ -158,7 +159,7 @@ final class AwsDeployerAdoptTest extends TestCase
 
         self::assertSame([
             'DescribeStacks', 'GetQueueUrl', 'ListQueueTags', 'GetQueueUrl', 'ListQueueTags',
-            'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeStacks',
+            'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks',
             'DescribeStacks', 'UpdateStack', 'DescribeStacks',
         ], $mocks->calls);
         self::assertSame(self::QUEUE_URL, $mocks->params[2]['QueueUrl']);
@@ -173,15 +174,16 @@ final class AwsDeployerAdoptTest extends TestCase
         self::assertSame(['QueueEmails', 'QueueEmailsDlq'], array_keys($template['Resources']));
         self::assertSame([
             'Type' => 'AWS::SQS::Queue',
-            'DeletionPolicy' => ResourcesStack::DELETION_POLICY,
+            'DeletionPolicy' => 'Retain',
             'UpdateReplacePolicy' => 'Retain',
             'Properties' => ['QueueName' => 'shop-production-emails', 'Tags' => self::tagList(self::tags('queue:emails'))],
-        ], $template['Resources']['QueueEmails'], 'literal properties only: no redrive policy referencing the DLQ');
+        ], $template['Resources']['QueueEmails'], 'literal properties only (no redrive policy referencing the DLQ), always retained');
         self::assertArrayNotHasKey('Outputs', $template);
         // Then the full template, with every option.
-        $full = json_decode((string) $mocks->params[11]['TemplateBody'], true);
+        $full = json_decode((string) $mocks->params[12]['TemplateBody'], true);
         self::assertIsArray($full);
         self::assertArrayHasKey('RedrivePolicy', $full['Resources']['QueueEmails']['Properties']);
+        self::assertSame(ResourcesStack::DELETION_POLICY, $full['Resources']['QueueEmails']['DeletionPolicy'] ?? null, 'the update sets the usual policy');
         self::assertSame([
             ['deploy.step_resources', ['stack' => self::STACK]],
             ['deploy.step_import', ['stack' => self::STACK, 'count' => 2]],
@@ -223,6 +225,7 @@ final class AwsDeployerAdoptTest extends TestCase
             new Result(['Id' => 'cs']),
             new Result(['Status' => 'CREATE_COMPLETE']),
             new Result([]),
+            new Result(['ExecutionStatus' => 'EXECUTE_COMPLETE']),
             self::stack('IMPORT_COMPLETE'),
             self::stack('IMPORT_COMPLETE'),
             new Result([]),
@@ -233,7 +236,7 @@ final class AwsDeployerAdoptTest extends TestCase
 
         self::assertSame([
             'DescribeStacks', 'DescribeStackResources', 'GetQueueUrl', 'ListQueueTags', 'GetTemplate',
-            'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeStacks',
+            'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks',
             'DescribeStacks', 'UpdateStack', 'DescribeStacks',
         ], $mocks->calls);
         self::assertSame([['ResourceType' => 'AWS::SQS::Queue', 'LogicalResourceId' => 'QueueEmailsDlq', 'ResourceIdentifier' => ['QueueUrl' => self::DLQ_URL]]], $mocks->params[6]['ResourcesToImport']);
@@ -266,7 +269,7 @@ final class AwsDeployerAdoptTest extends TestCase
 
         self::assertSame([
             'DescribeStacks', 'HeadBucket', 'GetBucketTagging', 'DescribeTable', 'DescribeTable', 'ListTagsOfResource',
-            'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeStacks',
+            'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks',
             'DescribeStacks', 'UpdateStack', 'DescribeStacks',
         ], $mocks->calls);
         self::assertSame('arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-state', $mocks->params[5]['ResourceArn']);
@@ -277,8 +280,8 @@ final class AwsDeployerAdoptTest extends TestCase
         $template = json_decode((string) $mocks->params[7]['TemplateBody'], true);
         self::assertIsArray($template);
         self::assertSame(['BucketName' => self::BUCKET, 'Tags' => self::tagList(self::tags('storage:uploads'))], $template['Resources']['StorageUploads']['Properties']);
-        self::assertSame(ResourcesStack::DELETION_POLICY, $template['Resources']['StorageUploads']['DeletionPolicy']);
-        self::assertSame(ResourcesStack::template($config)['Resources']['AppTableState'], $template['Resources']['AppTableState']);
+        self::assertSame('Retain', $template['Resources']['StorageUploads']['DeletionPolicy']);
+        self::assertSame(array_replace(ResourcesStack::template($config)['Resources']['AppTableState'], ['DeletionPolicy' => 'Retain', 'UpdateReplacePolicy' => 'Retain']), $template['Resources']['AppTableState']);
         self::assertSame([
             ['deploy.step_resources', ['stack' => self::STACK]],
             ['deploy.step_import', ['stack' => self::STACK, 'count' => 2]],
@@ -417,6 +420,31 @@ final class AwsDeployerAdoptTest extends TestCase
         self::assertFalse($deployer->changed());
     }
 
+    public function test_an_unreadable_running_template_is_refused_by_the_check(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stack(),
+            new Result(['StackResources' => [
+                ['LogicalResourceId' => 'QueueEmails', 'PhysicalResourceId' => self::QUEUE_URL, 'ResourceType' => 'AWS::SQS::Queue', 'ResourceStatus' => 'CREATE_COMPLETE'],
+            ]]),
+            new Result(['QueueUrl' => self::DLQ_URL]),
+            new Result(['Tags' => self::tags('queue:emails:dlq')]),
+            AwsMocks::error(CloudFormationException::class, 'GetTemplate', 'AccessDenied', 403),
+        );
+        $deployer = new ChangeTrackingDeployer(new AwsDeployer($mocks->clients(), AwsMocks::noSleep()));
+
+        try {
+            $deployer->checkAdoptions(self::adoptQueue(), fn () => null);
+            self::fail('expected deploy.import_failed');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.import_failed', $e->key);
+            self::assertSame(['stack' => self::STACK, 'reason' => 'cloudformation:GetTemplate'], $e->params);
+        }
+        self::assertSame(['DescribeStacks', 'DescribeStackResources', 'GetQueueUrl', 'ListQueueTags', 'GetTemplate'], $mocks->calls);
+        self::assertFalse($deployer->changed(), 'a refusal before any change');
+    }
+
     public function test_check_adoptions_makes_no_call_without_adopt_entries(): void
     {
         $mocks = new AwsMocks();
@@ -435,6 +463,8 @@ final class AwsDeployerAdoptTest extends TestCase
         $template = ResourcesStack::importTemplate($config, $deployed, ['QueueEmails']);
 
         self::assertSame(['TableCache', 'QueueEmails'], array_keys($template['Resources']));
+        self::assertSame(['Type' => 'AWS::DynamoDB::Table'], $template['Resources']['TableCache'], 'deployed resources stay exactly as deployed');
+        self::assertSame(['Retain', 'Retain'], [$template['Resources']['QueueEmails']['DeletionPolicy'], $template['Resources']['QueueEmails']['UpdateReplacePolicy']]);
         self::assertSame($deployed['Outputs'], $template['Outputs']);
         self::assertSame(['QueueName' => 'shop-production-emails.fifo', 'FifoQueue' => true, 'Tags' => self::tagList(self::tags('queue:emails'))], $template['Resources']['QueueEmails']['Properties']);
     }

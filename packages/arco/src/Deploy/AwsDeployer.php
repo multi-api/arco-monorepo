@@ -180,12 +180,33 @@ final class AwsDeployer implements Deployer
             return;
         }
         $name = ResourcesStack::name($config);
-        $stack = (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe($name);
+        $stacks = new Stacks($this->aws->cloudFormation(), $this->sleeper);
+        $stack = $stacks->describe($name);
         if ($stack !== null && ! self::ownsStack($stack, $config)) {
             // checkStacks() refuses it (stack.not_ours), as deployResources() does.
             return;
         }
-        $this->adoptions($config, $stack === null ? [] : $this->ownedResources($name));
+        $imports = $this->adoptions($config, $stack === null ? [] : $this->ownedResources($name));
+        if ($imports !== []) {
+            // The import needs the running template: refused here, before any change, when it cannot be read.
+            self::deployedTemplate($stacks, $name, $stack);
+        }
+    }
+
+    /**
+     * The template the stack runs, kept unchanged by an import; null for a stack to create (none, or one whose
+     * creation rolled back and is deleted first).
+     *
+     * @param array{status: string}|null $stack
+     * @return array<string, mixed>|null
+     * @throws DeployException deploy.import_failed when the template cannot be read
+     */
+    private static function deployedTemplate(Stacks $stacks, string $name, ?array $stack): ?array
+    {
+        if ($stack === null || in_array($stack['status'], ['ROLLBACK_COMPLETE', 'ROLLBACK_FAILED'], true)) {
+            return null;
+        }
+        return $stacks->template($name) ?? throw DeployException::make('deploy.import_failed', ['stack' => $name, 'reason' => 'cloudformation:GetTemplate']);
     }
 
     /** Whether a queue, bucket or table() table Arco creates comes from a config layer entry with `adopt: true`. */
@@ -1655,8 +1676,7 @@ final class AwsDeployer implements Deployer
                 $changed = $stack === null ? [] : ResourcesStack::changedResources($stacks->template($name), $template);
             } else {
                 // The import must keep the running template as it is: it cannot be guessed.
-                $fresh = $stack === null || in_array($stack['status'], ['ROLLBACK_COMPLETE', 'ROLLBACK_FAILED'], true);
-                $deployed = $fresh ? null : ($stacks->template($name) ?? throw DeployException::make('deploy.import_failed', ['stack' => $name, 'reason' => 'cloudformation:GetTemplate']));
+                $deployed = self::deployedTemplate($stacks, $name, $stack);
                 $changed = $deployed === null ? [] : ResourcesStack::changedResources($deployed, $template);
                 $onStep('deploy.step_import', ['stack' => $name, 'count' => count($imports)]);
                 $stacks->import($name, ResourcesStack::body(ResourcesStack::importTemplate($config, $deployed, array_column($imports, 'LogicalResourceId'))), $imports, self::tags($config));

@@ -151,24 +151,65 @@ final class Stacks
                 break;
             }
             if ($status === 'FAILED') {
-                Aws::call($this->cloudFormation, 'DeleteChangeSet', $changeSet);
-                if ($stack === null) {
-                    // An IMPORT on a new stack leaves it in REVIEW_IN_PROGRESS, which no later deploy could update.
-                    Aws::call($this->cloudFormation, 'DeleteStack', ['StackName' => $name]);
-                }
+                $this->discardChangeSet($changeSet, $stack === null);
                 throw DeployException::make('deploy.import_failed', ['stack' => $name, 'reason' => Aws::string($described['StatusReason'] ?? null) ?? '-']);
             }
             if ($waited >= $timeout) {
+                $this->discardChangeSet($changeSet, $stack === null);
                 throw DeployException::make('deploy.timeout', ['what' => "change set {$changeSet['ChangeSetName']} of stack $name"]);
             }
             $this->sleeper->sleep(self::CHANGE_SET_POLL);
         }
         Aws::call($this->cloudFormation, 'ExecuteChangeSet', $changeSet);
 
+        // The stack may still show its previous status right after ExecuteChangeSet (an UPDATE_COMPLETE, or the
+        // IMPORT_COMPLETE of an earlier import): its status is only read once the change set has run.
+        $gone = false;
+        for ($waited = 0; ; $waited += self::CHANGE_SET_POLL) {
+            try {
+                $execution = (string) Aws::string(Aws::call($this->cloudFormation, 'DescribeChangeSet', $changeSet)['ExecutionStatus'] ?? null);
+            } catch (AwsException $e) {
+                if ($e->getAwsErrorCode() !== 'ChangeSetNotFound') {
+                    throw $e;
+                }
+                // CloudFormation removes a stack's change sets once one has been executed.
+                $gone = true;
+                break;
+            }
+            if (in_array($execution, ['EXECUTE_COMPLETE', 'EXECUTE_FAILED', 'OBSOLETE'], true)) {
+                break;
+            }
+            if ($waited >= $timeout) {
+                throw DeployException::make('deploy.timeout', ['what' => "stack $name"]);
+            }
+            $this->sleeper->sleep(self::CHANGE_SET_POLL);
+        }
         $stack = $this->waitStable($name, $timeout);
+        // Without the change set to ask, a status other than an import's is the one from before it started.
+        for ($waited = 0; $gone && $stack !== null && ! str_starts_with((string) Aws::string($stack['StackStatus'] ?? null), 'IMPORT_'); $waited += self::POLL) {
+            if ($waited >= $timeout) {
+                throw DeployException::make('deploy.timeout', ['what' => "stack $name"]);
+            }
+            $this->sleeper->sleep(self::POLL);
+            $stack = $this->waitStable($name, $timeout);
+        }
         $status = $stack === null ? 'DELETED' : (string) Aws::string($stack['StackStatus'] ?? null);
         if ($status !== 'IMPORT_COMPLETE') {
             throw DeployException::make('deploy.import_failed', ['stack' => $name, 'reason' => $stack === null ? $status : $this->failureReason($name)]);
+        }
+    }
+
+    /**
+     * Deletes a change set that will not run, and the empty stack (REVIEW_IN_PROGRESS) an IMPORT on a new
+     * stack leaves, which no later deploy could update.
+     *
+     * @param array{StackName: string, ChangeSetName: string} $changeSet
+     */
+    private function discardChangeSet(array $changeSet, bool $newStack): void
+    {
+        Aws::call($this->cloudFormation, 'DeleteChangeSet', $changeSet);
+        if ($newStack) {
+            Aws::call($this->cloudFormation, 'DeleteStack', ['StackName' => $changeSet['StackName']]);
         }
     }
 

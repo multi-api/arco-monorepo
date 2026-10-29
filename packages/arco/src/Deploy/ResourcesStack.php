@@ -173,8 +173,9 @@ final class ResourcesStack
      * The template of an IMPORT change set: the one the stack runs ($deployed, null for a new stack)
      * unchanged, plus each resource of $logicalIds with literal properties only, so that nothing refers to a
      * resource not yet in the stack: a queue's name, FIFO flag and tags (no redrive policy), a bucket's name
-     * and tags, a table's whole definition (it has no reference). DeletionPolicy and UpdateReplacePolicy as in
-     * template(). The full template is applied by the update that follows.
+     * and tags, a table's whole definition (it has no reference). Types as in
+     * template(), except that the imported resources are always
+     * retained (DeletionPolicy and UpdateReplacePolicy Retain). The full template is applied by the update that follows.
      *
      * @param array<string, mixed>|null $deployed
      * @param list<string> $logicalIds queues, dead-letter queues, buckets or table() tables of template($config)
@@ -198,6 +199,10 @@ final class ResourcesStack
             if (isset($literal[$resource['Type']])) {
                 $resource['Properties'] = array_intersect_key($resource['Properties'], array_flip($literal[$resource['Type']]));
             }
+            // Kept whatever happens to the import: a rollback never deletes the data. The update that follows
+            // sets the usual policies.
+            $resource['DeletionPolicy'] = 'Retain';
+            $resource['UpdateReplacePolicy'] = 'Retain';
             $resources[$id] = $resource;
         }
         $template['Resources'] = $resources;

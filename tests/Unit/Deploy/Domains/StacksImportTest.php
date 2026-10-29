@@ -44,13 +44,14 @@ final class StacksImportTest extends TestCase
             new Result(['Status' => 'CREATE_PENDING']),
             new Result(['Status' => 'CREATE_COMPLETE']),
             new Result([]),                                       // ExecuteChangeSet
-            self::stack('IMPORT_IN_PROGRESS'),
+            new Result(['Status' => 'CREATE_COMPLETE', 'ExecutionStatus' => 'EXECUTE_IN_PROGRESS']),
+            new Result(['Status' => 'CREATE_COMPLETE', 'ExecutionStatus' => 'EXECUTE_COMPLETE']),
             self::stack('IMPORT_COMPLETE'),
         );
 
         $this->import($mocks);
 
-        self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeStacks', 'DescribeStacks'], $mocks->calls);
+        self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeChangeSet', 'DescribeStacks'], $mocks->calls, 'the stack is read once the change set has run');
         $create = $mocks->params[1];
         self::assertSame(self::NAME, $create['StackName']);
         self::assertSame('IMPORT', $create['ChangeSetType']);
@@ -71,12 +72,13 @@ final class StacksImportTest extends TestCase
             new Result(['Id' => 'cs']),
             new Result(['Status' => 'CREATE_COMPLETE']),
             new Result([]),
+            new Result(['ExecutionStatus' => 'EXECUTE_COMPLETE']),
             self::stack('IMPORT_COMPLETE'),
         );
 
         $this->import($mocks);
 
-        self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeStacks'], $mocks->calls);
+        self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks'], $mocks->calls);
         self::assertSame('IMPORT', $mocks->params[1]['ChangeSetType']);
     }
 
@@ -128,6 +130,7 @@ final class StacksImportTest extends TestCase
             new Result(['Id' => 'cs']),
             new Result(['Status' => 'CREATE_COMPLETE']),
             new Result([]),
+            new Result(['ExecutionStatus' => 'EXECUTE_FAILED']),
             self::stack('IMPORT_ROLLBACK_COMPLETE'),
             new Result(['StackEvents' => [
                 ['LogicalResourceId' => self::NAME, 'ResourceStatus' => 'IMPORT_ROLLBACK_COMPLETE'],
@@ -143,6 +146,45 @@ final class StacksImportTest extends TestCase
         } catch (DeployException $e) {
             self::assertSame('deploy.import_failed', $e->key);
             self::assertSame(['stack' => self::NAME, 'reason' => 'QueueEmails: tags differ'], $e->params);
+        }
+    }
+
+    public function test_a_stale_stack_status_after_execution_is_not_taken_for_the_result(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::stack('UPDATE_COMPLETE'),
+            new Result(['Id' => 'cs']),
+            new Result(['Status' => 'CREATE_COMPLETE']),
+            new Result([]),                                       // ExecuteChangeSet
+            AwsMocks::error(CloudFormationException::class, 'DescribeChangeSet', 'ChangeSetNotFound', 404),
+            self::stack('UPDATE_COMPLETE'),                       // not started yet: the status from before
+            self::stack('IMPORT_IN_PROGRESS'),
+            self::stack('IMPORT_COMPLETE'),
+        );
+
+        $this->import($mocks);
+
+        self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks', 'DescribeStacks', 'DescribeStacks'], $mocks->calls);
+    }
+
+    public function test_a_change_set_that_never_gets_ready_is_cleaned_up(): void
+    {
+        foreach ([[self::stack('UPDATE_COMPLETE'), ['DeleteChangeSet']], [self::missing(), ['DeleteChangeSet', 'DeleteStack']]] as [$before, $cleanup]) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append($before, new Result(['Id' => 'cs']));
+            for ($i = 0; $i <= 2; $i++) {
+                $mocks->handler->append(new Result(['Status' => 'CREATE_IN_PROGRESS']));
+            }
+            $mocks->handler->append(new Result([]), new Result([]));
+
+            try {
+                (new Stacks($mocks->clients()->cloudFormation(), AwsMocks::noSleep()))->import(self::NAME, '{}', self::resources(), [], 10);
+                self::fail('expected deploy.timeout');
+            } catch (DeployException $e) {
+                self::assertSame('deploy.timeout', $e->key);
+            }
+            self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'DescribeChangeSet', 'DescribeChangeSet', ...$cleanup], $mocks->calls);
         }
     }
 
