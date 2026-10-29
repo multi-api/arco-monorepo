@@ -49,6 +49,7 @@ The example app is copied without `vendor/` to `build/tmp/integration/e2e-app-<r
 | `test_arco_command` | `arco command --env=floci 'about --only=environment'` exits 0 and shows `production` |
 | `test_logs` | `arco logs --env=floci --since=10m` exits 0 and prints events |
 | `test_permissions_boundary` | the environment's `permissionsBoundary('arn:aws:iam::aws:policy/PowerUserAccess')` is on the execution role (`iam:GetRole`) and in `arco info --json` (`permissions_boundary`); `test_deploy_json` also checks it in the `deploy.step_role` params. The real-AWS run sets the same AWS-managed boundary and runs the same check |
+| `test_deploy_with_layer_and_no_arco_php` | a copy of the example without `arco.php` deploys from a config layer alone (`--config-layer`, no `--env`: app `arco-e2e-layer`, one queue `emails`, variables); `arco info --resources --json` gives the queue and its worker function source `cloud` with the layer's options, lists the marker variable by name with source `cloud` and never prints its value, and has the queue in `config`; `arco remove` with the layer cleans up |
 
 ## Known Floci gaps
 

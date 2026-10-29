@@ -21,7 +21,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   environment: it waits (`config.layer_adopt_waiting`) while `arco.php` declares the name; otherwise a retained,
   correctly tagged (`arco:app`, `arco:environment`) queue, bucket or table is imported into the resources stack with
   a CloudFormation `IMPORT` change set, after checks that run before any change. New steps `deploy.step_import`
-  (`{stack, count}`), `deploy.queue_adopted`, `deploy.storage_adopted` and `deploy.generic_table_adopted`; new error
+  (`{stack, count}`; `deploy.step_import_one` with the same params for one resource), `deploy.queue_adopted`, `deploy.storage_adopted` and `deploy.generic_table_adopted`; new error
   `deploy.import_failed` (`{stack, reason}`). New deploy permissions: `cloudformation:CreateChangeSet`,
   `DescribeChangeSet`, `ExecuteChangeSet`, `DeleteChangeSet` on `stack/arco-*` (and the tag and describe reads in
   [Permissions](docs/getting-started.md#permissions-for-queues)); nothing is needed without `adopt`.

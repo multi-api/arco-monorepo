@@ -90,14 +90,23 @@ Each key has the type the `arco.php` method stores:
 
 ### Queues, storage and tables
 
-Named entries take the options of the `arco.php` methods:
+Named entries take the options of the `arco.php` methods, plus `adopt` (see
+[Adopting retained resources](#adopting-retained-resources)):
 
-- queue: `timeout`, `memory`, `maxInstances`, `batchSize`, `tries`, `dlq`, `fifo`, `existing`, `default`
-- storage: `public`, `expire`, `cors`, `existing`, `default`
-- table: `ttl`, `existing`
+| Entry | Option | Type |
+|---|---|---|
+| queue | `timeout`, `memory`, `maxInstances`, `batchSize`, `tries` | integer |
+| queue | `dlq`, `fifo`, `default`, `adopt` | boolean |
+| queue | `existing` | string |
+| storage | `public`, `cors` | list of strings |
+| storage | `expire` | object of prefix to integer (days) |
+| storage | `existing` | string |
+| storage | `default`, `adopt` | boolean |
+| table | `ttl`, `existing` | string |
+| table | `adopt` | boolean |
 
-plus `adopt` (boolean, see [Adopting retained resources](#adopting-retained-resources)). Not accepted: the deprecated
-queue `concurrency`, `false` (a layer cannot remove what `arco.php` declares) and `adopt` together with `existing`.
+Each entry is an object (`{}` for all defaults). Not accepted: the deprecated queue `concurrency`, `false` (a layer
+cannot remove what `arco.php` declares) and `adopt` together with `existing`.
 
 ### Strictness
 
@@ -162,12 +171,18 @@ resources that were not made by Arco.
 - All checks are reads that run before the first change, so a refusal leaves everything untouched (`deploy --json`
   reports `changed: false`).
 
-An import uses a CloudFormation `IMPORT` change set: the step `deploy.step_import` (`{stack, count}`), then
+An import uses a CloudFormation `IMPORT` change set: the step `deploy.step_import` (`{stack, count}`;
+`deploy.step_import_one`, same params, when there is one resource), then
 `deploy.queue_adopted` (`{queue, name}`), `deploy.storage_adopted` (`{storage, bucket}`) or
 `deploy.generic_table_adopted` (`{table, name}`) per resource instead of `_created`. Imported resources keep their
 data and are `Retain` during the import; the normal deploy then applies every option (bucket policy, redrive, TTL)
 and the usual retention policy. If CloudFormation cannot import, it rolls the import back and the deploy fails with
-`deploy.import_failed` (`{stack, reason}`); the resources stay in AWS with their data. The permissions an import needs
+`deploy.import_failed` (`{stack, reason}`); the resources stay in AWS with their data. `deploy.import_failed` is also
+the refusal of the checks, with `reason` `cloudformation:GetTemplate`, when an import is due and the template the
+resources stack runs cannot be read (the import must keep it as it is): nothing is written. A read the profile is
+denied during the checks is reported like it is without `adopt`: `deploy.lookup_denied` (`{permission, name}`) for a
+refused `dynamodb:DescribeTable`, `deploy.bucket_taken` for a refused `s3:HeadBucket`, and the usual retained refusal
+for tags that cannot be read. The permissions an import needs
 are in [Permissions for queues](getting-started.md#permissions-for-queues) and
 [for storage and tables](getting-started.md#permissions-for-storage-and-tables).
 
@@ -185,7 +200,7 @@ are in [Permissions for queues](getting-started.md#permissions-for-queues) and
 - `variables`: `[{"name", "source"}]`, sorted by name. Never values.
 - `config`: every item the resolved configuration declares, deployed or not, `[{kind, name, source, options}]` with
   `kind` one of `queue`, `storage`, `table`, `cache`, `failedJobsTable`, `console`, `scheduler`, `domain`, `vpc`
-  (`name` is the queue, bucket or table name, the domain, or the kind for the singletons; a domain's options are
+  (`name` is the queue, storage or table name as configured, the domain, or the kind for the singletons; a domain's options are
   `{domain, dns, certificate}`).
 
 `variables` and `config` are present with or without a layer. `arco info` (the table) shows `cloud` in the source
