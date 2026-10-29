@@ -32,7 +32,7 @@ final class StacksImportTest extends TestCase
 
     private function import(AwsMocks $mocks): void
     {
-        (new Stacks($mocks->clients()->cloudFormation(), AwsMocks::noSleep()))->import(self::NAME, '{"Resources":{}}', self::resources(), ['arco:app' => 'shop', 'arco:environment' => 'production']);
+        (new Stacks($mocks->clients()->cloudFormation(), AwsMocks::noSleep()))->import(self::NAME, '{"Resources":{}}', self::resources());
     }
 
     public function test_import_creates_and_executes_an_import_change_set(): void
@@ -58,7 +58,7 @@ final class StacksImportTest extends TestCase
         self::assertSame('arco-import-1000000', $create['ChangeSetName']);
         self::assertSame('{"Resources":{}}', $create['TemplateBody']);
         self::assertSame(self::resources(), $create['ResourcesToImport']);
-        self::assertSame([['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']], $create['Tags']);
+        self::assertArrayNotHasKey('Tags', $create, 'an import cannot add or change stack tags');
         foreach ([2, 4] as $i) {
             self::assertSame(['StackName' => self::NAME, 'ChangeSetName' => 'arco-import-1000000'], array_intersect_key($mocks->params[$i], ['StackName' => 1, 'ChangeSetName' => 1]));
         }
@@ -257,7 +257,7 @@ final class StacksImportTest extends TestCase
         );
 
         try {
-            (new Stacks($mocks->clients()->cloudFormation(), AwsMocks::noSleep()))->import(self::NAME, '{}', self::resources(), [], 30);
+            (new Stacks($mocks->clients()->cloudFormation(), AwsMocks::noSleep()))->import(self::NAME, '{}', self::resources(), 30);
             self::fail('expected deploy.import_failed');
         } catch (DeployException $e) {
             self::assertSame('deploy.import_failed', $e->key);
@@ -278,7 +278,7 @@ final class StacksImportTest extends TestCase
             $mocks->handler->append(new Result([]), new Result([]));
 
             try {
-                (new Stacks($mocks->clients()->cloudFormation(), AwsMocks::noSleep()))->import(self::NAME, '{}', self::resources(), [], 10);
+                (new Stacks($mocks->clients()->cloudFormation(), AwsMocks::noSleep()))->import(self::NAME, '{}', self::resources(), 10);
                 self::fail('expected deploy.timeout');
             } catch (DeployException $e) {
                 self::assertSame('deploy.timeout', $e->key);

@@ -169,6 +169,25 @@ final class ResourcesStack
         ];
     }
 
+    /** The logical id of the no-op resource a stack created for an import holds until the update after it. */
+    public const IMPORT_PLACEHOLDER = 'ArcoImportPlaceholder';
+
+    /**
+     * The template of a stack created only to import into: an IMPORT change set cannot add stack tags, so
+     * the stack is created first, tagged, with a resource that makes nothing (a template needs one). The
+     * update after the import removes it.
+     *
+     * @return array<string, mixed>
+     */
+    public static function placeholderTemplate(AppConfig $config): array
+    {
+        return [
+            'AWSTemplateFormatVersion' => '2010-09-09',
+            'Description' => "Arco resources for {$config->app}/{$config->environment}",
+            'Resources' => [self::IMPORT_PLACEHOLDER => ['Type' => 'AWS::CloudFormation::WaitConditionHandle']],
+        ];
+    }
+
     /**
      * The template of an IMPORT change set: the one the stack runs ($deployed, null for a new stack)
      * unchanged, plus each resource of $logicalIds with literal properties only, so that nothing refers to a

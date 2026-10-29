@@ -64,11 +64,14 @@ final class AwsDeployerAdoptTest extends TestCase
         return array_map(fn (string $k, string $v) => ['Key' => $k, 'Value' => $v], array_keys($tags), array_values($tags));
     }
 
-    /** The calls of a successful import of a new stack, then its update. @return list<Result> */
+    /** The calls of a successful import into a new stack (created first, tagged, with a placeholder), then its update. @return list<Result> */
     private static function importThenUpdate(): array
     {
         return [
-            self::stackMissing(),                                  // Stacks::import
+            self::stackMissing(),                                  // Stacks::deploy, the placeholder stack
+            new Result([]),                                        // CreateStack
+            self::stack('CREATE_COMPLETE'),
+            self::stack('CREATE_COMPLETE'),                        // Stacks::import
             new Result(['Id' => 'cs']),                            // CreateChangeSet
             new Result(['Status' => 'CREATE_COMPLETE']),           // DescribeChangeSet
             new Result([]),                                        // ExecuteChangeSet
@@ -159,19 +162,27 @@ final class AwsDeployerAdoptTest extends TestCase
 
         self::assertSame([
             'DescribeStacks', 'GetQueueUrl', 'ListQueueTags', 'GetQueueUrl', 'ListQueueTags',
+            'DescribeStacks', 'CreateStack', 'DescribeStacks',
             'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks',
             'DescribeStacks', 'UpdateStack', 'DescribeStacks',
         ], $mocks->calls);
         self::assertSame(self::QUEUE_URL, $mocks->params[2]['QueueUrl']);
-        $create = $mocks->params[6];
+        // An import cannot add stack tags: the stack is created first, tagged, holding only a placeholder.
+        $placeholder = $mocks->params[6];
+        self::assertSame(self::tagList(['arco:app' => 'shop', 'arco:environment' => 'production']), array_values(array_filter($placeholder['Tags'], fn (array $t) => in_array($t['Key'], ['arco:app', 'arco:environment'], true))));
+        $placeholderTemplate = json_decode((string) $placeholder['TemplateBody'], true);
+        self::assertIsArray($placeholderTemplate);
+        self::assertSame(['ArcoImportPlaceholder' => ['Type' => 'AWS::CloudFormation::WaitConditionHandle']], $placeholderTemplate['Resources']);
+        $create = $mocks->params[9];
         self::assertSame('IMPORT', $create['ChangeSetType']);
+        self::assertArrayNotHasKey('Tags', $create);
         self::assertSame([
             ['ResourceType' => 'AWS::SQS::Queue', 'LogicalResourceId' => 'QueueEmails', 'ResourceIdentifier' => ['QueueUrl' => self::QUEUE_URL]],
             ['ResourceType' => 'AWS::SQS::Queue', 'LogicalResourceId' => 'QueueEmailsDlq', 'ResourceIdentifier' => ['QueueUrl' => self::DLQ_URL]],
         ], $create['ResourcesToImport']);
         $template = json_decode((string) $create['TemplateBody'], true);
         self::assertIsArray($template);
-        self::assertSame(['QueueEmails', 'QueueEmailsDlq'], array_keys($template['Resources']));
+        self::assertSame(['ArcoImportPlaceholder', 'QueueEmails', 'QueueEmailsDlq'], array_keys($template['Resources']), 'the running template, unchanged, plus the imports');
         self::assertSame([
             'Type' => 'AWS::SQS::Queue',
             'DeletionPolicy' => 'Retain',
@@ -180,8 +191,9 @@ final class AwsDeployerAdoptTest extends TestCase
         ], $template['Resources']['QueueEmails'], 'literal properties only (no redrive policy referencing the DLQ), always retained');
         self::assertArrayNotHasKey('Outputs', $template);
         // Then the full template, with every option.
-        $full = json_decode((string) $mocks->params[12]['TemplateBody'], true);
+        $full = json_decode((string) $mocks->params[15]['TemplateBody'], true);
         self::assertIsArray($full);
+        self::assertArrayNotHasKey('ArcoImportPlaceholder', $full['Resources'], 'the update removes the placeholder');
         self::assertArrayHasKey('RedrivePolicy', $full['Resources']['QueueEmails']['Properties']);
         self::assertSame(ResourcesStack::DELETION_POLICY, $full['Resources']['QueueEmails']['DeletionPolicy'] ?? null, 'the update sets the usual policy');
         self::assertSame([
@@ -271,6 +283,7 @@ final class AwsDeployerAdoptTest extends TestCase
 
         self::assertSame([
             'DescribeStacks', 'HeadBucket', 'GetBucketTagging', 'DescribeTable', 'DescribeTable', 'ListTagsOfResource',
+            'DescribeStacks', 'CreateStack', 'DescribeStacks',
             'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks',
             'DescribeStacks', 'UpdateStack', 'DescribeStacks',
         ], $mocks->calls);
@@ -278,8 +291,8 @@ final class AwsDeployerAdoptTest extends TestCase
         self::assertSame([
             ['ResourceType' => 'AWS::S3::Bucket', 'LogicalResourceId' => 'StorageUploads', 'ResourceIdentifier' => ['BucketName' => self::BUCKET]],
             ['ResourceType' => 'AWS::DynamoDB::Table', 'LogicalResourceId' => 'AppTableState', 'ResourceIdentifier' => ['TableName' => 'shop-production-state']],
-        ], $mocks->params[7]['ResourcesToImport']);
-        $template = json_decode((string) $mocks->params[7]['TemplateBody'], true);
+        ], $mocks->params[10]['ResourcesToImport']);
+        $template = json_decode((string) $mocks->params[10]['TemplateBody'], true);
         self::assertIsArray($template);
         self::assertSame(['BucketName' => self::BUCKET, 'Tags' => self::tagList(self::tags('storage:uploads'))], $template['Resources']['StorageUploads']['Properties']);
         self::assertSame('Retain', $template['Resources']['StorageUploads']['DeletionPolicy']);
@@ -489,10 +502,10 @@ final class AwsDeployerAdoptTest extends TestCase
             new Result(['Tags' => self::tags('queue:emails')]),
             new Result(['QueueUrl' => self::DLQ_URL]),
             new Result(['Tags' => self::tags('queue:emails:dlq')]),
-            self::stack('REVIEW_IN_PROGRESS'),                     // Stacks::import
+            self::stack('REVIEW_IN_PROGRESS'),                     // Stacks::deploy, the placeholder stack
             self::stack('REVIEW_IN_PROGRESS'),                     // Stacks::delete
             new Result([]),                                        // DeleteStack
-            ...self::importThenUpdate(),
+            ...self::importThenUpdate(),                           // its first DescribeStacks ends the delete
         );
 
         $steps = self::deployResources($mocks, self::adoptQueue());
@@ -500,6 +513,7 @@ final class AwsDeployerAdoptTest extends TestCase
         self::assertSame([
             'DescribeStacks', 'DescribeStackResources', 'GetQueueUrl', 'ListQueueTags', 'GetQueueUrl', 'ListQueueTags',
             'DescribeStacks', 'DescribeStacks', 'DeleteStack',
+            'DescribeStacks', 'CreateStack', 'DescribeStacks',
             'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks',
             'DescribeStacks', 'UpdateStack', 'DescribeStacks',
         ], $mocks->calls);

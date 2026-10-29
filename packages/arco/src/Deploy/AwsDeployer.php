@@ -1683,7 +1683,13 @@ final class AwsDeployer implements Deployer
                 $deployed = self::deployedTemplate($stacks, $name, $stack);
                 $changed = $deployed === null ? [] : ResourcesStack::changedResources($deployed, $template);
                 $onStep(count($imports) === 1 ? 'deploy.step_import_one' : 'deploy.step_import', ['stack' => $name, 'count' => count($imports)]);
-                $stacks->import($name, ResourcesStack::body(ResourcesStack::importTemplate($config, $deployed, array_column($imports, 'LogicalResourceId'))), $imports, self::tags($config));
+                if ($deployed === null) {
+                    // An import cannot add stack tags, and a stack without them is not provably Arco's: a new
+                    // stack is created first, tagged, holding only a placeholder the update below removes.
+                    $deployed = ResourcesStack::placeholderTemplate($config);
+                    $stacks->deploy($name, ResourcesStack::body($deployed), self::tags($config));
+                }
+                $stacks->import($name, ResourcesStack::body(ResourcesStack::importTemplate($config, $deployed, array_column($imports, 'LogicalResourceId'))), $imports);
                 $adopted = array_fill_keys(array_column($imports, 'LogicalResourceId'), true);
             }
             try {

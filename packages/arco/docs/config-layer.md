@@ -179,11 +179,11 @@ the DLQ) after its queue's step, which is `deploy.queue_adopted` when the queue 
 `_updated` or `_changed`. Imported resources keep their data and are `Retain` during the import; the normal deploy
 then applies every option (bucket policy, redrive, TTL) and the usual retention policy. If CloudFormation cannot
 import, it rolls the import back and the deploy fails with `deploy.import_failed` (`{stack, reason}`); the resources
-stay in AWS with their data. An import into a resources stack that does not exist yet creates the stack first in
-`REVIEW_IN_PROGRESS`; if that import is cut short (the process or the CI job is killed, an AWS call fails), the next
-deploy finds the stack still in that state, holding no resources, and deletes and creates it again after the usual
-ownership check. Do not run two deploys of the same environment at once: the second one can take the first one's
-stack in review for an abandoned one, and the first import then fails (nothing is lost; deploy again).
+stay in AWS with their data. An import cannot add tags to a stack, so when the resources stack does not exist yet
+Arco first creates it, tagged, with only a placeholder (`ArcoImportPlaceholder`, an
+`AWS::CloudFormation::WaitConditionHandle` that makes nothing), imports into it, and the normal deploy then removes
+the placeholder. If the deploy is cut short in between, the stack keeps the placeholder until the next deploy.
+Do not run two deploys of the same environment at once.
 `deploy.import_failed` is also the refusal of the checks, with `reason` `cloudformation:GetTemplate`, when an import
 is due and the template the resources stack runs cannot be read (the import must keep it as it is): nothing is
 written. A read the profile is denied during the checks is reported like it is without `adopt`:

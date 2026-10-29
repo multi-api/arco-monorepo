@@ -122,12 +122,13 @@ final class Stacks
      * set and waits for it. $body must be the template the stack runs plus the resources to import, each
      * with a DeletionPolicy and no reference to a resource not yet in the stack. A failed change set is
      * deleted (with the empty stack it left, for a new one); a failed import is rolled back by CloudFormation
-     * (IMPORT_ROLLBACK_COMPLETE, still updatable). Both throw deploy.import_failed.
+     * (IMPORT_ROLLBACK_COMPLETE, still updatable). Both throw deploy.import_failed. An import cannot add or
+     * change stack tags (CloudFormation refuses the change set): a stack created by it has none, so callers
+     * that tell their stacks by tags create the stack first with deploy().
      *
      * @param list<array{ResourceType: string, LogicalResourceId: string, ResourceIdentifier: array<string, string>}> $resources
-     * @param array<string, string> $tags
      */
-    public function import(string $name, string $body, array $resources, array $tags, int $timeout = 1800): void
+    public function import(string $name, string $body, array $resources, int $timeout = 1800): void
     {
         $stack = $this->stack($name);
         if (self::busy($stack)) {
@@ -149,7 +150,6 @@ final class Stacks
             'ChangeSetType' => 'IMPORT',
             'TemplateBody' => $body,
             'ResourcesToImport' => $resources,
-            'Tags' => array_map(fn (string $k, string $v) => ['Key' => $k, 'Value' => $v], array_keys($tags), $tags),
         ]);
         for ($waited = 0; ; $waited += self::CHANGE_SET_POLL) {
             $described = Aws::call($this->cloudFormation, 'DescribeChangeSet', $changeSet);
