@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.12.1
 
 - **Added:** the package uploads to S3 show their progress: a bar with the megabytes sent (`48 / 180 MB`) in a
   terminal, `25% (45 / 180 MB)` lines in CI logs; sizes under 10 MB have one decimal. The console package and its
