@@ -267,13 +267,14 @@ final class FlociE2eTest extends TestCase
 
         $began = microtime(true);
         // No --env: the layer's environment is used.
-        $deploy = self::arcoIn($dir, ['deploy', '--yes', ...$withLayer], 1800);
+        $deploy = self::arco(['deploy', '--yes', ...$withLayer], 1800, $dir);
         self::report('layer deploy', $began, $deploy->isSuccessful() ? 'ok' : 'FAILED');
         try {
             self::assertTrue($deploy->isSuccessful(), "[layer] arco deploy --config-layer without arco.php failed (exit {$deploy->getExitCode()}):\n"
                 . self::tail($deploy->getOutput() . $deploy->getErrorOutput(), 60));
+            self::assertStringNotContainsString($marker, $deploy->getOutput() . $deploy->getErrorOutput(), '[layer] arco deploy printed a variable value');
 
-            $info = self::arcoIn($dir, ['info', '--resources', '--json', ...$withLayer], 120);
+            $info = self::arco(['info', '--resources', '--json', ...$withLayer], 120, $dir);
             $stdout = $info->getOutput();
             self::assertTrue($info->isSuccessful(), "[layer] arco info --resources --json (exit {$info->getExitCode()}):\n" . self::tail($stdout . $info->getErrorOutput(), 40));
             self::assertStringNotContainsString($marker, $stdout . $info->getErrorOutput(), '[layer] arco info --resources --json printed a variable value');
@@ -314,24 +315,14 @@ final class FlociE2eTest extends TestCase
             self::assertSame(['emails', 'cloud'], [$queues[0]['name'] ?? null, $queues[0]['source'] ?? null], '[layer] config queues: ' . json_encode($queues));
         } finally {
             $began = microtime(true);
-            $remove = self::arcoIn($dir, ['remove', '--yes', ...$withLayer], 900);
+            $remove = self::arco(['remove', '--yes', ...$withLayer], 900, $dir);
             self::report('layer remove', $began, $remove->isSuccessful() ? 'ok' : 'FAILED');
             if (! $remove->isSuccessful()) {
                 fwrite(STDERR, "[layer remove] arco remove failed:\n" . self::tail($remove->getOutput() . $remove->getErrorOutput(), 40) . "\n");
             }
         }
-    }
-
-    /**
-     * Runs arco in $dir, a copy other than the main one.
-     *
-     * @param list<string> $arguments
-     */
-    private static function arcoIn(string $dir, array $arguments, int $timeout): Process
-    {
-        $process = new Process([PHP_BINARY, dirname(__DIR__, 2) . '/packages/arco/bin/arco', ...$arguments], $dir, null, null, $timeout);
-        $process->run();
-        return $process;
+        // Checked once the rest passed, so a failure above is not hidden by this one.
+        self::assertStringNotContainsString($marker, $remove->getOutput() . $remove->getErrorOutput(), '[layer] arco remove printed a variable value');
     }
 
     private static function refuseUnlessFloci(): void
