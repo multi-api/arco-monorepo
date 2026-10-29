@@ -153,8 +153,8 @@ Flags shared by many commands:
 
 #### Config layer
 
-`--config-layer=<path>` (or `ARCO_CONFIG_LAYER`, the flag wins; empty means the other one) on `deploy`, `package`,
-`info`, `remove` and `logs` merges a JSON file over `arco.php`, or replaces a missing `arco.php`. It adds queues,
+`--config-layer=<path>` (or `ARCO_CONFIG_LAYER`, the flag wins; empty or blank means the other one) on `deploy`,
+`package`, `info`, `remove` and `logs` merges a JSON file over `arco.php`, or replaces a missing `arco.php`. It adds queues,
 buckets, tables, variables, domains and settings and never overrides `arco.php`: a different value is
 `config.layer_conflict` before any AWS call. Every other command ignores the flag and the variable, so do not expect
 `queue:list` or the editing commands to see layer entries. A layer queue, storage or table with `adopt: true` imports

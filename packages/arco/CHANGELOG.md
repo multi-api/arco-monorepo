@@ -7,8 +7,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 - **Added:** the config layer, a JSON document merged over `arco.php` (or used alone when there is no `arco.php`),
   for tools that manage queues, buckets, tables, variables and domains outside your code. `--config-layer=<path>` and
-  `ARCO_CONFIG_LAYER` on `deploy`, `package`, `info`, `remove` and `logs` (the flag wins; an empty value falls back to
-  the variable; every other command ignores both). Schema 1, strict: unknown keys and wrong types are refused. The
+  `ARCO_CONFIG_LAYER` on `deploy`, `package`, `info`, `remove` and `logs` (the flag wins; an empty or blank value falls
+  back to the variable; every other command ignores both). Schema 1, strict: unknown keys and wrong types are refused. The
   layer never overrides `arco.php`: a different value is an error before any AWS call, every conflict listed. New
   keys: errors `config.layer_not_found` (`{path}`), `config.layer_schema` (`{schema}`), `config.layer_invalid`
   (`{path, reason}`), `config.layer_missing` (`{key}`), `config.layer_environment` (`{layer, environment}`) and
