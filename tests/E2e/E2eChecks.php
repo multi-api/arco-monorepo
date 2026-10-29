@@ -206,12 +206,17 @@ trait E2eChecks
         return $target;
     }
 
-    /** @param list<string> $arguments */
-    private static function arco(array $arguments, int $timeout): Process
+    /**
+     * Runs arco with processEnv(), in the deployed copy of the example or in $dir (another copy).
+     *
+     * @param list<string> $arguments
+     */
+    private static function arco(array $arguments, int $timeout, ?string $dir = null): Process
     {
-        \assert(self::$app !== null);
+        $dir ??= self::$app;
+        \assert($dir !== null);
         $env = static::processEnv();
-        $process = new Process([PHP_BINARY, dirname(__DIR__, 2) . '/packages/arco/bin/arco', ...$arguments], self::$app, $env === [] ? null : $env, null, $timeout);
+        $process = new Process([PHP_BINARY, dirname(__DIR__, 2) . '/packages/arco/bin/arco', ...$arguments], $dir, $env === [] ? null : $env, null, $timeout);
         $process->run();
         return $process;
     }

@@ -6,6 +6,7 @@ use Aws\CloudFormation\CloudFormationClient;
 use Aws\DynamoDb\DynamoDbClient;
 use Aws\Iam\IamClient;
 use Aws\Route53\Route53Client;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\Attributes\Depends;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -233,6 +234,95 @@ final class FlociE2eTest extends TestCase
         $logs = $error === null ? self::arco(['logs', '--env=' . self::ENV, '--since=10m'], 120)->getOutput() : '';
         self::fail("[storage] /e2e/storage answered {$answer['status']}: " . E2eHttp::excerpt($answer['body'])
             . ($error === null ? "\nLogs:\n" . self::tail($logs, 30) : ''));
+    }
+
+    /**
+     * A copy of examples/laravel without arco.php, deployed from a config layer alone (one queue, one
+     * plain variable, plus what the app needs to boot): the inventory names the queue's resources with
+     * source cloud and lists the variable by name, never its value. Its own app name, so it does not
+     * touch the main deploy.
+     */
+    public function test_deploy_with_layer_and_no_arco_php(): void
+    {
+        $app = 'arco-e2e-layer';
+        $marker = 'layer-value-' . bin2hex(random_bytes(8));
+        $dir = self::copyExample();
+        unlink("$dir/arco.php");
+        $layer = TempPaths::path('arco-e2e-layer-', '.json');
+        file_put_contents($layer, (string) json_encode([
+            'schema' => 1,
+            'name' => $app,
+            'region' => self::REQUIRED_ENV['AWS_REGION'],
+            'environments' => [self::ENV => [
+                'variables' => [
+                    'APP_ENV' => 'production',
+                    'APP_DEBUG' => 'false',
+                    'APP_KEY' => 'base64:' . base64_encode(str_repeat('b', 32)),
+                    'E2E_LAYER_MARKER' => $marker,
+                ],
+                'queues' => ['emails' => ['timeout' => 60, 'tries' => 3]],
+            ]],
+        ], JSON_PRETTY_PRINT));
+        $withLayer = ['--config-layer=' . $layer, '--no-interaction'];
+
+        $began = microtime(true);
+        // No --env: the layer's environment is used.
+        $deploy = self::arco(['deploy', '--yes', ...$withLayer], 1800, $dir);
+        self::report('layer deploy', $began, $deploy->isSuccessful() ? 'ok' : 'FAILED');
+        try {
+            self::assertTrue($deploy->isSuccessful(), "[layer] arco deploy --config-layer without arco.php failed (exit {$deploy->getExitCode()}):\n"
+                . self::tail($deploy->getOutput() . $deploy->getErrorOutput(), 60));
+            self::assertStringNotContainsString($marker, $deploy->getOutput() . $deploy->getErrorOutput(), '[layer] arco deploy printed a variable value');
+
+            $info = self::arco(['info', '--resources', '--json', ...$withLayer], 120, $dir);
+            $stdout = $info->getOutput();
+            self::assertTrue($info->isSuccessful(), "[layer] arco info --resources --json (exit {$info->getExitCode()}):\n" . self::tail($stdout . $info->getErrorOutput(), 40));
+            self::assertStringNotContainsString($marker, $stdout . $info->getErrorOutput(), '[layer] arco info --resources --json printed a variable value');
+            $data = json_decode($stdout, true);
+            self::assertIsArray($data, '[layer] arco info --resources --json is not JSON: ' . E2eHttp::excerpt($stdout));
+            self::assertSame(1, $data['schema'] ?? null);
+            self::assertSame($app, $data['app'] ?? null);
+            self::assertSame(self::ENV, $data['environment'] ?? null);
+
+            $resources = is_array($data['resources'] ?? null) ? $data['resources'] : [];
+            $queue = "$app-" . self::ENV . '-emails';
+            $byName = [];
+            foreach ($resources as $resource) {
+                if (is_array($resource) && is_string($resource['type'] ?? null) && is_string($resource['name'] ?? null)) {
+                    $byName[$resource['type'] . ' ' . $resource['name']] = $resource;
+                }
+            }
+            $listed = '[layer] resources: ' . E2eHttp::excerpt(implode(', ', array_keys($byName)));
+            foreach (['sqs ' . $queue, 'lambda:function ' . "$app-" . self::ENV . '-queue-emails'] as $key) {
+                self::assertArrayHasKey($key, $byName, $listed);
+                self::assertSame('cloud', $byName[$key]['source'] ?? null, "[layer] source of $key: " . json_encode($byName[$key]));
+                self::assertIsArray($byName[$key]['options'] ?? null, "[layer] options of $key: " . json_encode($byName[$key]));
+                self::assertSame(60, $byName[$key]['options']['timeout'] ?? null, "[layer] options of $key: " . json_encode($byName[$key]));
+                self::assertSame(3, $byName[$key]['options']['tries'] ?? null, "[layer] options of $key: " . json_encode($byName[$key]));
+            }
+
+            $variables = $data['variables'] ?? null;
+            self::assertIsArray($variables, '[layer] arco info --resources --json has no variables');
+            self::assertContains(['name' => 'E2E_LAYER_MARKER', 'source' => 'cloud'], $variables, '[layer] variables: ' . json_encode($variables));
+            foreach ($variables as $variable) {
+                self::assertIsArray($variable);
+                self::assertSame(['name', 'source'], array_keys($variable), '[layer] a variable entry carries more than its name and source: ' . json_encode($variable));
+            }
+
+            $config = is_array($data['config'] ?? null) ? $data['config'] : [];
+            $queues = array_values(array_filter($config, static fn (mixed $item): bool => is_array($item) && ($item['kind'] ?? null) === 'queue'));
+            self::assertCount(1, $queues, '[layer] config queues: ' . json_encode($queues));
+            self::assertSame(['emails', 'cloud'], [$queues[0]['name'] ?? null, $queues[0]['source'] ?? null], '[layer] config queues: ' . json_encode($queues));
+        } finally {
+            $began = microtime(true);
+            $remove = self::arco(['remove', '--yes', ...$withLayer], 900, $dir);
+            self::report('layer remove', $began, $remove->isSuccessful() ? 'ok' : 'FAILED');
+            if (! $remove->isSuccessful()) {
+                fwrite(STDERR, "[layer remove] arco remove failed:\n" . self::tail($remove->getOutput() . $remove->getErrorOutput(), 40) . "\n");
+            }
+        }
+        // Checked once the rest passed, so a failure above is not hidden by this one.
+        self::assertStringNotContainsString($marker, $remove->getOutput() . $remove->getErrorOutput(), '[layer] arco remove printed a variable value');
     }
 
     private static function refuseUnlessFloci(): void

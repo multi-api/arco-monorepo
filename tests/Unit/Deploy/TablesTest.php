@@ -63,4 +63,18 @@ final class TablesTest extends TestCase
         self::assertSame(42, $tables->itemCount('shop-production-cache'));
         self::assertNull($tables->itemCount('shop-production-cache'), 'unreadable: unknown');
     }
+
+    public function test_tags_refuse_a_table_without_an_arn(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['Table' => ['TableName' => 'shop-production-state']]));
+
+        try {
+            $this->tables($mocks)->tags('shop-production-state');
+            self::fail('expected a failure');
+        } catch (\UnexpectedValueException $e) {
+            self::assertStringContainsString('shop-production-state', $e->getMessage());
+        }
+        self::assertSame(['DescribeTable'], $mocks->calls, 'never ListTagsOfResource with an empty ARN');
+    }
 }

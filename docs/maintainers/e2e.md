@@ -42,6 +42,8 @@ The example app is copied without `vendor/` to `build/tmp/integration/e2e-app-<r
 | deploy | build, code bucket and upload, role, Web Function revision, endpoint, traffic, `/up` verification, resources stack (SQS + DLQ, S3, DynamoDB), console, worker and scheduler functions, ACM certificate, CloudFront distribution, Route 53 records |
 | `test_up` | `/up` answers 200 through the function endpoint (first request may pull the runtime image: up to 180 s) |
 | `test_custom_domain_through_cloudfront` | `arco info --json` shows a distribution, and Floci's CloudFront answers `/up` for `Host: app.arco-e2e.test` (Floci serves every distribution on its own port and picks it by Host, as the alias record would; `*.cloudfront.net` does not lead to Floci) |
+| `test_deploy_json` | a second deploy with `--json`: stdout is pure NDJSON (every line a `"schema": 1` object of type `step`, `progress` or `result`), the last line is the only result, `deployed` with no error and the live environment, domains, revision and URL; every step has a known status and an `at` time, `elapsed_ms` only when done; the `deploy.step_role` params carry the boundary; `build.zip` progress reaches 100 |
+| `test_table_resource` | `->table('state', ttl: 'expires_at')`: `arco info --json` lists it as `arco-example-floci-state`; DynamoDB has PK/SK string keys, on-demand billing (read from the resources stack template where Floci's `DescribeTable` omits it), TTL on `expires_at` and the `arco:app`, `arco:environment` and `arco:resource` (`table:state`) tags |
 | `test_cache` | `/e2e/cache`: the DynamoDB cache store reads back what it wrote |
 | `test_storage` | `/e2e/storage`: the S3 disk writes and reads a file |
 | `test_queue_job` | `/e2e/dispatch` then `/e2e/job/{id}` every 5 s for up to 120 s: SQS → worker function ran the job |
@@ -49,6 +51,7 @@ The example app is copied without `vendor/` to `build/tmp/integration/e2e-app-<r
 | `test_arco_command` | `arco command --env=floci 'about --only=environment'` exits 0 and shows `production` |
 | `test_logs` | `arco logs --env=floci --since=10m` exits 0 and prints events |
 | `test_permissions_boundary` | the environment's `permissionsBoundary('arn:aws:iam::aws:policy/PowerUserAccess')` is on the execution role (`iam:GetRole`) and in `arco info --json` (`permissions_boundary`); `test_deploy_json` also checks it in the `deploy.step_role` params. The real-AWS run sets the same AWS-managed boundary and runs the same check |
+| `test_deploy_with_layer_and_no_arco_php` | a copy of the example without `arco.php` deploys from a config layer alone (`--config-layer`, no `--env`: app `arco-e2e-layer`, one queue `emails`, variables); `arco info --resources --json` gives the queue and its worker function source `cloud` with the layer's options, lists the marker variable by name with source `cloud`, and has the queue in `config`; `arco remove` with the layer cleans up; the marker's value is in none of the deploy, info and remove outputs (stdout and stderr) |
 
 ## Known Floci gaps
 

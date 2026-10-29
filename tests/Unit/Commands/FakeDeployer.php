@@ -58,7 +58,11 @@ final class FakeDeployer implements Deployer
     public ?\Throwable $ownershipError = null;
     /** how many times checkOwnership() ran */
     public int $ownershipChecks = 0;
-    /** @var list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>}> returned by resources() */
+    /** thrown by checkAdoptions(), e.g. a retained queue tagged for another environment */
+    public ?\Throwable $adoptionsError = null;
+    /** how many times checkAdoptions() ran */
+    public int $adoptionChecks = 0;
+    /** @var list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>, source: ?string, options: ?array<string, mixed>}> returned by resources() */
     public array $tagged = [];
     /** thrown by resources(), e.g. AWS refusing tag:GetResources */
     public ?\Throwable $taggedError = null;
@@ -200,6 +204,13 @@ final class FakeDeployer implements Deployer
         $this->ownershipChecks++;
         if ($this->ownershipError !== null) {
             throw $this->ownershipError;
+        }
+    }
+    public function checkAdoptions(AppConfig $config, \Closure $onStep): void
+    {
+        $this->adoptionChecks++;
+        if ($this->adoptionsError !== null) {
+            throw $this->adoptionsError;
         }
     }
     public function deployResources(AppConfig $config, \Closure $onStep): void

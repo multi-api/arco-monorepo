@@ -1511,6 +1511,30 @@ final class AwsDeployerTest extends TestCase
         return [$mocks->calls, $steps];
     }
 
+    public function test_an_empty_stack_whose_creation_rolled_back_is_replaced_without_reading_its_template(): void
+    {
+        foreach (['ROLLBACK_COMPLETE', 'ROLLBACK_FAILED'] as $status) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(
+                self::resourcesStack($status),
+                new Result(['StackResources' => []]),
+                self::noQueue(),
+                self::noQueue(),
+                self::resourcesStack($status),                   // Stacks::deploy
+                self::resourcesStack($status),                   // Stacks::delete
+                new Result([]),                                  // DeleteStack
+                self::stackMissing(),
+                new Result([]),                                  // CreateStack
+                self::resourcesStack('CREATE_COMPLETE'),
+            );
+
+            [$calls, $steps] = $this->deployResources($mocks, $this->queueConfig());
+
+            self::assertSame(['DescribeStacks', 'DescribeStackResources', 'GetQueueUrl', 'GetQueueUrl', 'DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'CreateStack', 'DescribeStacks'], $calls, "$status: no GetTemplate");
+            self::assertSame(['deploy.queue_created', ['queue' => 'emails', 'name' => 'shop-production-emails']], $steps[1], $status);
+        }
+    }
+
     public function test_deploy_resources_creates_the_stack_with_the_queues(): void
     {
         $mocks = new AwsMocks();
@@ -3348,7 +3372,7 @@ final class AwsDeployerTest extends TestCase
 
         $resources = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->resources($this->config());
 
-        self::assertSame([['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true, 'relations' => []]], $resources);
+        self::assertSame([['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true, 'relations' => [], 'source' => null, 'options' => null]], $resources);
         self::assertSame(['GetResources', 'GetRole'], $mocks->calls);
     }
 

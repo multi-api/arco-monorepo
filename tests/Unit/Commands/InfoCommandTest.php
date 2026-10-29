@@ -421,12 +421,12 @@ final class InfoCommandTest extends TestCase
         $project->restore();
     }
 
-    /** @return list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>}> */
+    /** @return list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>, source: ?string, options: ?array<string, mixed>}> */
     private static function tagged(): array
     {
         return [
-            ['type' => 'lambda:function', 'name' => 'shop-production-console', 'arn' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console', 'retained' => false, 'relations' => []],
-            ['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true, 'relations' => []],
+            ['type' => 'lambda:function', 'name' => 'shop-production-console', 'arn' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console', 'retained' => false, 'relations' => [], 'source' => null, 'options' => null],
+            ['type' => 'sqs', 'name' => 'shop-production-emails', 'arn' => 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails', 'retained' => true, 'relations' => [], 'source' => null, 'options' => null],
         ];
     }
 
@@ -456,7 +456,55 @@ final class InfoCommandTest extends TestCase
             'environment' => 'production',
             'group' => 'arco-shop-production',
             'resources' => self::tagged(),
+            'variables' => self::variables(),
+            'config' => self::configItems(),
         ], json_decode($tester->getDisplay(), true));
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    /** @return list<array{name: string, source: string}> the standard config's variables, names only */
+    private static function variables(): array
+    {
+        return [['name' => 'API_TOKEN', 'source' => 'arco.php'], ['name' => 'APP_ENV', 'source' => 'arco.php'], ['name' => 'APP_KEY', 'source' => 'arco.php']];
+    }
+
+    /** @return list<array<string, mixed>> the standard config declares no queue, storage, table, domain, ... */
+    private static function configItems(): array
+    {
+        return [];
+    }
+
+    public function test_resources_json_has_variables_and_config(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer();
+        $deployer->tagged = self::tagged();
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertIsArray($json);
+        self::assertSame(['schema', 'app', 'environment', 'group', 'resources', 'variables', 'config'], array_keys($json));
+        self::assertIsArray($json['variables']);
+        self::assertNotSame([], $json['variables'], 'the standard config declares variables');
+        foreach ($json['variables'] as $variable) {
+            self::assertIsArray($variable);
+            self::assertSame(['name', 'source'], array_keys($variable));
+        }
+        foreach (['plain-token', 'arco-ssm:', 'app-key'] as $value) {
+            self::assertStringNotContainsString($value, $tester->getDisplay(), 'never a value');
+        }
+        self::assertSame([], $json['config']);
+
+        $deployer->taggedError = new \Aws\Exception\AwsException('denied', new \Aws\Command('GetResources'), ['code' => 'AccessDeniedException', 'message' => 'denied']);
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true);
+        self::assertIsArray($json);
+        self::assertSame(['schema', 'app', 'environment', 'group', 'resources', 'variables', 'config', 'error'], array_keys($json), 'error stays last');
         putenv('AWS_PROFILE');
         $project->restore();
     }
