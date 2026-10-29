@@ -102,7 +102,7 @@ final class DeployCommand extends ArcoCommand
             ->addOption('no-deploy-commands', null, InputOption::VALUE_NONE, 'Skip the deploy commands of arco.php')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Print NDJSON step events and a final result line on stdout (never asks: implies --no-interaction)')
             ->addOption(PermissionsBoundary::OPTION, null, InputOption::VALUE_REQUIRED, 'IAM policy ARN for the execution role\'s permissions boundary (overrides ARCO_PERMISSIONS_BOUNDARY and arco.php)')
-            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, 'JSON config layer merged over arco.php (or used without it); also ARCO_CONFIG_LAYER');
+            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, ConfigLayer::DESCRIPTION);
         $this->addCloudflareTokenOption();
     }
 

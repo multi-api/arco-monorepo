@@ -13,6 +13,8 @@ final readonly class ConfigLayer
 {
     public const OPTION = 'config-layer';
     public const ENV = 'ARCO_CONFIG_LAYER';
+    /** The --config-layer help text, the same in every command that takes the option. */
+    public const DESCRIPTION = 'JSON config layer merged over arco.php (or used without it); also ARCO_CONFIG_LAYER';
 
     private const SETTINGS = [
         'concurrency' => 'int', 'timeout' => 'int', 'maxInstances' => 'int', 'rateLimit' => 'int',
@@ -44,10 +46,16 @@ final readonly class ConfigLayer
     ) {
     }
 
-    /** @param array<string, string> $env the process environment, as getenv() returns it */
+    /**
+     * The layer named by the option, else by ARCO_CONFIG_LAYER; null when neither names one. Surrounding
+     * whitespace is dropped, so a blank value counts as empty.
+     *
+     * @param array<string, string> $env the process environment, as getenv() returns it
+     */
     public static function fromInput(?string $option, array $env): ?self
     {
-        $path = $option !== null && $option !== '' ? $option : ($env[self::ENV] ?? '');
+        $option = trim($option ?? '');
+        $path = $option !== '' ? $option : trim($env[self::ENV] ?? '');
 
         return $path === '' ? null : self::load($path);
     }
@@ -190,6 +198,7 @@ final readonly class ConfigLayer
                 self::checkType($value, $options[$key], $q);
             });
             /** @var array<string, mixed> $entry */
+            // Refused even with adopt: false: an entry is either Arco-managed or a reference, and adopt means nothing on a reference.
             if (isset($entry['adopt'], $entry['existing'])) {
                 throw self::invalid($p . '/adopt', 'cannot be combined with existing');
             }

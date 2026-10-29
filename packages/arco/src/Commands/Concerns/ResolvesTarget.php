@@ -51,11 +51,11 @@ trait ResolvesTarget
      */
     protected function loadTarget(InputInterface $input, SymfonyStyle $io, ?Closure $warn = null): AppConfig
     {
+        /** @var array<string, string> $env */
+        $env = getenv();
         $layer = null;
         if ($input->hasOption(ConfigLayer::OPTION)) {
             $option = $input->getOption(ConfigLayer::OPTION);
-            /** @var array<string, string> $env */
-            $env = getenv();
             $layer = ConfigLayer::fromInput(is_string($option) ? $option : null, $env);
         }
         $arcoPhp = $this->projectDir() . '/arco.php';
@@ -80,7 +80,7 @@ trait ResolvesTarget
             throw new UserError(
                 implode("\n", array_map(fn (array $c) => '• ' . $this->t($c['key'], $c['params']), $e->errors)),
                 $e->errors[0]['key'] ?? null,
-                params: $e->errors[0]['params'] ?? [],
+                $e->errors[0]['params'] ?? [],
             );
         }
         if ($withoutArcoPhp) {
@@ -89,8 +89,6 @@ trait ResolvesTarget
         // deploy and info: the deploy host's override, validated with the rest (info shows what deploy uses).
         if ($input->hasOption(PermissionsBoundary::OPTION)) {
             $flag = $input->getOption(PermissionsBoundary::OPTION);
-            /** @var array<string, string> $env */
-            $env = getenv();
             $config = PermissionsBoundary::apply($config, is_string($flag) ? $flag : null, $env);
         }
         $validation = (new Validator())->validate($config, $this->projectDir());

@@ -197,6 +197,30 @@ final class ConfigLayerCommandsTest extends TestCase
         self::assertSame([], $deployer->calls);
     }
 
+    public function test_env_option_for_another_arco_php_environment_is_refused(): void
+    {
+        $this->project(<<<'PHP'
+            <?php
+            use Multiapi\Arco\Config\App;
+
+            return App::make('shop')
+                ->region('us-east-1')
+                ->environment('production')
+                ->environment('staging');
+            PHP);
+        $layer = $this->layer();
+        $deployer = new FakeDeployer('rev-1');
+
+        $tester = $this->deployTester($deployer);
+        $tester->execute(['--config-layer' => $layer, '--env' => 'staging', '--profile' => 'acme-prod', '--json' => true], ['capture_stderr_separately' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $result = self::finalLine($tester);
+        self::assertSame('refused', $result['outcome']);
+        self::assertSame('config.layer_environment', $result['error']['key']);
+        self::assertSame([], $deployer->calls);
+    }
+
     public function test_conflict_fails_before_any_aws_call(): void
     {
         $this->project(self::arcoPhpWithQueue("queue('emails', timeout: 30)"));

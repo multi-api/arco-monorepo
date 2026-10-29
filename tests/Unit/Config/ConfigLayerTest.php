@@ -214,16 +214,39 @@ final class ConfigLayerTest extends TestCase
         self::assertNull(ConfigLayer::fromInput(null, [ConfigLayer::ENV => '']));
     }
 
-    public function test_errors_never_contain_variable_values(): void
+    public function test_whitespace_only_values_mean_no_layer(): void
     {
-        $path = $this->write($this->layer(['variables' => ['SECRET' => 's3cr3t', 'N' => 1], 'queues' => ['q' => ['timeout' => 's3cr3t']]]));
+        self::assertNull(ConfigLayer::fromInput(" \t", []));
+        self::assertNull(ConfigLayer::fromInput(' ', [ConfigLayer::ENV => "\n "]));
 
+        // A blank option falls back to the variable, like an empty one.
+        $env = $this->write($this->layer([], ['name' => 'fromenv']));
+        self::assertSame('fromenv', ConfigLayer::fromInput('  ', [ConfigLayer::ENV => $env])?->name);
+        self::assertSame($env, ConfigLayer::fromInput(null, [ConfigLayer::ENV => " $env\n"])?->path);
+    }
+
+    /** @return iterable<string, array{array<string, mixed>, string}> */
+    public static function secretFailures(): iterable
+    {
+        // The refused value is the secret itself, next to a valid secret string.
+        yield 'variable of the wrong type' => [['variables' => ['TOKEN' => 'tok-5f2a9c', 'SECRET' => 918273645]], '918273645'];
+        yield 'secret string in an integer slot' => [['variables' => ['TOKEN' => 'tok-5f2a9c'], 'queues' => ['emails' => ['timeout' => 's3cr3t-q']]], 's3cr3t-q'];
+        yield 'secret string in a boolean slot' => [['settings' => ['console' => 's3cr3t-b']], 's3cr3t-b'];
+    }
+
+    /** @param array<string, mixed> $environment */
+    #[\PHPUnit\Framework\Attributes\DataProvider('secretFailures')]
+    public function test_errors_never_contain_variable_values(array $environment, string $secret): void
+    {
         try {
-            ConfigLayer::load($path);
+            ConfigLayer::load($this->write($this->layer($environment)));
             self::fail('refused');
         } catch (ConfigException $e) {
-            self::assertStringNotContainsString('s3cr3t', $e->getMessage());
-            self::assertStringNotContainsString('s3cr3t', json_encode($e->params, JSON_THROW_ON_ERROR));
+            self::assertSame('config.layer_invalid', $e->key);
+            foreach ([$secret, 'tok-5f2a9c'] as $value) {
+                self::assertStringNotContainsString($value, $e->getMessage());
+                self::assertStringNotContainsString($value, json_encode($e->params, JSON_THROW_ON_ERROR));
+            }
         }
     }
 }

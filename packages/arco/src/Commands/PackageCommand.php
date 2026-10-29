@@ -32,7 +32,7 @@ final class PackageCommand extends ArcoCommand
     {
         $this->addOption('env', 'e', InputOption::VALUE_REQUIRED, 'Environment to package')
             ->addOption('output', 'o', InputOption::VALUE_REQUIRED, 'Where to write the zip')
-            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, 'JSON config layer merged over arco.php (or used without it); also ARCO_CONFIG_LAYER');
+            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, ConfigLayer::DESCRIPTION);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int

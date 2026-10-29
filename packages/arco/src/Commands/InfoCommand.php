@@ -58,7 +58,7 @@ final class InfoCommand extends ArcoCommand
             ->addOption('json', null, InputOption::VALUE_NONE, 'Print JSON')
             ->addOption('resources', null, InputOption::VALUE_NONE, 'List every AWS resource tagged for the environment')
             ->addOption(PermissionsBoundary::OPTION, null, InputOption::VALUE_REQUIRED, 'Show the permissions boundary as deploy would use it with this flag')
-            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, 'JSON config layer merged over arco.php (or used without it); also ARCO_CONFIG_LAYER');
+            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, ConfigLayer::DESCRIPTION);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int

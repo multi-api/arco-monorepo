@@ -62,7 +62,7 @@ final class RemoveCommand extends ArcoCommand
             ->addOption('force', null, InputOption::VALUE_NONE, 'Deprecated: use --yes')
             ->addOption('dns-profile', null, InputOption::VALUE_REQUIRED, 'AWS profile whose Route 53 holds the DNS zones of the custom domains')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Print NDJSON step events and a final result line on stdout (never asks: implies --no-interaction)')
-            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, 'JSON config layer merged over arco.php (or used without it); also ARCO_CONFIG_LAYER');
+            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, ConfigLayer::DESCRIPTION);
         $this->addCloudflareTokenOption();
     }
 

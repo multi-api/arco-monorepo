@@ -83,7 +83,7 @@ final class LogsCommand extends ArcoCommand
             ->addOption('queue', null, InputOption::VALUE_REQUIRED, 'Only the worker of this queue')
             ->addOption('platform', null, InputOption::VALUE_NONE, 'Show every Lambda platform event')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Print raw events as JSON, one per line')
-            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, 'JSON config layer merged over arco.php (or used without it); also ARCO_CONFIG_LAYER');
+            ->addOption(ConfigLayer::OPTION, null, InputOption::VALUE_REQUIRED, ConfigLayer::DESCRIPTION);
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int

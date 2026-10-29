@@ -12,7 +12,7 @@ final class UserError extends RuntimeException
      * @param string|null $key the message key it was translated from, for machine-readable output (--json)
      * @param array<string, string|int> $params the key's params, carried in NDJSON results when not empty
      */
-    public function __construct(string $message = '', public readonly ?string $key = null, ?Throwable $previous = null, public readonly array $params = [])
+    public function __construct(string $message = '', public readonly ?string $key = null, public readonly array $params = [], ?Throwable $previous = null)
     {
         parent::__construct($message, 0, $previous);
     }
