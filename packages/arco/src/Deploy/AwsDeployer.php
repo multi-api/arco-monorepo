@@ -23,6 +23,7 @@ use Multiapi\Arco\Logs\LogGroups;
 use Multiapi\Arco\Package\ConsoleArtifacts;
 use Multiapi\Arco\Package\Package;
 use Multiapi\Arco\Secrets\SecretResolver;
+use UnexpectedValueException;
 
 final class AwsDeployer implements Deployer
 {
@@ -312,7 +313,7 @@ final class AwsDeployer implements Deployer
     {
         try {
             $tags = $read();
-        } catch (AwsException|\UnexpectedValueException) {
+        } catch (AwsException|UnexpectedValueException) {
             return false;
         }
         return ($tags['arco:app'] ?? null) === $config->app
@@ -1675,6 +1676,7 @@ final class AwsDeployer implements Deployer
             if ($imports === []) {
                 // What the stack runs now, to say which resources this update changes. Unknown: reported as changed.
                 // An empty stack (left in review, or its creation rolled back) holds nothing and is about to be replaced.
+                // [] (nothing changed) is deliberate for Stacks::EMPTY: the stack is deleted and created again.
                 $changed = $stack === null || in_array($stack['status'], Stacks::EMPTY, true) ? [] : ResourcesStack::changedResources($stacks->template($name), $template);
             } else {
                 // The import must keep the running template as it is: it cannot be guessed.

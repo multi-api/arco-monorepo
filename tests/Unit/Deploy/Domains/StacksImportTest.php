@@ -223,6 +223,25 @@ final class StacksImportTest extends TestCase
         self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks'], $mocks->calls);
     }
 
+    public function test_a_new_stack_in_review_with_a_last_updated_time_is_not_taken_for_the_result(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::missing(),
+            new Result(['Id' => 'cs']),
+            new Result(['Status' => 'CREATE_COMPLETE']),
+            new Result([]),                                       // ExecuteChangeSet
+            self::changeSetGone(),
+            self::stackAt('REVIEW_IN_PROGRESS', '2026-10-28T12:00:00Z'), // not started yet
+            self::stackAt('IMPORT_IN_PROGRESS', '2026-10-28T12:00:05Z'),
+            self::stackAt('IMPORT_COMPLETE', '2026-10-28T12:01:00Z'),
+        );
+
+        $this->import($mocks);
+
+        self::assertSame(['DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'ExecuteChangeSet', 'DescribeChangeSet', 'DescribeStacks', 'DescribeStacks', 'DescribeStacks'], $mocks->calls);
+    }
+
     public function test_a_change_set_gone_without_running_is_an_import_failure(): void
     {
         $mocks = new AwsMocks();

@@ -201,9 +201,9 @@ final class Stacks
     /**
      * The stack once the import whose change set CloudFormation already removed has ended. Without the change
      * set to ask, the stack is only taken as the result once it moved on from $before (an IMPORT_* operation
-     * seen, another status or a newer LastUpdatedTime): right after ExecuteChangeSet it may still show the
-     * status from before, an earlier import's IMPORT_COMPLETE included. A stack still as it was when the wait
-     * ends never ran the import: deploy.import_failed.
+     * seen, another status or a newer LastUpdatedTime; never while it is still in review): right after
+     * ExecuteChangeSet it may still show the status from before, an earlier import's IMPORT_COMPLETE included.
+     * A stack still as it was when the wait ends never ran the import: deploy.import_failed.
      *
      * @param array{string, string} $before the status and LastUpdatedTime before ExecuteChangeSet
      * @return array<string, mixed>|null null when the stack no longer exists
@@ -215,7 +215,9 @@ final class Stacks
             $stack = $this->stack($name);
             $status = $stack === null ? null : (string) Aws::string($stack['StackStatus'] ?? null);
             $importing = $importing || ($status !== null && str_starts_with($status, 'IMPORT_') && self::busy($stack));
-            $moved = $importing || $stack === null || [$status, self::updatedAt($stack)] !== $before;
+            // A stack still in review has not started the import, whatever time it reports.
+            $moved = $importing || $stack === null
+                || ($status !== 'REVIEW_IN_PROGRESS' && [$status, self::updatedAt($stack)] !== $before);
             if ($moved && ! self::busy($stack)) {
                 return $stack;
             }
