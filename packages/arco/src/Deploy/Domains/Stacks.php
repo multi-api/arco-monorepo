@@ -10,6 +10,8 @@ use Multiapi\Arco\Deploy\Sleeper;
 final class Stacks
 {
     private const POLL = 15;
+    /** A change set is usually ready in seconds. */
+    private const CHANGE_SET_POLL = 5;
     private const SUCCESS = ['CREATE_COMPLETE', 'UPDATE_COMPLETE'];
     /** States UpdateStack accepts. */
     private const UPDATABLE = ['CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE', 'IMPORT_COMPLETE', 'IMPORT_ROLLBACK_COMPLETE'];
@@ -110,6 +112,66 @@ final class Stacks
         return self::outputs($stack);
     }
 
+    /**
+     * Imports existing resources into the stack (creating it when it does not exist) with an IMPORT change
+     * set and waits for it. $body must be the template the stack runs plus the resources to import, each
+     * with a DeletionPolicy and no reference to a resource not yet in the stack. A failed change set is
+     * deleted (with the empty stack it left, for a new one); a failed import is rolled back by CloudFormation
+     * (IMPORT_ROLLBACK_COMPLETE, still updatable). Both throw deploy.import_failed.
+     *
+     * @param list<array{ResourceType: string, LogicalResourceId: string, ResourceIdentifier: array<string, string>}> $resources
+     * @param array<string, string> $tags
+     */
+    public function import(string $name, string $body, array $resources, array $tags, int $timeout = 1800): void
+    {
+        $stack = $this->stack($name);
+        if ($stack !== null && str_ends_with((string) Aws::string($stack['StackStatus'] ?? null), '_IN_PROGRESS')) {
+            $stack = $this->waitStable($name, $timeout);
+        }
+        if ($stack !== null && in_array($stack['StackStatus'] ?? null, ['ROLLBACK_COMPLETE', 'ROLLBACK_FAILED'], true)) {
+            $this->delete($name, $timeout);
+            $stack = null;
+        }
+        if ($stack !== null && ! in_array($stack['StackStatus'] ?? null, self::UPDATABLE, true)) {
+            throw DeployException::make($this->keys . 'not_updatable', ['stack' => $name, 'status' => (string) Aws::string($stack['StackStatus'] ?? null)]);
+        }
+
+        $changeSet = ['StackName' => $name, 'ChangeSetName' => 'arco-import-' . (int) $this->sleeper->now()];
+        Aws::call($this->cloudFormation, 'CreateChangeSet', [
+            ...$changeSet,
+            'ChangeSetType' => 'IMPORT',
+            'TemplateBody' => $body,
+            'ResourcesToImport' => $resources,
+            'Tags' => array_map(fn (string $k, string $v) => ['Key' => $k, 'Value' => $v], array_keys($tags), $tags),
+        ]);
+        for ($waited = 0; ; $waited += self::CHANGE_SET_POLL) {
+            $described = Aws::call($this->cloudFormation, 'DescribeChangeSet', $changeSet);
+            $status = (string) Aws::string($described['Status'] ?? null);
+            if ($status === 'CREATE_COMPLETE') {
+                break;
+            }
+            if ($status === 'FAILED') {
+                Aws::call($this->cloudFormation, 'DeleteChangeSet', $changeSet);
+                if ($stack === null) {
+                    // An IMPORT on a new stack leaves it in REVIEW_IN_PROGRESS, which no later deploy could update.
+                    Aws::call($this->cloudFormation, 'DeleteStack', ['StackName' => $name]);
+                }
+                throw DeployException::make('deploy.import_failed', ['stack' => $name, 'reason' => Aws::string($described['StatusReason'] ?? null) ?? '-']);
+            }
+            if ($waited >= $timeout) {
+                throw DeployException::make('deploy.timeout', ['what' => "change set {$changeSet['ChangeSetName']} of stack $name"]);
+            }
+            $this->sleeper->sleep(self::CHANGE_SET_POLL);
+        }
+        Aws::call($this->cloudFormation, 'ExecuteChangeSet', $changeSet);
+
+        $stack = $this->waitStable($name, $timeout);
+        $status = $stack === null ? 'DELETED' : (string) Aws::string($stack['StackStatus'] ?? null);
+        if ($status !== 'IMPORT_COMPLETE') {
+            throw DeployException::make('deploy.import_failed', ['stack' => $name, 'reason' => $stack === null ? $status : $this->failureReason($name)]);
+        }
+    }
+
     /** Deletes the stack and waits until it is gone. A missing stack is not an error. */
     public function delete(string $name, int $timeout = 1800): void
     {
@@ -165,7 +227,7 @@ final class Stacks
             $status = (string) Aws::string($event['ResourceStatus'] ?? null);
             $reason = (string) Aws::string($event['ResourceStatusReason'] ?? null);
             $isStack = ($event['LogicalResourceId'] ?? null) === $name;
-            if ($isStack && in_array($status, ['CREATE_IN_PROGRESS', 'UPDATE_IN_PROGRESS', 'DELETE_IN_PROGRESS'], true)) {
+            if ($isStack && in_array($status, ['CREATE_IN_PROGRESS', 'UPDATE_IN_PROGRESS', 'DELETE_IN_PROGRESS', 'IMPORT_IN_PROGRESS'], true)) {
                 break;
             }
             if (! $isStack && str_ends_with($status, '_FAILED') && $reason !== '' && ! str_contains($reason, 'cancelled')) {

@@ -34,6 +34,24 @@ final class Tables
     }
 
     /**
+     * The tags of the table (DescribeTable for its ARN, then ListTagsOfResource). Throws on any failure.
+     *
+     * @return array<string, string>
+     */
+    public function tags(string $table): array
+    {
+        $arn = Aws::string(Aws::map(Aws::call($this->dynamoDb, 'DescribeTable', ['TableName' => $table])['Table'] ?? null)['TableArn'] ?? null) ?? '';
+        $tags = [];
+        $token = null;
+        do {
+            $result = Aws::call($this->dynamoDb, 'ListTagsOfResource', ['ResourceArn' => $arn] + ($token === null ? [] : ['NextToken' => $token]));
+            $tags += Aws::tagMap($result['Tags'] ?? []);
+            $token = Aws::string($result['NextToken'] ?? null);
+        } while ($token !== null);
+        return $tags;
+    }
+
+    /**
      * The approximate item count (DynamoDB refreshes it about every six hours), or null when it
      * cannot be read: only ever shown in warnings.
      */

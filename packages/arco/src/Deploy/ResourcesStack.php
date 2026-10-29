@@ -170,6 +170,41 @@ final class ResourcesStack
     }
 
     /**
+     * The template of an IMPORT change set: the one the stack runs ($deployed, null for a new stack)
+     * unchanged, plus each resource of $logicalIds with literal properties only, so that nothing refers to a
+     * resource not yet in the stack: a queue's name, FIFO flag and tags (no redrive policy), a bucket's name
+     * and tags, a table's whole definition (it has no reference). DeletionPolicy and UpdateReplacePolicy as in
+     * template(). The full template is applied by the update that follows.
+     *
+     * @param array<string, mixed>|null $deployed
+     * @param list<string> $logicalIds queues, dead-letter queues, buckets or table() tables of template($config)
+     * @return array<string, mixed>
+     */
+    public static function importTemplate(AppConfig $config, ?array $deployed, array $logicalIds): array
+    {
+        $template = $deployed ?? [
+            'AWSTemplateFormatVersion' => '2010-09-09',
+            'Description' => "Arco resources for {$config->app}/{$config->environment}",
+        ];
+        $resources = is_array($template['Resources'] ?? null) ? $template['Resources'] : [];
+        /** @var array<string, array{Type: string, DeletionPolicy: string, UpdateReplacePolicy: string, Properties: array<string, mixed>}> $full */
+        $full = self::template($config)['Resources'];
+        $literal = [
+            'AWS::SQS::Queue' => ['QueueName', 'FifoQueue', 'Tags'],
+            'AWS::S3::Bucket' => ['BucketName', 'Tags'],
+        ];
+        foreach ($logicalIds as $id) {
+            $resource = $full[$id] ?? throw new \InvalidArgumentException("$id is not a resource of the stack");
+            if (isset($literal[$resource['Type']])) {
+                $resource['Properties'] = array_intersect_key($resource['Properties'], array_flip($literal[$resource['Type']]));
+            }
+            $resources[$id] = $resource;
+        }
+        $template['Resources'] = $resources;
+        return $template;
+    }
+
+    /**
      * The logical ids whose definition differs between the template the stack runs and the new one:
      * changed, added or removed (a bucket's policy counts for its bucket, a queue's dead-letter queue
      * for the queue). Null when the running template is unknown.

@@ -11,6 +11,7 @@ use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Config\Runtime;
 use Multiapi\Arco\Console\CommandResult;
+use Multiapi\Arco\Deploy\ChangeTrackingDeployer;
 use Multiapi\Arco\Deploy\CommandPlan;
 use Multiapi\Arco\Deploy\ConsoleFunction;
 use Multiapi\Arco\Deploy\ConsoleRetriesNotDisabled;
@@ -1288,6 +1289,26 @@ final class DeployPipelineTest extends TestCase
             self::assertSame('deploy.not_owned', $e->key);
         }
         self::assertSame([], $deployer->calls, 'no resources stack, no prepare, no traffic');
+    }
+
+    public function test_adoption_refusal_happens_before_any_change(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $deployer, new FakeVerifier(true), fn () => null);
+        self::assertSame(1, $deployer->adoptionChecks);
+
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->adoptionsError = DeployException::make('deploy.queue_retained', ['queue' => 'emails', 'existing' => "queue('emails', existing: 'arn')"]);
+        $tracking = new ChangeTrackingDeployer($deployer);
+        try {
+            $this->pipeline()->deploy($this->queueConfig(), new PlainPhpPreset(), $this->project, $tracking, new FakeVerifier(true), fn () => null);
+            self::fail('expected deploy.queue_retained');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.queue_retained', $e->key);
+        }
+        self::assertSame(1, $deployer->ownershipChecks, 'after the ownership check');
+        self::assertSame([], $deployer->calls, 'no resources stack, no prepare, no traffic');
+        self::assertFalse($tracking->changed(), 'a refusal: nothing changed');
     }
 
     public function test_a_failed_resources_deploy_stops_before_any_traffic_moves(): void

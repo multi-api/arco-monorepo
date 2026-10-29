@@ -174,6 +174,130 @@ final class AwsDeployer implements Deployer
         return ($stack['tags']['arco:app'] ?? null) === $config->app && ($stack['tags']['arco:environment'] ?? null) === $config->environment;
     }
 
+    public function checkAdoptions(AppConfig $config, Closure $onStep): void
+    {
+        if (! self::adopts($config)) {
+            return;
+        }
+        $name = ResourcesStack::name($config);
+        $stack = (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe($name);
+        if ($stack !== null && ! self::ownsStack($stack, $config)) {
+            // checkStacks() refuses it (stack.not_ours), as deployResources() does.
+            return;
+        }
+        $this->adoptions($config, $stack === null ? [] : $this->ownedResources($name));
+    }
+
+    /** Whether a queue, bucket or table() table Arco creates comes from a config layer entry with `adopt: true`. */
+    private static function adopts(AppConfig $config): bool
+    {
+        foreach ([...ResourcesStack::createdQueues($config), ...ResourcesStack::createdStorage($config), ...ResourcesStack::createdGenericTables($config)] as $resource) {
+            if ($resource->adopt) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The resources of the config layer's `adopt` entries to import into the resources stack: not owned by it,
+     * existing under their name, and tagged for this app and environment (arco:resource, when present, as
+     * ResourcesStack writes it). A queue and its dead-letter queue are checked together. Read-only; an entry
+     * whose resource exists but is not provably this environment's (other tags, or tags that cannot be
+     * read) throws the error a deploy without `adopt` throws. A free name is created as usual.
+     *
+     * @param array<string, array{type: string, id: string}> $owned
+     * @return list<array{ResourceType: string, LogicalResourceId: string, ResourceIdentifier: array<string, string>}>
+     * @throws DeployException deploy.queue_retained, deploy.queue_dlq_retained, deploy.storage_retained,
+     *         deploy.bucket_taken, deploy.generic_table_retained, deploy.lookup_denied
+     */
+    private function adoptions(AppConfig $config, array $owned): array
+    {
+        $import = [];
+        $add = static function (string $type, string $id, array $identifier) use (&$import): void {
+            /** @var array<string, string> $identifier */
+            $import[] = ['ResourceType' => $type, 'LogicalResourceId' => $id, 'ResourceIdentifier' => $identifier];
+        };
+        $queues = new Queues($this->aws->sqs(), $this->aws->lambda());
+        foreach (ResourcesStack::createdQueues($config) as $queue) {
+            if (! $queue->adopt) {
+                continue;
+            }
+            $id = ResourcesStack::logicalId($queue->name);
+            if (! isset($owned[$id])) {
+                $url = $queues->url($queue->physicalName($config));
+                if ($url !== null) {
+                    if (! self::provablyOurs($config, "queue:{$queue->name}", static fn () => $queues->tags($url))) {
+                        throw DeployException::make('deploy.queue_retained', ['queue' => $queue->name, 'existing' => "queue('{$queue->name}', existing: '" . self::queueArn($url) . "')"]);
+                    }
+                    $add('AWS::SQS::Queue', $id, ['QueueUrl' => $url]);
+                }
+            }
+            $dlq = $queue->dlqName($config);
+            $dlqId = ResourcesStack::dlqLogicalId($queue->name);
+            if ($dlq !== null && ! isset($owned[$dlqId])) {
+                $url = $queues->url($dlq);
+                if ($url !== null) {
+                    if (! self::provablyOurs($config, "queue:{$queue->name}:dlq", static fn () => $queues->tags($url))) {
+                        throw DeployException::make('deploy.queue_dlq_retained', ['queue' => $queue->name, 'dlq' => $dlq]);
+                    }
+                    $add('AWS::SQS::Queue', $dlqId, ['QueueUrl' => $url]);
+                }
+            }
+        }
+        $buckets = new Buckets($this->aws->s3());
+        foreach (ResourcesStack::createdStorage($config) as $bucket) {
+            $id = ResourcesStack::bucketLogicalId($bucket->name);
+            if (! $bucket->adopt || isset($owned[$id])) {
+                continue;
+            }
+            $bucketName = $bucket->bucketName($config);
+            $holder = $buckets->exists($bucketName);
+            if ($holder === 'taken') {
+                throw DeployException::make('deploy.bucket_taken', ['bucket' => $bucketName]);
+            }
+            if ($holder === 'ours') {
+                if (! self::provablyOurs($config, "storage:{$bucket->name}", static fn () => $buckets->tags($bucketName))) {
+                    throw DeployException::make('deploy.storage_retained', ['storage' => $bucket->name, 'existing' => "storage('{$bucket->name}', existing: '{$bucketName}')"]);
+                }
+                $add('AWS::S3::Bucket', $id, ['BucketName' => $bucketName]);
+            }
+        }
+        $tables = new Tables($this->aws->dynamoDb());
+        foreach (ResourcesStack::createdGenericTables($config) as $table) {
+            $id = ResourcesStack::genericTableLogicalId($table->name);
+            if (! $table->adopt || isset($owned[$id])) {
+                continue;
+            }
+            $tableName = $table->tableName($config);
+            if ($tables->exists($tableName)) {
+                if (! self::provablyOurs($config, "table:{$table->name}", static fn () => $tables->tags($tableName))) {
+                    throw DeployException::make('deploy.generic_table_retained', ['kind' => 'table', 'name' => $table->name, 'table' => $tableName, 'existing' => "table('{$table->name}', existing: '{$tableName}')"]);
+                }
+                $add('AWS::DynamoDB::Table', $id, ['TableName' => $tableName]);
+            }
+        }
+        return $import;
+    }
+
+    /**
+     * Whether a resource's tags say it is this environment's $resource: arco:app and arco:environment equal,
+     * arco:resource equal when present. Tags that cannot be read prove nothing.
+     *
+     * @param Closure(): array<string, string> $read
+     */
+    private static function provablyOurs(AppConfig $config, string $resource, Closure $read): bool
+    {
+        try {
+            $tags = $read();
+        } catch (AwsException) {
+            return false;
+        }
+        return ($tags['arco:app'] ?? null) === $config->app
+            && ($tags['arco:environment'] ?? null) === $config->environment
+            && ($tags['arco:resource'] ?? $resource) === $resource;
+    }
+
     /**
      * Checks one name-addressed resource outside a deploy's checkOwnership() (scheduler:set --apply, the
      * console's removal): skipped when this deployer already checked it.
@@ -1471,10 +1595,17 @@ final class AwsDeployer implements Deployer
             }
         }
 
+        // A config layer entry with `adopt` imports its retained resource when it is provably this
+        // environment's, and is refused like any other otherwise: checked here, still before any change.
+        $imports = self::adopts($config) ? $this->adoptions($config, $owned) : [];
+
         // A queue, bucket or table removed earlier is retained under its name: CloudFormation would
         // fail creating it again, so the deploy stops here, before any change, and offers to reference
         // it instead. A bucket name another account holds stops it the same way.
         foreach ($created as $queue) {
+            if ($queue->adopt) {
+                continue;
+            }
             if (! isset($owned[ResourcesStack::logicalId($queue->name)])) {
                 $url = $queues->url($queue->physicalName($config));
                 if ($url !== null) {
@@ -1488,7 +1619,7 @@ final class AwsDeployer implements Deployer
         }
         $buckets = new Buckets($this->aws->s3());
         foreach ($storage as $bucket) {
-            if (isset($owned[ResourcesStack::bucketLogicalId($bucket->name)])) {
+            if ($bucket->adopt || isset($owned[ResourcesStack::bucketLogicalId($bucket->name)])) {
                 continue;
             }
             $bucketName = $bucket->bucketName($config);
@@ -1506,7 +1637,7 @@ final class AwsDeployer implements Deployer
             }
         }
         foreach ($generic as $table) {
-            if (! isset($owned[ResourcesStack::genericTableLogicalId($table->name)]) && $lookup->exists($table->tableName($config))) {
+            if (! $table->adopt && ! isset($owned[ResourcesStack::genericTableLogicalId($table->name)]) && $lookup->exists($table->tableName($config))) {
                 throw DeployException::make('deploy.generic_table_retained', ['kind' => 'table', 'name' => $table->name, 'table' => $table->tableName($config), 'existing' => "table('{$table->name}', existing: '{$table->tableName($config)}')"]);
             }
         }
@@ -1518,8 +1649,19 @@ final class AwsDeployer implements Deployer
             // The queues, buckets and tables stay (Retain): only the empty stack goes.
             $stacks->delete($name);
         } else {
-            // What the stack runs now, to say which resources this update changes. Unknown: reported as changed.
-            $changed = $stack === null ? [] : ResourcesStack::changedResources($stacks->template($name), $template);
+            $adopted = [];
+            if ($imports === []) {
+                // What the stack runs now, to say which resources this update changes. Unknown: reported as changed.
+                $changed = $stack === null ? [] : ResourcesStack::changedResources($stacks->template($name), $template);
+            } else {
+                // The import must keep the running template as it is: it cannot be guessed.
+                $fresh = $stack === null || in_array($stack['status'], ['ROLLBACK_COMPLETE', 'ROLLBACK_FAILED'], true);
+                $deployed = $fresh ? null : ($stacks->template($name) ?? throw DeployException::make('deploy.import_failed', ['stack' => $name, 'reason' => 'cloudformation:GetTemplate']));
+                $changed = $deployed === null ? [] : ResourcesStack::changedResources($deployed, $template);
+                $onStep('deploy.step_import', ['stack' => $name, 'count' => count($imports)]);
+                $stacks->import($name, ResourcesStack::body(ResourcesStack::importTemplate($config, $deployed, array_column($imports, 'LogicalResourceId'))), $imports, self::tags($config));
+                $adopted = array_fill_keys(array_column($imports, 'LogicalResourceId'), true);
+            }
             try {
                 $stacks->deploy($name, ResourcesStack::body($template), self::tags($config));
             } catch (DeployException $e) {
@@ -1527,12 +1669,12 @@ final class AwsDeployer implements Deployer
             }
             foreach ($created as $queue) {
                 $id = ResourcesStack::logicalId($queue->name);
-                $key = ! isset($owned[$id]) ? 'deploy.queue_created' : (self::isChanged($changed, $id) ? 'deploy.queue_changed' : 'deploy.queue_updated');
+                $key = isset($adopted[$id]) ? 'deploy.queue_adopted' : (! isset($owned[$id]) ? 'deploy.queue_created' : (self::isChanged($changed, $id) ? 'deploy.queue_changed' : 'deploy.queue_updated'));
                 $onStep($key, ['queue' => $queue->name, 'name' => $queue->physicalName($config)]);
             }
             foreach ($storage as $bucket) {
                 $id = ResourcesStack::bucketLogicalId($bucket->name);
-                $key = ! isset($owned[$id]) ? 'deploy.storage_created' : (self::isChanged($changed, $id) ? 'deploy.storage_changed' : 'deploy.storage_updated');
+                $key = isset($adopted[$id]) ? 'deploy.storage_adopted' : (! isset($owned[$id]) ? 'deploy.storage_created' : (self::isChanged($changed, $id) ? 'deploy.storage_changed' : 'deploy.storage_updated'));
                 $onStep($key, ['storage' => $bucket->name, 'bucket' => $bucket->bucketName($config)]);
                 if ($bucket->public !== []) {
                     $onStep('deploy.storage_public', ['storage' => $bucket->name, 'prefixes' => implode(', ', $bucket->public), 'url' => $bucket->url($config)]);
@@ -1545,7 +1687,7 @@ final class AwsDeployer implements Deployer
             }
             foreach ($generic as $table) {
                 $id = ResourcesStack::genericTableLogicalId($table->name);
-                $key = ! isset($owned[$id]) ? 'deploy.generic_table_created' : (self::isChanged($changed, $id) ? 'deploy.generic_table_changed' : 'deploy.generic_table_updated');
+                $key = isset($adopted[$id]) ? 'deploy.generic_table_adopted' : (! isset($owned[$id]) ? 'deploy.generic_table_created' : (self::isChanged($changed, $id) ? 'deploy.generic_table_changed' : 'deploy.generic_table_updated'));
                 $onStep($key, ['table' => $table->name, 'name' => $table->tableName($config)]);
             }
         }
