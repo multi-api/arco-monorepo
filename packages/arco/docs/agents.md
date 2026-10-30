@@ -220,7 +220,10 @@ There is no command for `variables()`, `permissions()`, `runtime()`, `deployComm
 |---|---|---|
 | `resources` | Lists the existing subnets, security groups, gateway endpoints, buckets, queues, tables, certificates and Route 53 zones, each with the command that adds it to `arco.php`. Read-only (`List*`, `Describe*`, `Get*`); in a terminal it is a picker, so always pass `--json` | `--env`, `--profile`, `--region`, `--dns-profile`, `--type=<type>` (repeatable: `subnet`, `security-group`, `endpoint`, `bucket`, `queue`, `table`, `certificate`, `zone`), `--all`, `--json`, `--config-layer=<path>` |
 
-`resources --json` prints `{"schema": 1, "account", "region", "environment", "types": {...}, "warnings": [...]}`.
+`resources --json` prints `{"schema": 1, "account", "region", "environment", "vpc", "types": {...}, "warnings": [...]}`.
+`vpc` is the environment's resolved `vpc()`: `{"subnets": [...], "securityGroups": [...], "endpoints": [{"service":
+"s3", "id": null}, {"service": "dynamodb", "id": "vpce-..."}], "source": "arco.php"|"cloud"}`, `false` for
+`vpc(false)`, or `null` when there is none. An endpoint with `"id": null` is one Arco manages: no item lists it.
 Each type is `{"ok": true, "items": [...]}` or `{"ok": false, "error": {"key", "params", "message"}}`: a missing
 permission (`resources.permission_denied`, `params.action`) degrades only that type and the exit code stays 0. A
 fatal error (no credentials, bad environment) is `{"schema": 1, "error": "<message>"}` with exit 1. The top-level
@@ -230,22 +233,27 @@ fatal error (no credentials, bad environment) is `{"schema": 1, "error": "<messa
   `egress`, `service`, `region`, `fifo`, `keys`, `status`, ...).
 - `inUse`: `null`, or `{"source": "arco.php"}` (or `"cloud"` for the config layer) when the environment's configuration already uses it.
 - `hidden`: shown only with `--all` in the terminal, always present in JSON with `hidden: true`. Hidden are Arco's
-  own resources for this app and environment, Arco's code bucket, `cdk-*` and `aws-sam-cli-*` buckets, buckets in
-  other regions and, when other VPCs exist, the default VPC's subnets, security groups and endpoints.
-- `warnings`: `[{key, params}]`, e.g. `resources.warning.subnet_no_egress`, `certificate_not_issued`, `table_schema`.
+  own resources for this app and environment, the gateway endpoints Arco created (tag `arco:managed`; their `apply` is
+  `null`: never name one by id, use the service name), Arco's code bucket, `cdk-*` and `aws-sam-cli-*` buckets, buckets
+  in other regions and, when other VPCs exist, the default VPC's subnets, security groups and endpoints.
+- `warnings`: `[{key, params}]`, e.g. `resources.warning.subnet_no_egress`, `certificate_not_issued`,
+  `bucket_region_unknown` (`s3:GetBucketLocation` was refused: the bucket may be in another region), `table_schema`
+  (one per use the table's keys do not fit; `params.use` is `generic`, `cache` or `failedJobs`).
   The subnet check treats a `0.0.0.0/0` route to a Transit Gateway or a peering connection as no egress, and
   `endpoint_missing_routes` is only computed when subnets are listed in the same run (not with `--type=endpoint`
   alone).
 - `apply`: `{"command": "vpc:set", "args": ["--subnet=subnet-0abc", "--env=staging"]}`, an argv: run it as
   `vendor/bin/arco <command> <args...>` without a shell. `null` for zones (use `domain:add`). A table has one per use,
   keyed `generic` (`table:add`), `cache` (`cache:add`) and `failedJobs` (`failed-jobs:add`); pick the one the user wants
-  and read `warnings` (`table_schema`) first.
+  and read `warnings` (`table_schema`) first. A FIFO queue's `apply` carries `--fifo`.
 
 **One `vpc:set` per environment.** `vpc:set` sets the full list of subnets, security groups and endpoints: it does
 not merge with what `arco.php` has. Do not run the `apply` of each subnet, group and endpoint one after the other (the
-last would win). Merge the `--subnet`, `--security-group` and `--endpoint` args of everything the user picked into
-**one** call per environment, and **always include the resources already in use** (`inUse` not null) unless the user
-asked to drop them. The same holds for `certificate:set` (it replaces the one certificate). Buckets, queues and
+last would win). Build **one** call per environment from the top-level `vpc` plus the user's picks: every subnet and
+security group of `vpc` (`--subnet=<id>`, `--security-group=<id>`), every endpoint of `vpc` (`--endpoint=<service>`
+when its `id` is `null`, the endpoint Arco manages, which no item lists; `--endpoint=<service>=<id>` otherwise), then
+the `--subnet`, `--security-group` and `--endpoint` args of the picks. Drop something already in use only when the
+user asked to. A pick of a service `vpc` already has replaces that endpoint. The same holds for `certificate:set` (it replaces the one certificate). Buckets, queues and
 tables are separate entries, so each `apply` can run on its own.
 
 The terminal picker (for the user, not for you) confirms the account, profile and region first and never writes with a

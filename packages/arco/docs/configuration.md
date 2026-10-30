@@ -269,13 +269,15 @@ vendor/bin/arco resources --env=staging --all                 # include the hidd
 | `--json` | The machine-readable document ([agents](agents.md#existing-aws-resources)) |
 
 Each resource shows what makes it a good or bad choice (`arco resources` warns about public subnets, subnets with no
-route out, few free addresses, security groups without outbound rules, buckets in another region, a queue that is a
+route out, few free addresses, security groups without outbound rules, buckets in another region (or whose region
+could not be read), a queue that is a
 dead-letter queue, a table whose keys do not fit the use, a gateway endpoint missing route tables, a certificate that
 is not issued, expiring or not covering your domains, and private zones), the Arco name it would get, and whether it
 is already in use and by what.
 
 **Hidden by default** (with `--all` in the terminal; always in `--json` with `hidden: true`): the resources Arco
-itself created for this app and environment, Arco's code bucket, `cdk-*` and `aws-sam-cli-*` buckets, buckets in other
+itself created for this app and environment, the gateway endpoints Arco created for any environment (never offered by
+id: `endpoints: ['s3']` lets Arco find and share them), Arco's code bucket, `cdk-*` and `aws-sam-cli-*` buckets, buckets in other
 regions, and the default VPC's subnets, security groups and endpoints when the account has other VPCs.
 
 What each pick writes:
@@ -284,14 +286,15 @@ What each pick writes:
 |---|---|---|
 | Subnets, security groups, gateway endpoints | `vpc:set` | One `vpc()` with everything ticked, in one write |
 | Bucket | `storage:add <name> --existing=<bucket>` | `->storage('<name>', existing: ...)` |
-| Queue | `queue:add <name> --existing=<url>` | `->queue('<name>', existing: ...)` |
+| Queue | `queue:add <name> --existing=<url>` (and `--fifo` for a `.fifo` queue) | `->queue('<name>', existing: ...)` |
 | Table | `table:add`, `cache:add` or `failed-jobs:add` with `--existing=<table>` | The use you choose (the keys must fit it) |
 | Certificate | `certificate:set <arn>` | `->certificate('<arn>')` |
 | Hosted zone | none | Add the domain with `domain:add` (it checks the zone) |
 
 **`vpc:set` sets the whole list; it does not merge.** `arco vpc:set --subnet=<id> --security-group=<id>
 --endpoint=s3` replaces the `vpc()` at that level (the environment's, or the app's with `--app`), so pass every subnet, group and endpoint you
-want to keep. The picker pre-ticks what is in use: unticking an in-use subnet, security group or endpoint removes it
+want to keep (with `--json`, the top-level `vpc` is the environment's current `vpc()`: start the one `vpc:set` from it,
+keeping each endpoint whose `id` is `null` as `--endpoint=<service>`). The picker pre-ticks what is in use: unticking an in-use subnet, security group or endpoint removes it
 from `vpc()`, while in-use ids it did not list (another region, a type that failed to list) are kept. Unticking an
 in-use bucket, queue, table or certificate writes nothing; use `storage:remove`, `queue:remove`, `table:remove` or
 `certificate:remove` for that. `vpc:remove` takes `vpc()` out (`->vpc(false)` when the environment would inherit the

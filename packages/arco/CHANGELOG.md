@@ -10,7 +10,10 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `arco.php`. It only reads (`List*`, `Describe*`, `Get*`); the only file it writes is `arco.php`, through the editing
   commands. In a terminal it is a picker that confirms the account, profile and region first. `--json` (schema 1) is
   the document for tools and agents: each item has `inUse`, `hidden`, `warnings` and `apply`, an argv `{command, args}`
-  (`null` for zones; tables have one per use: `generic`, `cache`, `failedJobs`). Options: `--env`, `--profile`,
+  (`null` for zones; tables have one per use: `generic`, `cache`, `failedJobs`), and the top-level `vpc` is the
+  environment's resolved `vpc()` (`{subnets, securityGroups, endpoints: [{service, id}], source}`, `false` for
+  `vpc(false)`, `null` for none), the base of the one `vpc:set` a caller builds (an endpoint with a `null` id is the
+  one Arco manages, which no item lists). Options: `--env`, `--profile`,
   `--region`, `--dns-profile`, `--type` (repeatable), `--all` (also Arco's own resources, other regions and default-VPC
   items), `--json`, `--config-layer`. A missing permission degrades only that type
   (`{"ok": false, "error": {...}}`, exit 0). Needs new, optional permissions
@@ -28,7 +31,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `vpc.mixed_vpcs`, `vpc.subnet_not_found`, `certificate.set`, `certificate.replaced`, `certificate.removed`,
   `certificate.unchanged`, `certificate.not_acm` and `certificate.wrong_region`. The `warnings` of `arco resources
   --json` use the keys `resources.warning.subnet_public`, `subnet_no_egress`, `subnet_few_ips`, `sg_no_egress`,
-  `bucket_other_region`, `queue_is_dlq`, `table_schema`, `endpoint_missing_routes`, `zone_private`,
+  `bucket_other_region`, `bucket_region_unknown`, `queue_is_dlq`, `table_schema`, `endpoint_missing_routes`,
+  `zone_private`,
   `certificate_not_issued`, `certificate_expired`, `certificate_expiring`, `certificate_expiring_one_day`,
   `certificate_not_covering` and `certificate_not_found`.
 
