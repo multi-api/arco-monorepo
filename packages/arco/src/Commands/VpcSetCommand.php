@@ -3,12 +3,15 @@
 namespace Multiapi\Arco\Commands;
 
 use Closure;
+use Aws\Exception\AwsException;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\EditsSettings;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\ArcoFileEditor;
+use Multiapi\Arco\Deploy\Domains\Aws;
+use Multiapi\Arco\Resources\SubnetLister;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -76,8 +79,10 @@ final class VpcSetCommand extends ArcoCommand
     }
 
     /**
-     * With working credentials, checks the subnets with EC2. Without them (no profile, expired credentials,
-     * a denied call) the command stays offline: the shape was validated and the deploy checks the rest.
+     * With working credentials, checks the subnets with EC2: a subnet that does not exist stops the command, subnets
+     * in more than one VPC too, and the egress warnings of `arco resources` are printed (they never block). Without
+     * credentials (no profile, expired credentials, a denied call) the command stays offline: the shape was validated
+     * and the deploy checks the rest.
      *
      * @param list<string> $subnetIds
      */
@@ -85,18 +90,43 @@ final class VpcSetCommand extends ArcoCommand
     {
         try {
             $config = $this->loadTarget($input, new SymfonyStyle($input, new NullOutput()));
-            $result = $this->awsClients($config, $input, $io)->ec2()->describeSubnets(['SubnetIds' => $subnetIds]);
+            $aws = $this->awsClients($config, $input, $io);
+            $result = $aws->ec2()->describeSubnets(['SubnetIds' => $subnetIds]);
+        } catch (AwsException $e) {
+            if (str_starts_with((string) $e->getAwsErrorCode(), 'InvalidSubnetID.NotFound')) {
+                preg_match_all('/subnet-[0-9a-z]+/', (string) $e->getAwsErrorMessage(), $named);
+                throw new UserError($this->t('vpc.subnet_not_found', ['subnets' => implode(', ', $named[0] !== [] ? $named[0] : $subnetIds)]));
+            }
+            return;
         } catch (Throwable) {
             return;
         }
-        $subnets = $result['Subnets'] ?? [];
-        $this->assertOneVpc(is_array($subnets) ? array_values(array_filter($subnets, 'is_array')) : []);
+        $subnets = Aws::maps($result['Subnets'] ?? []);
+        $this->assertOneVpc($subnets);
+        $this->warnAboutEgress($io, $aws, $subnets);
+    }
+
+    /**
+     * @param list<array<string, mixed>> $subnets
+     */
+    private function warnAboutEgress(SymfonyStyle $io, AwsClients $aws, array $subnets): void
+    {
+        try {
+            $items = (new SubnetLister())->items($aws, $subnets);
+        } catch (Throwable) {
+            return; // the warnings are a courtesy: without the route tables there is nothing to say
+        }
+        foreach ($items as $item) {
+            foreach ($item->warnings as $warning) {
+                $io->warning($item->id . ': ' . $this->t($warning['key'], $warning['params']));
+            }
+        }
     }
 
     /**
      * The seam for what the DescribeSubnets answer says about the subnets: they must share one VPC.
      *
-     * @param list<array<array-key, mixed>> $subnets
+     * @param list<array<string, mixed>> $subnets
      */
     private function assertOneVpc(array $subnets): void
     {

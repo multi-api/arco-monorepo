@@ -127,6 +127,52 @@ final class VpcCommandsTest extends TestCase
         self::assertSame($before, $this->arcoPhp());
     }
 
+    public function test_vpc_set_warns_public_subnet(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result(['Subnets' => [['SubnetId' => 'subnet-a1', 'VpcId' => 'vpc-1', 'AvailableIpAddressCount' => 100, 'Tags' => []]]]),
+            new Result(['RouteTables' => [['RouteTableId' => 'rtb-main', 'VpcId' => 'vpc-1', 'Associations' => [['Main' => true]], 'Routes' => [['DestinationCidrBlock' => '0.0.0.0/0', 'GatewayId' => 'igw-1']]]]]),
+            new Result(['Vpcs' => []]),
+        );
+        $tester = $this->setter();
+        $status = $tester->execute(['--env' => 'production', '--profile' => 'p', '--subnet' => ['subnet-a1'], '--security-group' => ['sg-1']], ['interactive' => false]);
+
+        self::assertSame(0, $status);
+        self::assertStringContainsString('subnet-a1', self::display($tester));
+        self::assertStringContainsString('gets no public IP', self::display($tester));
+        self::assertStringContainsString('Only 100 free addresses', self::display($tester));
+        self::assertStringContainsString("->vpc(subnets: ['subnet-a1'], securityGroups: ['sg-1'])", $this->arcoPhp());
+    }
+
+    public function test_unknown_subnet_fails_before_writing(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            AwsMocks::error(Ec2Exception::class, 'DescribeSubnets', 'InvalidSubnetID.NotFound', 400, "The subnet ID 'subnet-zz' does not exist"),
+        );
+        $tester = $this->setter();
+        $before = $this->arcoPhp();
+        $status = $tester->execute(['--env' => 'production', '--profile' => 'p', '--subnet' => ['subnet-zz'], '--security-group' => ['sg-1']], ['interactive' => false]);
+
+        self::assertSame(Command::FAILURE, $status);
+        self::assertStringContainsString('Subnet subnet-zz was not found', self::display($tester));
+        self::assertSame($before, $this->arcoPhp());
+    }
+
+    public function test_denied_describe_subnets_stays_offline(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            AwsMocks::error(Ec2Exception::class, 'DescribeSubnets', 'UnauthorizedOperation', 403),
+        );
+        $tester = $this->setter();
+        $status = $tester->execute(['--env' => 'production', '--profile' => 'p', '--subnet' => ['subnet-a1'], '--security-group' => ['sg-1']], ['interactive' => false]);
+
+        self::assertSame(0, $status);
+        self::assertStringContainsString("->vpc(subnets: ['subnet-a1']", $this->arcoPhp());
+    }
+
     public function test_offline_validates_shape_only(): void
     {
         $this->mocks->handler->append(AwsMocks::error(Ec2Exception::class, 'GetCallerIdentity', 'ExpiredToken', 403));
