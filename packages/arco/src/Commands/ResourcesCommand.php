@@ -9,10 +9,15 @@ use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigLayer;
+use LogicException;
 use Multiapi\Arco\Resources\Inventory;
+use Multiapi\Arco\Resources\Picker;
+use Multiapi\Arco\Resources\PickerUi;
+use Multiapi\Arco\Resources\PromptsPickerUi;
 use Multiapi\Arco\Resources\ResourceItem;
 use Multiapi\Arco\Resources\ResourceType;
 use Symfony\Component\Console\Attribute\AsCommand;
+use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\ConsoleOutputInterface;
@@ -24,7 +29,9 @@ use Throwable;
 /**
  * Lists the existing AWS resources an environment could use (subnets, security groups, gateway endpoints, buckets,
  * queues, tables, certificates, hosted zones), each with the command that adds it to arco.php. Read-only: it makes
- * List*, Describe* and Get* calls and writes nothing. `--json` is the document Arco Cloud reads (spec §8).
+ * List*, Describe* and Get* calls. `--json` is the document Arco Cloud reads (spec §8). In a terminal it is the
+ * picker (spec §7): what the person ticks is written to arco.php by the editing commands, run in-process, the only
+ * writes it makes.
  */
 #[AsCommand(name: 'resources', description: 'List existing AWS resources and the commands that add them to arco.php')]
 final class ResourcesCommand extends ArcoCommand
@@ -34,8 +41,9 @@ final class ResourcesCommand extends ArcoCommand
     /**
      * @param (Closure(?string, string): AwsClients)|null $awsFactory
      * @param (Closure(): int)|null $clock the current time, for the certificates' expiry (tests)
+     * @param PickerUi|null $ui the picker's questions (tests); laravel/prompts by default
      */
-    public function __construct(?Closure $awsFactory = null, private readonly ?Closure $clock = null)
+    public function __construct(?Closure $awsFactory = null, private readonly ?Closure $clock = null, private readonly ?PickerUi $ui = null)
     {
         $this->awsFactory = $awsFactory ?? fn (?string $profile, string $region) => new AwsClients($profile, $region);
         parent::__construct();
@@ -79,6 +87,15 @@ final class ResourcesCommand extends ArcoCommand
             if ($dns !== null && $this->dnsCredentialProfile === $this->credentialProfile) {
                 $dns = null; // the same account: its zones are the deploy profile's
             }
+            $picker = null;
+            if (! $json && $input->isInteractive()) {
+                // Spec §7 step 1: the default profile may be a personal account, so it is confirmed before any listing.
+                $picker = $this->picker($input, $output);
+                if (! $picker->confirmTarget($located, $this->credentialProfile ?? 'environment')) {
+                    $io->writeln($this->t('resources.cancelled'));
+                    return self::SUCCESS;
+                }
+            }
 
             $inventory = new Inventory($this->credentialProfile ?? 'environment', $this->dnsCredentialProfile, $this->clock);
             $result = $inventory->collect($located, $aws, $dns, $types, function (ResourceType $type) use ($json, $stderr): void {
@@ -94,9 +111,8 @@ final class ResourcesCommand extends ArcoCommand
                 $this->printJson($output, $located, $result, $inventory->warnings);
                 return self::SUCCESS;
             }
-            if ($input->isInteractive()) {
-                // Branch point for the interactive picker (spec §7, Task 9). Until it lands, a terminal gets the plain listing.
-                return $this->printPlain($io, $located, $result, (bool) $input->getOption('all'));
+            if ($picker !== null) {
+                return $picker->run($located, $result, (bool) $input->getOption('all'));
             }
             return $this->printPlain($io, $located, $result, (bool) $input->getOption('all'));
         } catch (Throwable $e) {
@@ -109,6 +125,79 @@ final class ResourcesCommand extends ArcoCommand
             }
             return self::FAILURE;
         }
+    }
+
+    private function picker(InputInterface $input, OutputInterface $output): Picker
+    {
+        return new Picker(
+            $this->ui ?? new PromptsPickerUi($output),
+            $output,
+            fn (string $key, array $params): string => $this->t($key, $params),
+            fn (ResourceItem $item): string => $this->pickerLabel($item),
+            fn (array $command, OutputInterface $out): int => $this->runEditingCommand($input, $command, $out),
+        );
+    }
+
+    /**
+     * Runs an `apply` argv in-process, never prompting, as `arco <command> <args>` would: the editing command does the
+     * writing (ArcoFileEditor). The --profile given to `arco resources` goes to the commands that check with AWS.
+     *
+     * @param array{command: string, args: list<string>} $command
+     */
+    private function runEditingCommand(InputInterface $input, array $command, OutputInterface $output): int
+    {
+        try {
+            $editing = ($this->getApplication() ?? throw new LogicException('resources runs inside the Arco application.'))->find($command['command']);
+            $definition = $editing->getNativeDefinition();
+            $arguments = array_keys($definition->getArguments());
+            /** @var array<string, mixed> $parameters */
+            $parameters = ['command' => $command['command']];
+            foreach ($command['args'] as $arg) {
+                if (! str_starts_with($arg, '--')) {
+                    $parameters[array_shift($arguments) ?? throw new LogicException("Too many arguments for {$command['command']}.")] = $arg;
+                    continue;
+                }
+                $parts = explode('=', substr($arg, 2), 2);
+                $name = $parts[0];
+                $value = $parts[1] ?? true;
+                if ($definition->hasOption($name) && $definition->getOption($name)->isArray()) {
+                    $values = $parameters["--$name"] ?? [];
+                    $parameters["--$name"] = [...(is_array($values) ? $values : []), $value];
+                } else {
+                    $parameters["--$name"] = $value;
+                }
+            }
+            $profile = $input->getOption('profile');
+            if (is_string($profile) && $profile !== '' && $definition->hasOption('profile')) {
+                $parameters['--profile'] = $profile;
+            }
+            $editingInput = new ArrayInput($parameters);
+            $editingInput->setInteractive(false);
+            return $editing->run($editingInput, $output);
+        } catch (Throwable $e) {
+            $output->writeln('<error>' . ($this->describeError($e) ?? $e->getMessage()) . '</error>');
+            return self::FAILURE;
+        }
+    }
+
+    /** A resource on one line for the picker's checklists: name and id, marks, details, warnings. */
+    private function pickerLabel(ResourceItem $item): string
+    {
+        $parts = [$item->name === null || $item->name === $item->id ? $item->id : "{$item->name}  {$item->id}"];
+        if ($item->inUse !== null) {
+            $parts[] = $this->t('resources.in_use', ['source' => $item->inUse['source']]);
+        }
+        if ($item->hidden) {
+            $parts[] = $this->t('resources.hidden');
+        }
+        if ($item->unnamed()) {
+            $parts[] = $this->t('resources.unnamed');
+        }
+        $parts[] = $this->details($item);
+        foreach ($item->warnings as $warning) {
+            $parts[] = '! ' . $this->t($warning['key'], $warning['params']);
+        }
+        return implode(' · ', $parts);
     }
 
     /**
