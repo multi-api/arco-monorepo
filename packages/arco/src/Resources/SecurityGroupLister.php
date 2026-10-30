@@ -5,7 +5,7 @@ namespace Multiapi\Arco\Resources;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Deploy\Domains\Aws;
 
-/** Security groups, with whether they let everything out (a function needs outbound traffic). */
+/** Security groups with their VPC, and whether they let everything out (a function needs outbound traffic). */
 final class SecurityGroupLister implements Lister
 {
     public function type(): ResourceType
@@ -42,6 +42,7 @@ final class SecurityGroupLister implements Lister
             }
             $token = Aws::string($page['NextToken'] ?? null);
         } while ($token !== null);
+        Vpcs::detailsOf($ec2, $items);
         usort($items, fn (ResourceItem $a, ResourceItem $b) => $a->id <=> $b->id);
         return $items;
     }

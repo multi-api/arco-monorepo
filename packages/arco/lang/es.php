@@ -103,6 +103,8 @@ return [
     'resources.warning.sg_no_egress' => 'Sin regla de salida a 0.0.0.0/0: una función con este grupo no alcanza nada fuera del grupo.',
     'resources.warning.bucket_other_region' => 'Este bucket está en {region}; arco solo usa buckets de su propia región.',
     'resources.warning.queue_is_dlq' => 'Esta cola es la cola de mensajes fallidos (DLQ) de otra cola.',
+    'resources.warning.table_schema' => 'Sus claves no son las que necesita el uso {use}: {expected}.',
+    'resources.warning.endpoint_missing_routes' => 'No está asociado a las tablas de rutas de las subnets en uso: {routeTables}.',
     'validation.domain' => 'El dominio "{domain}" no es un nombre de host válido. Usa un nombre en minúsculas como app.example.com, sin esquema, puerto ni ruta.',
     'validation.domain_wildcard' => 'Dominio "{domain}": no se admiten dominios comodín. Indica cada nombre de host.',
     'validation.domain_duplicate' => 'El dominio "{domain}" aparece más de una vez.',

@@ -12,7 +12,7 @@ final class ResourceItem
      * @param array<string, mixed> $details type-specific fields (spec §5.2), merged flat into the JSON
      * @param list<array{key: string, params: array<string, string>}> $warnings
      * @param array{source: string}|null $inUse
-     * @param array{command: string, args: list<string>}|null $apply
+     * @param array{command: string, args: list<string>}|array<string, array{command: string, args: list<string>}>|null $apply one command, or (tables) one per use: generic, cache, failedJobs
      * @param array{with: string, source: string}|null $conflict
      */
     public function __construct(

@@ -50,6 +50,7 @@ final class EndpointLister implements Lister
             }
             $token = Aws::string($page['NextToken'] ?? null);
         } while ($token !== null);
+        Vpcs::detailsOf($ec2, $items);
         usort($items, fn (ResourceItem $a, ResourceItem $b) => $a->id <=> $b->id);
         return $items;
     }

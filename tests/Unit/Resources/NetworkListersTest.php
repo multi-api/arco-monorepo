@@ -133,7 +133,22 @@ final class NetworkListersTest extends TestCase
     {
         $items = $this->listSubnets([self::subnet('subnet-a')], [], [['VpcId' => 'vpc-1', 'Tags' => [['Key' => 'Name', 'Value' => 'dev']]]]);
 
-        self::assertSame(['id' => 'vpc-1', 'name' => 'dev'], $items[0]->details['vpc']);
+        self::assertSame(['id' => 'vpc-1', 'name' => 'dev', 'default' => false], $items[0]->details['vpc']);
+    }
+
+    public function test_default_vpc_and_route_table(): void
+    {
+        $items = $this->listSubnets(
+            [self::subnet('subnet-a'), self::subnet('subnet-b'), self::subnet('subnet-c', ['VpcId' => 'vpc-2'])],
+            [self::table('rtb-1', [], 'subnet-a'), self::table('rtb-main', [], null, true)],
+            [['VpcId' => 'vpc-1', 'IsDefault' => true]],
+        );
+
+        self::assertSame(['id' => 'vpc-1', 'name' => null, 'default' => true], $items[0]->details['vpc']);
+        self::assertSame('rtb-1', $items[0]->details['routeTable']);
+        self::assertSame('rtb-main', $items[1]->details['routeTable'], 'the main table of its VPC');
+        self::assertSame(['id' => 'vpc-2', 'name' => null, 'default' => false], $items[2]->details['vpc']);
+        self::assertNull($items[2]->details['routeTable']);
     }
 
     public function test_security_group_egress_all_and_none(): void
@@ -143,13 +158,14 @@ final class NetworkListersTest extends TestCase
                 'IpPermissionsEgress' => [['IpProtocol' => '-1', 'IpRanges' => [['CidrIp' => '0.0.0.0/0']]]]],
             ['GroupId' => 'sg-closed', 'GroupName' => 'closed', 'VpcId' => 'vpc-1', 'Description' => 'nothing out', 'Tags' => [],
                 'IpPermissionsEgress' => [['IpProtocol' => 'tcp', 'IpRanges' => [['CidrIp' => '0.0.0.0/0']]]]],
-        ]]));
+        ]]), new Result(['Vpcs' => [['VpcId' => 'vpc-1', 'IsDefault' => true, 'Tags' => [['Key' => 'Name', 'Value' => 'main']]]]]));
         [$closed, $open] = (new SecurityGroupLister())->list($this->mocks->clients());
 
         self::assertSame('lambda', $open->name);
         self::assertTrue($open->details['egressAll']);
         self::assertSame([], $open->warnings);
-        self::assertSame('vpc-1', $open->details['vpc']);
+        self::assertSame(['id' => 'vpc-1', 'name' => 'main', 'default' => true], $open->details['vpc']);
+        self::assertSame(['DescribeSecurityGroups', 'DescribeVpcs'], $this->mocks->calls);
         self::assertSame('all out', $open->details['description']);
         self::assertFalse($closed->details['egressAll']);
         self::assertSame(['resources.warning.sg_no_egress'], self::keys($closed));
@@ -162,14 +178,14 @@ final class NetworkListersTest extends TestCase
             ['VpcEndpointId' => 'vpce-s3', 'VpcEndpointType' => 'Gateway', 'ServiceName' => 'com.amazonaws.us-east-1.s3', 'VpcId' => 'vpc-1', 'State' => 'available', 'RouteTableIds' => ['rtb-1']],
             ['VpcEndpointId' => 'vpce-other', 'VpcEndpointType' => 'Gateway', 'ServiceName' => 'com.amazonaws.us-east-1.kinesis', 'VpcId' => 'vpc-1'],
             ['VpcEndpointId' => 'vpce-gone', 'VpcEndpointType' => 'Gateway', 'ServiceName' => 'com.amazonaws.us-east-1.dynamodb', 'VpcId' => 'vpc-1', 'State' => 'deleted'],
-        ]]));
+        ]]), new Result(['Vpcs' => [['VpcId' => 'vpc-1', 'IsDefault' => false]]]));
         $items = (new EndpointLister())->list($this->mocks->clients());
 
         self::assertCount(1, $items);
         self::assertSame('vpce-s3', $items[0]->id);
         self::assertSame('s3', $items[0]->details['service']);
         self::assertSame(['rtb-1'], $items[0]->details['routeTables']);
-        self::assertSame('vpc-1', $items[0]->details['vpc']);
+        self::assertSame(['id' => 'vpc-1', 'name' => null, 'default' => false], $items[0]->details['vpc']);
     }
 
     public function test_stack_arco_and_unnamed(): void

@@ -103,6 +103,8 @@ return [
     'resources.warning.sg_no_egress' => 'No outbound rule to 0.0.0.0/0: a function with this group cannot reach anything outside the group.',
     'resources.warning.bucket_other_region' => 'This bucket lives in {region}; arco only uses buckets in its own region.',
     'resources.warning.queue_is_dlq' => 'This queue is the dead-letter queue of another queue.',
+    'resources.warning.table_schema' => 'Its keys are not what the {use} use needs: {expected}.',
+    'resources.warning.endpoint_missing_routes' => 'Not attached to the route tables of the subnets in use: {routeTables}.',
     'validation.domain' => 'Domain "{domain}" is not a valid hostname. Use a lowercase name such as app.example.com, without scheme, port or path.',
     'validation.domain_wildcard' => 'Domain "{domain}": wildcard domains are not supported. List each hostname.',
     'validation.domain_duplicate' => 'Domain "{domain}" is listed more than once.',

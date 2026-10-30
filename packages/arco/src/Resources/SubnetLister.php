@@ -6,7 +6,7 @@ use Aws\Ec2\Ec2Client;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Deploy\Domains\Aws;
 
-/** Subnets with the VPC they belong to, their free addresses and how they reach the internet. */
+/** Subnets with the VPC they belong to, the route table they use, their free addresses and how they reach the internet. */
 final class SubnetLister implements Lister
 {
     /** Fewer free addresses than this is worth a warning. */
@@ -36,7 +36,7 @@ final class SubnetLister implements Lister
         }
         $ec2 = $aws->ec2();
         [$explicit, $main] = $this->routeTables($ec2);
-        $vpcNames = $this->vpcNames($ec2);
+        $vpcs = Vpcs::describe($ec2);
 
         $items = [];
         foreach ($subnets as $subnet) {
@@ -55,11 +55,12 @@ final class SubnetLister implements Lister
                 Tags::name($tags),
                 $tags,
                 [
-                    'vpc' => ['id' => $vpcId, 'name' => $vpcNames[$vpcId] ?? null],
+                    'vpc' => $vpcs->detail($vpcId),
                     'az' => Aws::string($subnet['AvailabilityZoneId'] ?? null),
                     'cidr' => Aws::string($subnet['CidrBlock'] ?? null),
                     'freeIps' => $free,
                     'egress' => $egress,
+                    'routeTable' => $table === null ? null : Aws::string($table['RouteTableId'] ?? null),
                 ],
                 self::warnings($egress, $free),
             );
@@ -132,24 +133,5 @@ final class SubnetLister implements Lister
             $token = Aws::string($page['NextToken'] ?? null);
         } while ($token !== null);
         return [$explicit, $main];
-    }
-
-    /** @return array<string, string> VPC id => its Name tag (VPCs without one are left out) */
-    private function vpcNames(Ec2Client $ec2): array
-    {
-        $names = [];
-        $token = null;
-        do {
-            $page = Aws::call($ec2, 'DescribeVpcs', $token === null ? [] : ['NextToken' => $token]);
-            foreach (Aws::maps($page['Vpcs'] ?? []) as $vpc) {
-                $id = Aws::string($vpc['VpcId'] ?? null);
-                $name = Tags::name(Tags::map($vpc['Tags'] ?? []));
-                if ($id !== null && $name !== null) {
-                    $names[$id] = $name;
-                }
-            }
-            $token = Aws::string($page['NextToken'] ?? null);
-        } while ($token !== null);
-        return $names;
     }
 }
