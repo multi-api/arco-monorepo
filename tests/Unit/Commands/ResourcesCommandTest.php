@@ -265,7 +265,7 @@ final class ResourcesCommandTest extends TestCase
         $tester = $this->run_(self::arcoPhp(), ['--profile' => 'p', '--type' => ['rds'], '--json' => true]);
 
         self::assertSame(1, $tester->getStatusCode());
-        self::assertSame('resources.unknown_type', self::json($tester)['error']['key']);
+        self::assertSame(['schema' => 1, 'error' => 'Unknown resource type "rds". Types: subnet, security-group, endpoint, bucket, queue, table, certificate, zone.'], self::json($tester));
         self::assertSame([], $this->mocks->calls);
     }
 
@@ -339,7 +339,7 @@ final class ResourcesCommandTest extends TestCase
         $tester = $this->run_(null, ['--profile' => 'p', '--json' => true]);
 
         self::assertSame(1, $tester->getStatusCode());
-        self::assertSame('config.not_found', self::json($tester)['error']['key']);
+        self::assertStringStartsWith('No arco.php found at ', self::json($tester)['error']);
         self::assertSame([], $this->mocks->calls);
     }
 
@@ -435,8 +435,9 @@ final class ResourcesCommandTest extends TestCase
         $json = self::json($tester);
         self::assertSame(['schema', 'error'], array_keys($json));
         self::assertSame(1, $json['schema']);
-        self::assertStringStartsWith('aws.credentials', $json['error']['key']);
-        self::assertNotSame('', $json['error']['message']);
+        self::assertIsString($json['error']);
+        self::assertStringContainsString('p', $json['error'], 'names the profile');
+        self::assertStringContainsString('expired', $json['error']);
         self::assertSame(['GetCallerIdentity'], $this->mocks->calls);
     }
 

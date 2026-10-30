@@ -8,7 +8,6 @@ use Multiapi\Arco\Cli\ArcoCommand;
 use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\AppConfig;
-use Multiapi\Arco\Config\ConfigException;
 use Multiapi\Arco\Config\ConfigLayer;
 use Multiapi\Arco\Resources\Inventory;
 use Multiapi\Arco\Resources\ResourceItem;
@@ -103,7 +102,8 @@ final class ResourcesCommand extends ArcoCommand
         } catch (Throwable $e) {
             $message = $this->describeError($e) ?? throw $e;
             if ($json) {
-                $output->writeln((string) json_encode(['schema' => 1, 'error' => self::error($this->describeErrorKey($e), self::params($e), $message)], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+                // Scripts reading --json get the error as JSON too, as info, queue:list and storage:list give it.
+                $output->writeln((string) json_encode(['schema' => 1, 'error' => $message], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             } else {
                 $io->error($message);
             }
@@ -285,15 +285,5 @@ final class ResourcesCommand extends ArcoCommand
     private static function error(string $key, array $params, string $message): array
     {
         return ['key' => $key, 'params' => (object) $params, 'message' => $message];
-    }
-
-    /** @return array<string, string|int> */
-    private static function params(Throwable $e): array
-    {
-        return match (true) {
-            $e instanceof UserError => $e->params,
-            $e instanceof ConfigException => $e->params,
-            default => [],
-        };
     }
 }
