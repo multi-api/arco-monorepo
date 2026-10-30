@@ -99,6 +99,8 @@ return [
     'resources.warning.subnet_no_egress' => 'No route to the internet: no SSM, no external APIs; S3 and DynamoDB only through gateway endpoints.',
     'resources.warning.subnet_few_ips' => 'Only {free} free addresses left in this subnet.',
     'resources.warning.sg_no_egress' => 'No outbound rule to 0.0.0.0/0: a function with this group cannot reach anything outside the group.',
+    'resources.warning.bucket_other_region' => 'This bucket lives in {region}; arco only uses buckets in its own region.',
+    'resources.warning.queue_is_dlq' => 'This queue is the dead-letter queue of another queue.',
     'validation.domain' => 'Domain "{domain}" is not a valid hostname. Use a lowercase name such as app.example.com, without scheme, port or path.',
     'validation.domain_wildcard' => 'Domain "{domain}": wildcard domains are not supported. List each hostname.',
     'validation.domain_duplicate' => 'Domain "{domain}" is listed more than once.',
