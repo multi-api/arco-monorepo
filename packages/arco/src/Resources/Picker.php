@@ -40,12 +40,14 @@ final class Picker
     /** Spec §7 step 1: the account, profile and region, confirmed before anything is listed. */
     public function confirmTarget(AppConfig $config, string $profile): bool
     {
-        return $this->ui->confirm($this->t('resources.confirm_target', [
+        // The target goes on its own line: prompts cuts a label at the terminal's width, and the region is last.
+        $this->output->writeln($this->t('resources.target', [
             'account' => (string) $config->account,
             'profile' => $profile,
             'region' => (string) $config->region,
             'environment' => $config->environment,
-        ]), true);
+        ]));
+        return $this->ui->confirm($this->t('resources.confirm_target'), true);
     }
 
     /**
