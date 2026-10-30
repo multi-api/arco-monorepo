@@ -56,6 +56,8 @@ final class Application extends SymfonyApplication
             new \Multiapi\Arco\Commands\TableAddCommand(),
             new \Multiapi\Arco\Commands\TableRemoveCommand(),
             new \Multiapi\Arco\Commands\LogsRetentionCommand(),
+            new \Multiapi\Arco\Commands\VpcSetCommand(),
+            new \Multiapi\Arco\Commands\VpcRemoveCommand(),
         ]);
         return $app;
     }
