@@ -471,10 +471,38 @@ final class ResourcesPickerTest extends TestCase
         $tester = $this->run_(self::arcoPhp(), ['table']);
 
         $tester->assertCommandIsSuccessful();
-        self::assertCount(1, $labels);
-        self::assertSame(1, substr_count($labels[0], '! '));
-        self::assertStringContainsString('! Its keys fit only as the cache.', $labels[0]);
-        self::assertStringNotContainsString('failedJobs', $labels[0]);
+        // The row stays short (prompts cuts it at the terminal's width); the warning is printed in full above the list.
+        self::assertSame(['shop-staging-cache · ! 1'], $labels);
+        $display = $tester->getDisplay();
+        self::assertSame(1, substr_count($display, '! Its keys fit only as the cache.'));
+        self::assertStringNotContainsString('failedJobs', $display);
+    }
+
+    public function test_rows_are_short_and_the_details_are_printed_above_the_list(): void
+    {
+        $this->account();
+        $this->mocks->handler->append(
+            new Result(['CertificateSummaryList' => [['CertificateArn' => self::CERT]]]),
+            new Result(['Certificate' => [
+                'CertificateArn' => self::CERT, 'DomainName' => '*.other.com', 'SubjectAlternativeNames' => ['*.other.com'],
+                'Status' => 'ISSUED', 'NotAfter' => (int) strtotime('2027-06-01T00:00:00Z'), 'InUseBy' => [],
+            ]]),
+        );
+        $labels = [];
+        $this->ui->confirms = [true];
+        $this->ui->multiselects = [function (string $label, array $options) use (&$labels): array {
+            $labels = $options;
+            return [];
+        }];
+
+        $tester = $this->run_(self::arcoPhp("->domain('shop.example.com')"), ['certificate']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame([self::CERT => '*.other.com · ! 1 · abcd-1234'], $labels);
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('*.other.com  ' . self::CERT, $display, 'the full ARN, which the row leaves out');
+        self::assertStringContainsString('! ', $display);
+        self::assertLessThan(strpos($display, '! '), strpos($display, 'Certificates'), 'the type title comes first');
     }
 
     public function test_a_vpc_without_security_groups_is_asked_again_before_names(): void
