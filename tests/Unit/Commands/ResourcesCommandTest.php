@@ -10,6 +10,13 @@ use Aws\Sqs\Exception\SqsException;
 use Aws\Sts\Exception\StsException;
 use Multiapi\Arco\Cli\Application;
 use Multiapi\Arco\Commands\ResourcesCommand;
+use Multiapi\Arco\Config\App;
+use Multiapi\Arco\Config\ConfigLayer;
+use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Config\Environment;
+use Multiapi\Arco\Resources\Inventory;
+use Multiapi\Arco\Resources\ResourceItem;
+use Multiapi\Arco\Resources\ResourceType;
 use Multiapi\Arco\Tests\Unit\Deploy\AwsMocks;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Tester\ApplicationTester;
@@ -222,6 +229,12 @@ final class ResourcesCommandTest extends TestCase
     private function everything(): void
     {
         $this->account();
+        $this->listings();
+    }
+
+    /** What the contract run lists, after the account. */
+    private function listings(): void
+    {
         $this->subnets();
         $this->securityGroupsDenied();
         $this->endpoints();
@@ -470,6 +483,56 @@ final class ResourcesCommandTest extends TestCase
         self::assertSame('production', $json['environment']);
         $uploads = array_values(array_filter($json['types']['bucket']['items'], fn (array $item) => $item['id'] === 'shop-uploads'))[0];
         self::assertSame(['source' => 'cloud'], $uploads['inUse']);
+        self::assertFileDoesNotExist($this->project->dir . '/arco.php');
+    }
+
+    /**
+     * Arco Cloud calls Inventory in-process (docs/config-layer.md): its items are the --json items, its errors and
+     * warnings the --json ones without `message`. It knows the account, so nothing asks STS.
+     */
+    public function test_library_inventory_gives_the_contract_items(): void
+    {
+        $this->listings();
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')
+            ->environment('staging', fn (Environment $env) => $env->vpc(['subnet-aaa'], ['sg-aaa'], ['s3'])->domain('shop.example.com')->dns('acme-prod')->storage('uploads', existing: 'shop-uploads'))
+            ->toArray(), 'staging')->withAccount('111111111111');
+        $inventory = new Inventory('p', 'acme-prod', static fn (): int => (int) strtotime('2026-10-30T00:00:00Z'));
+
+        $result = $inventory->collect($config, $this->mocks->clients(), $this->mocks->clients(), ResourceType::cases(), static function (ResourceType $type): void {
+        });
+
+        $fixture = json_decode((string) file_get_contents(__DIR__ . '/fixtures/resources-contract.json'), true, flags: JSON_THROW_ON_ERROR);
+        $plain = static fn (mixed $value): mixed => json_decode((string) json_encode($value), true, flags: JSON_THROW_ON_ERROR);
+        $withoutMessage = static fn (array $error): array => ['key' => $error['key'], 'params' => $error['params']];
+        self::assertSame(array_keys($fixture['types']), array_keys($result));
+        foreach ($fixture['types'] as $type => $expected) {
+            if ($expected['ok']) {
+                self::assertTrue($result[$type]['ok'], $type);
+                self::assertSame($expected['items'], $plain(array_map(fn (ResourceItem $item) => $item->toArray(), $result[$type]['items'])), $type);
+            } else {
+                self::assertSame($withoutMessage($expected['error']), $result[$type]['error'] ?? null, $type);
+            }
+        }
+        self::assertSame(array_map($withoutMessage, $fixture['warnings']), $inventory->warnings);
+        self::assertNotContains('GetCallerIdentity', $this->mocks->calls);
+    }
+
+    public function test_library_inventory_with_only_a_layer(): void
+    {
+        $this->project = new ProjectFixture();
+        $layer = ConfigLayer::load($this->project->layer([
+            'schema' => 1, 'name' => 'shop', 'region' => 'us-east-1',
+            'environments' => ['production' => ['storage' => ['uploads' => ['existing' => 'shop-uploads']]]],
+        ]));
+        $this->buckets();
+
+        $config = ConfigResolver::resolve([], 'production', $layer)->withAccount('111111111111');
+        $result = (new Inventory('cloud'))->collect($config, $this->mocks->clients(), null, [ResourceType::Bucket], static function (ResourceType $type): void {
+        });
+
+        self::assertTrue($result['bucket']['ok']);
+        $uploads = array_values(array_filter($result['bucket']['items'], fn (ResourceItem $item) => $item->id === 'shop-uploads'))[0];
+        self::assertSame(['source' => 'cloud'], $uploads->inUse);
         self::assertFileDoesNotExist($this->project->dir . '/arco.php');
     }
 

@@ -5,6 +5,10 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## Unreleased
 
+- **Added:** `Inventory`, `ResourceItem` and `ResourceType` (`Multiapi\Arco\Resources`) are public API, for tools
+  that list existing resources in-process instead of running `arco resources --json`
+  ([Listing existing resources in-process](docs/config-layer.md#listing-existing-resources-in-process)). The config
+  layer docs now list `resources` among the commands that read the layer.
 - **Added:** `arco resources` lists the AWS resources an environment could use (subnets, security groups, gateway
   endpoints, buckets, queues, tables, certificates and Route 53 zones) and the command that adds each one to
   `arco.php`. It only reads (`List*`, `Describe*`, `Get*`); the only file it writes is `arco.php`, through the editing
