@@ -9,6 +9,7 @@ use Multiapi\Arco\Commands\ResourcesCommand;
 use Multiapi\Arco\Commands\VpcSetCommand;
 use Multiapi\Arco\Resources\PromptsUnavailable;
 use Multiapi\Arco\Tests\Unit\Deploy\AwsMocks;
+use Laravel\Prompts\Prompt;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -44,6 +45,8 @@ final class ResourcesPickerTest extends TestCase
     protected function tearDown(): void
     {
         $this->project?->restore();
+        Prompt::flushState();
+        Prompt::interactive(false);
     }
 
     private static function arcoPhp(string $staging = ''): string
@@ -347,6 +350,26 @@ final class ResourcesPickerTest extends TestCase
         self::assertStringContainsString('Queues', $tester->getDisplay());
         self::assertStringContainsString('eu-west-1', $tester->getDisplay());
         self::assertStringContainsString("only in the environment's region (us-east-1)", $tester->getDisplay());
+        self::assertSame(self::arcoPhp(), $this->arcoPhpNow());
+    }
+
+    public function test_piped_stdin_without_n_prints_the_plain_listing_and_asks_nothing(): void
+    {
+        $this->account();
+        $this->mocks->handler->append(new Result(['QueueUrls' => []]));
+
+        $this->project = new ProjectFixture(self::arcoPhp());
+        $factory = fn (?string $profile, string $region) => $this->mocks->clients($region);
+        $app = Application::create();
+        $app->addCommands([new ResourcesCommand($factory)]); // the real UI: laravel/prompts under the non-TTY STDIN
+        $tester = new CommandTester($app->find('resources'));
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--type' => ['queue']], ['interactive' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('Queues (0)', $display);
+        self::assertStringNotContainsString('List the resources of account', $display, 'no confirmation without a terminal');
+        self::assertStringNotContainsString('Nothing to change', $display);
         self::assertSame(self::arcoPhp(), $this->arcoPhpNow());
     }
 

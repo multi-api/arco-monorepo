@@ -93,7 +93,10 @@ final class ResourcesCommand extends ArcoCommand
                 $dns = null; // the same account: its zones are the deploy profile's
             }
             $picker = null;
-            if (! $json && $input->isInteractive()) {
+            // Symfony leaves the input interactive on a piped STDIN, where laravel/prompts would silently take defaults:
+            // without a terminal (and no injected UI) the run falls through to the plain listing.
+            $terminal = $this->ui !== null || (defined('STDIN') && stream_isatty(STDIN));
+            if (! $json && $input->isInteractive() && $terminal) {
                 // Spec §7 step 1: the default profile may be a personal account, so it is confirmed before any listing.
                 $picker = $this->picker($input, $output);
                 try {
