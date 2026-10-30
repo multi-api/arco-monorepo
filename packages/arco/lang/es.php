@@ -91,6 +91,8 @@ return [
     'certificate.not_acm' => '"{value}" no es un ARN de certificado de ACM (arn:aws:acm:us-east-1:<cuenta>:certificate/<id>).',
     'certificate.wrong_region' => 'El certificado está en {region}; CloudFront solo usa certificados de ACM de us-east-1.',
     'resources.warning.certificate_not_issued' => 'El certificado está {status}; CloudFront necesita un certificado ISSUED.',
+    'resources.warning.certificate_expired' => 'El certificado ya venció.',
+    'resources.warning.zone_private' => 'La zona alojada es privada: solo resuelve dentro de sus VPC, así que no sirve para validar certificados ni publicar registros.',
     'resources.warning.certificate_expiring' => 'El certificado vence en {days} días.',
     'resources.warning.certificate_expiring_one_day' => 'El certificado vence en 1 día.',
     'resources.warning.certificate_not_covering' => 'El certificado no cubre: {domains}.',

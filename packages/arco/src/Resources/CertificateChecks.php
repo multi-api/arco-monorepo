@@ -23,7 +23,7 @@ final class CertificateChecks
     }
 
     /**
-     * The warnings for a DescribeCertificate `Certificate`: not issued, expiring within 30 days, and not
+     * The warnings for a DescribeCertificate `Certificate`: not issued, expiring within 30 days (or already expired), and not
      * covering some of the domains the environment declares.
      *
      * @param array<array-key, mixed> $certificate
@@ -65,7 +65,10 @@ final class CertificateChecks
         if ($left >= self::EXPIRY_DAYS * 86400) {
             return [];
         }
-        $days = max(0, intdiv($left, 86400));
+        if ($left <= 0) {
+            return [['key' => 'resources.warning.certificate_expired', 'params' => []]];
+        }
+        $days = intdiv($left, 86400);
         // One day has its own message (the lang parity test requires a singular sibling for every {days} days text).
         return $days === 1
             ? [['key' => 'resources.warning.certificate_expiring_one_day', 'params' => []]]

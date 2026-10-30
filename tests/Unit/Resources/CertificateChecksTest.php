@@ -42,4 +42,13 @@ final class CertificateChecksTest extends TestCase
             CertificateChecks::warnings($certificate, ['a.example.com'], fn (): int => 1_000_000),
         );
     }
+
+    public function test_an_expired_certificate_says_so_instead_of_zero_days(): void
+    {
+        $certificate = ['Status' => 'ISSUED', 'DomainName' => 'a.example.com', 'NotAfter' => 1_000_000 - 3 * 86400];
+        self::assertSame(
+            [['key' => 'resources.warning.certificate_expired', 'params' => []]],
+            CertificateChecks::warnings($certificate, ['a.example.com'], fn (): int => 1_000_000),
+        );
+    }
 }

@@ -91,6 +91,8 @@ return [
     'certificate.not_acm' => '"{value}" is not an ACM certificate ARN (arn:aws:acm:us-east-1:<account>:certificate/<id>).',
     'certificate.wrong_region' => 'The certificate is in {region}; CloudFront only uses ACM certificates from us-east-1.',
     'resources.warning.certificate_not_issued' => 'The certificate is {status}; CloudFront needs an ISSUED certificate.',
+    'resources.warning.certificate_expired' => 'The certificate has expired.',
+    'resources.warning.zone_private' => 'The hosted zone is private: it only resolves inside its VPCs, so it cannot validate certificates or serve public records.',
     'resources.warning.certificate_expiring' => 'The certificate expires in {days} days.',
     'resources.warning.certificate_expiring_one_day' => 'The certificate expires in 1 day.',
     'resources.warning.certificate_not_covering' => 'The certificate does not cover: {domains}.',
