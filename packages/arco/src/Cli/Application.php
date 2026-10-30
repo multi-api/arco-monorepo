@@ -60,6 +60,7 @@ final class Application extends SymfonyApplication
             new \Multiapi\Arco\Commands\VpcRemoveCommand(),
             new \Multiapi\Arco\Commands\CertificateSetCommand(),
             new \Multiapi\Arco\Commands\CertificateRemoveCommand(),
+            new \Multiapi\Arco\Commands\ResourcesCommand(),
         ]);
         return $app;
     }

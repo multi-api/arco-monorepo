@@ -1,0 +1,327 @@
+{
+    "schema": 1,
+    "account": "111111111111",
+    "region": "us-east-1",
+    "environment": "staging",
+    "types": {
+        "subnet": {
+            "ok": true,
+            "items": [
+                {
+                    "type": "subnet",
+                    "id": "subnet-aaa",
+                    "name": "dev-lambda-1a",
+                    "vpc": {
+                        "id": "vpc-1",
+                        "name": "dev",
+                        "default": false
+                    },
+                    "az": "use1-az1",
+                    "cidr": "10.0.8.0/21",
+                    "freeIps": 2011,
+                    "egress": "nat",
+                    "routeTable": "rtb-1",
+                    "stack": "multiapi-dev-vpc",
+                    "arco": null,
+                    "tags": {
+                        "Name": "dev-lambda-1a",
+                        "aws:cloudformation:stack-name": "multiapi-dev-vpc"
+                    },
+                    "unnamed": false,
+                    "inUse": {
+                        "source": "arco.php"
+                    },
+                    "hidden": false,
+                    "warnings": [],
+                    "apply": {
+                        "command": "vpc:set",
+                        "args": [
+                            "--subnet=subnet-aaa",
+                            "--env=staging"
+                        ]
+                    }
+                }
+            ]
+        },
+        "security-group": {
+            "ok": true,
+            "items": [
+                {
+                    "type": "security-group",
+                    "id": "sg-aaa",
+                    "name": "lambda",
+                    "vpc": {
+                        "id": "vpc-1",
+                        "name": "dev",
+                        "default": false
+                    },
+                    "description": "Lambda functions",
+                    "egressAll": true,
+                    "stack": null,
+                    "arco": null,
+                    "tags": {},
+                    "unnamed": false,
+                    "inUse": {
+                        "source": "arco.php"
+                    },
+                    "hidden": false,
+                    "warnings": [],
+                    "apply": {
+                        "command": "vpc:set",
+                        "args": [
+                            "--security-group=sg-aaa",
+                            "--env=staging"
+                        ]
+                    }
+                }
+            ]
+        },
+        "endpoint": {
+            "ok": true,
+            "items": [
+                {
+                    "type": "endpoint",
+                    "id": "vpce-0123abcd",
+                    "name": null,
+                    "vpc": {
+                        "id": "vpc-1",
+                        "name": "dev",
+                        "default": false
+                    },
+                    "service": "s3",
+                    "routeTables": [
+                        "rtb-2"
+                    ],
+                    "stack": null,
+                    "arco": null,
+                    "tags": {},
+                    "unnamed": true,
+                    "inUse": null,
+                    "hidden": false,
+                    "warnings": [
+                        {
+                            "key": "resources.warning.endpoint_missing_routes",
+                            "params": {
+                                "routeTables": "rtb-1"
+                            }
+                        }
+                    ],
+                    "apply": {
+                        "command": "vpc:set",
+                        "args": [
+                            "--endpoint=s3=vpce-0123abcd",
+                            "--env=staging"
+                        ]
+                    },
+                    "conflict": {
+                        "with": "vpc(subnets: ['subnet-aaa'], securityGroups: ['sg-aaa'])",
+                        "source": "arco.php"
+                    }
+                }
+            ]
+        },
+        "bucket": {
+            "ok": true,
+            "items": [
+                {
+                    "type": "bucket",
+                    "id": "shop-uploads",
+                    "name": "shop-uploads",
+                    "region": "us-east-1",
+                    "created": "2026-02-01T00:00:00+00:00",
+                    "stack": null,
+                    "arco": null,
+                    "tags": {
+                        "team": "web"
+                    },
+                    "unnamed": false,
+                    "inUse": {
+                        "source": "arco.php"
+                    },
+                    "hidden": false,
+                    "warnings": [],
+                    "apply": {
+                        "command": "storage:add",
+                        "args": [
+                            "uploads",
+                            "--existing=shop-uploads",
+                            "--env=staging"
+                        ]
+                    },
+                    "suggestedName": "uploads"
+                },
+                {
+                    "type": "bucket",
+                    "id": "arco-111111111111-us-east-1",
+                    "name": "arco-111111111111-us-east-1",
+                    "region": "us-east-1",
+                    "created": "2026-01-01T00:00:00+00:00",
+                    "stack": null,
+                    "arco": null,
+                    "tags": {},
+                    "unnamed": false,
+                    "inUse": null,
+                    "hidden": true,
+                    "warnings": [],
+                    "apply": {
+                        "command": "storage:add",
+                        "args": [
+                            "arco-111111111111-us-east-1",
+                            "--existing=arco-111111111111-us-east-1",
+                            "--env=staging"
+                        ]
+                    },
+                    "suggestedName": "arco-111111111111-us-east-1"
+                }
+            ]
+        },
+        "queue": {
+            "ok": true,
+            "items": [
+                {
+                    "type": "queue",
+                    "id": "https://sqs.us-east-1.amazonaws.com/111111111111/shop-staging-emails",
+                    "name": "shop-staging-emails",
+                    "url": "https://sqs.us-east-1.amazonaws.com/111111111111/shop-staging-emails",
+                    "arn": "arn:aws:sqs:us-east-1:111111111111:shop-staging-emails",
+                    "fifo": false,
+                    "visibilityTimeout": 60,
+                    "dlq": null,
+                    "stack": null,
+                    "arco": null,
+                    "tags": {},
+                    "unnamed": false,
+                    "inUse": null,
+                    "hidden": false,
+                    "warnings": [],
+                    "apply": {
+                        "command": "queue:add",
+                        "args": [
+                            "emails",
+                            "--existing=https://sqs.us-east-1.amazonaws.com/111111111111/shop-staging-emails",
+                            "--env=staging"
+                        ]
+                    },
+                    "suggestedName": "emails"
+                }
+            ]
+        },
+        "table": {
+            "ok": true,
+            "items": [
+                {
+                    "type": "table",
+                    "id": "shop-staging-cache",
+                    "name": "shop-staging-cache",
+                    "arn": "arn:aws:dynamodb:us-east-1:111111111111:table/shop-staging-cache",
+                    "keys": [
+                        {
+                            "name": "key",
+                            "type": "S",
+                            "role": "HASH"
+                        }
+                    ],
+                    "ttl": "expires_at",
+                    "billing": "PAY_PER_REQUEST",
+                    "stack": null,
+                    "arco": null,
+                    "tags": {},
+                    "unnamed": false,
+                    "inUse": null,
+                    "hidden": false,
+                    "warnings": [
+                        {
+                            "key": "resources.warning.table_schema",
+                            "params": {
+                                "use": "generic",
+                                "expected": "PK (S, HASH), SK (S, RANGE)"
+                            }
+                        },
+                        {
+                            "key": "resources.warning.table_schema",
+                            "params": {
+                                "use": "failedJobs",
+                                "expected": "application (S, HASH), uuid (S, RANGE)"
+                            }
+                        }
+                    ],
+                    "apply": {
+                        "generic": {
+                            "command": "table:add",
+                            "args": [
+                                "cache",
+                                "--existing=shop-staging-cache",
+                                "--env=staging"
+                            ]
+                        },
+                        "cache": {
+                            "command": "cache:add",
+                            "args": [
+                                "--existing=shop-staging-cache",
+                                "--env=staging"
+                            ]
+                        },
+                        "failedJobs": {
+                            "command": "failed-jobs:add",
+                            "args": [
+                                "--existing=shop-staging-cache",
+                                "--env=staging"
+                            ]
+                        }
+                    },
+                    "suggestedName": "cache"
+                }
+            ]
+        },
+        "certificate": {
+            "ok": false,
+            "error": {
+                "key": "resources.permission_denied",
+                "params": {
+                    "action": "acm:ListCertificates"
+                },
+                "message": "Missing permission acm:ListCertificates: this type was not listed."
+            }
+        },
+        "zone": {
+            "ok": true,
+            "items": [
+                {
+                    "type": "zone",
+                    "id": "Z2",
+                    "name": "shop.example.com",
+                    "private": false,
+                    "records": 5,
+                    "account": "acme-prod",
+                    "stack": null,
+                    "arco": null,
+                    "tags": {},
+                    "unnamed": false,
+                    "inUse": {
+                        "source": "arco.php"
+                    },
+                    "hidden": false,
+                    "warnings": [],
+                    "apply": null
+                },
+                {
+                    "type": "zone",
+                    "id": "Z1",
+                    "name": "example.com",
+                    "private": false,
+                    "records": 5,
+                    "account": "p",
+                    "stack": null,
+                    "arco": null,
+                    "tags": {},
+                    "unnamed": false,
+                    "inUse": null,
+                    "hidden": false,
+                    "warnings": [],
+                    "apply": null
+                }
+            ]
+        }
+    },
+    "warnings": []
+}
