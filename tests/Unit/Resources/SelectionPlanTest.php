@@ -262,4 +262,50 @@ final class SelectionPlanTest extends TestCase
             SelectionPlan::preview($config, ['command' => 'failed-jobs:add', 'args' => ['--existing=f', '--env=staging']]),
         );
     }
+
+    public function test_preview_of_a_fifo_queue_writes_fifo(): void
+    {
+        self::assertSame(
+            ['old' => null, 'new' => "->queue('orders-fifo', existing: 'https://q/orders.fifo', fifo: true)"],
+            SelectionPlan::preview(self::config(), ['command' => 'queue:add', 'args' => ['orders-fifo', '--existing=https://q/orders.fifo', '--fifo', '--env=staging']]),
+        );
+    }
+
+    public function test_preview_reads_vpc_at_the_environment_level(): void
+    {
+        $app = static fn (?callable $env = null): array => App::make('shop')->region('us-east-1')->vpc(['subnet-a'], ['sg-1'])
+            ->environment('staging', function (Environment $e) use ($env): void {
+                $e->account(self::ACCOUNT);
+                if ($env !== null) {
+                    $env($e);
+                }
+            })->toArray();
+        $remove = ['command' => 'vpc:remove', 'args' => ['--env=staging']];
+        $set = ['command' => 'vpc:set', 'args' => ['--subnet=subnet-b', '--security-group=sg-1', '--env=staging']];
+        $setLine = "->vpc(subnets: ['subnet-b'], securityGroups: ['sg-1'])";
+
+        // Inherited from the app: vpc:remove writes ->vpc(false) on the environment, vpc:set adds the environment's own.
+        $raw = $app();
+        $config = ConfigResolver::resolve($raw, 'staging', null);
+        $level = SelectionPlan::environmentVpc($raw, 'staging');
+        self::assertSame(['line' => null, 'inherited' => true], $level);
+        self::assertSame(['old' => null, 'new' => '->vpc(false)'], SelectionPlan::preview($config, $remove, $level));
+        self::assertSame(['old' => null, 'new' => $setLine], SelectionPlan::preview($config, $set, $level));
+
+        // The environment's own over the app's: replaced, or ->vpc(false).
+        $raw = $app(fn (Environment $e) => $e->vpc(['subnet-e'], ['sg-e'], ['s3']));
+        $config = ConfigResolver::resolve($raw, 'staging', null);
+        $level = SelectionPlan::environmentVpc($raw, 'staging');
+        $own = "->vpc(subnets: ['subnet-e'], securityGroups: ['sg-e'], endpoints: ['s3'])";
+        self::assertSame(['line' => $own, 'inherited' => true], $level);
+        self::assertSame(['old' => $own, 'new' => '->vpc(false)'], SelectionPlan::preview($config, $remove, $level));
+        self::assertSame(['old' => $own, 'new' => $setLine], SelectionPlan::preview($config, $set, $level));
+
+        // Only the environment's: removed.
+        $raw = self::config(fn (Environment $e) => $e->vpc(['subnet-e'], ['sg-e']));
+        $rawArray = App::make('shop')->region('us-east-1')->environment('staging', fn (Environment $e) => $e->vpc(['subnet-e'], ['sg-e']))->toArray();
+        $level = SelectionPlan::environmentVpc($rawArray, 'staging');
+        self::assertSame(['line' => "->vpc(subnets: ['subnet-e'], securityGroups: ['sg-e'])", 'inherited' => false], $level);
+        self::assertSame(['old' => $level['line'], 'new' => null], SelectionPlan::preview($raw, $remove, $level));
+    }
 }

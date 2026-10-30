@@ -105,6 +105,8 @@ return [
     'resources.warning.bucket_region_unknown' => 'No se pudo leer su región (se rechazó s3:GetBucketLocation): puede estar en otra región, donde arco no puede usarlo.',
     'resources.warning.queue_is_dlq' => 'Esta cola es la cola de mensajes fallidos (DLQ) de otra cola.',
     'resources.warning.table_schema' => 'Sus claves no son las que necesita el uso {use}: {expected}.',
+    'resources.warning.table_fits' => 'Sus claves solo sirven {uses}.',
+    'resources.warning.table_fits_none' => 'Sus claves no sirven para ningún uso: como tabla necesita {generic}; como caché, {cache}; como tabla de jobs fallidos, {failedJobs}.',
     'resources.warning.endpoint_missing_routes' => 'No está asociado a las tablas de rutas de las subnets en uso: {routeTables}.',
     'resources.type.subnet' => 'Subnets',
     'resources.type.security-group' => 'Grupos de seguridad',

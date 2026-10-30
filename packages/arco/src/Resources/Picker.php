@@ -50,11 +50,12 @@ final class Picker
 
     /**
      * @param array<string, array{ok: true, items: list<ResourceItem>}|array{ok: false, error: array{key: string, params: array<string, string>}}> $result
+     * @param array{line: ?string, inherited: bool}|null $environmentVpc vpc() at the environment's level (SelectionPlan::environmentVpc()), for the preview
      */
-    public function run(AppConfig $config, array $result, bool $all): int
+    public function run(AppConfig $config, array $result, bool $all, ?array $environmentVpc = null): int
     {
-        [$picked, $listed] = $this->pick($result, $all);
-        $picked = $this->confirmConflicts($config, $picked, $listed);
+        [$picked, $listed] = $this->pick($config, $result, $all);
+        $picked = $this->confirmConflicts($config, $picked, $listed, $environmentVpc);
         [$picked, $names, $uses] = $this->namesAndUses($config, $picked);
         try {
             $plan = SelectionPlan::from($config, $picked, $names, $uses, $listed);
@@ -67,7 +68,7 @@ final class Picker
             return 0;
         }
 
-        $this->preview($config, $plan);
+        $this->preview($config, $plan, $environmentVpc);
         if (! $this->ui->confirm($this->t('resources.confirm_apply'), true)) {
             $this->output->writeln($this->t('resources.cancelled'));
             return 0;
@@ -77,16 +78,17 @@ final class Picker
 
     /**
      * Spec §7 step 3: a checklist per listed type, in-use resources ticked. Subnets, security groups and endpoints of
-     * two VPCs are refused at once and the list asked again; so is more than one certificate. Zones are shown only:
-     * there is nothing to pick them for (spec §6.1).
+     * two VPCs are refused at once and the list asked again; so is more than one certificate. Once the last network
+     * list is answered, a vpc() left without subnets or without security groups is refused and the network lists are
+     * asked again, before any name or use. Zones are shown only: there is nothing to pick them for (spec §6.1); nor are
+     * the endpoints Arco created, which no apply offers.
      *
      * @param array<string, array{ok: true, items: list<ResourceItem>}|array{ok: false, error: array{key: string, params: array<string, string>}}> $result
      * @return array{list<ResourceItem>, list<ResourceItem>} the ticked items and every item the person was shown
      */
-    private function pick(array $result, bool $all): array
+    private function pick(AppConfig $config, array $result, bool $all): array
     {
-        $picked = [];
-        $offered = [];
+        $lists = [];
         foreach ($result as $value => $listed) {
             $type = ResourceType::from($value);
             $title = $this->t('resources.type.' . $value);
@@ -94,36 +96,93 @@ final class Picker
                 $this->output->writeln("<error>$title: " . $this->t($listed['error']['key'], $listed['error']['params']) . '</error>');
                 continue;
             }
-            $shown = array_values(array_filter($listed['items'], fn (ResourceItem $item) => $all || ! $item->hidden || $item->inUse !== null));
+            $shown = array_values(array_filter($listed['items'], fn (ResourceItem $item) => ($all || ! $item->hidden || $item->inUse !== null)
+                && ($type === ResourceType::Zone || $item->apply !== null || $item->inUse !== null)));
             if ($type === ResourceType::Zone) {
                 $this->showZones($title, $shown);
                 continue;
             }
-            $offered = [...$offered, ...$shown];
-            if ($shown === []) {
-                $this->output->writeln("$title: " . $this->t('resources.none'));
+            $lists[] = ['type' => $type, 'title' => $title, 'shown' => $shown];
+        }
+        $offered = array_merge([], ...array_map(fn (array $list) => $list['shown'], $lists));
+        $lastNetwork = null;
+        foreach ($lists as $i => $list) {
+            if (in_array($list['type'], self::NETWORK, true) && $list['shown'] !== []) {
+                $lastNetwork = $i;
+            }
+        }
+
+        /** @var array<int, list<ResourceItem>> $chosen ticks by list */
+        $chosen = [];
+        foreach ($lists as $i => $list) {
+            $chosen[$i] = $this->ask($list, array_merge([], ...$chosen), null);
+            if ($i !== $lastNetwork) {
                 continue;
             }
-            $options = [];
-            $byId = [];
-            foreach ($shown as $item) {
-                $options[$item->id] = ($this->label)($item);
-                $byId[$item->id] = $item;
-            }
-            $default = array_values(array_map(fn (ResourceItem $item) => $item->id, array_filter($shown, fn (ResourceItem $item) => $item->inUse !== null)));
-            while (true) {
-                $ids = $this->ui->multiselect($this->t('resources.pick', ['type' => $title]), $options, $default);
-                $chosen = array_values(array_filter(array_map(fn (string $id) => $byId[$id] ?? null, $ids)));
-                $refused = $this->refused($type, [...$picked, ...$chosen], $chosen);
-                if ($refused === null) {
-                    break;
+            // vpc() complete or gone: asked again while it would have subnets without groups, or groups without subnets.
+            while (($incomplete = $this->incomplete($config, array_merge([], ...$chosen), $offered)) !== null) {
+                $this->output->writeln('<error>' . $incomplete . '</error>');
+                foreach ($lists as $j => $network) {
+                    if ($j <= $i && in_array($network['type'], self::NETWORK, true) && $network['shown'] !== []) {
+                        $others = array_merge([], ...array_values(array_diff_key($chosen, [$j => true])));
+                        $chosen[$j] = $this->ask($network, $others, array_map(fn (ResourceItem $item) => $item->id, $chosen[$j]));
+                    }
                 }
-                $this->output->writeln('<error>' . $refused . '</error>');
-                $default = $ids;
             }
-            $picked = [...$picked, ...$chosen];
         }
-        return [$picked, $offered];
+        return [array_merge([], ...$chosen), $offered];
+    }
+
+    /**
+     * One checklist, asked again while refused().
+     *
+     * @param array{type: ResourceType, title: string, shown: list<ResourceItem>} $list
+     * @param list<ResourceItem> $picked the ticks of the other lists
+     * @param list<string>|null $default the ticks to start from; null: what is in use
+     * @return list<ResourceItem>
+     */
+    private function ask(array $list, array $picked, ?array $default): array
+    {
+        if ($list['shown'] === []) {
+            $this->output->writeln("{$list['title']}: " . $this->t('resources.none'));
+            return [];
+        }
+        $options = [];
+        $byId = [];
+        foreach ($list['shown'] as $item) {
+            $options[$item->id] = ($this->label)($item);
+            $byId[$item->id] = $item;
+        }
+        $default ??= array_values(array_map(fn (ResourceItem $item) => $item->id, array_filter($list['shown'], fn (ResourceItem $item) => $item->inUse !== null)));
+        while (true) {
+            $ids = $this->ui->multiselect($this->t('resources.pick', ['type' => $list['title']]), $options, $default);
+            $chosen = array_values(array_filter(array_map(fn (string $id) => $byId[$id] ?? null, $ids)));
+            $refused = $this->refused($list['type'], [...$picked, ...$chosen], $chosen);
+            if ($refused === null) {
+                return $chosen;
+            }
+            $this->output->writeln('<error>' . $refused . '</error>');
+            $default = $ids;
+        }
+    }
+
+    /**
+     * Why the network picks would leave vpc() without subnets or without security groups (resources.vpc_incomplete),
+     * the config's ids that were not listed counted as SelectionPlan keeps them; null when they would not.
+     *
+     * @param list<ResourceItem> $picked
+     * @param list<ResourceItem> $offered
+     */
+    private function incomplete(AppConfig $config, array $picked, array $offered): ?string
+    {
+        try {
+            SelectionPlan::from($config, array_values(array_filter($picked, fn (ResourceItem $item) => in_array($item->type, self::NETWORK, true))), [], [], $offered);
+        } catch (UserError $e) {
+            if ($e->key === 'resources.vpc_incomplete') {
+                return $this->t($e->key, $e->params);
+            }
+        }
+        return null;
     }
 
     /**
@@ -170,9 +229,10 @@ final class Picker
      *
      * @param list<ResourceItem> $picked
      * @param list<ResourceItem> $listed
+     * @param array{line: ?string, inherited: bool}|null $environmentVpc
      * @return list<ResourceItem>
      */
-    private function confirmConflicts(AppConfig $config, array $picked, array $listed): array
+    private function confirmConflicts(AppConfig $config, array $picked, array $listed, ?array $environmentVpc): array
     {
         $isNetwork = fn (ResourceItem $item): bool => in_array($item->type, self::NETWORK, true);
         $unticked = array_values(array_filter($listed, fn (ResourceItem $item) => $isNetwork($item) && $item->inUse !== null && ! in_array($item, $picked, true)));
@@ -184,11 +244,13 @@ final class Picker
                 $command = null; // refused: the plan says why, once the rest is asked
             }
             if ($command !== null) {
-                $lines = SelectionPlan::preview($config, $command);
+                // The vpc() in use, wherever it is set, and what the environment's level becomes.
+                $old = SelectionPlan::preview($config, $command)['old'];
+                $new = SelectionPlan::preview($config, $command, $environmentVpc)['new'];
                 $change = $this->ui->confirm($this->t('resources.replace_vpc', [
-                    'old' => (string) $lines['old'],
+                    'old' => (string) $old,
                     'source' => $unticked[0]->inUse['source'] ?? 'arco.php',
-                    'new' => $lines['new'] ?? $this->t('settings.remove_call', ['method' => 'vpc']),
+                    'new' => $new ?? $this->t('settings.remove_call', ['method' => 'vpc']),
                 ]), false);
                 if (! $change) {
                     // vpc() as it is: what is in use ticked again, nothing new.
@@ -304,13 +366,14 @@ final class Picker
      * would run them.
      *
      * @param list<array{command: string, args: list<string>}> $plan
+     * @param array{line: ?string, inherited: bool}|null $environmentVpc
      */
-    private function preview(AppConfig $config, array $plan): void
+    private function preview(AppConfig $config, array $plan, ?array $environmentVpc): void
     {
         $this->output->writeln('');
         $this->output->writeln('<info>' . $this->t('resources.preview_heading', ['environment' => $config->environment]) . '</info>');
         foreach ($plan as $command) {
-            $lines = SelectionPlan::preview($config, $command);
+            $lines = SelectionPlan::preview($config, $command, $environmentVpc);
             if ($lines['old'] !== null) {
                 $this->output->writeln('  <fg=red>- ' . $lines['old'] . '</>');
             }

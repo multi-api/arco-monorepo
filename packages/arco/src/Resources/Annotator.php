@@ -4,6 +4,8 @@ namespace Multiapi\Arco\Resources;
 
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ArcoFileEditor;
+use Multiapi\Arco\Config\Validator;
+use Multiapi\Arco\Deploy\GatewayEndpoints;
 
 /**
  * What a listing says about the environment it is shown for (spec §5.1, §5.3, §5.4, §6.1, §6.3): whether a
@@ -54,8 +56,11 @@ final class Annotator
             $item->hidden = $item->hidden || self::hidden($config, $codeBucket, $item, $nonDefaultVpc);
             if (in_array($item->type, [ResourceType::Bucket, ResourceType::Queue, ResourceType::Table], true)) {
                 $item->suggestedName = self::suggestedName($item->name ?? $item->id, $config->app, $config->environment, $config->account);
+                if ($item->type === ResourceType::Table && (Validator::genericTableNameError($item->suggestedName)['key'] ?? null) === 'validation.generic_table_reserved') {
+                    $item->suggestedName .= '-table'; // cache and failed-jobs are Arco's own tables: table:add refuses them
+                }
             }
-            $item->apply = self::apply($config->environment, $item);
+            $item->apply = self::arcoEndpoint($item) ? null : self::apply($config->environment, $item);
             $item->conflict = self::conflict($config, $item);
             $item->warnings = [...$item->warnings, ...self::warnings($config, $item, $usedRouteTables)];
         }
@@ -201,7 +206,7 @@ final class Annotator
 
     private static function hidden(AppConfig $config, string $codeBucket, ResourceItem $item, bool $nonDefaultVpc): bool
     {
-        if ($item->arco() === ['app' => $config->app, 'environment' => $config->environment]) {
+        if ($item->arco() === ['app' => $config->app, 'environment' => $config->environment] || (self::arcoEndpoint($item) && $item->inUse === null)) {
             return true;
         }
         if ($item->type === ResourceType::Bucket) {
@@ -219,6 +224,16 @@ final class Annotator
         return $vpc !== null && $vpc['default'] && $nonDefaultVpc && $item->inUse === null;
     }
 
+    /**
+     * A gateway endpoint Arco created (GatewayEndpoints' marker tag) for whichever environments use it: the last of
+     * them to leave deletes it, so it is never offered as an existing endpoint id (an environment naming it would not
+     * count as a user, and could lose it). vpc() without an id lets Arco find and share it.
+     */
+    private static function arcoEndpoint(ResourceItem $item): bool
+    {
+        return $item->type === ResourceType::Endpoint && ($item->tags[GatewayEndpoints::MARKER_KEY] ?? null) === GatewayEndpoints::MARKER_VALUE;
+    }
+
     /** @return array{command: string, args: list<string>}|array<string, array{command: string, args: list<string>}>|null */
     private static function apply(string $environment, ResourceItem $item): ?array
     {
@@ -227,7 +242,10 @@ final class Annotator
         $one = static fn (string $command, string ...$args): array => ['command' => $command, 'args' => [...array_values($args), $env]];
         return match ($item->type) {
             ResourceType::Bucket => $one('storage:add', $name, '--existing=' . $item->id),
-            ResourceType::Queue => $one('queue:add', $name, '--existing=' . $item->id),
+            // queue:add refuses an existing .fifo queue without --fifo (validation.queue_existing_fifo).
+            ResourceType::Queue => ($item->details['fifo'] ?? false) === true
+                ? $one('queue:add', $name, '--existing=' . $item->id, '--fifo')
+                : $one('queue:add', $name, '--existing=' . $item->id),
             ResourceType::Table => [
                 'generic' => $one(self::TABLE_COMMANDS['generic'], $name, '--existing=' . $item->id),
                 'cache' => $one(self::TABLE_COMMANDS['cache'], '--existing=' . $item->id),
@@ -244,7 +262,7 @@ final class Annotator
     /** @return array{with: string, source: string}|null what picking the item would replace in the config */
     private static function conflict(AppConfig $config, ResourceItem $item): ?array
     {
-        if ($item->inUse !== null) {
+        if ($item->inUse !== null || $item->apply === null) {
             return null;
         }
         switch ($item->type) {

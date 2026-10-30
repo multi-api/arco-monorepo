@@ -105,6 +105,8 @@ return [
     'resources.warning.bucket_region_unknown' => 'Its region could not be read (s3:GetBucketLocation was refused): it may be in another region, where arco cannot use it.',
     'resources.warning.queue_is_dlq' => 'This queue is the dead-letter queue of another queue.',
     'resources.warning.table_schema' => 'Its keys are not what the {use} use needs: {expected}.',
+    'resources.warning.table_fits' => 'Its keys fit only {uses}.',
+    'resources.warning.table_fits_none' => 'Its keys fit no use: as a table it needs {generic}; as the cache, {cache}; as the failed-jobs table, {failedJobs}.',
     'resources.warning.endpoint_missing_routes' => 'Not attached to the route tables of the subnets in use: {routeTables}.',
     'resources.type.subnet' => 'Subnets',
     'resources.type.security-group' => 'Security groups',

@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\Commands;
 
 use Aws\Acm\Exception\AcmException;
+use Aws\Ec2\Exception\Ec2Exception;
 use Aws\Result;
 use Aws\Route53\Exception\Route53Exception;
 use Aws\Sqs\Exception\SqsException;
@@ -28,6 +29,8 @@ final class ResourcesCommandTest extends TestCase
     ];
 
     private const QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-staging-emails';
+    private const FIFO_URL = 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-staging-orders.fifo';
+    private const CERT = 'arn:aws:acm:us-east-1:111111111111:certificate/abcd-1234';
 
     private ?ProjectFixture $project = null;
     private AwsMocks $mocks;
@@ -57,8 +60,11 @@ final class ResourcesCommandTest extends TestCase
             PHP;
     }
 
-    /** The staging environment of the contract run: a VPC, a domain served from the DNS profile's zone, an existing bucket. */
-    private const STAGING = "->vpc(['subnet-aaa'], ['sg-aaa'])->domain('shop.example.com')->dns('acme-prod')->storage('uploads', existing: 'shop-uploads')";
+    /**
+     * The staging environment of the contract run: a VPC with an endpoint Arco manages, a domain whose DNS profile
+     * cannot be read, an existing bucket.
+     */
+    private const STAGING = "->vpc(['subnet-aaa'], ['sg-aaa'], ['s3'])->domain('shop.example.com')->dns('acme-prod')->storage('uploads', existing: 'shop-uploads')";
 
     private function command(): ResourcesCommand
     {
@@ -155,6 +161,35 @@ final class ResourcesCommandTest extends TestCase
         );
     }
 
+    /** A standard queue and a FIFO one. */
+    private function queuesWithFifo(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['QueueUrls' => [self::QUEUE_URL, self::FIFO_URL]]),
+            new Result(['Attributes' => ['QueueArn' => 'arn:aws:sqs:us-east-1:111111111111:shop-staging-emails', 'VisibilityTimeout' => '60']]),
+            new Result(['Tags' => []]),
+            new Result(['Attributes' => ['QueueArn' => 'arn:aws:sqs:us-east-1:111111111111:shop-staging-orders.fifo', 'FifoQueue' => 'true', 'VisibilityTimeout' => '30']]),
+            new Result(['Tags' => []]),
+        );
+    }
+
+    /** One issued certificate for another domain, used by one distribution. */
+    private function certificates(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['CertificateSummaryList' => [['CertificateArn' => self::CERT]]]),
+            new Result(['Certificate' => [
+                'CertificateArn' => self::CERT, 'DomainName' => 'old.example.com', 'SubjectAlternativeNames' => ['old.example.com'],
+                'Status' => 'ISSUED', 'NotAfter' => (int) strtotime('2027-06-01T00:00:00Z'), 'InUseBy' => ['arn:aws:cloudfront::111111111111:distribution/E1'],
+            ]]),
+        );
+    }
+
+    private function securityGroupsDenied(): void
+    {
+        $this->mocks->handler->append(AwsMocks::error(Ec2Exception::class, 'DescribeSecurityGroups', 'UnauthorizedOperation', 403));
+    }
+
     private function tables(): void
     {
         $this->mocks->handler->append(
@@ -180,18 +215,27 @@ final class ResourcesCommandTest extends TestCase
         return new Result(['HostedZones' => [['Id' => "/hostedzone/$id", 'Name' => "$name.", 'Config' => ['PrivateZone' => false], 'ResourceRecordSetCount' => 5]], 'IsTruncated' => false]);
     }
 
-    /** Every type, in the order the command lists them; the certificates are denied. */
+    /**
+     * Every type, in the order the command lists them: the security groups are denied, and the DNS profile's zones
+     * cannot be read (the deploy account has both).
+     */
     private function everything(): void
     {
         $this->account();
         $this->subnets();
-        $this->securityGroups();
+        $this->securityGroupsDenied();
         $this->endpoints();
         $this->buckets();
-        $this->queues();
+        $this->queuesWithFifo();
         $this->tables();
-        $this->certificatesDenied();
-        $this->mocks->handler->append($this->zone('Z1', 'example.com'), $this->zone('Z2', 'shop.example.com'));
+        $this->certificates();
+        $this->mocks->handler->append(
+            new Result(['HostedZones' => [
+                ['Id' => '/hostedzone/Z1', 'Name' => 'example.com.', 'Config' => ['PrivateZone' => false], 'ResourceRecordSetCount' => 5],
+                ['Id' => '/hostedzone/Z2', 'Name' => 'shop.example.com.', 'Config' => ['PrivateZone' => false], 'ResourceRecordSetCount' => 5],
+            ], 'IsTruncated' => false]),
+            AwsMocks::error(Route53Exception::class, 'ListHostedZones', 'AccessDenied', 403),
+        );
     }
 
     public function test_json_shape_matches_the_contract_fixture(): void
@@ -207,11 +251,76 @@ final class ResourcesCommandTest extends TestCase
         self::assertSame($normalize($fixture), $normalize($tester->getDisplay()));
 
         $json = self::json($tester);
-        self::assertSame(['schema', 'account', 'region', 'environment', 'types', 'warnings'], array_keys($json));
+        self::assertSame(['schema', 'account', 'region', 'environment', 'vpc', 'types', 'warnings'], array_keys($json));
         self::assertSame(['subnet', 'security-group', 'endpoint', 'bucket', 'queue', 'table', 'certificate', 'zone'], array_keys($json['types']));
-        self::assertSame('', $tester->getErrorOutput(), 'nothing but the document; no progress lines with --json');
+        // The endpoint Arco manages has no item: only `vpc` says it is there, for the one vpc:set to keep.
+        self::assertSame([['service' => 's3', 'id' => null]], $json['vpc']['endpoints']);
+        self::assertSame([['key', 'params', 'message']], array_map('array_keys', $json['warnings']));
+        self::assertSame('resources.dns_profile_failed', $json['warnings'][0]['key']);
+        self::assertStringNotContainsString('Listing', $tester->getErrorOutput(), 'no progress lines with --json');
+        self::assertStringContainsString('acme-prod', $tester->getErrorOutput(), 'the warning is a diagnostic on stderr too');
         self::assertSame([], array_values(array_diff($this->mocks->calls, self::READ_ONLY)), 'read-only AWS calls only');
         self::assertSame([['p', 'us-east-1'], ['acme-prod', 'us-east-1']], $this->factoryCalls);
+    }
+
+    public function test_json_vpc_is_the_environment_resolved_vpc(): void
+    {
+        $vpc = function (string $staging, ?string $layer = null): mixed {
+            $this->project?->restore();
+            $this->project = new ProjectFixture(self::arcoPhp($staging));
+            $this->account();
+            $options = ['--env' => 'staging', '--profile' => 'p', '--type' => ['queue'], '--json' => true];
+            if ($layer !== null) {
+                $options['--config-layer'] = $this->project->layer(['schema' => 1, 'name' => 'shop', 'region' => 'us-east-1', 'environments' => ['staging' => json_decode($layer, true)]]);
+            }
+            $this->mocks->handler->append(new Result(['QueueUrls' => []]));
+            $tester = $this->run_(null, $options);
+            $tester->assertCommandIsSuccessful();
+            return self::json($tester)['vpc'];
+        };
+
+        self::assertNull($vpc(''));
+        self::assertFalse($vpc('->vpc(false)'));
+        self::assertSame(
+            ['subnets' => ['subnet-aaa'], 'securityGroups' => ['sg-aaa'], 'endpoints' => [['service' => 's3', 'id' => null], ['service' => 'dynamodb', 'id' => 'vpce-0abc']], 'source' => 'arco.php'],
+            $vpc("->vpc(['subnet-aaa'], ['sg-aaa'], ['s3', 'dynamodb' => 'vpce-0abc'])"),
+        );
+        self::assertSame(
+            ['subnets' => ['subnet-c'], 'securityGroups' => ['sg-c'], 'endpoints' => [], 'source' => 'cloud'],
+            $vpc('', '{"settings": {"vpc": {"subnets": ["subnet-c"], "securityGroups": ["sg-c"]}}}'),
+        );
+    }
+
+    public function test_plain_output_names_the_use_a_table_fits_in_one_line(): void
+    {
+        $this->account();
+        $this->tables();
+
+        $tester = $this->run_(self::arcoPhp(), ['--profile' => 'p', '--type' => ['table']]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        self::assertSame(1, substr_count($display, '! '), 'one line for the table\'s keys');
+        self::assertStringContainsString('Its keys fit only as the cache.', $display);
+        self::assertStringNotContainsString('failedJobs use', $display);
+        self::assertStringContainsString('arco table:add cache-table --existing=shop-staging-cache --env=staging', $display);
+    }
+
+    public function test_plain_output_when_no_use_fits(): void
+    {
+        $this->account();
+        $this->mocks->handler->append(
+            new Result(['TableNames' => ['orders']]),
+            new Result(['Table' => ['TableArn' => 'arn:aws:dynamodb:us-east-1:111111111111:table/orders', 'KeySchema' => [['AttributeName' => 'id', 'KeyType' => 'HASH']], 'AttributeDefinitions' => [['AttributeName' => 'id', 'AttributeType' => 'N']]]]),
+            new Result(['TimeToLiveDescription' => []]),
+            new Result(['Tags' => []]),
+        );
+
+        $tester = $this->run_(self::arcoPhp(), ['--profile' => 'p', '--type' => ['table']]);
+
+        $display = $tester->getDisplay();
+        self::assertSame(1, substr_count($display, '! '));
+        self::assertStringContainsString('Its keys fit no use: as a table it needs PK (S, HASH), SK (S, RANGE); as the cache, key (S, HASH); as the failed-jobs table, application (S, HASH), uuid (S, RANGE).', $display);
     }
 
     public function test_one_type_denied_others_listed(): void
@@ -322,7 +431,8 @@ final class ResourcesCommandTest extends TestCase
         self::assertStringContainsString('arco queue:add emails --existing=' . self::QUEUE_URL . ' --env=staging', $display);
         self::assertStringContainsString('arco cache:add --existing=shop-staging-cache --env=staging', $display);
         self::assertStringContainsString('Not attached to the route tables of the subnets in use: rtb-1.', $display);
-        self::assertStringContainsString('Missing permission acm:ListCertificates', $display);
+        self::assertStringContainsString('Missing permission ec2:DescribeSecurityGroups', $display);
+        self::assertStringContainsString('Its keys fit only as the cache.', $display);
         self::assertStringContainsString('Nothing was written', $display);
         self::assertStringContainsString('Listing subnets', $tester->getErrorOutput());
         self::assertSame($arcoPhp, file_get_contents((string) $this->project?->dir . '/arco.php'), 'arco.php unchanged');

@@ -53,12 +53,15 @@ final class SelectionPlan
 
     /**
      * The arco.php line a command replaces (null: none) and the one it writes (null: it removes the call), as the
-     * editing command would print them.
+     * editing command would print them. vpc:set and vpc:remove write the environment's own vpc(): with
+     * $environmentVpc (environmentVpc()) the lines are that level's, as vpc:remove decides (an inherited vpc() is left
+     * with ->vpc(false)); without it, the resolved vpc() stands for the environment's.
      *
      * @param array{command: string, args: list<string>} $command
+     * @param array{line: ?string, inherited: bool}|null $environmentVpc
      * @return array{old: ?string, new: ?string}
      */
-    public static function preview(AppConfig $config, array $command): array
+    public static function preview(AppConfig $config, array $command, ?array $environmentVpc = null): array
     {
         $positional = [];
         $options = [];
@@ -72,25 +75,53 @@ final class SelectionPlan
         }
         $existing = ['existing' => $options['existing'][0] ?? ''];
         $name = $positional[0] ?? '';
-        $currentVpc = $config->vpc === null ? null : ArcoFileEditor::vpcLine(self::vpcValue($config->vpc));
+        $currentVpc = $environmentVpc !== null ? $environmentVpc['line'] : ($config->vpc === null ? null : ArcoFileEditor::vpcLine(self::vpcValue($config->vpc)));
         return match ($command['command']) {
             'vpc:set' => ['old' => $currentVpc, 'new' => ArcoFileEditor::vpcLine([
                 'subnets' => $options['subnet'] ?? [],
                 'securityGroups' => $options['security-group'] ?? [],
                 'endpoints' => self::endpointValues($options['endpoint'] ?? []),
             ])],
-            'vpc:remove' => ['old' => $currentVpc, 'new' => null],
+            'vpc:remove' => ['old' => $currentVpc, 'new' => ($environmentVpc['inherited'] ?? false) ? ArcoFileEditor::vpcLine(false) : null],
             'certificate:set' => [
                 'old' => $config->certificate === null ? null : ArcoFileEditor::settingLine('certificate', $config->certificate),
                 'new' => ArcoFileEditor::settingLine('certificate', $name),
             ],
             'storage:add' => ['old' => null, 'new' => ArcoFileEditor::namedLine('storage', $name, $existing)],
-            'queue:add' => ['old' => null, 'new' => ArcoFileEditor::queueLine($name, $existing)],
+            'queue:add' => ['old' => null, 'new' => ArcoFileEditor::queueLine($name, isset($options['fifo']) ? [...$existing, 'fifo' => true] : $existing)],
             'table:add' => ['old' => null, 'new' => ArcoFileEditor::namedLine('table', $name, $existing)],
             'cache:add' => ['old' => self::tableLine('cache', $config->cacheTable), 'new' => ArcoFileEditor::singletonLine('cache', $existing)],
             'failed-jobs:add' => ['old' => self::tableLine('failedJobsTable', $config->failedJobsTable), 'new' => ArcoFileEditor::singletonLine('failedJobsTable', $existing)],
             default => ['old' => null, 'new' => null],
         };
+    }
+
+    /**
+     * vpc() as the environment itself sets it in arco.php (what vpc:set replaces and vpc:remove removes): its line
+     * (null: it sets none; `->vpc(false)` when it opts out), and whether the app sets a vpc() it would inherit.
+     *
+     * @param array<string, mixed> $raw arco.php as ConfigLoader loads it; [] without arco.php
+     * @return array{line: ?string, inherited: bool}
+     */
+    public static function environmentVpc(array $raw, string $environment): array
+    {
+        $setting = static function (mixed $level): mixed {
+            $settings = is_array($level) ? $level['settings'] ?? null : null;
+            return is_array($settings) ? $settings['vpc'] ?? null : null;
+        };
+        $environments = $raw['environments'] ?? null;
+        $own = $setting(is_array($environments) ? $environments[$environment] ?? null : null);
+        $strings = static fn (mixed $list): array => is_array($list) ? array_values(array_filter($list, 'is_string')) : [];
+        $line = match (true) {
+            $own === false => ArcoFileEditor::vpcLine(false),
+            is_array($own) => ArcoFileEditor::vpcLine([
+                'subnets' => $strings($own['subnets'] ?? null),
+                'securityGroups' => $strings($own['securityGroups'] ?? null),
+                'endpoints' => is_array($own['endpoints'] ?? null) ? array_filter($own['endpoints'], 'is_string') : [],
+            ]),
+            default => null,
+        };
+        return ['line' => $line, 'inherited' => is_array($setting($raw))];
     }
 
     /**

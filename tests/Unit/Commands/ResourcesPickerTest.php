@@ -69,8 +69,9 @@ final class ResourcesPickerTest extends TestCase
      * (they validate with DescribeSubnets and DescribeCertificate when they can).
      *
      * @param list<string> $types
+     * @param array<string, mixed> $options
      */
-    private function run_(string $arcoPhp, array $types = self::TYPES): CommandTester
+    private function run_(string $arcoPhp, array $types = self::TYPES, array $options = []): CommandTester
     {
         $this->project = new ProjectFixture($arcoPhp);
         $factory = fn (?string $profile, string $region) => $this->mocks->clients($region);
@@ -82,7 +83,7 @@ final class ResourcesPickerTest extends TestCase
             new CertificateSetCommand($factory, $clock),
         ]);
         $this->tester = new CommandTester($app->find('resources'));
-        $this->tester->execute(['--env' => 'staging', '--profile' => 'p', '--type' => $types], ['interactive' => true]);
+        $this->tester->execute(['--env' => 'staging', '--profile' => 'p', '--type' => $types, ...$options], ['interactive' => true]);
         return $this->tester;
     }
 
@@ -374,5 +375,135 @@ final class ResourcesPickerTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertNotSame([], $this->mocks->calls);
         self::assertSame([], array_values(array_diff($this->mocks->calls, self::READ_ONLY)), 'read-only AWS calls only');
+    }
+
+    public function test_fifo_queue_is_written_as_fifo(): void
+    {
+        $url = 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-staging-orders.fifo';
+        $this->account();
+        $this->mocks->handler->append(
+            new Result(['QueueUrls' => [$url]]),
+            new Result(['Attributes' => ['QueueArn' => 'arn:aws:sqs:us-east-1:111111111111:shop-staging-orders.fifo', 'FifoQueue' => 'true']]),
+            new Result(['Tags' => []]),
+        );
+        $this->ui->confirms = [true, true];
+        $this->ui->multiselects = [[$url]];
+        $this->ui->texts = ['orders'];
+
+        $tester = $this->run_(self::arcoPhp(), ['queue']);
+
+        $tester->assertCommandIsSuccessful();
+        $line = "->queue('orders', existing: '$url', fifo: true)";
+        self::assertStringContainsString("+ $line", $tester->getDisplay());
+        self::assertStringContainsString("arco queue:add orders --existing=$url --fifo --env=staging", $tester->getDisplay());
+        self::assertStringContainsString($line, $this->arcoPhpNow());
+    }
+
+    public function test_endpoints_arco_created_are_not_offered(): void
+    {
+        $this->account();
+        $this->mocks->handler->append(
+            new Result(['VpcEndpoints' => [
+                ['VpcEndpointId' => 'vpce-arco', 'VpcEndpointType' => 'Gateway', 'ServiceName' => 'com.amazonaws.us-east-1.s3', 'VpcId' => 'vpc-1', 'State' => 'available',
+                    'RouteTableIds' => ['rtb-1'], 'Tags' => [['Key' => 'arco:managed', 'Value' => 'gateway-endpoint']]],
+                ['VpcEndpointId' => 'vpce-mine', 'VpcEndpointType' => 'Gateway', 'ServiceName' => 'com.amazonaws.us-east-1.dynamodb', 'VpcId' => 'vpc-1', 'State' => 'available',
+                    'RouteTableIds' => ['rtb-1']],
+            ]]),
+            new Result(['Vpcs' => [['VpcId' => 'vpc-1']]]),
+        );
+        $offered = [];
+        $this->ui->confirms = [true];
+        $this->ui->multiselects = [function (string $label, array $options) use (&$offered): array {
+            $offered = array_keys($options);
+            return [];
+        }];
+
+        // Even with --all: another environment's release could delete it, so it is never picked by id.
+        $tester = $this->run_(self::arcoPhp(), ['endpoint'], ['--all' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['vpce-mine'], $offered);
+    }
+
+    public function test_a_table_shows_one_line_for_its_keys(): void
+    {
+        $this->account();
+        $this->mocks->handler->append(
+            new Result(['TableNames' => ['shop-staging-cache']]),
+            new Result(['Table' => [
+                'TableArn' => 'arn:aws:dynamodb:us-east-1:111111111111:table/shop-staging-cache',
+                'KeySchema' => [['AttributeName' => 'key', 'KeyType' => 'HASH']],
+                'AttributeDefinitions' => [['AttributeName' => 'key', 'AttributeType' => 'S']],
+            ]]),
+            new Result(['TimeToLiveDescription' => []]),
+            new Result(['Tags' => []]),
+        );
+        $labels = [];
+        $this->ui->confirms = [true];
+        $this->ui->multiselects = [function (string $label, array $options) use (&$labels): array {
+            $labels = array_values($options);
+            return [];
+        }];
+
+        $tester = $this->run_(self::arcoPhp(), ['table']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertCount(1, $labels);
+        self::assertSame(1, substr_count($labels[0], '! '));
+        self::assertStringContainsString('! Its keys fit only as the cache.', $labels[0]);
+        self::assertStringNotContainsString('failedJobs', $labels[0]);
+    }
+
+    public function test_a_vpc_without_security_groups_is_asked_again_before_names(): void
+    {
+        $this->networkListing();
+        $this->mocks->handler->append(
+            new Result(['Buckets' => [['Name' => 'shop-uploads', 'CreationDate' => '2026-02-01T00:00:00+00:00']]]),
+            new Result([]),
+            new Result(['TagSet' => []]),
+        );
+        $this->ui->confirms = [true, true];
+        // The subnet without a group: refused once the network lists are answered, then both asked again.
+        $this->ui->multiselects = [['subnet-aaa'], [], ['subnet-aaa'], ['sg-aaa'], ['shop-uploads']];
+        $this->ui->texts = ['files'];
+
+        $tester = $this->run_(self::arcoPhp(), ['subnet', 'security-group', 'bucket']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('vpc() needs at least one subnet and one security group', $tester->getDisplay());
+        $kinds = array_column($this->ui->asked, 0);
+        self::assertSame(['confirm', 'multiselect', 'multiselect', 'multiselect', 'multiselect', 'multiselect', 'text', 'confirm'], $kinds);
+        self::assertSame(['subnet-aaa'], $this->ui->asked[3][2], 'asked again with the ticks kept');
+        self::assertStringContainsString("->vpc(subnets: ['subnet-aaa'], securityGroups: ['sg-aaa'])", $this->arcoPhpNow());
+        self::assertStringContainsString("->storage('files', existing: 'shop-uploads')", $this->arcoPhpNow());
+    }
+
+    public function test_removing_an_inherited_vpc_previews_vpc_false_on_the_environment(): void
+    {
+        $this->networkListing();
+        $this->ui->confirms = [true, true, true];
+        $this->ui->multiselects = [[], []];
+        $arcoPhp = <<<'PHP'
+            <?php
+            use Multiapi\Arco\Config\App;
+            use Multiapi\Arco\Config\Environment;
+
+            return App::make('shop')
+                ->region('us-east-1')
+                ->vpc(['subnet-aaa'], ['sg-aaa'])
+                ->environment('staging', fn (Environment $env) => $env->timeout(30));
+            PHP;
+
+        $tester = $this->run_($arcoPhp, ['subnet', 'security-group']);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        // The environment sets no vpc() of its own: nothing to replace there, it opts out with ->vpc(false).
+        self::assertStringContainsString("Change ->vpc(subnets: ['subnet-aaa'], securityGroups: ['sg-aaa']) (arco.php) to ->vpc(false)?", $this->ui->asked[3][1]);
+        self::assertStringContainsString('+ ->vpc(false)', $display);
+        self::assertStringNotContainsString('- ->vpc(', $display);
+        self::assertStringContainsString('arco vpc:remove --env=staging', $display);
+        self::assertStringContainsString("fn (Environment \$env) => \$env\n        ->vpc(false)->timeout(30)", $this->arcoPhpNow());
+        self::assertStringContainsString("->vpc(['subnet-aaa'], ['sg-aaa'])", $this->arcoPhpNow(), "the app's vpc() stays");
     }
 }

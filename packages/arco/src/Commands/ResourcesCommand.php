@@ -9,7 +9,9 @@ use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigLayer;
+use Multiapi\Arco\Config\ConfigLoader;
 use LogicException;
+use Multiapi\Arco\Resources\Annotator;
 use Multiapi\Arco\Resources\Inventory;
 use Multiapi\Arco\Resources\Picker;
 use Multiapi\Arco\Resources\PickerUi;
@@ -17,6 +19,7 @@ use Multiapi\Arco\Resources\PromptsPickerUi;
 use Multiapi\Arco\Resources\PromptsUnavailable;
 use Multiapi\Arco\Resources\ResourceItem;
 use Multiapi\Arco\Resources\ResourceType;
+use Multiapi\Arco\Resources\SelectionPlan;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Input\InputInterface;
@@ -127,7 +130,10 @@ final class ResourcesCommand extends ArcoCommand
             }
             if ($picker !== null) {
                 try {
-                    return $picker->run($located, $result, $all);
+                    // The preview shows vpc() at the environment's level, the one vpc:set and vpc:remove write.
+                    $arcoPhp = $this->projectDir() . '/arco.php';
+                    $environmentVpc = SelectionPlan::environmentVpc(is_file($arcoPhp) ? (new ConfigLoader())->load($arcoPhp) : [], $located->environment);
+                    return $picker->run($located, $result, $all, $environmentVpc);
                 } catch (PromptsUnavailable $e) {
                     // Questions come before any command runs: nothing was written.
                     $io->writeln($this->t('resources.prompts_unavailable', ['message' => $e->getMessage()]));
@@ -213,10 +219,36 @@ final class ResourcesCommand extends ArcoCommand
             $parts[] = $this->t('resources.unnamed');
         }
         $parts[] = $this->details($item);
-        foreach ($item->warnings as $warning) {
-            $parts[] = '! ' . $this->t($warning['key'], $warning['params']);
+        foreach ($this->warningLines($item) as $warning) {
+            $parts[] = '! ' . $warning;
         }
         return implode(' · ', $parts);
+    }
+
+    /**
+     * An item's warnings as a person reads them. A table's table_schema warnings (one per use its keys do not fit, as
+     * the JSON keeps them) become one line: the use its keys fit, or that they fit none and what each use needs.
+     *
+     * @return list<string>
+     */
+    private function warningLines(ResourceItem $item): array
+    {
+        $lines = [];
+        $misfits = [];
+        foreach ($item->warnings as $warning) {
+            if ($warning['key'] === 'resources.warning.table_schema') {
+                $misfits[$warning['params']['use'] ?? ''] = $warning['params']['expected'] ?? '';
+                continue;
+            }
+            $lines[] = $this->t($warning['key'], $warning['params']);
+        }
+        if ($misfits !== []) {
+            $fits = array_values(array_diff(array_keys(Annotator::TABLE_KEYS), array_keys($misfits)));
+            $lines[] = $fits === []
+                ? $this->t('resources.warning.table_fits_none', ['generic' => $misfits['generic'] ?? '', 'cache' => $misfits['cache'] ?? '', 'failedJobs' => $misfits['failedJobs'] ?? ''])
+                : $this->t('resources.warning.table_fits', ['uses' => implode(', ', array_map(fn (string $use): string => $this->t('resources.use.' . $use), $fits))]);
+        }
+        return $lines;
     }
 
     /**
@@ -239,7 +271,9 @@ final class ResourcesCommand extends ArcoCommand
 
     /**
      * Spec §8. A failed type is {ok: false, error: {key, params, message}}; `warnings` holds what went wrong without
-     * failing a type (a DNS profile whose zones could not be read), each {key, params, message}.
+     * failing a type (a DNS profile whose zones could not be read), each {key, params, message}. `vpc` is the
+     * environment's resolved vpc() (false: vpc(false); null: none), whose endpoints with a null id (Arco-managed) no
+     * item lists: a caller building the one vpc:set starts from it.
      *
      * @param array<string, array{ok: true, items: list<ResourceItem>}|array{ok: false, error: array{key: string, params: array<string, string>}}> $result
      * @param list<array{key: string, params: array<string, string>}> $warnings
@@ -257,9 +291,27 @@ final class ResourcesCommand extends ArcoCommand
             'account' => $config->account,
             'region' => $config->region,
             'environment' => $config->environment,
+            'vpc' => self::vpcDocument($config),
             'types' => (object) $types,
             'warnings' => array_map(fn (array $w) => self::error($w['key'], $w['params'], $this->t($w['key'], $w['params'])), $warnings),
         ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    }
+
+    /**
+     * @return array{subnets: list<string>, securityGroups: list<string>, endpoints: list<array{service: string, id: ?string}>, source: string}|false|null
+     */
+    private static function vpcDocument(AppConfig $config): array|false|null
+    {
+        $source = $config->sources['vpc'] ?? 'default';
+        if ($config->vpc === null) {
+            return $source === 'default' ? null : false; // set, so vpc(false)
+        }
+        return [
+            'subnets' => $config->vpc->subnets,
+            'securityGroups' => $config->vpc->securityGroups,
+            'endpoints' => $config->vpc->endpoints,
+            'source' => $source === 'cloud' ? 'cloud' : 'arco.php',
+        ];
     }
 
     /**
@@ -321,8 +373,8 @@ final class ResourcesCommand extends ArcoCommand
         $label = $item->name === null || $item->name === $item->id ? $item->id : "{$item->name}  {$item->id}";
         $io->writeln(' <info>' . $label . '</info>' . ($marks === [] ? '' : '  · ' . implode(' · ', $marks)));
         $io->writeln('   ' . $this->details($item));
-        foreach ($item->warnings as $warning) {
-            $io->writeln('   <comment>! ' . $this->t($warning['key'], $warning['params']) . '</comment>');
+        foreach ($this->warningLines($item) as $warning) {
+            $io->writeln('   <comment>! ' . $warning . '</comment>');
         }
         if ($item->conflict !== null) {
             $io->writeln('   ' . $this->t('resources.conflict', $item->conflict));

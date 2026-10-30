@@ -3,6 +3,21 @@
     "account": "111111111111",
     "region": "us-east-1",
     "environment": "staging",
+    "vpc": {
+        "subnets": [
+            "subnet-aaa"
+        ],
+        "securityGroups": [
+            "sg-aaa"
+        ],
+        "endpoints": [
+            {
+                "service": "s3",
+                "id": null
+            }
+        ],
+        "source": "arco.php"
+    },
     "types": {
         "subnet": {
             "ok": true,
@@ -44,37 +59,14 @@
             ]
         },
         "security-group": {
-            "ok": true,
-            "items": [
-                {
-                    "type": "security-group",
-                    "id": "sg-aaa",
-                    "name": "lambda",
-                    "vpc": {
-                        "id": "vpc-1",
-                        "name": "dev",
-                        "default": false
-                    },
-                    "description": "Lambda functions",
-                    "egressAll": true,
-                    "stack": null,
-                    "arco": null,
-                    "tags": {},
-                    "unnamed": false,
-                    "inUse": {
-                        "source": "arco.php"
-                    },
-                    "hidden": false,
-                    "warnings": [],
-                    "apply": {
-                        "command": "vpc:set",
-                        "args": [
-                            "--security-group=sg-aaa",
-                            "--env=staging"
-                        ]
-                    }
-                }
-            ]
+            "ok": false,
+            "error": {
+                "key": "resources.permission_denied",
+                "params": {
+                    "action": "ec2:DescribeSecurityGroups"
+                },
+                "message": "Missing permission ec2:DescribeSecurityGroups: this type was not listed."
+            }
         },
         "endpoint": {
             "ok": true,
@@ -114,7 +106,7 @@
                         ]
                     },
                     "conflict": {
-                        "with": "vpc(subnets: ['subnet-aaa'], securityGroups: ['sg-aaa'])",
+                        "with": "vpc(subnets: ['subnet-aaa'], securityGroups: ['sg-aaa'], endpoints: ['s3'])",
                         "source": "arco.php"
                     }
                 }
@@ -203,6 +195,33 @@
                         ]
                     },
                     "suggestedName": "emails"
+                },
+                {
+                    "type": "queue",
+                    "id": "https://sqs.us-east-1.amazonaws.com/111111111111/shop-staging-orders.fifo",
+                    "name": "shop-staging-orders.fifo",
+                    "url": "https://sqs.us-east-1.amazonaws.com/111111111111/shop-staging-orders.fifo",
+                    "arn": "arn:aws:sqs:us-east-1:111111111111:shop-staging-orders.fifo",
+                    "fifo": true,
+                    "visibilityTimeout": 30,
+                    "dlq": null,
+                    "stack": null,
+                    "arco": null,
+                    "tags": {},
+                    "unnamed": false,
+                    "inUse": null,
+                    "hidden": false,
+                    "warnings": [],
+                    "apply": {
+                        "command": "queue:add",
+                        "args": [
+                            "orders-fifo",
+                            "--existing=https://sqs.us-east-1.amazonaws.com/111111111111/shop-staging-orders.fifo",
+                            "--fifo",
+                            "--env=staging"
+                        ]
+                    },
+                    "suggestedName": "orders-fifo"
                 }
             ]
         },
@@ -249,7 +268,7 @@
                         "generic": {
                             "command": "table:add",
                             "args": [
-                                "cache",
+                                "cache-table",
                                 "--existing=shop-staging-cache",
                                 "--env=staging"
                             ]
@@ -269,19 +288,47 @@
                             ]
                         }
                     },
-                    "suggestedName": "cache"
+                    "suggestedName": "cache-table"
                 }
             ]
         },
         "certificate": {
-            "ok": false,
-            "error": {
-                "key": "resources.permission_denied",
-                "params": {
-                    "action": "acm:ListCertificates"
-                },
-                "message": "Missing permission acm:ListCertificates: this type was not listed."
-            }
+            "ok": true,
+            "items": [
+                {
+                    "type": "certificate",
+                    "id": "arn:aws:acm:us-east-1:111111111111:certificate/abcd-1234",
+                    "name": "old.example.com",
+                    "arn": "arn:aws:acm:us-east-1:111111111111:certificate/abcd-1234",
+                    "domains": [
+                        "old.example.com"
+                    ],
+                    "status": "ISSUED",
+                    "expires": "2027-06-01T00:00:00+00:00",
+                    "inUseBy": 1,
+                    "stack": null,
+                    "arco": null,
+                    "tags": {},
+                    "unnamed": false,
+                    "inUse": null,
+                    "hidden": false,
+                    "warnings": [
+                        {
+                            "key": "resources.warning.certificate_not_covering",
+                            "params": {
+                                "domains": "shop.example.com"
+                            }
+                        }
+                    ],
+                    "apply": {
+                        "command": "certificate:set",
+                        "args": [
+                            "arn:aws:acm:us-east-1:111111111111:certificate/abcd-1234",
+                            "--env=staging"
+                        ]
+                    }
+                }
+            ]
         },
         "zone": {
             "ok": true,
@@ -292,7 +339,7 @@
                     "name": "shop.example.com",
                     "private": false,
                     "records": 5,
-                    "account": "acme-prod",
+                    "account": "p",
                     "stack": null,
                     "arco": null,
                     "tags": {},
@@ -323,5 +370,14 @@
             ]
         }
     },
-    "warnings": []
+    "warnings": [
+        {
+            "key": "resources.dns_profile_failed",
+            "params": {
+                "profile": "acme-prod",
+                "error": "AccessDenied"
+            },
+            "message": "Could not list the hosted zones of DNS profile acme-prod (AccessDenied); only the deploy profile's zones are listed."
+        }
+    ]
 }

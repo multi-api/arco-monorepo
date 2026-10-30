@@ -34,7 +34,9 @@ final class PromptsPickerUi implements PickerUi
     {
         Prompt::setOutput($output);
         $io = new SymfonyStyle($input, $output);
-        // Prompts falls back by itself when stty fails; Windows has no stty at all.
+        // When `stty` fails, prompts prints its error and switches to the fallbacks registered below for the rest of
+        // the run. On Windows it refuses before trying stty (checkEnvironment() throws), so the fallbacks start there
+        // at once. Without a TTY on STDIN it neither draws nor falls back: it asks nothing and returns each default.
         Prompt::fallbackWhen(PHP_OS_FAMILY === 'Windows');
         ConfirmPrompt::fallbackUsing(static fn (ConfirmPrompt $prompt): bool => $io->confirm($prompt->label, $prompt->default));
         TextPrompt::fallbackUsing(static function (TextPrompt $prompt) use ($io): string {

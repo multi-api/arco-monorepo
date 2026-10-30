@@ -75,7 +75,7 @@ final class AnnotatorTest extends TestCase
     {
         $url = 'https://sqs.us-east-1.amazonaws.com/' . self::ACCOUNT . '/' . $name;
         return new ResourceItem(ResourceType::Queue, $url, $name, [], [
-            'url' => $url, 'arn' => 'arn:aws:sqs:us-east-1:' . self::ACCOUNT . ':' . $name, 'fifo' => false, 'visibilityTimeout' => 30, 'dlq' => null,
+            'url' => $url, 'arn' => 'arn:aws:sqs:us-east-1:' . self::ACCOUNT . ':' . $name, 'fifo' => str_ends_with($name, '.fifo'), 'visibilityTimeout' => 30, 'dlq' => null,
         ]);
     }
 
@@ -276,6 +276,41 @@ final class AnnotatorTest extends TestCase
         self::assertSame(['command' => 'vpc:set', 'args' => ['--endpoint=dynamodb=vpce-a', '--env=production']], $items['vpce-a']->apply);
         self::assertSame(['command' => 'certificate:set', 'args' => [self::CERT, '--env=production']], $items[self::CERT]->apply);
         self::assertNull($items['Z1']->apply);
+    }
+
+    public function test_fifo_queue_is_applied_as_fifo(): void
+    {
+        $url = 'https://sqs.us-east-1.amazonaws.com/943653377281/shop-production-orders.fifo';
+        $items = self::annotated(self::config(), ['queue' => [self::queue('shop-production-orders.fifo')]]);
+
+        // queue:add refuses an existing .fifo queue without --fifo (validation.queue_existing_fifo).
+        self::assertSame(['command' => 'queue:add', 'args' => ['orders-fifo', '--existing=' . $url, '--fifo', '--env=production']], $items[$url]->apply);
+    }
+
+    public function test_suggested_table_name_avoids_the_reserved_names(): void
+    {
+        $items = self::annotated(self::config(), ['table' => [self::table('shop-production-cache'), self::table('shop-failed-jobs'), self::table('cache-v2')]]);
+
+        // table:add refuses cache and failed-jobs (validation.generic_table_reserved): Arco's own tables take them.
+        self::assertSame('cache-table', $items['shop-production-cache']->suggestedName);
+        self::assertSame(['cache-table', '--existing=shop-production-cache', '--env=production'], $items['shop-production-cache']->apply['generic']['args'] ?? null);
+        self::assertSame('failed-jobs-table', $items['shop-failed-jobs']->suggestedName);
+        self::assertSame('cache-v2', $items['cache-v2']->suggestedName);
+    }
+
+    public function test_endpoints_arco_created_are_hidden_and_not_offered(): void
+    {
+        $managed = new ResourceItem(ResourceType::Endpoint, 'vpce-arco', null, ['arco:managed' => 'gateway-endpoint', 'arco:uses:other-app-production' => '1'], [
+            'vpc' => ['id' => 'vpc-1', 'name' => null, 'default' => false], 'service' => 's3', 'routeTables' => ['rtb-1'],
+        ]);
+        $items = self::annotated(self::config(fn (Environment $e) => $e->vpc(['subnet-a'], ['sg-a'], ['s3'])), ['endpoint' => [$managed, self::endpoint('vpce-own', 'dynamodb')]]);
+
+        // Another environment's release could delete it: it is never picked as an existing endpoint id.
+        self::assertTrue($items['vpce-arco']->hidden);
+        self::assertNull($items['vpce-arco']->apply);
+        self::assertNull($items['vpce-arco']->conflict);
+        self::assertFalse($items['vpce-own']->hidden);
+        self::assertNotNull($items['vpce-own']->apply);
     }
 
     public function test_order_in_use_then_app_then_name(): void
