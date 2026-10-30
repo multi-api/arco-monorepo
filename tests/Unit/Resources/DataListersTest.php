@@ -2,8 +2,10 @@
 
 namespace Multiapi\Arco\Tests\Unit\Resources;
 
+use Aws\DynamoDb\Exception\DynamoDbException;
 use Aws\Result;
 use Aws\S3\Exception\S3Exception;
+use Aws\Sqs\Exception\SqsException;
 use Multiapi\Arco\Resources\BucketLister;
 use Multiapi\Arco\Resources\QueueLister;
 use Multiapi\Arco\Resources\ResourceItem;
@@ -94,6 +96,9 @@ final class DataListersTest extends TestCase
         self::assertNull($items[2]->details['region']);
         self::assertFalse($items[2]->hidden);
         self::assertSame(['k' => 'v'], $items[2]->tags);
+        // A denied GetBucketLocation does not pass for this region: the bucket says its region is unknown.
+        self::assertSame([['key' => 'resources.warning.bucket_region_unknown', 'params' => []]], $items[2]->warnings);
+        self::assertSame([], $items[0]->warnings);
     }
 
     public function test_queue_fifo_dlq_and_is_dlq(): void
@@ -124,6 +129,57 @@ final class DataListersTest extends TestCase
         self::assertFalse($dlq->details['fifo']);
         self::assertNull($dlq->details['dlq']);
         self::assertSame([['key' => 'resources.warning.queue_is_dlq', 'params' => []]], $dlq->warnings);
+    }
+
+    public function test_queue_deleted_while_listing_is_skipped(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['QueueUrls' => ['https://sqs/1/gone', 'https://sqs/1/gone-tags', 'https://sqs/1/kept']]),
+            AwsMocks::error(SqsException::class, 'GetQueueAttributes', 'AWS.SimpleQueueService.NonExistentQueue', 400),
+            new Result(['Attributes' => ['QueueArn' => 'arn:gone-tags']]),
+            AwsMocks::error(SqsException::class, 'ListQueueTags', 'QueueDoesNotExist', 400),
+            new Result(['Attributes' => ['QueueArn' => 'arn:kept']]),
+            new Result([]),
+        );
+        $items = (new QueueLister())->list($this->mocks->clients(overrides: ['retries' => 0]));
+
+        self::assertSame(['https://sqs/1/kept'], array_map(fn (ResourceItem $i) => $i->id, $items));
+    }
+
+    public function test_other_queue_errors_fail_the_type(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['QueueUrls' => ['https://sqs/1/q']]),
+            AwsMocks::error(SqsException::class, 'GetQueueAttributes', 'AccessDenied', 403),
+        );
+        $this->expectException(SqsException::class);
+        (new QueueLister())->list($this->mocks->clients(overrides: ['retries' => 0]));
+    }
+
+    public function test_table_deleted_while_listing_is_skipped(): void
+    {
+        $table = fn (string $name) => new Result(['Table' => ['TableName' => $name, 'TableArn' => 'arn:' . $name, 'KeySchema' => [], 'AttributeDefinitions' => []]]);
+        $gone = fn (string $operation) => AwsMocks::error(DynamoDbException::class, $operation, 'ResourceNotFoundException', 400);
+        $this->mocks->handler->append(
+            new Result(['TableNames' => ['a', 'b', 'c', 'kept']]),
+            $gone('DescribeTable'),
+            $table('b'), $gone('DescribeTimeToLive'),
+            $table('c'), new Result(['TimeToLiveDescription' => []]), $gone('ListTagsOfResource'),
+            $table('kept'), new Result(['TimeToLiveDescription' => []]), new Result(['Tags' => []]),
+        );
+        $items = (new TableLister())->list($this->mocks->clients(overrides: ['retries' => 0]));
+
+        self::assertSame(['kept'], array_map(fn (ResourceItem $i) => $i->id, $items));
+    }
+
+    public function test_other_table_errors_fail_the_type(): void
+    {
+        $this->mocks->handler->append(
+            new Result(['TableNames' => ['t']]),
+            AwsMocks::error(DynamoDbException::class, 'DescribeTable', 'AccessDeniedException', 400),
+        );
+        $this->expectException(DynamoDbException::class);
+        (new TableLister())->list($this->mocks->clients(overrides: ['retries' => 0]));
     }
 
     public function test_table_keys_ttl_billing(): void

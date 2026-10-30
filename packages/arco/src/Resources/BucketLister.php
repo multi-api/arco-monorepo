@@ -8,7 +8,8 @@ use Multiapi\Arco\Deploy\Domains\Aws;
 
 /**
  * S3 buckets. ListBuckets is account-wide, so a bucket of another region is hidden (and its tags are not read, to
- * avoid cross-region redirects); a bucket whose location or tags cannot be read stays in the list without them.
+ * avoid cross-region redirects); a bucket whose location or tags cannot be read stays in the list without them, and
+ * one whose location cannot be read says so (it may be in another region).
  */
 final class BucketLister implements Lister
 {
@@ -28,13 +29,18 @@ final class BucketLister implements Lister
             }
             $region = $this->region($s3, $name);
             $other = $region !== null && $region !== $aws->region;
+            $warnings = match (true) {
+                $other => [['key' => 'resources.warning.bucket_other_region', 'params' => ['region' => $region]]],
+                $region === null => [['key' => 'resources.warning.bucket_region_unknown', 'params' => []]],
+                default => [],
+            };
             $items[] = new ResourceItem(
                 ResourceType::Bucket,
                 $name,
                 $name,
                 $other ? [] : $this->tags($s3, $name),
                 ['region' => $region, 'created' => self::created($bucket['CreationDate'] ?? null)],
-                $other ? [['key' => 'resources.warning.bucket_other_region', 'params' => ['region' => $region]]] : [],
+                $warnings,
                 $other,
             );
         }

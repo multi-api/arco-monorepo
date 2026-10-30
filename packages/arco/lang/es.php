@@ -102,6 +102,7 @@ return [
     'resources.warning.subnet_few_ips' => 'Quedan solo {free} direcciones libres en esta subnet.',
     'resources.warning.sg_no_egress' => 'Sin regla de salida a 0.0.0.0/0: una función con este grupo no alcanza nada fuera del grupo.',
     'resources.warning.bucket_other_region' => 'Este bucket está en {region}; arco solo usa buckets de su propia región.',
+    'resources.warning.bucket_region_unknown' => 'No se pudo leer su región (se rechazó s3:GetBucketLocation): puede estar en otra región, donde arco no puede usarlo.',
     'resources.warning.queue_is_dlq' => 'Esta cola es la cola de mensajes fallidos (DLQ) de otra cola.',
     'resources.warning.table_schema' => 'Sus claves no son las que necesita el uso {use}: {expected}.',
     'resources.warning.endpoint_missing_routes' => 'No está asociado a las tablas de rutas de las subnets en uso: {routeTables}.',

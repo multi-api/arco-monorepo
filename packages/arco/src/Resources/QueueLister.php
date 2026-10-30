@@ -2,12 +2,19 @@
 
 namespace Multiapi\Arco\Resources;
 
+use Aws\Exception\AwsException;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Deploy\Domains\Aws;
 
-/** SQS queues, with the dead-letter queue they redrive to and a warning on the ones that are some other queue's DLQ. */
+/**
+ * SQS queues, with the dead-letter queue they redrive to and a warning on the ones that are some other queue's DLQ.
+ * A queue deleted between ListQueues and the calls about it is left out.
+ */
 final class QueueLister implements Lister
 {
+    /** The codes SQS gives for a queue that no longer exists (the query and the JSON protocol). */
+    private const GONE = ['AWS.SimpleQueueService.NonExistentQueue', 'QueueDoesNotExist'];
+
     public function type(): ResourceType
     {
         return ResourceType::Queue;
@@ -18,9 +25,17 @@ final class QueueLister implements Lister
         $sqs = $aws->sqs();
         $items = [];
         foreach ($this->urls($sqs) as $url) {
-            $attributes = Aws::map(Aws::call($sqs, 'GetQueueAttributes', ['QueueUrl' => $url, 'AttributeNames' => ['All']])['Attributes'] ?? []);
+            try {
+                $attributes = Aws::map(Aws::call($sqs, 'GetQueueAttributes', ['QueueUrl' => $url, 'AttributeNames' => ['All']])['Attributes'] ?? []);
+                $listed = Aws::map(Aws::call($sqs, 'ListQueueTags', ['QueueUrl' => $url])['Tags'] ?? []);
+            } catch (AwsException $e) {
+                if (in_array($e->getAwsErrorCode(), self::GONE, true)) {
+                    continue; // deleted while listing
+                }
+                throw $e;
+            }
             $tags = [];
-            foreach (Aws::map(Aws::call($sqs, 'ListQueueTags', ['QueueUrl' => $url])['Tags'] ?? []) as $key => $value) {
+            foreach ($listed as $key => $value) {
                 if (is_string($value)) {
                     $tags[$key] = $value;
                 }

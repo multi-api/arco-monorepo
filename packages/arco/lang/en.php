@@ -102,6 +102,7 @@ return [
     'resources.warning.subnet_few_ips' => 'Only {free} free addresses left in this subnet.',
     'resources.warning.sg_no_egress' => 'No outbound rule to 0.0.0.0/0: a function with this group cannot reach anything outside the group.',
     'resources.warning.bucket_other_region' => 'This bucket lives in {region}; arco only uses buckets in its own region.',
+    'resources.warning.bucket_region_unknown' => 'Its region could not be read (s3:GetBucketLocation was refused): it may be in another region, where arco cannot use it.',
     'resources.warning.queue_is_dlq' => 'This queue is the dead-letter queue of another queue.',
     'resources.warning.table_schema' => 'Its keys are not what the {use} use needs: {expected}.',
     'resources.warning.endpoint_missing_routes' => 'Not attached to the route tables of the subnets in use: {routeTables}.',

@@ -3,10 +3,11 @@
 namespace Multiapi\Arco\Resources;
 
 use Aws\DynamoDb\DynamoDbClient;
+use Aws\Exception\AwsException;
 use Multiapi\Arco\Aws\AwsClients;
 use Multiapi\Arco\Deploy\Domains\Aws;
 
-/** DynamoDB tables with their key schema, TTL attribute and billing mode. */
+/** DynamoDB tables with their key schema, TTL attribute and billing mode; a table deleted while listing is left out. */
 final class TableLister implements Lister
 {
     public function type(): ResourceType
@@ -19,15 +20,23 @@ final class TableLister implements Lister
         $db = $aws->dynamoDb();
         $items = [];
         foreach ($this->names($db) as $name) {
-            $table = Aws::map(Aws::call($db, 'DescribeTable', ['TableName' => $name])['Table'] ?? []);
-            $arn = Aws::string($table['TableArn'] ?? null);
-            $ttl = Aws::map(Aws::call($db, 'DescribeTimeToLive', ['TableName' => $name])['TimeToLiveDescription'] ?? []);
+            try {
+                $table = Aws::map(Aws::call($db, 'DescribeTable', ['TableName' => $name])['Table'] ?? []);
+                $arn = Aws::string($table['TableArn'] ?? null);
+                $ttl = Aws::map(Aws::call($db, 'DescribeTimeToLive', ['TableName' => $name])['TimeToLiveDescription'] ?? []);
+                $tags = $arn === null ? [] : $this->tags($db, $arn);
+            } catch (AwsException $e) {
+                if ($e->getAwsErrorCode() === 'ResourceNotFoundException') {
+                    continue; // deleted while listing
+                }
+                throw $e;
+            }
             $ttlOn = in_array($ttl['TimeToLiveStatus'] ?? null, ['ENABLED', 'ENABLING'], true);
             $items[] = new ResourceItem(
                 ResourceType::Table,
                 $name,
                 $name,
-                $arn === null ? [] : $this->tags($db, $arn),
+                $tags,
                 [
                     'arn' => $arn,
                     'keys' => self::keys($table),

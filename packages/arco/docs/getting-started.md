@@ -988,7 +988,10 @@ these, never a deploy. They are all reads, resource `*`:
 
 A missing permission does not stop the command: that type is reported as not listed
 (`{"ok": false, "error": {"key": "resources.permission_denied", ...}}` in `--json`) and the others are listed; the exit
-code stays 0. `vpc:set` and `certificate:set` need none of them: without working credentials (or when a call is
+code stays 0. Two of them are softer: without `s3:GetBucketLocation` every bucket is still listed, each with a
+`resources.warning.bucket_region_unknown` warning (its region is unknown, so it may be in another region, where Arco
+cannot use it), and without `s3:GetBucketTagging` buckets are listed without their tags. `vpc:set` and
+`certificate:set` need none of them: without working credentials (or when a call is
 denied) they edit `arco.php` offline and skip their checks (`ec2:DescribeSubnets`, `ec2:DescribeRouteTables`,
 `ec2:DescribeVpcs` and `acm:DescribeCertificate`). A service that runs the command for you (Arco Cloud) needs them in
 its connect template.
