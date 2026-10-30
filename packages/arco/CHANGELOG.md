@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.14.1
 
 - **Fixed:** `arco resources` printed the account, profile, region and environment inside the confirmation, which
   a narrow terminal cut off (the region came last). They are now a line of their own above a short question.
