@@ -14,6 +14,7 @@ use Multiapi\Arco\Resources\Inventory;
 use Multiapi\Arco\Resources\Picker;
 use Multiapi\Arco\Resources\PickerUi;
 use Multiapi\Arco\Resources\PromptsPickerUi;
+use Multiapi\Arco\Resources\PromptsUnavailable;
 use Multiapi\Arco\Resources\ResourceItem;
 use Multiapi\Arco\Resources\ResourceType;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -77,6 +78,7 @@ final class ResourcesCommand extends ArcoCommand
             $config = $json
                 ? $this->loadTarget($input, $errorIo, fn (string $key, array $params) => $errorIo->warning($this->t($key, $params)))
                 : $this->loadTarget($input, $io);
+            $environmentRegion = (string) $config->region;
             $region = $input->getOption('region');
             if (is_string($region) && $region !== '') {
                 $config = $config->withRegion($region);
@@ -91,9 +93,14 @@ final class ResourcesCommand extends ArcoCommand
             if (! $json && $input->isInteractive()) {
                 // Spec §7 step 1: the default profile may be a personal account, so it is confirmed before any listing.
                 $picker = $this->picker($input, $output);
-                if (! $picker->confirmTarget($located, $this->credentialProfile ?? 'environment')) {
-                    $io->writeln($this->t('resources.cancelled'));
-                    return self::SUCCESS;
+                try {
+                    if (! $picker->confirmTarget($located, $this->credentialProfile ?? 'environment')) {
+                        $io->writeln($this->t('resources.cancelled'));
+                        return self::SUCCESS;
+                    }
+                } catch (PromptsUnavailable $e) {
+                    $io->writeln($this->t('resources.prompts_unavailable', ['message' => $e->getMessage()]));
+                    $picker = null;
                 }
             }
 
@@ -111,10 +118,22 @@ final class ResourcesCommand extends ArcoCommand
                 $this->printJson($output, $located, $result, $inventory->warnings);
                 return self::SUCCESS;
             }
-            if ($picker !== null) {
-                return $picker->run($located, $result, (bool) $input->getOption('all'));
+            $all = (bool) $input->getOption('all');
+            if ($picker !== null && $located->region !== $environmentRegion) {
+                // The editing commands write the environment, whose resources live in its own region.
+                $this->printPlain($io, $located, $result, $all);
+                $io->writeln($this->t('resources.region_differs', ['region' => (string) $located->region, 'env_region' => $environmentRegion]));
+                return self::SUCCESS;
             }
-            return $this->printPlain($io, $located, $result, (bool) $input->getOption('all'));
+            if ($picker !== null) {
+                try {
+                    return $picker->run($located, $result, $all);
+                } catch (PromptsUnavailable $e) {
+                    // Questions come before any command runs: nothing was written.
+                    $io->writeln($this->t('resources.prompts_unavailable', ['message' => $e->getMessage()]));
+                }
+            }
+            return $this->printPlain($io, $located, $result, $all);
         } catch (Throwable $e) {
             $message = $this->describeError($e) ?? throw $e;
             if ($json) {
@@ -130,7 +149,7 @@ final class ResourcesCommand extends ArcoCommand
     private function picker(InputInterface $input, OutputInterface $output): Picker
     {
         return new Picker(
-            $this->ui ?? new PromptsPickerUi($output),
+            $this->ui ?? new PromptsPickerUi($input, $output, $this->t('resources.pick_none')),
             $output,
             fn (string $key, array $params): string => $this->t($key, $params),
             fn (ResourceItem $item): string => $this->pickerLabel($item),

@@ -145,9 +145,26 @@ final class SelectionPlanTest extends TestCase
         // Only security groups were listed (--type=security-group): the subnets stay what arco.php has.
         self::assertSame(
             [['command' => 'vpc:set', 'args' => ['--subnet=subnet-a', '--security-group=sg-1', '--security-group=sg-2', '--env=staging']]],
-            SelectionPlan::from($config, $picked, [], [], [ResourceType::SecurityGroup]),
+            SelectionPlan::from($config, $picked, [], [], $picked),
         );
-        self::assertSame([], SelectionPlan::from($config, [], [], [], [ResourceType::Bucket]), 'no network type listed: vpc() untouched');
+        self::assertSame([], SelectionPlan::from($config, [], [], [], []), 'no network type listed: vpc() untouched');
+    }
+
+    public function test_unlisted_in_use_ids_are_kept(): void
+    {
+        // subnet-z is in arco.php but the listing did not return it (deleted, another account, a failed call).
+        $config = self::config(fn (Environment $e) => $e->vpc(['subnet-a', 'subnet-z'], ['sg-1'], endpoints: ['s3' => 'vpce-z']));
+        $listed = self::annotate($config, [self::subnet('subnet-a'), self::group('sg-1'), self::group('sg-2')]);
+
+        self::assertSame(
+            [['command' => 'vpc:set', 'args' => ['--subnet=subnet-a', '--subnet=subnet-z', '--security-group=sg-1', '--security-group=sg-2', '--endpoint=s3=vpce-z', '--env=staging']]],
+            SelectionPlan::from($config, $listed, [], [], $listed),
+        );
+        // Unticking every listed one keeps the unlisted ones: no vpc:remove.
+        self::assertSame(
+            [['command' => 'vpc:set', 'args' => ['--subnet=subnet-z', '--security-group=sg-2', '--endpoint=s3=vpce-z', '--env=staging']]],
+            SelectionPlan::from($config, [$listed[2]], [], [], $listed),
+        );
     }
 
     public function test_subnets_from_two_vpcs_refused(): void

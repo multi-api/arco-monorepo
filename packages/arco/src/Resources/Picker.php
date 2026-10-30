@@ -53,11 +53,11 @@ final class Picker
      */
     public function run(AppConfig $config, array $result, bool $all): int
     {
-        [$picked, $offered] = $this->pick($result, $all);
-        $picked = $this->confirmConflicts($picked);
+        [$picked, $listed] = $this->pick($result, $all);
+        $picked = $this->confirmConflicts($config, $picked, $listed);
         [$picked, $names, $uses] = $this->namesAndUses($config, $picked);
         try {
-            $plan = SelectionPlan::from($config, $picked, $names, $uses, $offered);
+            $plan = SelectionPlan::from($config, $picked, $names, $uses, $listed);
         } catch (UserError $e) {
             $this->output->writeln('<error>' . $this->t((string) $e->key, $e->params) . '</error>');
             return 1;
@@ -81,7 +81,7 @@ final class Picker
      * there is nothing to pick them for (spec §6.1).
      *
      * @param array<string, array{ok: true, items: list<ResourceItem>}|array{ok: false, error: array{key: string, params: array<string, string>}}> $result
-     * @return array{list<ResourceItem>, list<ResourceType>} the ticked items and the types the person was shown
+     * @return array{list<ResourceItem>, list<ResourceItem>} the ticked items and every item the person was shown
      */
     private function pick(array $result, bool $all): array
     {
@@ -99,7 +99,7 @@ final class Picker
                 $this->showZones($title, $shown);
                 continue;
             }
-            $offered[] = $type;
+            $offered = [...$offered, ...$shown];
             if ($shown === []) {
                 $this->output->writeln("$title: " . $this->t('resources.none'));
                 continue;
@@ -164,22 +164,40 @@ final class Picker
     }
 
     /**
-     * Spec §6.3: a pick that would change what arco.php sets (another vpc(), another certificate) is asked about;
-     * a "no" leaves that value alone. The new subnets, groups and endpoints are one question: they make one vpc().
+     * Spec §6.3: a pick that would change what arco.php sets is asked about, and a "no" leaves that value alone.
+     * Adding subnets, groups or endpoints to the vpc() in use changes nothing it has, so it is not asked; unticking
+     * one in use is, once, with the vpc() line before and after. A certificate replacing another is asked too.
      *
      * @param list<ResourceItem> $picked
+     * @param list<ResourceItem> $listed
      * @return list<ResourceItem>
      */
-    private function confirmConflicts(array $picked): array
+    private function confirmConflicts(AppConfig $config, array $picked, array $listed): array
     {
-        $network = array_values(array_filter($picked, fn (ResourceItem $item) => in_array($item->type, self::NETWORK, true) && $item->conflict !== null));
-        $declined = [];
-        if ($network !== [] && $network[0]->conflict !== null) {
-            $by = implode(', ', array_map(fn (ResourceItem $item) => $item->id, $network));
-            if (! $this->replace($network[0]->conflict, $by)) {
-                $declined = $network;
+        $isNetwork = fn (ResourceItem $item): bool => in_array($item->type, self::NETWORK, true);
+        $unticked = array_values(array_filter($listed, fn (ResourceItem $item) => $isNetwork($item) && $item->inUse !== null && ! in_array($item, $picked, true)));
+        if ($unticked !== [] && $config->vpc !== null) {
+            $network = array_values(array_filter($picked, $isNetwork));
+            try {
+                $command = SelectionPlan::from($config, $network, [], [], $listed)[0] ?? null;
+            } catch (UserError) {
+                $command = null; // refused: the plan says why, once the rest is asked
+            }
+            if ($command !== null) {
+                $lines = SelectionPlan::preview($config, $command);
+                $change = $this->ui->confirm($this->t('resources.replace_vpc', [
+                    'old' => (string) $lines['old'],
+                    'source' => $unticked[0]->inUse['source'] ?? 'arco.php',
+                    'new' => $lines['new'] ?? $this->t('settings.remove_call', ['method' => 'vpc']),
+                ]), false);
+                if (! $change) {
+                    // vpc() as it is: what is in use ticked again, nothing new.
+                    $inUse = array_filter($listed, fn (ResourceItem $item) => $isNetwork($item) && $item->inUse !== null);
+                    $picked = [...array_filter($picked, fn (ResourceItem $item) => ! $isNetwork($item)), ...$inUse];
+                }
             }
         }
+        $declined = [];
         foreach ($picked as $item) {
             if ($item->type === ResourceType::Certificate && $item->conflict !== null && ! $this->replace($item->conflict, $item->id)) {
                 $declined[] = $item;

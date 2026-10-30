@@ -7,6 +7,7 @@ use Multiapi\Arco\Cli\Application;
 use Multiapi\Arco\Commands\CertificateSetCommand;
 use Multiapi\Arco\Commands\ResourcesCommand;
 use Multiapi\Arco\Commands\VpcSetCommand;
+use Multiapi\Arco\Resources\PromptsUnavailable;
 use Multiapi\Arco\Tests\Unit\Deploy\AwsMocks;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -264,6 +265,103 @@ final class ResourcesPickerTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertCount(2, array_filter($this->ui->asked, fn (array $q) => $q[0] === 'multiselect'), 'asked again');
         self::assertStringContainsString('more than one VPC (vpc-1, vpc-2)', $tester->getDisplay());
+    }
+
+    /** subnet-aaa, and security groups sg-aaa and sg-bbb, all in vpc-1. */
+    private function networkListing(): void
+    {
+        $this->account();
+        $group = static fn (string $id): array => [
+            'GroupId' => $id, 'GroupName' => $id, 'VpcId' => 'vpc-1', 'Description' => 'Lambda', 'Tags' => [],
+            'IpPermissionsEgress' => [['IpProtocol' => '-1', 'IpRanges' => [['CidrIp' => '0.0.0.0/0']]]],
+        ];
+        $this->mocks->handler->append(
+            new Result(['Subnets' => [['SubnetId' => 'subnet-aaa', 'VpcId' => 'vpc-1', 'AvailableIpAddressCount' => 2011, 'Tags' => []]]]),
+            new Result(['RouteTables' => [[
+                'RouteTableId' => 'rtb-1', 'VpcId' => 'vpc-1',
+                'Routes' => [['DestinationCidrBlock' => '0.0.0.0/0', 'NatGatewayId' => 'nat-1']],
+                'Associations' => [['SubnetId' => 'subnet-aaa', 'Main' => false]],
+            ]]]),
+            new Result(['Vpcs' => [['VpcId' => 'vpc-1']]]),
+            new Result(['SecurityGroups' => [$group('sg-aaa'), $group('sg-bbb')]]),
+            new Result(['Vpcs' => [['VpcId' => 'vpc-1']]]),
+        );
+    }
+
+    public function test_existing_vpc_plus_one_sg_adds_it(): void
+    {
+        $this->networkListing();
+        $this->ui->confirms = [true, true];
+        $this->ui->multiselects = [
+            fn (string $label, array $options, array $default) => $default,
+            fn (string $label, array $options, array $default) => [...$default, 'sg-bbb'],
+        ];
+
+        $tester = $this->run_(self::arcoPhp("->vpc(['subnet-aaa'], ['sg-aaa'])"), ['subnet', 'security-group']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString("->vpc(subnets: ['subnet-aaa'], securityGroups: ['sg-aaa', 'sg-bbb'])", $this->arcoPhpNow());
+        $confirms = array_values(array_filter($this->ui->asked, fn (array $q) => $q[0] === 'confirm'));
+        self::assertCount(2, $confirms, 'the account line and the final confirmation: a pure addition is not a replacement');
+    }
+
+    public function test_changing_the_vpc_in_use_asks_once_with_the_old_and_new_lines(): void
+    {
+        $this->networkListing();
+        // Untick sg-aaa (in use), tick sg-bbb: a real change, asked with default no; declining keeps vpc() as is.
+        $this->ui->confirms = [true, false];
+        $this->ui->multiselects = [
+            fn (string $label, array $options, array $default) => $default,
+            ['sg-bbb'],
+        ];
+
+        $arcoPhp = self::arcoPhp("->vpc(['subnet-aaa'], ['sg-aaa'])");
+        $tester = $this->run_($arcoPhp, ['subnet', 'security-group']);
+
+        $tester->assertCommandIsSuccessful();
+        $question = $this->ui->asked[3];
+        self::assertSame('confirm', $question[0]);
+        self::assertFalse($question[2], 'defaults to no');
+        self::assertStringContainsString("->vpc(subnets: ['subnet-aaa'], securityGroups: ['sg-aaa'])", $question[1]);
+        self::assertStringContainsString("->vpc(subnets: ['subnet-aaa'], securityGroups: ['sg-bbb'])", $question[1]);
+        self::assertSame($arcoPhp, $this->arcoPhpNow());
+        self::assertStringContainsString('Nothing to change', $tester->getDisplay());
+    }
+
+    public function test_another_region_lists_without_applying(): void
+    {
+        $this->account();
+        $this->mocks->handler->append(new Result(['QueueUrls' => []]));
+        $this->ui->confirms = [true];
+
+        $this->project = new ProjectFixture(self::arcoPhp());
+        $factory = fn (?string $profile, string $region) => $this->mocks->clients($region);
+        $app = Application::create();
+        $app->addCommands([new ResourcesCommand($factory, null, $this->ui)]);
+        $tester = new CommandTester($app->find('resources'));
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--region' => 'eu-west-1', '--type' => ['queue']], ['interactive' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['confirm'], array_column($this->ui->asked, 0), 'nothing to pick: only the account line');
+        self::assertStringContainsString('Queues', $tester->getDisplay());
+        self::assertStringContainsString('eu-west-1', $tester->getDisplay());
+        self::assertStringContainsString("only in the environment's region (us-east-1)", $tester->getDisplay());
+        self::assertSame(self::arcoPhp(), $this->arcoPhpNow());
+    }
+
+    public function test_prompts_unavailable_prints_the_listing(): void
+    {
+        $this->account();
+        $this->mocks->handler->append(new Result(['QueueUrls' => []]));
+        $this->ui->confirms = [fn () => throw new PromptsUnavailable('stty: not a tty')];
+
+        $tester = $this->run_(self::arcoPhp(), ['queue']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('stty: not a tty', $tester->getDisplay());
+        self::assertStringContainsString('Queues (0)', $tester->getDisplay());
+        self::assertStringContainsString('Nothing was written', $tester->getDisplay());
+        self::assertSame(self::arcoPhp(), $this->arcoPhpNow());
     }
 
     public function test_never_calls_aws_writes(): void

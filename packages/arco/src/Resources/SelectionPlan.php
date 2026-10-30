@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Resources;
 
+use Closure;
 use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ArcoFileEditor;
@@ -19,22 +20,22 @@ final class SelectionPlan
 
     /**
      * Subnets, security groups and endpoints become one vpc:set with the full list (it sets, it does not merge):
-     * the ticked ones, in-use ones included since the picker pre-ticks them, so an unticked one is dropped, and
-     * unticking all of them is a vpc:remove. A network type the person was not shown keeps what the config has, as
-     * do the endpoints Arco creates. Every other pick runs its `apply`, with the Arco name and the table use chosen;
-     * picks already in use are left as they are.
+     * what the config has, less the in-use ones that were listed and unticked (the picker pre-ticks them), plus the
+     * new picks. What the listing did not return (a type not listed or failed, an id AWS no longer knows, the
+     * endpoints Arco creates) is kept. Unticking everything is a vpc:remove. Every other pick runs its `apply`, with
+     * the Arco name and the table use chosen; picks already in use are left as they are.
      *
      * @param list<ResourceItem> $picked every ticked item, annotated (inUse, apply, suggestedName)
      * @param array<string, string> $names item id => the Arco name chosen (buckets, queues, tables used as tables)
      * @param array<string, string> $uses table id => generic, cache or failedJobs (default generic)
-     * @param list<ResourceType>|null $offered the types the person was shown; null: all of them
+     * @param list<ResourceItem>|null $listed every item the person was shown; null: every id the config has
      * @return list<array{command: string, args: list<string>}>
      * @throws UserError resources.mixed_vpcs, resources.vpc_incomplete (the message is the key; translate it)
      */
-    public static function from(AppConfig $config, array $picked, array $names, array $uses, ?array $offered = null): array
+    public static function from(AppConfig $config, array $picked, array $names, array $uses, ?array $listed = null): array
     {
         $plan = [];
-        $vpc = self::vpc($config, $picked, $offered ?? ResourceType::cases());
+        $vpc = self::vpc($config, $picked, $listed);
         if ($vpc !== null) {
             $plan[] = $vpc;
         }
@@ -94,17 +95,12 @@ final class SelectionPlan
 
     /**
      * @param list<ResourceItem> $picked
-     * @param list<ResourceType> $offered
+     * @param list<ResourceItem>|null $listed
      * @return array{command: string, args: list<string>}|null
      */
-    private static function vpc(AppConfig $config, array $picked, array $offered): ?array
+    private static function vpc(AppConfig $config, array $picked, ?array $listed): ?array
     {
         $current = $config->vpc;
-        $ids = static fn (ResourceType $type): array => array_values(array_map(
-            static fn (ResourceItem $item): string => $item->id,
-            array_filter($picked, static fn (ResourceItem $item): bool => $item->type === $type),
-        ));
-
         $vpcs = [];
         foreach ($picked as $item) {
             $vpc = self::vpcId($item);
@@ -117,21 +113,22 @@ final class SelectionPlan
             throw new UserError('resources.mixed_vpcs', 'resources.mixed_vpcs', ['vpcs' => implode(', ', $vpcs)]);
         }
 
-        $subnets = in_array(ResourceType::Subnet, $offered, true) ? $ids(ResourceType::Subnet) : ($current->subnets ?? []);
-        $groups = in_array(ResourceType::SecurityGroup, $offered, true) ? $ids(ResourceType::SecurityGroup) : ($current->securityGroups ?? []);
+        $pickedIds = array_map(static fn (ResourceItem $item): string => $item->id, $picked);
+        $listedIds = $listed === null ? null : array_map(static fn (ResourceItem $item): string => $item->id, $listed);
+        // An id of the config goes only when it was listed and left unticked.
+        $kept = static fn (string $id): bool => in_array($id, $pickedIds, true) || ($listedIds !== null && ! in_array($id, $listedIds, true));
+        $subnets = self::merge($current->subnets ?? [], $kept, $picked, ResourceType::Subnet);
+        $groups = self::merge($current->securityGroups ?? [], $kept, $picked, ResourceType::SecurityGroup);
         $owned = [];
-        if (in_array(ResourceType::Endpoint, $offered, true)) {
-            foreach ($picked as $item) {
-                $service = $item->details['service'] ?? null;
-                if ($item->type === ResourceType::Endpoint && is_string($service)) {
-                    $owned[$service] = $item->id;
-                }
+        foreach ($current->endpoints ?? [] as $endpoint) {
+            if ($endpoint['id'] !== null && $kept($endpoint['id'])) {
+                $owned[$endpoint['service']] = $endpoint['id'];
             }
-        } else {
-            foreach ($current->endpoints ?? [] as $endpoint) {
-                if ($endpoint['id'] !== null) {
-                    $owned[$endpoint['service']] = $endpoint['id'];
-                }
+        }
+        foreach ($picked as $item) {
+            $service = $item->details['service'] ?? null;
+            if ($item->type === ResourceType::Endpoint && is_string($service)) {
+                $owned[$service] = $item->id;
             }
         }
         // The endpoints Arco creates are not listed: they stay, unless one of the service is now picked.
@@ -160,6 +157,30 @@ final class SelectionPlan
             ...array_map(static fn (string $endpoint): string => '--endpoint=' . $endpoint, $endpoints),
             $env,
         ]];
+    }
+
+    /**
+     * The config's ids that stay, then the picks of the type that are new.
+     *
+     * @param list<string> $ids
+     * @param Closure(string): bool $kept
+     * @param list<ResourceItem> $picked
+     * @return list<string>
+     */
+    private static function merge(array $ids, Closure $kept, array $picked, ResourceType $type): array
+    {
+        $merged = [];
+        foreach ($ids as $id) {
+            if ($kept($id)) {
+                $merged[] = $id;
+            }
+        }
+        foreach ($picked as $item) {
+            if ($item->type === $type && ! in_array($item->id, $merged, true)) {
+                $merged[] = $item->id;
+            }
+        }
+        return $merged;
     }
 
     /** The VPC of a subnet, security group or endpoint, as its lister gives it. */
