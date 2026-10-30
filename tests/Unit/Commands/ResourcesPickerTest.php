@@ -149,9 +149,9 @@ final class ResourcesPickerTest extends TestCase
         $tester->assertCommandIsSuccessful();
         self::assertSame(['GetCallerIdentity'], $this->mocks->calls, 'no AWS list call after the account line is declined');
         self::assertSame('confirm', $this->ui->asked[0][0]);
-        self::assertStringContainsString('111111111111', $this->ui->asked[0][1]);
-        self::assertStringContainsString('(p)', $this->ui->asked[0][1]);
-        self::assertStringContainsString('us-east-1', $this->ui->asked[0][1]);
+        // The target is a line of its own, never cut: prompts truncates a label at the terminal's width.
+        self::assertStringContainsString('Account 111111111111 (p), region us-east-1, environment staging.', $tester->getDisplay());
+        self::assertSame("List this account's resources?", $this->ui->asked[0][1]);
         self::assertCount(1, $this->ui->asked);
         self::assertSame(self::arcoPhp(), $this->arcoPhpNow());
     }
@@ -368,7 +368,7 @@ final class ResourcesPickerTest extends TestCase
         $tester->assertCommandIsSuccessful();
         $display = $tester->getDisplay();
         self::assertStringContainsString('Queues (0)', $display);
-        self::assertStringNotContainsString('List the resources of account', $display, 'no confirmation without a terminal');
+        self::assertStringNotContainsString("List this account's resources?", $display, 'no confirmation without a terminal');
         self::assertStringNotContainsString('Nothing to change', $display);
         self::assertSame(self::arcoPhp(), $this->arcoPhpNow());
     }
