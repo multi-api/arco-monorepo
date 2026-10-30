@@ -26,6 +26,24 @@ final class LangParityTest extends TestCase
         }
     }
 
+    public function test_new_keys_exist_in_both_languages(): void
+    {
+        foreach (['en', 'es'] as $locale) {
+            /** @var array<string, string> $messages */
+            $messages = require Arco::packageRoot() . '/lang/' . $locale . '.php';
+            foreach (['resources.', 'vpc.', 'certificate.'] as $prefix) {
+                $keys = array_filter(array_keys($messages), fn (string $key): bool => str_starts_with($key, $prefix));
+                self::assertNotSame([], $keys, "$locale: no $prefix* keys");
+                foreach ($keys as $key) {
+                    self::assertNotSame('', trim($messages[$key]), "$locale: $key is empty");
+                }
+            }
+            foreach (['resources.permission_denied', 'resources.warning.subnet_no_egress', 'vpc.mixed_vpcs', 'certificate.wrong_region'] as $key) {
+                self::assertArrayHasKey($key, $messages, "$locale: $key");
+            }
+        }
+    }
+
     public function test_every_days_count_message_has_a_singular_one_day_sibling(): void
     {
         foreach (['en', 'es'] as $locale) {

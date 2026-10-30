@@ -868,4 +868,102 @@ final class ArcoFileEditorTest extends TestCase
         self::assertFalse(ArcoFileEditor::setNamed($path, 'production', 'storage', 'files', ['1bad' => true]));
         self::assertSame($php, file_get_contents($path));
     }
+
+    private static function vpcFile(string $calls = ''): string
+    {
+        return self::head() . "return App::make('shop')\n"
+            . "    ->region('us-east-1')\n"
+            . "    ->environment('staging')\n"
+            . "    ->environment('production', fn (Environment \$env) => \$env\n"
+            . "        ->timeout(60)" . $calls . ");\n";
+    }
+
+    private const VPC = ['subnets' => ['subnet-a1', 'subnet-b2'], 'securityGroups' => ['sg-1'], 'endpoints' => ['s3', 'dynamodb' => 'vpce-0abc']];
+
+    public function test_sets_vpc_in_an_environment(): void
+    {
+        $path = $this->file(self::vpcFile());
+
+        self::assertTrue(ArcoFileEditor::setVpc($path, 'production', self::VPC));
+        self::assertStringContainsString("->vpc(subnets: ['subnet-a1', 'subnet-b2'], securityGroups: ['sg-1'], endpoints: ['s3', 'dynamodb' => 'vpce-0abc'])", (string) file_get_contents($path));
+        $vpc = self::resolve($path)->vpc;
+        self::assertNotNull($vpc);
+        self::assertSame(['subnet-a1', 'subnet-b2'], $vpc->subnets);
+        self::assertSame(['s3' => null, 'dynamodb' => 'vpce-0abc'], $vpc->endpointIds());
+        self::assertNull(self::resolve($path, 'staging')->vpc);
+    }
+
+    public function test_replaces_an_existing_vpc_call_whole(): void
+    {
+        $path = $this->file(self::vpcFile("\n        ->vpc(['subnet-old'], ['sg-old'], ['s3'])"));
+
+        self::assertTrue(ArcoFileEditor::setVpc($path, 'production', self::VPC));
+        $source = (string) file_get_contents($path);
+        self::assertStringNotContainsString('subnet-old', $source);
+        self::assertStringNotContainsString('sg-old', $source);
+        self::assertSame(1, substr_count($source, '->vpc('));
+        $vpc = self::resolve($path)->vpc;
+        self::assertNotNull($vpc);
+        self::assertSame(['subnet-a1', 'subnet-b2'], $vpc->subnets);
+        self::assertSame(['sg-1'], $vpc->securityGroups);
+    }
+
+    public function test_vpc_without_endpoints_omits_the_argument(): void
+    {
+        $path = $this->file(self::vpcFile());
+
+        self::assertTrue(ArcoFileEditor::setVpc($path, 'production', ['subnets' => ['subnet-a1'], 'securityGroups' => ['sg-1'], 'endpoints' => []]));
+        self::assertStringContainsString("->vpc(subnets: ['subnet-a1'], securityGroups: ['sg-1'])", (string) file_get_contents($path));
+        self::assertSame("->vpc(subnets: ['subnet-a1'], securityGroups: ['sg-1'])", ArcoFileEditor::vpcLine(['subnets' => ['subnet-a1'], 'securityGroups' => ['sg-1'], 'endpoints' => []]));
+        self::assertSame('->vpc(false)', ArcoFileEditor::vpcLine(false));
+    }
+
+    public function test_vpc_false_and_null(): void
+    {
+        $path = $this->file(self::vpcFile("\n        ->vpc(['subnet-old'], ['sg-old'])"));
+
+        self::assertTrue(ArcoFileEditor::setVpc($path, 'production', false));
+        self::assertStringContainsString('->vpc(false)', (string) file_get_contents($path));
+        self::assertNull(self::resolve($path)->vpc);
+
+        self::assertTrue(ArcoFileEditor::setVpc($path, 'production', null));
+        self::assertStringNotContainsString('->vpc(', (string) file_get_contents($path));
+        self::assertTrue(ArcoFileEditor::setVpc($path, null, self::VPC));
+        self::assertNotNull(self::resolve($path)->vpc);
+        self::assertTrue(ArcoFileEditor::setVpc($path, null, null));
+        self::assertStringNotContainsString('->vpc(', (string) file_get_contents($path));
+    }
+
+    public function test_refuses_a_non_literal_vpc_call(): void
+    {
+        $php = self::head() . "\$subnets = ['subnet-a1'];\nreturn App::make('shop')->environment('production', fn (Environment \$env) => \$env->vpc(\$subnets, ['sg-1']));\n";
+        $path = $this->file($php);
+
+        self::assertFalse(ArcoFileEditor::setVpc($path, 'production', self::VPC));
+        self::assertFalse(ArcoFileEditor::setVpc($path, 'production', null));
+        self::assertSame($php, file_get_contents($path));
+    }
+
+    public function test_refuses_unwritable_vpc_values(): void
+    {
+        $path = $this->file(self::vpcFile());
+        $before = file_get_contents($path);
+
+        self::assertFalse(ArcoFileEditor::setVpc($path, 'production', ['subnets' => [1 => 'subnet-a'], 'securityGroups' => [], 'endpoints' => []]));
+        self::assertSame($before, file_get_contents($path));
+    }
+
+    public function test_sets_and_removes_certificate(): void
+    {
+        $path = $this->file(self::settingsFile());
+        $arn = 'arn:aws:acm:us-east-1:111111111111:certificate/x';
+
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'certificate', $arn));
+        self::assertStringContainsString("->certificate('$arn')", (string) file_get_contents($path));
+        self::assertSame($arn, self::resolve($path)->certificate);
+
+        self::assertTrue(ArcoFileEditor::setSetting($path, 'production', 'certificate', null));
+        self::assertStringNotContainsString('->certificate(', (string) file_get_contents($path));
+        self::assertNull(self::resolve($path)->certificate);
+    }
 }
