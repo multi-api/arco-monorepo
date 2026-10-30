@@ -62,7 +62,15 @@ final class Annotator
 
         $sorted = [];
         foreach ($byType as $type => $items) {
-            usort($items, fn (ResourceItem $a, ResourceItem $b): int => self::sortKey($config, $a) <=> self::sortKey($config, $b));
+            // A VPC's items stay together: each group goes where its best item would.
+            $groupTier = [];
+            foreach ($items as $item) {
+                $vpc = self::vpcOf($item);
+                if ($vpc !== null) {
+                    $groupTier[$vpc['id']] = min($groupTier[$vpc['id']] ?? 2, self::tier($config, $item));
+                }
+            }
+            usort($items, fn (ResourceItem $a, ResourceItem $b): int => self::sortKey($config, $groupTier, $a) <=> self::sortKey($config, $groupTier, $b));
             $sorted[$type] = $items;
         }
         return $sorted;
@@ -337,19 +345,29 @@ final class Annotator
     }
 
     /**
-     * In use first, then what matches the app (its stack, its arco:app tag or its name contains the app name),
-     * then the rest; within each, by VPC (subnets, security groups, endpoints), then by name (else id), then id.
+     * Subnets, security groups and endpoints are grouped by VPC, the groups ordered by their best tier (then VPC
+     * id); everything else is one group. Inside a group: by tier, then by name (else id), then id.
      *
-     * @return array{int, string, string, string}
+     * @param array<string, int> $groupTier VPC id => the best tier of its items
+     * @return array{int, string, int, string, string}
      */
-    private static function sortKey(AppConfig $config, ResourceItem $item): array
+    private static function sortKey(AppConfig $config, array $groupTier, ResourceItem $item): array
     {
+        $vpc = self::vpcOf($item)['id'] ?? '';
+        return [$groupTier[$vpc] ?? 0, $vpc, self::tier($config, $item), strtolower($item->name ?? $item->id), $item->id];
+    }
+
+    /** 0 in use, 1 matches the app (its stack, its arco:app tag or its name contains the app name), 2 the rest. */
+    private static function tier(AppConfig $config, ResourceItem $item): int
+    {
+        if ($item->inUse !== null) {
+            return 0;
+        }
         $app = strtolower($config->app);
         $matches = ($item->tags['arco:app'] ?? null) === $config->app
             || str_contains(strtolower((string) $item->stack()), $app)
             || str_contains(strtolower((string) $item->name), $app);
-        $tier = $item->inUse !== null ? 0 : ($matches ? 1 : 2);
-        return [$tier, self::vpcOf($item)['id'] ?? '', strtolower($item->name ?? $item->id), $item->id];
+        return $matches ? 1 : 2;
     }
 
     /** @return array{id: string, default: bool}|null the VPC of a subnet, security group or endpoint */

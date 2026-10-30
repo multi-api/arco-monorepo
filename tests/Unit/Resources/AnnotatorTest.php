@@ -299,9 +299,9 @@ final class AnnotatorTest extends TestCase
 
         self::assertSame(['subnet', 'bucket'], array_keys($result));
         self::assertSame(
-            ['subnet-x', 'subnet-y', 'subnet-u', 'subnet-w', 'subnet-v', 'subnet-z'],
+            ['subnet-x', 'subnet-v', 'subnet-z', 'subnet-y', 'subnet-u', 'subnet-w'],
             array_map(fn (ResourceItem $i) => $i->id, $result['subnet']),
-            'in use; app-matching (by VPC, then name, then id); the rest by VPC, then name',
+            'grouped by VPC, vpc-2 first (it has the item in use); in each group in use, app-matching, the rest, then by name',
         );
         self::assertSame(['zz-used', 'tagged', 'aaa', 'mmm'], array_map(fn (ResourceItem $i) => $i->id, $result['bucket']));
     }
