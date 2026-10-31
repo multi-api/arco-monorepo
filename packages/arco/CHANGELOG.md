@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## 0.14.2
+## 0.15.0
 
 - **Added:** the execution role in `arco info --resources --json` has a `grants` relation to each queue, bucket and
   table its policy gives access to ([Resource relations](docs/getting-started.md)), worked out from `arco.php` like the
