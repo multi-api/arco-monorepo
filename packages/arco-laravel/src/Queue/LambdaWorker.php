@@ -22,7 +22,8 @@ use Throwable;
  * come back (ReportBatchItemFailures). Lambda deletes every message that is not reported.
  *
  * A message is reported when its job was released (it comes back after its backoff) or did not end
- * deleted; a job out of tries fails into the app's failed-jobs store and is not reported. Each job
+ * deleted; a job out of tries fails into the app's failed-jobs store and is not reported, unless the
+ * store could not take it: it then comes back, so it ends in the dead-letter queue instead of being lost. Each job
  * gets the time left before the Lambda deadline minus a safety margin, so a slow job times out like
  * under `queue:work` instead of the whole batch being killed.
  */
@@ -43,6 +44,8 @@ final class LambdaWorker
     private readonly ?string $workerQueue;
     /** @var array<string, string> */
     private readonly array $queues;
+    /** @var array<string, true> job id => the failed-jobs store could not take the job of this delivery */
+    private array $unstored = [];
 
     /** @param (\Closure(array<string, mixed>): void)|null $log receives one JSON log line per call */
     public function __construct(private readonly Application $app, ?\Closure $log = null)
@@ -88,7 +91,9 @@ final class LambdaWorker
                 }
                 $failer->log($event->connectionName, $event->job->getQueue(), $event->job->getRawBody(), $event->exception);
             } catch (Throwable $e) {
-                // A failer error must never replace the job's own exception.
+                // A failer error must never replace the job's own exception. The message must not be
+                // deleted either: it comes back and ends in the dead-letter queue (see processRecord()).
+                $this->unstored[(string) $event->job->getJobId()] = true;
                 $this->exceptions->report($e);
             }
         });
@@ -189,6 +194,7 @@ final class LambdaWorker
     {
         $started = hrtime(true);
         $job = null;
+        $this->unstored = [];
         try {
             $this->resetScope();
             $job = ArcoSqsJob::fromRecord($this->app, $queue->getSqs(), $record, $connection, $this->queueUrl($record, $queue), $queue->overflowOptions(), $this->log);
@@ -207,6 +213,12 @@ final class LambdaWorker
                     default => 'failed',
                 };
                 $reported = ! $job->isDeleted();
+                if ($status === 'failed' && isset($this->unstored[(string) $job->getJobId()])) {
+                    // Failed for good, but the failed-jobs store could not take it (no database on
+                    // Lambda, a full table...): deleting the message would lose the job unseen.
+                    $status = 'failed_unstored';
+                    $reported = true;
+                }
             }
         } catch (Throwable $e) {
             $this->exceptions->report($e);
