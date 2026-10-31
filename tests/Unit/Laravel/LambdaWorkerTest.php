@@ -119,14 +119,35 @@ final class LambdaWorkerTest extends TestCase
         self::assertSame([], array_filter($this->test->exceptions->reported, fn (\Throwable $e) => $e->getMessage() !== 'boom'));
     }
 
-    public function test_a_failer_error_is_reported_and_does_not_escape(): void
+    public function test_a_job_the_failer_cannot_store_comes_back_so_it_ends_in_the_dlq(): void
     {
-        $this->test->failer->throws = new \RuntimeException('unique violation');
+        // An app on SQLite: database/database.sqlite does not exist on Lambda.
+        $this->test->failer->throws = new \RuntimeException('Database file does not exist');
 
-        self::assertSame([], $this->handle([QueueTestJob::record('throw', attempts: 3)]));
+        self::assertSame(['m-throw'], $this->handle([QueueTestJob::record('throw', attempts: 3)]));
 
-        self::assertContains('unique violation', array_map(fn (\Throwable $e) => $e->getMessage(), $this->test->exceptions->reported));
-        self::assertSame('failed', $this->logs[0]['status']);
+        self::assertSame(['throw'], QueueTestJob::$failed);
+        self::assertContains('Database file does not exist', array_map(fn (\Throwable $e) => $e->getMessage(), $this->test->exceptions->reported));
+        self::assertSame('failed_unstored', $this->logs[0]['status']);
+    }
+
+    public function test_on_the_last_delivery_a_job_the_failer_cannot_store_still_comes_back(): void
+    {
+        $_SERVER['ARCO_QUEUE_MAX_RECEIVES'] = '5';
+        $this->test->failer->throws = new \RuntimeException('Database file does not exist');
+
+        self::assertSame(['m-throw'], $this->handle([QueueTestJob::record('throw', attempts: 4, maxTries: 10)]));
+
+        self::assertSame('failed_unstored', $this->logs[0]['status']);
+    }
+
+    public function test_a_failer_error_on_one_record_does_not_keep_the_next_one(): void
+    {
+        $this->test->failer->throws = new \RuntimeException('Database file does not exist');
+
+        self::assertSame(['m-throw'], $this->handle([QueueTestJob::record('throw', attempts: 3), QueueTestJob::record('ok')]));
+
+        self::assertSame(['failed_unstored', 'ok'], array_column($this->logs, 'status'));
     }
 
     public function test_a_job_past_its_time_limit_times_out_and_the_rest_of_the_batch_still_runs(): void
