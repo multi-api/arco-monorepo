@@ -162,6 +162,46 @@ final class TaggedResourcesTest extends TestCase
         }
     }
 
+    public function test_the_execution_role_grants_each_queue_bucket_and_table_its_policy_names(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e
+            ->queue('emails')
+            ->queue('legacy', existing: 'arn:aws:sqs:us-east-1:222222222222:legacy-jobs')
+            ->storage('uploads')
+            ->storage('archive', existing: 'someone-elses-archive')
+            ->table('events')
+            ->table('ghost')
+            ->cache())->toArray(), 'production');
+        $queue = 'arn:aws:sqs:us-east-1:111111111111:shop-production-emails';
+        $bucket = 'arn:aws:s3:::shop-production-uploads-111111111111';
+        $events = 'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-events';
+        $cache = 'arn:aws:dynamodb:us-east-1:111111111111:table/shop-production-cache';
+
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['ResourceTagMappingList' => [
+            self::mapping($queue),
+            self::mapping('arn:aws:sqs:us-east-1:111111111111:shop-production-emails-dlq'),
+            self::mapping($bucket),
+            self::mapping($events),
+            self::mapping($cache),
+        ]]), self::role(['arco:app' => 'shop', 'arco:environment' => 'production']));
+        $relations = [];
+        foreach (self::subject($mocks)->list($config) as $resource) {
+            $relations[$resource['type'] . ' ' . $resource['name']] = $resource['relations'];
+        }
+
+        // The DLQ is not in the policy; the `ghost` table is not listed; arco.php names no account (the role's is used).
+        self::assertSame(array_map(static fn (string $target): array => ['type' => 'grants', 'target' => $target], [
+            $queue,
+            'arn:aws:sqs:us-east-1:222222222222:legacy-jobs',
+            $bucket,
+            'arn:aws:s3:::someone-elses-archive',
+            $cache,
+            $events,
+        ]), $relations['iam:role arco-shop-production']);
+        self::assertSame([], $relations['s3 shop-production-uploads-111111111111']);
+    }
+
     public function test_unresolvable_relations_are_left_out(): void
     {
         // No console function listed, no domains configured, the worker's queue is not configured.
