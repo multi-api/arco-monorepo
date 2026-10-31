@@ -5,6 +5,12 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## 0.14.2
 
+- **Added:** the execution role in `arco info --resources --json` has a `grants` relation to each queue, bucket and
+  table its policy gives access to ([Resource relations](docs/getting-started.md)), worked out from `arco.php` like the
+  other relations, with no extra AWS call or permission.
+
+## 0.14.2
+
 - **Fixed:** a queue job that failed for good was deleted even when the app's failed-jobs store could not take it
   (an app whose `failed_jobs` is a SQLite file, which does not exist on Lambda), so it was lost without a trace. Its
   message now comes back and ends in the dead-letter queue; the worker logs it with status `failed_unstored`.
