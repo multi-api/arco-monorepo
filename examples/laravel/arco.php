@@ -44,6 +44,9 @@ return App::make($app)
             ->cache()
             ->table('state', ttl: 'expires_at')
             ->maxInstances(2)
+            // The real-AWS run also checks bundleVariables(): the app, the console and the worker start with their
+            // variables (the arco-ssm: APP_KEY included) loaded from the code bucket, not the Lambda environment.
+            ->bundleVariables()
             ->variables([
                 'APP_ENV' => 'production',
                 'APP_DEBUG' => 'false',

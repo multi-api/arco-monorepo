@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.16.0
 
 - **Added:** `bundleVariables()` (environment or app level; `bundleVariables` in a config layer) keeps an
   environment's variables in one S3 object of the code bucket instead of the Lambda environment, which AWS caps at
