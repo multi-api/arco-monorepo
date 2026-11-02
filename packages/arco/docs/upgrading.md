@@ -11,7 +11,7 @@ composer require multiapi/arco-laravel:^0.12
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
-## Upgrading to the next release
+## Upgrading to 0.16
 
 Nothing is required. The managed execution role gains a read-only statement on the environment's
 [bundled variables](configuration.md#bundled-variables) (`ArcoVariables`), whether or not you use
