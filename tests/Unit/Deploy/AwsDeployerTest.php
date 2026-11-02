@@ -404,6 +404,73 @@ final class AwsDeployerTest extends TestCase
         self::assertContains('ArcoRuntimeBinary', array_column($policy['Statement'], 'Sid'), 'an older live console version may still download its binary');
     }
 
+    public function test_bundle_variables_leaves_only_arco_variables_and_the_pointer_in_every_function(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '111111111111']),                                             // GetCallerIdentity
+            new Result([]),                                                                      // HeadBucket
+            new Result([]), new Result([]), new Result([]), new Result([]),                      // bucket hardening PUTs
+            new Result(['VersionId' => 'v1']),                                                   // HeadObject: web zip already there
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
+            new Result(['Role' => ['Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production']]), // CreateRole
+            new Result([]),                                                                      // PutRolePolicy
+            new Result([]),                                                                      // PutObject (variables)
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
+            new Result(['revision' => ['revisionId' => 'rev-1'], 'endpoint' => ['domainName' => 'abc.xpt.lambda-web.us-east-1.on.aws']]),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),                           // GetWebFunctionRevision
+            new Result(['VersionId' => 'cv1']),                                                  // HeadObject: console zip already there
+            self::lambdaMissing('GetAlias'),
+            self::lambdaMissing('GetFunctionConfiguration'),
+            new Result(['State' => 'Pending']),                                                  // CreateFunction
+            new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']),
+            new Result(['Version' => '1']),                                                      // PublishVersion
+        );
+        $zip = (string) TempPaths::file('console');
+        file_put_contents($zip, 'console-zip-with-bin-php');
+        $console = new ConsoleArtifacts(new Package($zip, str_repeat('c', 64), 24), null);
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->console()->bundleVariables())->toArray(), 'production');
+        $variables = ['APP_ENV' => 'production', 'APP_KEY' => 'arco-ssm:/shop/production/app-key', 'ARCO' => '1', 'ARCO_APP' => 'shop'];
+
+        $prepared = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prepare($config, $this->package(), $console, $variables);
+
+        self::assertCount(0, $mocks->handler);
+        $byOperation = [];
+        foreach ($mocks->calls as $i => $operation) {
+            $byOperation[$operation][] = $mocks->params[$i];
+        }
+        $body = \Multiapi\Arco\Deploy\VariableBundle::body(['APP_ENV' => 'production', 'APP_KEY' => 'arco-ssm:/shop/production/app-key']);
+        $key = 'variables/shop/production/' . hash('sha256', $body) . '.json';
+        self::assertSame($key, $byOperation['PutObject'][0]['Key']);
+        self::assertSame($key, $prepared->variablesKey);
+        $kept = ['ARCO' => '1', 'ARCO_APP' => 'shop', 'ARCO_VARIABLES' => "s3://arco-111111111111-us-east-1/$key"];
+        self::assertSame($kept, $byOperation['CreateWebFunction'][0]['revisionConfig']['serviceConfig']['environmentVariables']);
+        self::assertSame($kept, $byOperation['CreateFunction'][0]['Environment']['Variables']);
+        $policy = json_decode($byOperation['PutRolePolicy'][0]['PolicyDocument'], true);
+        $bySid = array_column($policy['Statement'], null, 'Sid');
+        self::assertSame('arn:aws:s3:::arco-111111111111-us-east-1/variables/shop/production/*', $bySid['ArcoVariables']['Resource']);
+        self::assertSame(['arn:aws:ssm:us-east-1:111111111111:parameter/shop/production/app-key'], $bySid['ArcoParameters']['Resource'], 'references inside the bundle still get their permission');
+    }
+
+    public function test_the_prune_keeps_the_newest_variable_bundles_and_this_deploys(): void
+    {
+        $old = array_map(fn (int $i) => ['Key' => "variables/shop/production/$i.json", 'LastModified' => new \DateTimeImmutable("2026-01-01 +$i hours")], range(1, 22));
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Contents' => []]),                                                      // ListObjectsV2 (web zips)
+            new Result(['Contents' => $old]),                                                    // ListObjectsV2 (variables)
+            new Result([]),                                                                      // DeleteObjects
+            new Result(['ResourceTagMappingList' => []]), new Result(['Contents' => []]),
+        );
+        $prepared = new PreparedDeploy('rev-2', 'rev-1', 'b', 'shop/production/a.zip', null, null, variablesKey: 'variables/shop/production/1.json');
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune($this->config(), $prepared);
+
+        self::assertSame(['ListObjectsV2', 'ListObjectsV2', 'DeleteObjects', 'GetResources', 'ListObjectsV2'], $mocks->calls);
+        self::assertSame('variables/shop/production/', $mocks->params[1]['Prefix']);
+        self::assertSame([['Key' => 'variables/shop/production/2.json']], $mocks->params[2]['Delete']['Objects'], 'the 20 newest stay, and the one this deploy uses');
+    }
+
     public function test_redeploy_creates_a_revision_and_remembers_the_previous_one(): void
     {
         $ready = fn () => new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']);

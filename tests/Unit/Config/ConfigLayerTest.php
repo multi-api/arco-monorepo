@@ -169,10 +169,11 @@ final class ConfigLayerTest extends TestCase
     {
         $layer = ConfigLayer::load($this->write($this->layer(['settings' => [
             'dns' => false, 'scheduler' => false, 'logRetention' => false, 'permissionsBoundary' => false,
-            'vpc' => false, 'cache' => false, 'protected' => true, 'timeout' => 30,
+            'vpc' => false, 'cache' => false, 'protected' => true, 'bundleVariables' => true, 'timeout' => 30,
         ]])));
 
         self::assertFalse($layer->entry['settings']['dns']);
+        self::assertTrue($layer->entry['settings']['bundleVariables']);
     }
 
     public function test_vpc_endpoints_may_be_a_map(): void
