@@ -102,6 +102,25 @@ final class PolicyBuilderTest extends TestCase
         self::assertSame('arn:aws:s3:::arco-111111111111-us-east-1/runtime/*', $bySid['ArcoRuntimeBinary']['Resource']);
     }
 
+    public function test_the_runtimes_may_read_only_their_environments_variable_bundles(): void
+    {
+        $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], 'arco-111111111111-us-east-1', variablesPrefix: 'variables/shop/production/');
+
+        $bySid = array_column($doc['Statement'], null, 'Sid');
+        self::assertSame('s3:GetObject', $bySid['ArcoVariables']['Action']);
+        self::assertSame('arn:aws:s3:::arco-111111111111-us-east-1/variables/shop/production/*', $bySid['ArcoVariables']['Resource']);
+        self::assertArrayNotHasKey('ArcoVariablesDecrypt', $bySid, 'SSE-S3 needs no KMS permission');
+
+        $kms = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], 'arco-111111111111-us-east-1', variablesPrefix: 'variables/shop/production/', kmsKey: 'arn:aws:kms:us-east-1:111111111111:key/k');
+        $bySid = array_column($kms['Statement'], null, 'Sid');
+        self::assertSame(['kms:Decrypt'], $bySid['ArcoVariablesDecrypt']['Action']);
+        self::assertSame('arn:aws:kms:us-east-1:111111111111:key/k', $bySid['ArcoVariablesDecrypt']['Resource']);
+        self::assertSame(['StringEquals' => ['kms:ViaService' => 's3.us-east-1.amazonaws.com']], $bySid['ArcoVariablesDecrypt']['Condition']);
+
+        $none = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], [], 'arco-111111111111-us-east-1');
+        self::assertNotContains('ArcoVariables', array_column($none['Statement'], 'Sid'));
+    }
+
     public function test_scopes_secret_access_to_referenced_resources(): void
     {
         $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [

@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\ConsoleRuntime;
 
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
+use Multiapi\Arco\Tests\Support\S3Emulator;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Filesystem\Filesystem;
@@ -26,7 +27,7 @@ final class WorkerTest extends TestCase
         $fs->dumpFile("$this->root/app/artisan", <<<'PHP'
             <?php
             echo 'args:', json_encode(array_slice($argv, 1)), "\n", 'server-args:', json_encode(array_slice($_SERVER['argv'], 1)), "\n";
-            echo 'queue:', getenv('ARCO_WORKER_QUEUE'), "\n", 'home:', getenv('HOME'), "\n", 'cwd:', getcwd(), "\n", 'ini:', getenv('PHP_INI_SCAN_DIR'), "\n";
+            echo 'queue:', getenv('ARCO_WORKER_QUEUE'), "\n", 'home:', getenv('HOME'), "\n", 'cwd:', getcwd(), "\n", 'ini:', getenv('PHP_INI_SCAN_DIR'), "\n", 'bundled:', getenv('BUNDLED'), "\n";
             exit(3);
             PHP);
         $this->api = new RuntimeApiEmulator();
@@ -80,6 +81,40 @@ final class WorkerTest extends TestCase
     public function test_becomes_artisan_arco_work_with_the_prepared_environment(): void
     {
         $this->assertBecameArtisan($this->worker());
+    }
+
+    public function test_the_variable_bundle_reaches_arco_work(): void
+    {
+        $s3 = new S3Emulator();
+        try {
+            $body = '{"schema":1,"variables":{"BUNDLED":"from-s3","ARCO_WORKER_QUEUE":"ignored"}}';
+            $key = 'variables/shop/staging/' . hash('sha256', $body) . '.json';
+            $file = (string) TempPaths::file('bundle');
+            file_put_contents($file, $body);
+            $s3->put('arco-111111111111-us-east-1', $key, $file);
+
+            $worker = $this->worker([
+                'ARCO_VARIABLES' => "s3://arco-111111111111-us-east-1/$key",
+                'ARCO_S3_ENDPOINT' => "http://127.0.0.1:$s3->port",
+                'AWS_ACCESS_KEY_ID' => 'AK',
+                'AWS_SECRET_ACCESS_KEY' => 'SK',
+            ]);
+        } finally {
+            $s3->stop();
+        }
+
+        $this->assertBecameArtisan($worker);
+        self::assertStringContainsString("bundled:from-s3\n", $worker->getOutput());
+        self::assertStringContainsString('"variables":1', $worker->getOutput(), 'the real ARCO_WORKER_QUEUE wins over the bundle');
+    }
+
+    public function test_an_unreadable_variable_bundle_is_an_init_error(): void
+    {
+        $worker = $this->worker(['ARCO_VARIABLES' => 'not-a-pointer']);
+
+        self::assertSame(1, $worker->getExitCode());
+        self::assertSame('Arco.WorkerInit', $this->api->initError()['type'] ?? null, $worker->getOutput());
+        self::assertStringContainsString('ARCO_VARIABLES must be s3:', $this->api->initError()['body'] ?? '');
     }
 
     public function test_without_pcntl_exec_the_worker_runs_as_a_child_process(): void

@@ -288,6 +288,26 @@ final class ConfigResolverTest extends TestCase
         self::assertFalse(ConfigResolver::resolve($off, 'production')->isProtected());
     }
 
+    public function test_bundle_variables_is_off_unless_switched_on(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->environment('production')
+            ->environment('staging', fn (Environment $e) => $e->bundleVariables())
+            ->toArray();
+
+        self::assertFalse(ConfigResolver::resolve($raw, 'production')->bundleVariables);
+        self::assertSame('default', ConfigResolver::resolve($raw, 'production')->sources['bundleVariables']);
+        self::assertTrue(ConfigResolver::resolve($raw, 'staging')->bundleVariables);
+        self::assertSame('environment', ConfigResolver::resolve($raw, 'staging')->sources['bundleVariables']);
+
+        $app = App::make('shop')->region('us-east-1')->bundleVariables()
+            ->environment('production', fn (Environment $e) => $e->bundleVariables(false))
+            ->environment('staging')
+            ->toArray();
+        self::assertFalse(ConfigResolver::resolve($app, 'production')->bundleVariables);
+        self::assertTrue(ConfigResolver::resolve($app, 'staging')->bundleVariables);
+    }
+
     public function test_console_defaults_unset(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
