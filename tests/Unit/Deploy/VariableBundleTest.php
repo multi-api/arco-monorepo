@@ -23,21 +23,22 @@ final class VariableBundleTest extends TestCase
         return ConfigResolver::resolve($app->environment('staging', fn (Environment $e) => $e->bundleVariables())->toArray(), 'staging');
     }
 
-    public function test_arco_variables_stay_in_lambda_and_the_rest_goes_to_the_bundle(): void
+    public function test_arco_app_and_env_stay_in_lambda_and_the_rest_goes_to_the_bundle(): void
     {
         $split = VariableBundle::split([
             'APP_KEY' => 'arco-ssm:/shop/staging/app-key',
             'ARCO' => '1',
             'ARCO_APP' => 'shop',
-            'ARCOLIKE' => 'bundled: only ARCO and ARCO_* are Arco\'s',
+            'ARCO_ENV' => 'staging',
+            'ARCO_QUEUES' => '{"default":"https://sqs.us-east-1.amazonaws.com/1/shop-staging-default"}',
             'QUEUE_CONNECTION' => 'sqs',
             'EMPTY' => '',
         ]);
 
-        self::assertSame(['ARCO' => '1', 'ARCO_APP' => 'shop'], $split['environment']);
+        self::assertSame(['ARCO' => '1', 'ARCO_APP' => 'shop', 'ARCO_ENV' => 'staging'], $split['environment']);
         self::assertSame([
             'APP_KEY' => 'arco-ssm:/shop/staging/app-key',
-            'ARCOLIKE' => 'bundled: only ARCO and ARCO_* are Arco\'s',
+            'ARCO_QUEUES' => '{"default":"https://sqs.us-east-1.amazonaws.com/1/shop-staging-default"}',
             'QUEUE_CONNECTION' => 'sqs',
         ], $split['bundle'], 'an empty value is left out, as Lambda leaves it out of the environment');
     }

@@ -7,8 +7,8 @@ use Multiapi\Arco\Config\AppConfig;
 
 /**
  * bundleVariables(): the app's variables in one JSON object of the code bucket instead of the Lambda environment, which
- * AWS caps at 4 KB per function. The functions keep ARCO and ARCO_* (the runtime's own wiring) and ARCO_VARIABLES, an
- * s3:// pointer the web, console and worker runtimes read at cold start, before they resolve arco-ssm: and arco-secret:
+ * AWS caps at 4 KB per function. The functions keep ARCO, ARCO_APP, ARCO_ENV, the runtime's own wiring added after
+ * the split (ARCO_WORKER_QUEUE, ARCO_BINARY_*, ...) and ARCO_VARIABLES, an s3:// pointer the web, console and worker runtimes read at cold start, before they resolve arco-ssm: and arco-secret:
  * references. The key is the SHA-256 of the body: each function version or revision pins exactly the variables it was
  * deployed with (a rollback brings them back), and the runtime checks the bytes against it.
  */
@@ -17,6 +17,8 @@ final class VariableBundle
     public const POINTER = 'ARCO_VARIABLES';
     /** Objects kept besides the one this deploy uses, as for the packages (AwsDeployer::KEEP_PACKAGES). */
     public const KEEP = 20;
+    /** Small and stable: they stay readable in the Lambda console and by anything that runs before the bundle loads. */
+    private const IN_LAMBDA = ['ARCO', 'ARCO_APP', 'ARCO_ENV'];
 
     public function __construct(private readonly S3Client $s3)
     {
@@ -29,8 +31,9 @@ final class VariableBundle
     }
 
     /**
-     * ARCO and ARCO_* stay in the Lambda environment: the bootstrap and the runtimes read them before the bundle is
-     * loaded. An empty value is left out, as Lambda leaves it out of the environment.
+     * ARCO, ARCO_APP and ARCO_ENV stay in the Lambda environment; everything else, the JSON maps arco-laravel reads
+     * (ARCO_QUEUES, ARCO_STORAGE, ARCO_TABLES) included, goes to the bundle. An empty value is left out, as Lambda leaves
+     * it out of the environment.
      *
      * @param array<string, string> $variables
      * @return array{bundle: array<string, string>, environment: array<string, string>}
@@ -41,7 +44,7 @@ final class VariableBundle
         $environment = [];
         foreach ($variables as $name => $value) {
             $name = (string) $name;
-            if ($name === 'ARCO' || str_starts_with($name, 'ARCO_')) {
+            if (in_array($name, self::IN_LAMBDA, true)) {
                 $environment[$name] = $value;
             } elseif ($value !== '') {
                 $bundle[$name] = $value;
