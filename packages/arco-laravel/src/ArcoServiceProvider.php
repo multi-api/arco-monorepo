@@ -53,6 +53,9 @@ final class ArcoServiceProvider extends ServiceProvider
         $this->addSessionToken();
         $this->fixDefaultConfiguration();
         $this->registerQueueConnector();
+        foreach (CloudExtensions::providers($this->app->basePath()) as $provider) {
+            $this->app->register($provider);
+        }
     }
 
     public function boot(): void

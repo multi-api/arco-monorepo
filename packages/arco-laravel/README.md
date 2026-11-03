@@ -24,6 +24,13 @@ Arco runs the app) it:
 It also provides the Laravel preset Arco uses to package your app (Octane worker, storage in
 `/tmp`, `/up` health route, cached asset paths).
 
+## Arco Cloud extensions
+
+Arco Cloud can add extensions to an app it deploys. An extension is a directory under `.arco-cloud/<name>/`
+whose `bootstrap.php` returns the class name of a service provider; on Lambda this package registers each one.
+An extension that throws or returns anything else is logged to stderr as one JSON line and skipped, so it never
+stops the app from booting.
+
 Documentation, issues and pull requests: [multi-api/arco](https://github.com/multi-api/arco).
 This repository is a read-only split.
 
