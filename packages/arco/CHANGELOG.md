@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.18.0
 
 - **Added:** `multiapi/arco-laravel` adds `php artisan arco:failed-jobs`: `--json` prints the failed jobs as one JSON
   line (`store`, `total`, `queues`, and `jobs`, the 200 newest with their exception cut to 8 KB), and `--flush`
