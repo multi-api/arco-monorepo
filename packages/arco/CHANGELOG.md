@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.19.0
 
 - **Added:** `accessLog()` (environment or app level; `accessLog` in a config layer) makes the web runtime write one
   JSON line per HTTP request to the web function's log: `{"arco":"request","status":200,"method":"GET","path":"/",
