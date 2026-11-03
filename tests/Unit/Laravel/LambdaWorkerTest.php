@@ -41,12 +41,12 @@ final class LambdaWorkerTest extends TestCase
      * @param list<array<string, mixed>> $records
      * @return list<string> The reported message ids.
      */
-    private function handle(array $records, int $remainingMs = 60_000): array
+    private function handle(array $records, int $remainingMs = 60_000, ?string $requestId = null, ?string $traceId = null): array
     {
         $this->worker = new LambdaWorker($this->test->app, function (array $line): void {
             $this->logs[] = $line;
         });
-        $result = $this->worker->handle(['Records' => $records], $remainingMs);
+        $result = $this->worker->handle(['Records' => $records], $remainingMs, requestId: $requestId, traceId: $traceId);
         self::assertSame(['batchItemFailures'], array_keys($result));
         return array_map(fn (array $item) => $item['itemIdentifier'], $result['batchItemFailures']);
     }
@@ -222,6 +222,29 @@ final class LambdaWorkerTest extends TestCase
         self::assertSame(['m-throw'], $this->handle([QueueTestJob::record('throw', attempts: 4, maxTries: 10)]));
 
         self::assertSame([], QueueTestJob::$failed);
+    }
+
+    public function test_every_job_logs_with_the_invocation_id_its_trace_and_its_name(): void
+    {
+        $invocationTrace = '1-6543210f-000000000000000000000001';
+        $sqsTrace = '1-6543210f-000000000000000000000002';
+        $fromPayload = QueueTestJob::record('context', id: 'xray');
+        $fromPayload['body'] = QueueTestJob::body('context', extra: ['arco_xray' => '00-6543210f000000000000000000000003-0123456789abcdef-01']);
+
+        $this->handle([
+            QueueTestJob::record('context', id: 'sqs', attributes: ['AWSTraceHeader' => "Root=$sqsTrace;Parent=0123456789abcdef;Sampled=1"]),
+            QueueTestJob::record('context', id: 'plain'),
+            $fromPayload,
+        ], requestId: 'inv-1', traceId: $invocationTrace);
+
+        self::assertSame([
+            // The message's AWSTraceHeader: the trace of whoever sent it.
+            ['requestId' => 'inv-1', 'traceId' => $sqsTrace, 'job' => QueueTestJob::class],
+            // Nothing in the message: the invocation's trace, not the previous job's.
+            ['requestId' => 'inv-1', 'traceId' => $invocationTrace, 'job' => QueueTestJob::class],
+            // multiapi/arco-xray's carrier: the trace its spans for this job go to.
+            ['requestId' => 'inv-1', 'traceId' => '1-6543210f-000000000000000000000003', 'job' => QueueTestJob::class],
+        ], QueueTestJob::$context);
     }
 
     public function test_scoped_instances_are_reset_between_jobs(): void

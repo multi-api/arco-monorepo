@@ -55,6 +55,18 @@ final class HandlerTest extends TestCase
         self::assertSame($result['output'], $this->echoed, 'command output is echoed to the function log');
     }
 
+    public function test_the_invocation_variables_reach_that_command_only(): void
+    {
+        file_put_contents("$this->app/scripts/env.php", '<?php echo getenv("ARCO_REQUEST_ID") ?: "-", " ", getenv("_X_AMZN_TRACE_ID") ?: "-";');
+        $handler = $this->handler(null);
+
+        $first = $handler->handle('{"command":"scripts/env.php"}', 60_000, ['ARCO_REQUEST_ID' => 'req-1', '_X_AMZN_TRACE_ID' => 'Root=1-6543210f-0123456789abcdef01234567']);
+        $second = $handler->handle('{"command":"scripts/env.php"}', 60_000);
+
+        self::assertSame('req-1 Root=1-6543210f-0123456789abcdef01234567', $first['output']);
+        self::assertSame('- -', $second['output']);
+    }
+
     public function test_a_failing_command_is_a_normal_result_and_is_logged(): void
     {
         $result = $this->handler()->handle('{"command":"migrate --fail"}', 60_000);

@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\ConsoleRuntime;
 
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
+use Multiapi\Arco\Tests\Support\RuntimeApiTrace;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Filesystem\Filesystem;
@@ -28,7 +29,7 @@ final class ConsoleLoopTest extends TestCase
         $fs->dumpFile("$this->root/arco-runtime.json", '{"phpIni":{"memory_limit":"321M"},"console":{"entry":"artisan"}}');
         $fs->dumpFile("$this->root/app/artisan", <<<'PHP'
             <?php
-            echo 'args:', json_encode(array_slice($argv, 1)), "\n", 'server-args:', json_encode(array_slice($_SERVER['argv'], 1)), "\n", 'greeting:', getenv('GREETING'), "\n", 'cwd:', getcwd(), "\n", 'ini:', getenv('PHP_INI_SCAN_DIR'), "\n";
+            echo 'args:', json_encode(array_slice($argv, 1)), "\n", 'server-args:', json_encode(array_slice($_SERVER['argv'], 1)), "\n", 'greeting:', getenv('GREETING'), "\n", 'cwd:', getcwd(), "\n", 'ini:', getenv('PHP_INI_SCAN_DIR'), "\n", 'request:', getenv('ARCO_REQUEST_ID'), "\n", 'trace:', getenv('_X_AMZN_TRACE_ID'), "\n";
             fwrite(STDERR, "to-stderr\n");
             if (($argv[1] ?? '') === 'arco:tinker') { echo "ARCO-TINKER:scope-with-a-secret\n"; }
             exit(in_array('--fail', $argv, true) ? 3 : 0);
@@ -73,8 +74,8 @@ final class ConsoleLoopTest extends TestCase
         $runtime = $this->runtime = $this->runtime(['ARCO_PHP_BINARY' => PHP_BINARY, 'GREETING' => 'hola']);
         $runtime->start();
 
-        $ok = $this->respond($runtime, $this->api->enqueue(['command' => "greet --name='A B'"]));
-        $failed = $this->respond($runtime, $this->api->enqueue(['command' => 'greet --fail']));
+        $ok = $this->respond($runtime, $okId = $this->api->enqueue(['command' => "greet --name='A B'"]));
+        $failed = $this->respond($runtime, $failedId = $this->api->enqueue(['command' => 'greet --fail']));
         $invalid = $this->api->await($this->api->enqueueRaw('not json'));
 
         self::assertSame(0, $ok['exitCode']);
@@ -85,6 +86,9 @@ final class ConsoleLoopTest extends TestCase
         self::assertSame(['session.upload_progress.enabled' => '0', 'fatal_error_backtraces' => '0', 'memory_limit' => '321M'], parse_ini_file("$this->root/tmp/php/99-arco.ini"));
         self::assertStringContainsString('to-stderr', $ok['output']);
         self::assertStringContainsString('cwd:' . realpath("$this->root/app"), $ok['output']);
+        // Each command's Laravel shares them in its log context (ArcoServiceProvider), for one invocation's lines.
+        self::assertStringContainsString("request:$okId\ntrace:" . RuntimeApiTrace::header($okId) . "\n", $ok['output']);
+        self::assertStringContainsString("request:$failedId\ntrace:" . RuntimeApiTrace::header($failedId) . "\n", $failed['output']);
         self::assertSame(3, $failed['exitCode']);
         self::assertSame('error', $invalid['type']);
         self::assertSame('Arco.InvalidEvent', $invalid['errorType']);

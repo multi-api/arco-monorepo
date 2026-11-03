@@ -308,6 +308,26 @@ final class ConfigResolverTest extends TestCase
         self::assertTrue(ConfigResolver::resolve($app, 'staging')->bundleVariables);
     }
 
+    public function test_access_log_is_off_unless_switched_on(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')
+            ->environment('production')
+            ->environment('staging', fn (Environment $e) => $e->accessLog())
+            ->toArray();
+
+        self::assertFalse(ConfigResolver::resolve($raw, 'production')->accessLog);
+        self::assertSame('default', ConfigResolver::resolve($raw, 'production')->sources['accessLog']);
+        self::assertTrue(ConfigResolver::resolve($raw, 'staging')->accessLog);
+        self::assertSame('environment', ConfigResolver::resolve($raw, 'staging')->sources['accessLog']);
+
+        $app = App::make('shop')->region('us-east-1')->accessLog()
+            ->environment('production', fn (Environment $e) => $e->accessLog(false))
+            ->environment('staging')
+            ->toArray();
+        self::assertFalse(ConfigResolver::resolve($app, 'production')->accessLog);
+        self::assertTrue(ConfigResolver::resolve($app, 'staging')->accessLog);
+    }
+
     public function test_console_defaults_unset(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');

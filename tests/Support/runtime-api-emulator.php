@@ -3,6 +3,10 @@
 // A minimal Lambda Runtime API for tests, served by `php -S`. State lives in ARCO_EMULATOR_DIR:
 // queue/<id>.json (events to hand out, in name order), responses/<id>.json, errors/<id>.json,
 // init-error.json, and a "stop" file that ends a waiting /next with HTTP 410.
+use Multiapi\Arco\Tests\Support\RuntimeApiTrace;
+
+require_once __DIR__ . '/RuntimeApiTrace.php';
+
 $dir = (string) getenv('ARCO_EMULATOR_DIR');
 $path = (string) parse_url((string) ($_SERVER['REQUEST_URI'] ?? '/'), PHP_URL_PATH);
 $method = (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET');
@@ -18,6 +22,7 @@ if ($method === 'GET' && $path === '/2018-06-01/runtime/invocation/next') {
             $event = (string) file_get_contents($queued[0]);
             unlink($queued[0]);
             header("Lambda-Runtime-Aws-Request-Id: $id");
+            header('Lambda-Runtime-Trace-Id: ' . RuntimeApiTrace::header($id));
             header('Lambda-Runtime-Deadline-Ms: ' . (int) floor(microtime(true) * 1000 + (int) (getenv('ARCO_EMULATOR_TIMEOUT_MS') ?: 120000)));
             header('Content-Type: application/json');
             echo $event;

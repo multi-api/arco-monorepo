@@ -9,8 +9,9 @@ $e2eAccount = getenv('ARCO_E2E_ACCOUNT') ?: null;
 
 return App::make($app)
     ->region('us-east-1')
-    // Local simulation in Docker: no AWS calls, so no secret references.
+    // Local simulation in Docker: no AWS calls, so no secret references. The simulation reads the access log back.
     ->environment('ci', fn (Environment $env) => $env
+        ->accessLog()
         ->variables([
             'APP_ENV' => 'production',
             'APP_DEBUG' => 'false',

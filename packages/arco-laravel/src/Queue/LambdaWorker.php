@@ -15,6 +15,7 @@ use Illuminate\Queue\QueueManager;
 use Illuminate\Queue\WorkerOptions;
 use Illuminate\Support\Facades\Facade;
 use Multiapi\Arco\Laravel\Env;
+use Multiapi\Arco\Laravel\Log\LogContext;
 use Throwable;
 
 /**
@@ -46,6 +47,9 @@ final class LambdaWorker
     private readonly array $queues;
     /** @var array<string, true> job id => the failed-jobs store could not take the job of this delivery */
     private array $unstored = [];
+    /** The invocation being served: its id and X-Ray trace id, shared in every job's log context. */
+    private ?string $requestId = null;
+    private ?string $traceId = null;
 
     /** @param (\Closure(array<string, mixed>): void)|null $log receives one JSON log line per call */
     public function __construct(private readonly Application $app, ?\Closure $log = null)
@@ -117,10 +121,14 @@ final class LambdaWorker
      * @param (\Closure(array{batchItemFailures: list<array{itemIdentifier: string}>}): void)|null $backstop
      *        called one second before the deadline if the batch is still running (a job that swallowed
      *        its timeout), with every record not known to have succeeded; it must answer and end the process
+     * @param string|null $requestId the Lambda invocation id, `context.requestId` of every job's log lines
+     * @param string|null $traceId the invocation's X-Ray trace id, for jobs whose message carries none
      * @return array{batchItemFailures: list<array{itemIdentifier: string}>}
      */
-    public function handle(array $event, int $remainingMs, ?\Closure $backstop = null): array
+    public function handle(array $event, int $remainingMs, ?\Closure $backstop = null, ?string $requestId = null, ?string $traceId = null): array
     {
+        $this->requestId = $requestId;
+        $this->traceId = $traceId;
         $records = $event['Records'] ?? null;
         if (! is_array($records)) {
             throw new \InvalidArgumentException('The event is not an SQS event: it has no Records.');
@@ -197,7 +205,11 @@ final class LambdaWorker
         $this->unstored = [];
         try {
             $this->resetScope();
+            $attributes = is_array($record['attributes'] ?? null) ? $record['attributes'] : [];
+            $traceId = LogContext::traceId(is_string($attributes['AWSTraceHeader'] ?? null) ? $attributes['AWSTraceHeader'] : null) ?? $this->traceId;
+            LogContext::share($this->app, ['requestId' => $this->requestId, 'traceId' => $traceId]);
             $job = ArcoSqsJob::fromRecord($this->app, $queue->getSqs(), $record, $connection, $this->queueUrl($record, $queue), $queue->overflowOptions(), $this->log);
+            LogContext::share($this->app, ['traceId' => self::dispatchTraceId($job), 'job' => self::jobName($job)]);
             if ($this->isDown()) {
                 [$status, $reported] = $this->whileDown($job, $record);
             } else {
@@ -424,6 +436,16 @@ final class LambdaWorker
     {
         $arn = is_string($record['eventSourceARN'] ?? null) ? $record['eventSourceARN'] : null;
         return $this->workerQueue ?? ($arn === null ? null : substr($arn, (int) strrpos($arn, ':') + 1));
+    }
+
+    /**
+     * The trace the job was dispatched in, when multiapi/arco-xray added it to the payload: the trace its
+     * spans for this job go to, so the job's log lines point there rather than to the SQS or Lambda trace.
+     */
+    private static function dispatchTraceId(ArcoSqsJob $job): ?string
+    {
+        $carrier = $job->payload()['arco_xray'] ?? null;
+        return LogContext::traceIdFromTraceparent(is_string($carrier) ? $carrier : null);
     }
 
     private static function jobName(?ArcoSqsJob $job): ?string

@@ -98,7 +98,7 @@ final class LambdaSimulationTest extends TestCase
         self::assertSame(200, $status, (string) (new Process(['docker', 'logs', $this->container]))->mustRun()->getOutput());
 
         // 4. Laravel runs on FrankenPHP with storage in /tmp, and trusts the front end's proxy headers.
-        $check = json_decode((string) $http->get('/arco-check', ['headers' => ['X-Forwarded-Proto' => 'https']])->getBody(), true);
+        $check = json_decode((string) $http->get('/arco-check?secret=1', ['headers' => ['X-Forwarded-Proto' => 'https', 'X-Amzn-RequestId' => 'it-request-1']])->getBody(), true);
         self::assertSame('frankenphp', $check['sapi']);
         self::assertSame('/tmp/arco/storage', $check['storage']);
         self::assertSame('ci', $check['environment']);
@@ -113,5 +113,31 @@ final class LambdaSimulationTest extends TestCase
         $started = microtime(true);
         (new Pool($http, $requests, ['concurrency' => 20]))->promise()->wait();
         self::assertLessThan(2.5, microtime(true) - $started);
+
+        // 6. accessLog(): one line per request, Caddy's own entry (headers, IP) never reaches the log. A request
+        // that never reaches Laravel (a static file) is logged too.
+        $http->get('/robots.txt');
+        $logs = '';
+        $deadline = microtime(true) + 5;
+        do {
+            $logs = (new Process(['docker', 'logs', $this->container]))->mustRun()->getOutput();
+            if (str_contains($logs, '"path":"/robots.txt"')) {
+                break;
+            }
+            usleep(200_000);
+        } while (microtime(true) < $deadline);
+        $lines = array_values(array_filter(
+            array_map(static fn (string $line): mixed => json_decode($line, true), explode("\n", $logs)),
+            static fn (mixed $line): bool => is_array($line) && ($line['arco'] ?? null) === 'request',
+        ));
+        $check = array_values(array_filter($lines, static fn (array $line): bool => $line['path'] === '/arco-check'));
+        self::assertCount(1, $check, $logs);
+        self::assertSame(['arco', 'status', 'method', 'path', 'ms', 'requestId'], array_keys($check[0]));
+        self::assertSame(['arco' => 'request', 'status' => 200, 'method' => 'GET', 'path' => '/arco-check', 'requestId' => 'it-request-1'], array_diff_key($check[0], ['ms' => true]));
+        self::assertIsInt($check[0]['ms']);
+        self::assertCount(20, array_filter($lines, static fn (array $line): bool => $line['path'] === '/arco-slow'));
+        self::assertGreaterThanOrEqual(300, max(array_map(static fn (array $line): int => $line['path'] === '/arco-slow' ? $line['ms'] : 0, $lines)));
+        self::assertNotEmpty(array_filter($lines, static fn (array $line): bool => $line['path'] === '/robots.txt'), $logs);
+        self::assertStringNotContainsString('http.log.access', $logs);
     }
 }

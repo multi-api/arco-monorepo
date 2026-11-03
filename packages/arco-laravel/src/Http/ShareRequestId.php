@@ -4,12 +4,13 @@ namespace Multiapi\Arco\Laravel\Http;
 
 use Closure;
 use Illuminate\Http\Request;
+use Multiapi\Arco\Laravel\Log\LogContext;
 use Psr\Log\LoggerInterface;
 
 /**
  * Adds the request id to every log line of the request, so all lines of one request can be found
  * together in CloudWatch. Uses the caller's X-Request-ID when present, else the id or trace id the
- * AWS front end adds.
+ * AWS front end adds. With an X-Amzn-Trace-Id, its X-Ray trace id is shared too (`traceId`).
  */
 final class ShareRequestId
 {
@@ -21,9 +22,12 @@ final class ShareRequestId
 
     public function handle(Request $request, Closure $next): mixed
     {
-        $id = self::requestId($request);
-        if ($id !== null && method_exists($this->log, 'shareContext')) {
-            $this->log->shareContext(['requestId' => $id]);
+        $context = array_filter(
+            ['requestId' => self::requestId($request), 'traceId' => LogContext::traceId($request->headers->get('X-Amzn-Trace-Id'))],
+            static fn (?string $value): bool => $value !== null,
+        );
+        if ($context !== [] && method_exists($this->log, 'shareContext')) {
+            $this->log->shareContext($context);
         }
         return $next($request);
     }

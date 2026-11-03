@@ -13,6 +13,7 @@ use Multiapi\Arco\Laravel\Console\ScheduleIntervalsCommand;
 use Multiapi\Arco\Laravel\Console\TinkerCommand;
 use Multiapi\Arco\Laravel\Console\WorkCommand;
 use Multiapi\Arco\Laravel\Http\ShareRequestId;
+use Multiapi\Arco\Laravel\Log\LogContext;
 use Multiapi\Arco\Laravel\Queue\ArcoSqsConnector;
 use Multiapi\Arco\Laravel\Queue\ArcoSqsQueue;
 use Multiapi\Arco\Laravel\Queue\LambdaWorker;
@@ -73,6 +74,11 @@ final class ArcoServiceProvider extends ServiceProvider
             // for `arco scheduler:set` and `arco deploy`, which run it locally with ARCO=1; arco:work for
             // the queue worker functions.
             $this->commands([TinkerCommand::class, ScheduleIntervalsCommand::class, WorkCommand::class]);
+            // A command the console function runs: its invocation id and trace (runtime/console.php sets both).
+            $requestId = Env::get(LogContext::REQUEST_ID);
+            if ($requestId !== null) {
+                LogContext::share($this->app, ['requestId' => $requestId, 'traceId' => LogContext::traceId(Env::get('_X_AMZN_TRACE_ID'))]);
+            }
         }
         $kernel = $this->app->bound(Kernel::class) ? $this->app->make(Kernel::class) : null;
         if (is_object($kernel) && method_exists($kernel, 'prependMiddleware')) {
