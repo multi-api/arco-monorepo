@@ -6,6 +6,7 @@ use Illuminate\Console\Command;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Application;
 use Multiapi\Arco\Laravel\Env;
+use Multiapi\Arco\Laravel\Log\LogContext;
 use Multiapi\Arco\Laravel\Queue\LambdaWorker;
 use Multiapi\Arco\Laravel\Queue\RuntimeApiClient;
 use Throwable;
@@ -42,6 +43,9 @@ final class WorkCommand extends Command
             if ($invocation['traceId'] !== null) {
                 putenv("_X_AMZN_TRACE_ID={$invocation['traceId']}");
             }
+            $traceId = LogContext::traceId($invocation['traceId']);
+            // Log lines outside a job (a broken event) carry this invocation's ids, not the last job's.
+            LogContext::replace($this->laravel, ['requestId' => $requestId, 'traceId' => $traceId]);
             $nowMs = (int) floor(microtime(true) * 1000);
             // Without a deadline header, assume Lambda's longest timeout.
             $remainingMs = $invocation['deadlineMs'] > 0 ? $invocation['deadlineMs'] - $nowMs : self::MAX_LAMBDA_MS;
@@ -50,7 +54,7 @@ final class WorkCommand extends Command
                 if (! is_array($event)) {
                     throw new \InvalidArgumentException('The event is not a JSON object.');
                 }
-                $result = $worker->handle($event, $remainingMs, static function (array $result) use ($api, $requestId): void {
+                $result = $worker->handle($event, $remainingMs, requestId: $requestId, traceId: $traceId, backstop: static function (array $result) use ($api, $requestId): void {
                     // A job kept running past its time limit: answer for the batch before Lambda's deadline
                     // kills it, and leave; the app may be in any state.
                     LambdaWorker::stderr(['arco' => 'worker_deadline', 'reported' => count($result['batchItemFailures'])]);

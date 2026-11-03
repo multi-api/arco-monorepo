@@ -19,6 +19,8 @@ final class QueueTestJob implements ShouldQueue
     public static array $failed = [];
     /** @var list<int> */
     public static array $scoped = [];
+    /** @var list<array<string, mixed>> the log's shared context while a 'context' job ran */
+    public static array $context = [];
 
     public function __construct(public string $mode)
     {
@@ -29,6 +31,7 @@ final class QueueTestJob implements ShouldQueue
         self::$handled = [];
         self::$failed = [];
         self::$scoped = [];
+        self::$context = [];
     }
 
     public function handle(): void
@@ -40,8 +43,20 @@ final class QueueTestJob implements ShouldQueue
             'slow' => sleep(5),
             'stubborn' => self::sleepThroughTimeouts(20),
             'scoped' => self::$scoped[] = spl_object_id(Container::getInstance()->make('arco.test.scoped')),
+            'context' => self::recordContext(),
             default => null,
         };
+    }
+
+    /** In a worker process (WorkCommandTest), also appended as a JSON line to the file in ARCO_TEST_CONTEXT. */
+    private static function recordContext(): void
+    {
+        $context = Container::getInstance()->make('log')->sharedContext();
+        self::$context[] = $context;
+        $file = getenv('ARCO_TEST_CONTEXT');
+        if (is_string($file) && $file !== '') {
+            file_put_contents($file, json_encode($context) . "\n", FILE_APPEND);
+        }
     }
 
     /** Swallows every exception, the timeout included, like a careless retry loop. */
@@ -61,9 +76,11 @@ final class QueueTestJob implements ShouldQueue
     }
 
     /** The SQS message body Laravel would send for this job. */
-    public static function body(string $mode, ?int $timeout = null, ?int $maxTries = null): string
+    /** @param array<string, mixed> $extra more payload keys (what Queue::createPayloadUsing() adds) */
+    public static function body(string $mode, ?int $timeout = null, ?int $maxTries = null, array $extra = []): string
     {
         return (string) json_encode([
+            ...$extra,
             'uuid' => "uuid-$mode",
             'displayName' => self::class,
             'job' => 'Illuminate\\Queue\\CallQueuedHandler@call',

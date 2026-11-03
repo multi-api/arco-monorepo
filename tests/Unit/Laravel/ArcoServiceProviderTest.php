@@ -6,6 +6,7 @@ use Illuminate\Config\Repository;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
 use Illuminate\Http\Middleware\TrustProxies;
+use Illuminate\Log\LogManager;
 use Multiapi\Arco\Laravel\ArcoServiceProvider;
 use Multiapi\Arco\Laravel\Http\ShareRequestId;
 use PHPUnit\Framework\TestCase;
@@ -21,6 +22,7 @@ final class ArcoServiceProviderTest extends TestCase
             $_SERVER['ARCO'], $_SERVER['AWS_ACCESS_KEY_ID'], $_SERVER['AWS_SECRET_ACCESS_KEY'], $_SERVER['AWS_SESSION_TOKEN'],
             $_SERVER['AWS_REGION'], $_SERVER['AWS_DEFAULT_REGION'], $_SERVER['ARCO_STORAGE'], $_SERVER['ARCO_CACHE_TABLE'],
             $_SERVER['ARCO_FAILED_JOBS_TABLE'], $_SERVER['AWS_USE_PATH_STYLE_ENDPOINT'],
+            $_SERVER['ARCO_REQUEST_ID'], $_SERVER['_X_AMZN_TRACE_ID'],
         );
     }
 
@@ -303,5 +305,50 @@ final class ArcoServiceProviderTest extends TestCase
         (new ShareRequestId($logger))->handle($request, fn () => 'ok');
 
         self::assertSame(['requestId' => 'req-1'], $logger->context);
+    }
+
+    public function test_the_trace_id_of_the_front_end_is_shared_with_the_request_id(): void
+    {
+        $logger = new class extends \Psr\Log\AbstractLogger {
+            /** @var array<string, mixed> */
+            public array $context = [];
+            public function shareContext(array $context): void { $this->context = $context; }
+            public function log($level, \Stringable|string $message, array $context = []): void {}
+        };
+        $request = Request::create('/');
+        $request->headers->set('X-Amzn-RequestId', 'req-1');
+        $request->headers->set('X-Amzn-Trace-Id', 'Root=1-6543210f-0123456789abcdef01234567;Sampled=0');
+
+        (new ShareRequestId($logger))->handle($request, fn () => 'ok');
+
+        self::assertSame(['requestId' => 'req-1', 'traceId' => '1-6543210f-0123456789abcdef01234567'], $logger->context);
+    }
+
+    public function test_a_console_command_logs_with_its_invocation_id_and_trace(): void
+    {
+        $_SERVER['ARCO'] = '1';
+        $_SERVER['ARCO_REQUEST_ID'] = 'inv-1';
+        $_SERVER['_X_AMZN_TRACE_ID'] = 'Root=1-6543210f-0123456789abcdef01234567;Parent=0123456789abcdef;Sampled=1';
+        $app = new Application(sys_get_temp_dir());
+        $app->instance('config', new Repository([]));
+
+        (new ArcoServiceProvider($app))->boot();
+
+        $log = $app->make('log');
+        self::assertInstanceOf(LogManager::class, $log);
+        self::assertSame(['requestId' => 'inv-1', 'traceId' => '1-6543210f-0123456789abcdef01234567'], $log->sharedContext());
+    }
+
+    public function test_outside_the_console_function_nothing_is_shared(): void
+    {
+        $_SERVER['ARCO'] = '1';
+        $app = new Application(sys_get_temp_dir());
+        $app->instance('config', new Repository([]));
+
+        (new ArcoServiceProvider($app))->boot();
+
+        $log = $app->make('log');
+        self::assertInstanceOf(LogManager::class, $log);
+        self::assertSame([], $log->sharedContext());
     }
 }

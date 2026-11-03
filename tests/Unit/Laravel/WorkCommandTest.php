@@ -7,6 +7,7 @@ use Illuminate\Events\Dispatcher;
 use Illuminate\Foundation\Application;
 use Multiapi\Arco\Laravel\ArcoServiceProvider;
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
+use Multiapi\Arco\Tests\Support\RuntimeApiTrace;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Laravel\Fixtures\QueueTestApp;
 use Multiapi\Arco\Tests\Unit\Laravel\Fixtures\QueueTestJob;
@@ -39,7 +40,7 @@ final class WorkCommandTest extends TestCase
     }
 
     /** Starts the emulator (each invocation gets $timeoutMs) and `arco:work`; returns the boots file. */
-    private function start(int $timeoutMs = 120_000): string
+    private function start(int $timeoutMs = 120_000, ?string $contextFile = null): string
     {
         // The emulator's server inherits $_ENV when it starts.
         $_ENV['ARCO_EMULATOR_TIMEOUT_MS'] = (string) $timeoutMs;
@@ -53,6 +54,7 @@ final class WorkCommandTest extends TestCase
             ...QueueTestApp::env(),
             'AWS_LAMBDA_RUNTIME_API' => "127.0.0.1:{$this->api->port}",
             'ARCO_TEST_BOOTS' => $boots,
+            'ARCO_TEST_CONTEXT' => $contextFile ?? '',
             // Never inherit real credentials from the developer's shell.
             'AWS_ACCESS_KEY_ID' => false,
             'AWS_SECRET_ACCESS_KEY' => false,
@@ -80,6 +82,23 @@ final class WorkCommandTest extends TestCase
         self::assertSame(['batchItemFailures' => [['itemIdentifier' => 'm-throw']]], json_decode($second['body'], true));
         self::assertSame('error', $broken['type'], $output);
         self::assertSame("boot\n", file_get_contents($boots), 'Laravel boots once for all invocations');
+    }
+
+    public function test_jobs_log_with_the_invocation_id_and_trace_from_the_runtime_api(): void
+    {
+        $contextFile = TempPaths::path('arco-context-', '.jsonl');
+        $this->start(contextFile: $contextFile);
+        self::assertNotNull($this->api);
+        self::assertNotNull($this->worker);
+
+        $id = $this->api->enqueue(['Records' => [QueueTestJob::record('context')]]);
+        $reply = $this->api->await($id);
+
+        self::assertSame('response', $reply['type'], $this->worker->getErrorOutput());
+        self::assertSame(
+            ['requestId' => $id, 'traceId' => RuntimeApiTrace::root($id), 'job' => QueueTestJob::class],
+            json_decode(trim((string) file_get_contents($contextFile)), true),
+        );
     }
 
     public function test_after_a_timeout_the_answer_is_posted_and_the_process_restarts(): void

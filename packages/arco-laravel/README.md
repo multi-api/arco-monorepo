@@ -15,8 +15,8 @@ Arco runs the app) it:
   client IP;
 - passes Lambda's session token to every AWS client configured with the function's key (DynamoDB
   cache, SQS, S3, SES, failed jobs, your own services);
-- sends stock logging to stderr as JSON, with a request id in every line, and keeps sessions out
-  of files.
+- sends stock logging to stderr as JSON, with the request or invocation id and the X-Ray trace id in every
+  line (and the job's name on queue workers), and keeps sessions out of files.
 - registers each `storage()` of `arco.php` as a disk of the same name (`Storage::disk('uploads')`), points
   the DynamoDB cache store at a table Arco created, and sends failed jobs to the table of
   `failedJobsTable()`.

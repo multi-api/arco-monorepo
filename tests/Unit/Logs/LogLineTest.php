@@ -70,6 +70,9 @@ final class LogLineTest extends TestCase
         self::assertSame(LogLine::ARCO, LogLine::parse('{"arco":"boot","ms":1}')->kind);
         self::assertSame('error', LogLine::parse('{"arco":"frankenphp_exit","ms":9,"code":137,"signal":null}')->level, 'the web server crashed');
         self::assertSame('debug', LogLine::parse('{"arco":"binary_ready","seconds":2,"bytes":1}')->level);
+        // accessLog(): `arco logs --request=<id>` finds a request's access line with its app lines.
+        self::assertSame('req-1', LogLine::parse('{"arco":"request","status":200,"method":"GET","path":"/","ms":3,"requestId":"req-1"}')->requestId);
+        self::assertNull(LogLine::parse('{"arco":"request","status":200,"method":"GET","path":"/","ms":3,"requestId":null}')->requestId);
     }
 
     public function test_events_from_filter_log_events_and_live_tail(): void

@@ -7,6 +7,7 @@ use Multiapi\Arco\Build\PlainPhpPreset;
 use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Config\Runtime;
 use Multiapi\Arco\Build\BuildException;
 use Multiapi\Arco\Package\PackageManifest;
@@ -110,6 +111,16 @@ final class PackagerTest extends TestCase
         self::assertSame($old, $json(fn (Runtime $r) => $r->threads(8)), 'the defaults are 4 workers and max_threads 64');
         self::assertStringContainsString('"workers":{"min":4,"max":64}', $old);
         self::assertStringContainsString('"workers":{"min":6,"max":32}', $json(fn (Runtime $r) => $r->workers(6)->maxThreads(32)));
+    }
+
+    public function test_access_log_reaches_the_web_runtime(): void
+    {
+        $config = ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->accessLog())->toArray(),
+            'production',
+        );
+        self::assertTrue(Packager::runtimeConfig($config, new PlainPhpPreset())['accessLog']);
+        self::assertArrayNotHasKey('accessLog', Packager::runtimeConfig($this->config(), new PlainPhpPreset()), 'off: the package keeps its hash');
     }
 
     public function test_laravel_commands_go_through_artisan(): void
