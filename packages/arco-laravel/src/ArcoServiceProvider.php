@@ -8,6 +8,7 @@ use Illuminate\Http\Middleware\TrustProxies;
 use Illuminate\Http\Request;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Queue\QueueManager;
+use Multiapi\Arco\Laravel\Console\FailedJobsCommand;
 use Multiapi\Arco\Laravel\Console\ScheduleIntervalsCommand;
 use Multiapi\Arco\Laravel\Console\TinkerCommand;
 use Multiapi\Arco\Laravel\Console\WorkCommand;
@@ -60,6 +61,10 @@ final class ArcoServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        if ($this->app->runningInConsole()) {
+            // Also outside Lambda: it reads whichever failed-jobs store the app is configured with.
+            $this->commands([FailedJobsCommand::class]);
+        }
         if (($_SERVER['ARCO'] ?? getenv('ARCO')) !== '1') {
             return;
         }
