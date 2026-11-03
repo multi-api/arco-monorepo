@@ -21,6 +21,10 @@ Arco runs the app) it:
   the DynamoDB cache store at a table Arco created, and sends failed jobs to the table of
   `failedJobsTable()`.
 
+In any environment it adds `php artisan arco:failed-jobs`: `--json` lists the failed jobs with their exception
+as one JSON line, `--flush` forgets them on any failed-jobs store (DynamoDB included, where `queue:flush`
+throws), and `--queue=<url>` limits either to one queue.
+
 It also provides the Laravel preset Arco uses to package your app (Octane worker, storage in
 `/tmp`, `/up` health route, cached asset paths).
 
