@@ -14,6 +14,7 @@ final class CloudExtensionsTest extends TestCase
     protected function tearDown(): void
     {
         ArcoServiceProvider::$log = null;
+        CloudExtensions::flush();
         unset($_SERVER['ARCO']);
     }
 
@@ -53,7 +54,7 @@ final class CloudExtensionsTest extends TestCase
 
         self::assertTrue($app->bound('ext.ran'));
         self::assertCount(1, $app->getProviders($class));
-            }
+    }
 
     public function test_ignores_extensions_when_arco_is_not_1(): void
     {
@@ -79,10 +80,8 @@ final class CloudExtensionsTest extends TestCase
         mkdir("$base/.arco-cloud/d-ok", 0777, true);
         file_put_contents("$base/.arco-cloud/d-ok/bootstrap.php", self::providerBootstrap($class));
 
-        // The bootstrap files are required once per process, so providers() and boot() each get their own copy.
         self::assertSame([$class], CloudExtensions::providers($base));
-        $app = self::boot(self::appWith('d-ok', self::providerBootstrap($ok)));
-        self::assertTrue($app->bound('ext.ran'));
+        self::assertTrue(self::boot($base)->bound('ext.ran'));
 
         $names = array_values(array_unique(array_map(static fn (array $l): mixed => $l['extension'] ?? null, $lines)));
         self::assertSame(['a-throws', 'b-string', 'c-stdclass'], $names);
@@ -97,5 +96,41 @@ final class CloudExtensionsTest extends TestCase
 
         self::assertSame([], CloudExtensions::providers($base));
         self::assertFalse(self::boot($base)->bound('ext.ran'));
+    }
+
+    public function test_repeated_calls_keep_the_extension(): void
+    {
+        $base = self::appWith('demo', self::providerBootstrap($class));
+
+        self::assertSame([$class], CloudExtensions::providers($base));
+        self::assertSame([$class], CloudExtensions::providers($base));
+    }
+
+    public function test_two_apps_on_the_same_base_path_both_register_the_provider(): void
+    {
+        $_SERVER['ARCO'] = '1';
+        $lines = [];
+        ArcoServiceProvider::$log = static function (array $line) use (&$lines): void { $lines[] = $line; };
+        $base = self::appWith('demo', self::providerBootstrap($class));
+
+        $first = self::boot($base);
+        $second = self::boot($base);
+
+        self::assertTrue($first->bound('ext.ran'));
+        self::assertTrue($second->bound('ext.ran'));
+        self::assertSame([], $lines);
+    }
+
+    public function test_a_failing_extension_is_logged_once_across_calls(): void
+    {
+        $lines = [];
+        ArcoServiceProvider::$log = static function (array $line) use (&$lines): void { $lines[] = $line; };
+        $base = self::appWith('broken', "<?php\nthrow new \\RuntimeException('boom');\n");
+
+        self::assertSame([], CloudExtensions::providers($base));
+        self::assertSame([], CloudExtensions::providers($base));
+
+        self::assertCount(1, $lines);
+        self::assertSame('broken', $lines[0]['extension']);
     }
 }
