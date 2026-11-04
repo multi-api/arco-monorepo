@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.19.1
 
 - **Fixed:** web requests always have a request id. Lambda Web Functions add none of the headers Arco reads it from,
   so every access log line had `"requestId": null` and Laravel's web log lines had no `context.requestId`. The web
