@@ -9,8 +9,9 @@ use Psr\Log\LoggerInterface;
 
 /**
  * Adds the request id to every log line of the request, so all lines of one request can be found
- * together in CloudWatch. Uses the caller's X-Request-ID when present, else the id or trace id the
- * AWS front end adds. With an X-Amzn-Trace-Id, its X-Ray trace id is shared too (`traceId`).
+ * together in CloudWatch. Uses the caller's X-Request-ID when present, else the other ids or trace id a
+ * caller may send. Without any, Arco's web runtime adds an X-Request-ID (Lambda Web Functions add none), the
+ * id of the request's access log line. With an X-Amzn-Trace-Id, its X-Ray trace id is shared too (`traceId`).
  */
 final class ShareRequestId
 {
