@@ -103,6 +103,10 @@ final class LambdaSimulationTest extends TestCase
         self::assertSame('/tmp/arco/storage', $check['storage']);
         self::assertSame('ci', $check['environment']);
         self::assertSame('https', $check['scheme']);
+        self::assertSame('it-request-1', $check['requestId'], 'the caller\'s id is kept');
+        // Lambda Web Functions send no request id: the runtime makes one up, which Laravel and the access log share.
+        $generated = json_decode((string) $http->get('/arco-check')->getBody(), true)['requestId'];
+        self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/', (string) $generated);
 
         // 5. Concurrent slow requests are served in parallel by the Octane worker pool.
         $requests = (function () {
@@ -131,13 +135,14 @@ final class LambdaSimulationTest extends TestCase
             static fn (mixed $line): bool => is_array($line) && ($line['arco'] ?? null) === 'request',
         ));
         $check = array_values(array_filter($lines, static fn (array $line): bool => $line['path'] === '/arco-check'));
-        self::assertCount(1, $check, $logs);
+        self::assertCount(2, $check, $logs);
+        self::assertSame($generated, $check[1]['requestId'], 'the access line has the id Laravel logged with');
         self::assertSame(['arco', 'status', 'method', 'path', 'ms', 'requestId'], array_keys($check[0]));
         self::assertSame(['arco' => 'request', 'status' => 200, 'method' => 'GET', 'path' => '/arco-check', 'requestId' => 'it-request-1'], array_diff_key($check[0], ['ms' => true]));
         self::assertIsInt($check[0]['ms']);
         self::assertCount(20, array_filter($lines, static fn (array $line): bool => $line['path'] === '/arco-slow'));
         self::assertGreaterThanOrEqual(300, max(array_map(static fn (array $line): int => $line['path'] === '/arco-slow' ? $line['ms'] : 0, $lines)));
-        self::assertNotEmpty(array_filter($lines, static fn (array $line): bool => $line['path'] === '/robots.txt'), $logs);
+        self::assertNotEmpty(array_filter($lines, static fn (array $line): bool => $line['path'] === '/robots.txt' && is_string($line['requestId'])), $logs);
         self::assertStringNotContainsString('http.log.access', $logs);
     }
 }

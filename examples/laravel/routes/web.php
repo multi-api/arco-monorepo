@@ -16,6 +16,8 @@ Route::get('/arco-check', fn () => response()->json([
     'storage' => storage_path(),
     'environment' => env('ARCO_ENV'),
     'scheme' => request()->getScheme(),
+    // What multiapi/arco-laravel's ShareRequestId put in the log context of this request.
+    'requestId' => app('log')->sharedContext()['requestId'] ?? null,
 ]));
 
 Route::get('/arco-slow', function () {
