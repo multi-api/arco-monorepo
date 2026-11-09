@@ -34,7 +34,7 @@ final class InfoCommandTest extends TestCase
         self::assertMatchesRegularExpression('/auth\s+public\s+default/', $display);
         self::assertMatchesRegularExpression('/maxInstances\s+-\s+default/', $display);
         self::assertStringNotContainsString('maxEnvironments', $display);
-        self::assertMatchesRegularExpression('/runtime\.build\s+php8\.5\.12-fp1\.13\.1-r1 \(FrankenPHP 1\.13\.1, PHP 8\.5\.12\)\s+default/', $display);
+        self::assertMatchesRegularExpression('/runtime\.build\s+php8\.5\.12-fp1\.13\.5-r1 \(FrankenPHP 1\.13\.5, PHP 8\.5\.12\)\s+default/', $display);
         self::assertStringContainsString('arco-ssm:/shop/production/app-key', $display);
         self::assertStringNotContainsString('plain-token', $display);
         $project->restore();
@@ -53,7 +53,7 @@ final class InfoCommandTest extends TestCase
         self::assertSame(60, $json['settings']['timeout']);
         self::assertArrayHasKey('maxInstances', $json['settings']);
         self::assertArrayNotHasKey('maxEnvironments', $json['settings']);
-        self::assertSame('php8.5.12-fp1.13.1-r1 (FrankenPHP 1.13.1, PHP 8.5.12)', $json['settings']['runtime.build']);
+        self::assertSame('php8.5.12-fp1.13.5-r1 (FrankenPHP 1.13.5, PHP 8.5.12)', $json['settings']['runtime.build']);
         self::assertSame(4, $json['settings']['runtime.workers'], 'an integer since 0.9 (it was "4-64")');
         self::assertSame(64, $json['settings']['runtime.maxThreads']);
         $project->restore();
