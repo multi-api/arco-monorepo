@@ -16,6 +16,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   other userland state ([Upgrading](docs/upgrading.md#upgrading-to-0192-security)).
 - **Changed:** the runtime build includes the `msgpack` extension (FrankenPHP 1.13.5 builds it in), on the web
   function and in the console's PHP CLI.
+- **Changed:** the E2E suite and the [local Floci guide](docs/local-floci.md) now use Floci `nightly-11082026`, which
+  accepts Web Function code up to 512 MiB unzipped as AWS does (the earlier pin refused more than 250 MiB, and the
+  example app with FrankenPHP 1.13.5 unzips to 254 MiB).
 
 ## 0.19.1
 
