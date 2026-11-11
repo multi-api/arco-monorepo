@@ -157,7 +157,7 @@ Flags shared by many commands:
 #### Config layer
 
 `--config-layer=<path>` (or `ARCO_CONFIG_LAYER`, the flag wins; empty or blank means the other one) on `deploy`,
-`package`, `info`, `remove` and `logs` merges a JSON file over `arco.php`, or replaces a missing `arco.php`. It adds queues,
+`package`, `info`, `remove`, `logs`, `scheduler:pause` and `scheduler:resume` merges a JSON file over `arco.php`, or replaces a missing `arco.php`. It adds queues,
 buckets, tables, variables, domains and settings and never overrides `arco.php`: a different value is
 `config.layer_conflict` before any AWS call. Every other command ignores the flag and the variable, so do not expect
 `queue:list` or the editing commands to see layer entries. A layer queue, storage or table with `adopt: true` imports
@@ -173,14 +173,28 @@ multiapi/arco`), so run `arco`, not `vendor/bin/arco`, and Go must be on `PATH`.
 - `deploy`, `package`, `info`, `logs`, `remove`, `resources`, `scheduler:pause`, `scheduler:resume`, `queue:list`,
   `queue:dlq` and `storage:list` work as for PHP. `info --json` adds `runtime`, `schedules`
   (`[{name, every, expression, route, timeout, rule, paused}]`) and `queues[].route`.
-- `command`, `tinker`, `queue:failed-table`, `scheduler:set`, `scheduler:remove` and every command that edits
-  `arco.php` refuse with `config.process_unsupported_command` (`{command}`) and change nothing. Edit `arco.json` by
+- These 30 commands refuse with `config.process_unsupported_command` (`{command}`) and change nothing: `cache:add`, `cache:remove`, `certificate:remove`, `certificate:set`, `command`, `console:add`, `console:remove`, `domain:add`, `domain:remove`, `failed-jobs:add`, `failed-jobs:remove`, `logs:retention`, `queue:add`, `queue:failed-table`, `queue:remove`, `queue:set`, `scheduler:remove`, `scheduler:set`, `set`, `storage:add`, `storage:cors`, `storage:expire`, `storage:public`, `storage:remove`, `table:add`, `table:remove`, `tinker`, `unset`, `vpc:remove` and `vpc:set`.
+  The refusal is text only (exit 1, no `--json` document, because none of them has `--json`); do not parse it. With
+  both `arco.php` and `arco.json` the editing commands fail with `config.both_files` instead. Edit `arco.json` by
   hand, then validate with `arco info --env=<env> --json -n`.
-- `scheduler:pause` / `scheduler:resume` pause or resume all the environment's schedules at once (ask first: they
-  change AWS). A deploy keeps the paused state.
+- `scheduler:pause` / `scheduler:resume` (both take `--config-layer`) pause or resume all the environment's schedules at
+  once (ask first: they change AWS) and print one line per schedule: `scheduler.schedule_paused_now`,
+  `scheduler.schedule_resumed_now`, `scheduler.schedule_already_paused` or `scheduler.schedule_already_active`
+  (`{schedule, rule}`), then `scheduler.schedules_paused_now` / `scheduler.schedules_resumed_now` (`{environment}`).
+  Without schedule rules in AWS: `scheduler.no_schedule_rules` (`{environment}`), exit 1, nothing changed. A deploy
+  keeps the paused state.
 - Without `environments` in `arco.json`, always pass `--env` (else `config.env_required`).
 - Deploy steps for schedules: `deploy.schedule_created`, `deploy.schedule_updated`, `deploy.schedule_deleted`
-  (`{schedule, rule}`) and `deploy.schedule_paused` (`{schedule}`, a new schedule that starts paused).
+  (`{schedule, rule}`) and `deploy.schedule_paused` (`{schedule}`, a new schedule that starts paused). The warning
+  `deploy.schedules_failed` (`{error}`) means the deploy is live and verified but the rules were not updated: fix the
+  permissions and deploy again. `deploy --force` takes over a same-named schedule rule of another environment.
+- `info` (the table) hides the PHP-only rows (`runtime.build`, `runtime.binary`, `runtime.workers`,
+  `runtime.maxThreads`, `runtime.threads`, `runtime.mode`, `scheduler`, `consoleTimeout`, `deployCommands`); `--json`
+  keeps every key and appends `runtime`, `schedules` and `queues[].route`. `schedules[].paused` is `true` or `false`
+  from the rule in AWS, `null` when the rule is not deployed or cannot be read.
+- `remove` also deletes the schedule rules (`remove.step_schedule`, `{schedule, rule}`). If the tag scan fails it warns
+  `remove.schedule_scan_failed` (`{error}`) and continues: leftover rules keep firing at the removed console function
+  until `remove` is run again or they are deleted in EventBridge.
 
 `arco.json` reference: [Process runtime (Go)](configuration.md#arcojson). Keys: `name`, `region`, `runtime`
 (`kind`, `language`, `main`, `command`, `healthPath`), `include`, `exclude`, `settings`, `variables`, `permissions`,
@@ -214,7 +228,7 @@ written twice, an app built over several statements) it changes nothing, prints 
 | `set <key> <value>` / `unset <key>` | `concurrency`, `max-instances`, `rate-limit`, `timeout`, `log-level`, `console-timeout`, `console-memory` | `unset` removes the call so the inherited value applies |
 | `console:add` / `console:remove` | `->console()` / `->console(false)` | `console:remove` refuses while a scheduler runs |
 | `scheduler:set [N]` / `scheduler:remove` | `->scheduler(N)` (and `->console()`) / scheduler off | N in 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60; without N it suggests one from the app's schedule. `--apply` (with `--env`, `--profile`) also changes the EventBridge rule in AWS without a deploy |
-| `scheduler:pause` / `scheduler:resume` | nothing: **AWS only** | Disable or enable the EventBridge rule now (`--env`, `--profile`); deploys keep a paused rule paused |
+| `scheduler:pause` / `scheduler:resume` | nothing: **AWS only** | Disable or enable the EventBridge rule now (`--env`, `--profile`, `--config-layer=<path>`); deploys keep a paused rule paused |
 | `logs:retention <days\|never>` | `->logRetention(days\|false)` | `--remove` goes back to the 30-day default |
 | `queue:add <name>` | `->queue('<name>', ...)` | `--timeout`, `--memory`, `--max-instances`, `--batch-size`, `--tries`, `--no-dlq`, `--fifo`, `--existing=<name\|URL\|ARN>`, `--default` (`--concurrency` is deprecated) |
 | `queue:set <name> <option> <value>` | one queue option | `timeout`, `memory`, `max-instances` (`none` clears), `batch-size`, `tries`, `dlq` (`on`/`off`), `default` (`on`/`off`). `fifo` and `existing` cannot change |
@@ -758,9 +772,10 @@ failed, usually for a missing permission the message names.
 | `logs.invalid_time`, `logs.until_with_follow`, `logs.invalid_source`, `logs.source_conflict`, `logs.invalid_level` | Use `30s`/`10m`/`2h`/`1d` or a date; no `--until` with `--follow`; one of `--source`, `--console`, `--queue` |
 | `queue.unknown`, `queue.option_fixed`, `queue.unknown_option` | Use a queue name from `arco.php`; `fifo` and `existing` cannot change |
 | `queue.dlq_missing` | Deploy first |
+| `scheduler.no_schedule_rules` | `scheduler:pause`/`resume` in a Go app found no schedule rule for the environment: add `schedules` to `arco.json` and deploy |
 | `scheduler.no_rule`, `scheduler.apply_needs_env`, `scheduler.apply_needs_deploy` | `scheduler:set` and deploy first; `--apply` needs `--env` |
 | `editor.lint_failed`, `editor.verify_failed` | The edit was refused and `arco.php` restored: make the change by hand with the line printed |
-| `config.process_unsupported_command` | The command (`command`) is PHP-only or edits `arco.php`, and this is a Go app: edit `arco.json` by hand |
+| `config.process_unsupported_command` | The command (`command`) is PHP-only or edits `arco.php`, and this is a Go app: edit `arco.json` by hand. Text only, no `--json` |
 | `remove.nothing` | The environment is not deployed; nothing to do |
 | `error.unexpected` | An unexpected exception (`message` has it); report it with the command and Arco version (`vendor/bin/arco --version`) |
 

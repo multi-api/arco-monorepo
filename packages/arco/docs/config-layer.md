@@ -19,7 +19,7 @@ ARCO_CONFIG_LAYER=layer.json vendor/bin/arco deploy
 
 - `--config-layer=<path>` wins over `ARCO_CONFIG_LAYER`. Surrounding whitespace is trimmed, and an empty or blank
   value falls back to the other one: there is no layer only when both are empty.
-- Only `deploy`, `package`, `info`, `remove`, `logs` and `resources` read the layer. Every other command (`tinker`, `command`,
+- Only `deploy`, `package`, `info`, `remove`, `logs`, `resources`, `scheduler:pause` and `scheduler:resume` read the layer. Every other command (`tinker`, `command`,
   `queue:list`, the `arco.php`-editing commands, ...) ignores both the flag and the variable, and the editing commands
   change `arco.php` only.
 - A missing or unreadable file is `config.layer_not_found` (`{path}`).

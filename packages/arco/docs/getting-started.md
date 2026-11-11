@@ -84,7 +84,9 @@ arco logs --env=production --since=10m
 [minimal deploy permissions](#minimal-iam-permissions) cover the web function, and with queues or schedules the
 statements for the console function (`*-console`, including `lambda:AddPermission`), the queue workers (`*-queue-*`
 and the event source mappings), the scheduler rules (`rule/arco-*-scheduler`, which every schedule rule matches) and
-`tag:GetResources` (to find schedule rules that left the configuration) are the ones Arco already lists.
+`tag:GetResources` (to find schedule rules that left the configuration) are the ones Arco already lists. `deploy`,
+`remove`, `scheduler:pause` and `scheduler:resume` rely on `tag:GetResources` to find the schedule rules, and
+`deploy --force` takes over a schedule rule of the same name that another environment owns, as for other resources.
 
 ## `arco init`
 

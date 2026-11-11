@@ -87,7 +87,7 @@ like the others (an environment's call replaces the app's, and `cache(false)` tu
 
 ## Config layer
 
-`deploy`, `package`, `info`, `remove` and `logs` also accept a JSON config layer (`--config-layer=<path>` or
+`deploy`, `package`, `info`, `remove`, `logs`, `scheduler:pause` and `scheduler:resume` also accept a JSON config layer (`--config-layer=<path>` or
 `ARCO_CONFIG_LAYER`) that adds queues, buckets, tables, variables, domains and settings (and, for process apps,
 schedules) on top of `arco.php` or `arco.json`, or replaces them when there is none. It never overrides `arco.php`: a different value is an error. The format, the merge
 rules and `adopt` are in [Config layer](config-layer.md).
@@ -1835,10 +1835,19 @@ route receives. `route` is refused for PHP apps (`validation.queue_route_php`).
 - On each run the console `POST`s to the route with an empty body and the header `X-Arco-Schedule: <name>`. A
   non-`2xx` response or a timeout logs `{"arco":"schedule_failed",...}` and fails the invocation; there is no retry.
 - `arco scheduler:pause --env=<env>` disables every schedule rule of the environment at once and
-  `arco scheduler:resume` enables them again. A deploy keeps each rule's state, and a schedule added while the
+  `arco scheduler:resume` enables them again (both accept `--config-layer`). They find the rules by tag, print one line
+  per schedule (`scheduler.schedule_paused_now`, `scheduler.schedule_resumed_now`, `scheduler.schedule_already_paused`,
+  `scheduler.schedule_already_active`) and fail with `scheduler.no_schedule_rules` when AWS has none.
+  `deploy --force` takes over a schedule rule of the same name that another environment owns, like any other resource
+  (`deploy.ownership_forced`). A deploy keeps each rule's state, and a schedule added while the
   environment is paused starts paused.
 - A deploy prints `deploy.schedule_created`, `deploy.schedule_updated` and `deploy.schedule_deleted`
   (`{schedule, rule}`) per rule, and `deploy.schedule_paused` (`{schedule}`) for a new rule that starts paused.
+- `arco info` lists each schedule with its every, EventBridge expression, route, timeout and state (`paused` or
+  `active`), and hides the PHP-only rows (`runtime.build`, `runtime.binary`, `runtime.workers`, `runtime.maxThreads`,
+  `runtime.threads`, `runtime.mode`, `scheduler`, `consoleTimeout`, `deployCommands`). `--json` keeps every key and
+  appends `runtime`, `schedules` (`paused` is `true` or `false` from the rule, `null` when it is not deployed or cannot
+  be read) and `queues[].route`.
 
 ### Variables of process apps
 
@@ -1856,8 +1865,9 @@ starting with `ARCO` stay reserved.
 - Settings: `console`, `scheduler`, `consoleTimeout`, `consoleMemory`, `cache`, `failedJobsTable` and
   `deployCommands`, and the PHP `runtime` options. From any source (the config layer too) they fail with
   `validation.process_unsupported` (`{key}`).
-- Commands: `command`, `tinker`, `queue:failed-table`, `scheduler:set`, `scheduler:remove` and the other commands that
-  edit `arco.php` refuse with `config.process_unsupported_command` (`{command}`): edit `arco.json` by hand. `deploy`,
+- Commands: these 30 refuse with `config.process_unsupported_command` (`{command}`): `cache:add`, `cache:remove`, `certificate:remove`, `certificate:set`, `command`, `console:add`, `console:remove`, `domain:add`, `domain:remove`, `failed-jobs:add`, `failed-jobs:remove`, `logs:retention`, `queue:add`, `queue:failed-table`, `queue:remove`, `queue:set`, `scheduler:remove`, `scheduler:set`, `set`, `storage:add`, `storage:cors`, `storage:expire`, `storage:public`, `storage:remove`, `table:add`, `table:remove`, `tinker`, `unset`, `vpc:remove` and `vpc:set`. Edit `arco.json`
+  by hand. With both `arco.php` and `arco.json` they fail with `config.both_files` instead (the editors would
+  otherwise change `arco.php` next to an `arco.json`). The refusal is text only: these commands have no `--json`. `deploy`,
   `package`, `info`, `logs`, `remove`, `resources`, `scheduler:pause`, `scheduler:resume`, `queue:list`, `queue:dlq`
   and `storage:list` work. `arco init` writes `arco.php`, for PHP apps.
 - An environment deployed as a PHP app cannot be redeployed as a process app, or the other way round: the deploy
@@ -1865,6 +1875,8 @@ starting with `ARCO` stay reserved.
   worker runs the other kind's runtime. Run `arco remove --env=<env>` first (queues, buckets and tables stay).
 - X-Ray, WebSockets, Laravel's failed-jobs table (queues have dead-letter queues instead) and cgo.
 
-`arco remove` also deletes the schedule rules, with the console and the workers; queues, buckets and tables stay, as
-for PHP. The deploy profile needs no permission beyond the lists in
+`arco remove` also deletes the schedule rules (found by tag), with the console and the workers; queues, buckets and
+tables stay, as for PHP. If the rules cannot be looked up, `remove` warns `remove.schedule_scan_failed` (`{error}`) and
+carries on: any rule left keeps firing at the removed console function until you run `arco remove` again (with
+`tag:GetResources` and `events:DescribeRule`) or delete it in the EventBridge console. The deploy profile needs no permission beyond the lists in
 [Minimal IAM permissions](getting-started.md#minimal-iam-permissions).

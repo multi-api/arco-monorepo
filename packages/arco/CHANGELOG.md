@@ -31,7 +31,17 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   with `X-Arco-Schedule`. `every` takes `<n>m`, `<n>h`, `1d` or a 5-field cron in UTC. `scheduler:pause` and
   `scheduler:resume` pause and resume every schedule of the environment; `arco remove` deletes the rules. New deploy
   steps `deploy.schedule_created`, `deploy.schedule_updated`, `deploy.schedule_deleted` (`{schedule, rule}`) and
-  `deploy.schedule_paused` (`{schedule}`) ([Schedules](docs/configuration.md#schedules)).
+  `deploy.schedule_paused` (`{schedule}`), and a warning `deploy.schedules_failed` (`{error}`: the deploy is live and
+  verified, the rules were not updated; deploy again) ([Schedules](docs/configuration.md#schedules)).
+- **Added:** `arco remove` of a process environment deletes its schedule rules (step `remove.step_schedule`,
+  `{schedule, rule}`). When the tag scan fails it warns `remove.schedule_scan_failed` (`{error}`) and carries on:
+  rules that remain keep firing at the removed console function until they are deleted.
+- **Added:** `scheduler:pause` and `scheduler:resume` accept `--config-layer=<path>` (and `ARCO_CONFIG_LAYER`), so a
+  project whose `arco.json` leaves `name` or `region` to a layer can resolve the app. In a process app they act on
+  every schedule rule of the environment and print one line per schedule: `scheduler.schedule_paused_now`,
+  `scheduler.schedule_resumed_now`, `scheduler.schedule_already_paused` and `scheduler.schedule_already_active`
+  (`{schedule, rule}`), then `scheduler.schedules_paused_now` or `scheduler.schedules_resumed_now`
+  (`{environment}`); without schedule rules in AWS they fail with `scheduler.no_schedule_rules` (`{environment}`).
 - **Added:** `arco info --json` keys `runtime` (`{"kind": "php"}` or `{"kind": "process", "language", "command",
   "healthPath"}`), `schedules` (`[{name, every, expression, route, timeout, rule, paused}]`, `[]` for PHP apps) and
   `queues[].route` (`null` for PHP apps); `arco info --resources --json` `config` items of kind `schedule`
@@ -47,8 +57,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   (`{main}`), `build.go_missing` and `runtime.main_required`; deploy errors `deploy.process_package_too_large`
   (`{size, max}`, a process zip over 250 MB with queues or schedules) and `deploy.runtime_kind_changed`
   (`{function, runtime}`, an environment deployed as the other kind of app); and `config.process_unsupported_command`
-  (`{command}`) for `command`, `tinker`, `queue:failed-table`, `scheduler:set`, `scheduler:remove` and the commands
-  that edit `arco.php`.
+  (`{command}`) for the 30 commands that only work for Laravel apps: `cache:add`, `cache:remove`, `certificate:remove`, `certificate:set`, `command`, `console:add`, `console:remove`, `domain:add`, `domain:remove`, `failed-jobs:add`, `failed-jobs:remove`, `logs:retention`, `queue:add`, `queue:failed-table`, `queue:remove`, `queue:set`, `scheduler:remove`, `scheduler:set`, `set`, `storage:add`, `storage:cors`, `storage:expire`, `storage:public`, `storage:remove`, `table:add`, `table:remove`, `tinker`, `unset`, `vpc:remove` and `vpc:set`. They fail before reading
+  their input and have no `--json` document: the refusal is text (exit 1); with both `arco.php` and `arco.json` it is
+  `config.both_files`.
 - **Changed:** a project with both `arco.php` and `arco.json` fails with `config.both_files`, and a layer-only
   project with a `go.mod` whose `composer.json` does not require both `multiapi/arco` and `multiapi/arco-laravel`
   deploys as a Go app ([Upgrading](docs/upgrading.md#unreleased)). PHP apps are otherwise unchanged: the runtime's PHP
