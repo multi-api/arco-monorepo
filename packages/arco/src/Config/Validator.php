@@ -393,31 +393,34 @@ final class Validator
 
     /**
      * Whether the process proxy treats the path as /_arco or /_arco/... and answers 404 (runtime/lib/supervisor.js
-     * isInternalPath): decoded until stable (at most 5 decodes, the last one changing nothing), with empty and `.`
-     * segments dropped and `..` applied. A path that does not decode, or is still changing, counts as internal.
+     * isInternalPath): every decoding level is checked (at most 5 decodes), with empty and `.` segments dropped and
+     * `..` applied. A path that does not decode at all, or is still changing, counts as internal; a level that does
+     * not decode further is final (a literal `%`, as in /files/100%25, is an ordinary path).
      */
     private static function isInternalPath(string $path): bool
     {
         $decoded = $path;
-        for ($round = 0; ; $round++) {
-            if ($round === 5) {
+        for ($round = 0; $round < 5; $round++) {
+            if (self::firstSegment($decoded) === '_arco') {
                 return true;
             }
             // decodeURIComponent() throws on a `%` without two hex digits, and on bytes that are not UTF-8.
-            if (preg_match('/%(?![0-9A-Fa-f]{2})/', $decoded) === 1) {
-                return true;
-            }
             $next = rawurldecode($decoded);
-            if (preg_match('//u', $next) !== 1) {
-                return true;
+            if (preg_match('/%(?![0-9A-Fa-f]{2})/', $decoded) === 1 || preg_match('//u', $next) !== 1) {
+                return $round === 0;
             }
             if ($next === $decoded) {
-                break;
+                return false;
             }
             $decoded = $next;
         }
+        return true;
+    }
+
+    private static function firstSegment(string $path): ?string
+    {
         $segments = [];
-        foreach (explode('/', $decoded) as $segment) {
+        foreach (explode('/', $path) as $segment) {
             if ($segment === '' || $segment === '.') {
                 continue;
             }
@@ -427,7 +430,7 @@ final class Validator
                 $segments[] = $segment;
             }
         }
-        return ($segments[0] ?? null) === '_arco';
+        return $segments[0] ?? null;
     }
 
     /**

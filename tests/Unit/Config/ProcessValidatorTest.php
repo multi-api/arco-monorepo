@@ -172,7 +172,7 @@ final class ProcessValidatorTest extends TestCase
 
     public function test_health_paths_that_only_look_internal_are_accepted(): void
     {
-        foreach (['/_arcox', '/api/_arco', '/_arco_health', '/healthz'] as $path) {
+        foreach (['/_arcox', '/api/_arco', '/_arco_health', '/healthz', '/h%25', '/files/100%25', '/%2525zz'] as $path) {
             self::assertNotContains('validation.health_path_internal', self::keys(['process' => ['healthPath' => $path]]), $path);
         }
     }

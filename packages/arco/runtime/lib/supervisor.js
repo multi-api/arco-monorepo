@@ -92,31 +92,37 @@ function targetPath(rawUrl) {
 const MAX_DECODES = 5;
 
 // True for /_arco and /_arco/..., however the target is spelled: absolute-form, percent-encoded (at any depth: a
-// router that unescapes twice must not reach it either), with repeated slashes or with dot segments. A target
-// without a usable path, an undecodable one, or one still changing after MAX_DECODES counts as internal (fail
-// closed). The validator's healthPath check (Validator::isInternalPath) follows the same rule.
+// router that unescapes twice must not reach it either), with repeated slashes or with dot segments. Every decoding
+// level is checked. A target without a usable path, one that does not decode at all, or one still changing after
+// MAX_DECODES counts as internal (fail closed); a level that does not decode further is final (a literal `%` such
+// as /files/100%25 is an ordinary path). The validator's healthPath check (Validator::isInternalPath) follows the
+// same rule.
 function isInternalPath(rawUrl) {
   const raw = targetPath(rawUrl);
   if (raw === null) return true;
   let decoded = raw;
-  for (let round = 0; ; round++) {
-    if (round === MAX_DECODES) return true;
+  for (let round = 0; round < MAX_DECODES; round++) {
+    if (firstSegment(decoded) === '_arco') return true;
     let next;
     try {
       next = decodeURIComponent(decoded);
     } catch {
-      return true;
+      return round === 0;
     }
-    if (next === decoded) break;
+    if (next === decoded) return false;
     decoded = next;
   }
+  return true;
+}
+
+function firstSegment(path) {
   const segments = [];
-  for (const segment of decoded.split('/')) {
+  for (const segment of path.split('/')) {
     if (segment === '' || segment === '.') continue;
     if (segment === '..') segments.pop();
     else segments.push(segment);
   }
-  return segments[0] === '_arco';
+  return segments[0];
 }
 
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer']);
