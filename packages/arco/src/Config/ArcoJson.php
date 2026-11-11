@@ -149,6 +149,7 @@ final class ArcoJson
         if (array_key_exists('command', $runtime)) {
             $command = $runtime['command'];
             if (is_string($command)) {
+                // Split on whitespace only (no quoting): use the list form for arguments with spaces.
                 $command = preg_split('/\s+/', trim($command), -1, PREG_SPLIT_NO_EMPTY);
             }
             if (! is_array($command) || ! array_is_list($command) || $command === []) {

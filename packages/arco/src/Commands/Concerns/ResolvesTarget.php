@@ -20,6 +20,7 @@ use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigException;
 use Multiapi\Arco\Config\ConfigLayer;
 use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Config\LayerConflicts;
 use Multiapi\Arco\Config\PermissionsBoundary;
 use Multiapi\Arco\Config\ProjectConfig;
@@ -61,6 +62,14 @@ trait ResolvesTarget
         ['raw' => $raw, 'hasArcoPhp' => $hasArcoPhp] = ProjectConfig::raw($this->projectDir(), $layer);
         $environments = ConfigResolver::environments($raw, $layer);
         $environment = $input->getOption('env');
+        if ($environments === [] && ! $hasArcoPhp && $layer === null) {
+            // An arco.json without environments: any --env names one, as a layer-added environment does.
+            if (! is_string($environment) || $environment === '') {
+                throw $this->userError('config.env_required');
+            }
+            $raw['environments'] = [$environment => (new Environment())->toArray()];
+            $environments = [$environment];
+        }
         if (! is_string($environment) || $environment === '') {
             if ($layer !== null) {
                 $environment = $layer->environment;

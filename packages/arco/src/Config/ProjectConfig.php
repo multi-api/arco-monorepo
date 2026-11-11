@@ -39,18 +39,42 @@ final class ProjectConfig
             throw ConfigException::make('config.not_found', ['path' => $arcoPhp]);
         }
         $raw = ConfigResolver::layerOnly($layer);
-        if ($hasGoMod) {
+        if ($hasGoMod && ! self::isArcoLaravelApp($projectDir)) {
             $raw['process'] = ['language' => 'go'];
         }
 
         return ['raw' => $raw, 'hasArcoPhp' => false];
     }
 
-    /** Whether the project is a process app: arco.json, or a go.mod without arco.php. File checks only. */
+    /**
+     * Whether the project is a process app: arco.json, or a go.mod without arco.php that is not an Arco Laravel
+     * app (Arco Cloud's rule). Reads composer.json only in that last case.
+     */
     public static function isProcess(string $projectDir): bool
     {
         return is_file($projectDir . '/arco.json')
-            || (! is_file($projectDir . '/arco.php') && is_file($projectDir . '/go.mod'));
+            || (! is_file($projectDir . '/arco.php') && is_file($projectDir . '/go.mod') && ! self::isArcoLaravelApp($projectDir));
+    }
+
+    /** composer.json requires both multiapi/arco and multiapi/arco-laravel (require or require-dev); unreadable counts as no. */
+    private static function isArcoLaravelApp(string $projectDir): bool
+    {
+        $json = is_file($projectDir . '/composer.json') ? @file_get_contents($projectDir . '/composer.json') : false;
+        $composer = $json === false ? null : json_decode($json, true);
+        if (! is_array($composer)) {
+            return false;
+        }
+        foreach (['multiapi/arco', 'multiapi/arco-laravel'] as $package) {
+            $required = false;
+            foreach (['require', 'require-dev'] as $section) {
+                $required = $required || (is_array($composer[$section] ?? null) && array_key_exists($package, $composer[$section]));
+            }
+            if (! $required) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /** Whether the project root has a configuration file (arco.php or arco.json). */

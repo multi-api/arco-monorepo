@@ -119,6 +119,36 @@ final class ProjectConfigTest extends TestCase
         self::assertArrayNotHasKey('process', $result['raw']);
     }
 
+    public function test_an_arco_laravel_composer_json_keeps_a_layer_only_project_on_php(): void
+    {
+        $dir = $this->project(['go.mod']);
+        file_put_contents($dir . '/composer.json', '{"require":{"multiapi/arco-laravel":"^1"},"require-dev":{"multiapi/arco":"^1"}}');
+
+        $result = ProjectConfig::raw($dir, $this->layer());
+
+        self::assertArrayNotHasKey('process', $result['raw']);
+        self::assertFalse(ProjectConfig::isProcess($dir));
+    }
+
+    public function test_a_stray_or_partial_composer_json_does_not_stop_go_detection(): void
+    {
+        foreach (['{"require-dev":{"squizlabs/php_codesniffer":"^3"}}', '{"require":{"multiapi/arco":"^1"}}', 'not json'] as $composer) {
+            $dir = $this->project(['go.mod']);
+            file_put_contents($dir . '/composer.json', $composer);
+
+            self::assertSame(['language' => 'go'], ProjectConfig::raw($dir, $this->layer())['raw']['process']);
+            self::assertTrue(ProjectConfig::isProcess($dir));
+        }
+    }
+
+    public function test_arco_json_is_process_even_with_a_composer_json(): void
+    {
+        $dir = $this->project(['arco.json']);
+        file_put_contents($dir . '/composer.json', '{"require":{"multiapi/arco":"^1","multiapi/arco-laravel":"^1"}}');
+
+        self::assertTrue(ProjectConfig::isProcess($dir));
+    }
+
     public function test_arco_php_with_a_layer_keeps_arco_php(): void
     {
         $result = ProjectConfig::raw($this->project(['arco.php']), $this->layer('shop', 'us-east-1'));
