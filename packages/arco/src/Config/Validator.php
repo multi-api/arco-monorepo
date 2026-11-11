@@ -220,6 +220,7 @@ final class Validator
             }
         }
         self::validateGenericTables($config, $result);
+        self::validateProcess($config, $result);
 
         // The script every command goes through (artisan), as the console runtime runs it: php <entry> <args>.
         $entry = null;
@@ -274,6 +275,91 @@ final class Validator
         }
 
         return $result;
+    }
+
+    /** PHP-only settings a process app sets (any source), as the keys the error names. */
+    private const PROCESS_UNSUPPORTED = [
+        'console', 'scheduler', 'consoleTimeout', 'consoleMemory', 'cache', 'failedJobsTable', 'deployCommands',
+        'runtime.php', 'runtime.frankenphp', 'runtime.build', 'runtime.binary', 'runtime.phpBinary',
+        'runtime.workers', 'runtime.maxThreads', 'runtime.threads', 'runtime.mode',
+    ];
+
+    /** Process apps refuse the PHP-only settings and check their own keys; PHP apps refuse the process-only ones. */
+    private static function validateProcess(AppConfig $config, ValidationResult $result): void
+    {
+        $queueRoutes = [];
+        foreach ($config->queues as $queue) {
+            if ($queue->route !== null) {
+                $queueRoutes[] = $queue;
+            }
+        }
+        if (! $config->isProcess()) {
+            foreach ($queueRoutes as $queue) {
+                $result->error('validation.queue_route_php', ['queue' => $queue->name]);
+            }
+            if ($config->schedules !== []) {
+                $result->error('validation.schedules_php', ['schedules' => implode(', ', array_map(fn (ScheduleConfig $s): string => $s->name, $config->schedules))]);
+            }
+            return;
+        }
+
+        foreach (self::PROCESS_UNSUPPORTED as $key) {
+            if (($config->sources[$key] ?? 'default') !== 'default') {
+                $result->error('validation.process_unsupported', ['key' => $key]);
+            }
+        }
+        if ($config->runtime->phpIni !== []) {
+            $result->error('validation.process_unsupported', ['key' => 'runtime.phpIni']);
+        }
+
+        $process = $config->process;
+        if ($process !== null) {
+            if ($process->language !== 'go') {
+                $result->error('validation.process_language', ['language' => $process->language]);
+            }
+            if ($process->main !== null && trim($process->main) === '') {
+                $result->error('validation.process_main');
+            }
+            if (! str_starts_with($process->healthPath, '/')) {
+                $result->error('validation.route', ['kind' => 'healthPath', 'name' => $process->healthPath]);
+            }
+            foreach ($process->command as $part) {
+                if (trim($part) === '') {
+                    $result->error('validation.process_command');
+                    break;
+                }
+            }
+        }
+
+        foreach ($config->queues as $queue) {
+            if (! str_starts_with($queue->route(), '/')) {
+                $result->error('validation.route', ['kind' => 'queue', 'name' => $queue->name]);
+            }
+        }
+        $byVariable = [];
+        foreach ($config->queues as $queue) {
+            $byVariable[QueueConfig::urlVariable($queue->name)][] = $queue->name;
+        }
+        foreach ($byVariable as $variable => $names) {
+            if (count($names) > 1) {
+                $result->error('validation.queue_variable_collision', ['queues' => implode(', ', $names), 'variable' => $variable]);
+            }
+        }
+
+        foreach ($config->schedules as $schedule) {
+            if (preg_match('/^[a-z0-9][a-z0-9-]*$/', $schedule->name) !== 1 || strlen($schedule->name) > 40) {
+                $result->error('validation.schedule_name', ['name' => $schedule->name]);
+            }
+            if (ScheduleExpression::toEventBridge($schedule->every) === null) {
+                $result->error('validation.schedule_every', ['schedule' => $schedule->name, 'every' => $schedule->every]);
+            }
+            if ($schedule->timeout < 1 || $schedule->timeout > 900) {
+                $result->error('validation.schedule_timeout', ['schedule' => $schedule->name, 'value' => $schedule->timeout]);
+            }
+            if (! str_starts_with($schedule->route(), '/')) {
+                $result->error('validation.route', ['kind' => 'schedule', 'name' => $schedule->name]);
+            }
+        }
     }
 
     /**

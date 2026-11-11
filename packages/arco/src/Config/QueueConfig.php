@@ -34,6 +34,12 @@ final readonly class QueueConfig
     ) {
     }
 
+    /** The variable that holds a queue's URL in a process app: ARCO_QUEUE_<NAME>_URL, every non-alphanumeric character a `_`. */
+    public static function urlVariable(string $name): string
+    {
+        return 'ARCO_QUEUE_' . preg_replace('/[^A-Z0-9]/', '_', strtoupper($name)) . '_URL';
+    }
+
     public function route(): string
     {
         return $this->route ?? '/_arco/queues/' . $this->name;
