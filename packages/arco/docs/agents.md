@@ -1,7 +1,7 @@
 # Arco for coding agents
 
 This page is for a coding agent (Claude Code, Codex, Cursor, ...) working in a PHP or Laravel project that deploys
-with Arco. It says how to drive the `arco` CLI safely without a human at the keyboard, what each command and
+with Arco, or in a Go project that deploys with `arco.json` (see [Go apps](#go-apps-arcojson)). It says how to drive the `arco` CLI safely without a human at the keyboard, what each command and
 `arco.php` method does, and how to fix the errors you will meet. The human-facing docs have every detail; this page
 links to them instead of repeating them:
 
@@ -65,6 +65,9 @@ unless the user explicitly says otherwise for the case at hand.
 - **Never packaged:** `.env` and `.env.*` (anywhere), `vendor/` (rebuilt), `node_modules/`, `.git/`, `.arco/`, editor
   and AI-assistant folders (`.claude`, `.cursor`, `.codex`, ...). The Laravel preset also excludes `storage/**` and
   `tests/**`.
+- **Go apps** have `arco.json` instead of `arco.php` (both at once is an error) and run a binary that listens on
+  `PORT`. Queues and schedules POST to routes of the app under `/_arco/`, which the public endpoint never serves.
+  See [Go apps](#go-apps-arcojson).
 - **`.arco/`** (git-ignored) holds the remembered profile per environment (`.arco/local.php`) and built zips
   (`.arco/build/`).
 
@@ -160,6 +163,30 @@ buckets, tables, variables, domains and settings and never overrides `arco.php`:
 `queue:list` or the editing commands to see layer entries. A layer queue, storage or table with `adopt: true` imports
 a retained resource of this app and environment. `--json` errors carry `error.params` when the key has params
 (`config.layer_conflict`: `{kind, name}`). Format, merge rules and adoption: [Config layer](config-layer.md).
+
+### Go apps (`arco.json`)
+
+A project with `arco.json` (or, with a config layer and no config file, a `go.mod`) is a
+[process app](configuration.md#process-runtime-go). Arco is installed globally (`composer global require
+multiapi/arco`), so run `arco`, not `vendor/bin/arco`, and Go must be on `PATH`.
+
+- `deploy`, `package`, `info`, `logs`, `remove`, `resources`, `scheduler:pause`, `scheduler:resume`, `queue:list`,
+  `queue:dlq` and `storage:list` work as for PHP. `info --json` adds `runtime`, `schedules`
+  (`[{name, every, expression, route, timeout, rule, paused}]`) and `queues[].route`.
+- `command`, `tinker`, `queue:failed-table`, `scheduler:set`, `scheduler:remove` and every command that edits
+  `arco.php` refuse with `config.process_unsupported_command` (`{command}`) and change nothing. Edit `arco.json` by
+  hand, then validate with `arco info --env=<env> --json -n`.
+- `scheduler:pause` / `scheduler:resume` pause or resume all the environment's schedules at once (ask first: they
+  change AWS). A deploy keeps the paused state.
+- Without `environments` in `arco.json`, always pass `--env` (else `config.env_required`).
+- Deploy steps for schedules: `deploy.schedule_created`, `deploy.schedule_updated`, `deploy.schedule_deleted`
+  (`{schedule, rule}`) and `deploy.schedule_paused` (`{schedule}`, a new schedule that starts paused).
+
+`arco.json` reference: [Process runtime (Go)](configuration.md#arcojson). Keys: `name`, `region`, `runtime`
+(`kind`, `language`, `main`, `command`, `healthPath`), `include`, `exclude`, `settings`, `variables`, `permissions`,
+`domains`, `queues` (with `route`), `storage`, `tables`, `schedules` (`every`, `route`, `timeout`) and
+`environments`. Never put `console`, `scheduler`, `consoleTimeout`, `consoleMemory`, `cache`, `failedJobsTable` or
+`deployCommands` in it (`validation.process_unsupported`).
 
 ### Run code on the console function
 
@@ -431,6 +458,17 @@ naming the `composer require` to run. In `require`, not `require-dev` (the build
 7. Suggest locking the environment to its account: `->account('<id>')` (the id is in the `deploy.target` step's
    params).
 
+### First deploy of a Go app
+
+1. Check that `go` and a global `arco` are on `PATH` (`composer global require multiapi/arco`).
+2. Write `arco.json` with `name`, `region` and `environments`; add `runtime.main` when the root is not
+   `package main` and `cmd/` has several commands, `include` for files the binary reads at run time, and `queues` /
+   `schedules` with routes under `/_arco/` that the app serves (`POST`, `2xx` = done).
+3. Validate: `arco info --env=staging --json -n`. Build only: `arco package --env=staging`.
+4. Profile and secrets as for Laravel (steps 4 and 5 above; `arco secret:set` works the same).
+5. With the user's go-ahead: `arco deploy --env=staging --yes --json -n`. The health check is a `GET` of
+   `runtime.healthPath` (default `/`), which must answer `2xx`.
+
 ### Change a setting or add a feature
 
 ```bash
@@ -614,7 +652,17 @@ not. The most common ones:
 | `config.layer_schema`, `config.layer_invalid` | The layer has no `schema: 1`, or an unknown key, a wrong type or bad JSON (`path` is a JSON pointer) | Fix the layer at `path` ([Config layer](config-layer.md)) |
 | `config.layer_missing` | No `arco.php` and the layer lacks `name` or `region` | Add the key to the layer |
 | `config.layer_environment` | `--env` is not the layer's environment | Drop `--env` or use the layer's |
-| `config.layer_conflict` | The layer sets differently something `arco.php` sets (`kind`: `name`, `region`, `setting`, `variable`, `queue`, `storage`, `table`) | Remove it from one of them; every conflict is listed |
+| `config.layer_conflict` | The layer sets differently something `arco.php` or `arco.json` sets (`kind`: `name`, `region`, `setting`, `variable`, `queue`, `storage`, `table`, `schedule`) | Remove it from one of them; every conflict is listed |
+| `config.both_files` | `arco.php` and `arco.json` at the project root | Keep one: `arco.php` for PHP apps, `arco.json` for Go apps. Ask the user which |
+| `config.json_invalid` | `arco.json` has bad JSON, an unknown key or a wrong type (`pointer` is a JSON pointer) | Fix `arco.json` at `pointer` ([`arco.json`](configuration.md#arcojson)) |
+| `config.json_missing` | Neither `arco.json` nor the layer sets `name` or `region` | Add the key to `arco.json` |
+| `config.json_runtime_missing`, `config.json_php_runtime` | `arco.json` without `runtime` and no `go.mod`; or `runtime.kind: "php"` | Add `"runtime": {"language": "go"}` (and a `go.mod`); PHP apps use `arco.php` |
+| `config.env_required` | `arco.json` declares no environments and there is no `--env` | Pass `--env=<env>` |
+| `validation.process_unsupported` | A PHP-only setting (`console`, `scheduler`, `cache`, `failedJobsTable`, `deployCommands`, ...) in a Go app, `key` names it | Remove it from `arco.json` or the layer |
+| `validation.process_main_flag`, `validation.process_main`, `validation.process_command`, `validation.process_language`, `validation.route` | Bad `runtime` value, or a route not starting with `/` | Fix the value the message names |
+| `validation.schedule_name`, `validation.schedule_every`, `validation.schedule_timeout` | Bad schedule name, `every` (`5m`, `1h`, `1d` or 5-field cron in UTC) or `timeout` (1 to 900) | Fix the schedule |
+| `validation.queue_variable_collision` | Two queue names give the same `ARCO_QUEUE_<NAME>_URL` | Rename one queue |
+| `validation.queue_route_php`, `validation.schedules_php` | A queue `route` or `schedules` in a PHP app | Remove them; PHP apps use `scheduler()` |
 | `config.layer_adopt_waiting` (note) | A layer `adopt: true` entry waits because `arco.php` still declares the name | Remove the name from `arco.php` |
 | `config.removed_*`, `config.changed_*` | API removed or renamed in 0.9 | Apply the replacement the message gives ([Upgrading](upgrading.md)) |
 | `validation.*` | A value out of range or a bad name (`validation.region`, `validation.timeout`, `validation.queue_name`, `validation.bucket_name_length`, `validation.vpc_id`, ...) | The message names the rule; fix the value in `arco.php`. Name length errors need a shorter app, environment or resource name |
@@ -659,6 +707,9 @@ not. The most common ones:
 | `build.needs_packages`, `laravel.octane_missing` | The preset needs packages `composer.json` does not require | Run the `composer require` given |
 | `deploy.needs_packages` | Features in `arco.php` need packages missing from the built package | Run the `composer require` given (in `require`, not `require-dev`) |
 | `build.command_failed` | `composer install --no-dev` or a preset build command failed | Read the output; reproduce locally (`composer install --no-dev`, `php artisan event:cache`) |
+| `build.go_missing` | No `go` on `PATH` | Install Go, or ask the user to |
+| `runtime.main_required` | Arco cannot tell which Go package to build | Set `runtime.main` in `arco.json` (`"./cmd/api"`) |
+| `deploy.process_package_too_large` | A Go app with queues or schedules unzips to more than 250 MB | Fewer `include` files or a smaller binary |
 | `package.too_large` | Unzipped package over 512 MB | `->exclude([...])` what the app does not need at runtime (the message lists the largest directories) |
 | `deploy.workers_package_too_large`, `deploy.console_skipped_size` (warning) | Console/worker package over Lambda's 250 MB | `->exclude([...])` large folders |
 | `package.not_arco`, `package.wrong_target`, `package.wrong_preset`, `package.corrupt` | `--package` zip unusable for this target | Rebuild with `arco package --env=<env>` |
@@ -675,6 +726,7 @@ not. The most common ones:
 | `deploy.verify_failed` (`rolled_back: true`) | The new revision failed its health check | See [Debug a failed deploy](#debug-a-failed-deploy) |
 | `deploy.verify_iam_no_report` | `auth('iam')` without a domain: no init report in time | Check the logs; Floci never writes it |
 | `deploy.verify_signed_forbidden` | With `domain()`, the signed `/up` probe got 403 | Allow `lambda:InvokeWebFunctionEndpoint` in the deploy profile |
+| `deploy.runtime_kind_changed` | The environment was deployed as the other kind of app (PHP or Go): `function` runs `runtime` | Nothing changed. Only with the user's go-ahead: `arco remove --env=<env>`, then deploy (queues, buckets and tables stay) |
 | `deploy.queue_retained`, `deploy.queue_dlq_retained`, `deploy.storage_retained`, `deploy.table_retained`, `deploy.generic_table_retained` | A kept queue, bucket or table already has the name | Attach it with the `existing:` line the message prints, or choose another name. Do not delete the kept resource without the user |
 | `deploy.import_failed` | CloudFormation could not import a retained resource adopted with a layer's `adopt: true`; it rolled the import back and the resource is untouched | Read the reason, fix it, deploy again. Reason `cloudformation:GetTemplate`: refused before any change because the running template cannot be read; allow it. Steps `deploy.step_import` (`deploy.step_import_one` for one resource), `deploy.queue_adopted`, `deploy.queue_dlq_adopted` (an imported dead-letter queue, after its queue's step), `deploy.storage_adopted` and `deploy.generic_table_adopted` are the import's progress, not errors |
 | `deploy.queue_replaced`, `deploy.resource_replaced` | A change CloudFormation would do by replacement (FIFO on/off, ...) | Undo it; add a new queue or resource under another name |
@@ -708,6 +760,7 @@ failed, usually for a missing permission the message names.
 | `queue.dlq_missing` | Deploy first |
 | `scheduler.no_rule`, `scheduler.apply_needs_env`, `scheduler.apply_needs_deploy` | `scheduler:set` and deploy first; `--apply` needs `--env` |
 | `editor.lint_failed`, `editor.verify_failed` | The edit was refused and `arco.php` restored: make the change by hand with the line printed |
+| `config.process_unsupported_command` | The command (`command`) is PHP-only or edits `arco.php`, and this is a Go app: edit `arco.json` by hand |
 | `remove.nothing` | The environment is not deployed; nothing to do |
 | `error.unexpected` | An unexpected exception (`message` has it); report it with the command and Arco version (`vendor/bin/arco --version`) |
 
