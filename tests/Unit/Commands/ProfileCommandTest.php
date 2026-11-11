@@ -76,4 +76,26 @@ final class ProfileCommandTest extends TestCase
         self::assertStringContainsString('--env', $tester->getDisplay());
         $project->restore();
     }
+
+    public function test_arco_json_leaving_name_and_region_to_the_layer_lists_its_environments(): void
+    {
+        $project = new ProjectFixture();
+        file_put_contents($project->dir . '/arco.json', '{"runtime":{"language":"go"},"environments":{"staging":{},"production":{}}}');
+        (new LocalState($project->dir))->rememberProfile('production', 'acme-prod');
+
+        $tester = $project->tester(new ProfileCommand());
+        $tester->execute(['--json' => true], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful($tester->getDisplay());
+        self::assertSame(
+            ['schema' => 1, 'profiles' => [['environment' => 'staging', 'profile' => null], ['environment' => 'production', 'profile' => 'acme-prod']]],
+            json_decode($tester->getDisplay(), true),
+        );
+
+        $tester = $project->tester(new ProfileCommand());
+        $tester->execute([], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful($tester->getDisplay());
+        self::assertMatchesRegularExpression('/production\s+acme-prod/', $tester->getDisplay());
+        self::assertStringNotContainsString('name', $tester->getDisplay());
+        $project->restore();
+    }
 }

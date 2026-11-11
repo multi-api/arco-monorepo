@@ -11,10 +11,12 @@ final class ProjectConfig
     /**
      * The raw configuration array ConfigResolver reads.
      *
+     * @param bool $identity false for a caller that reads only the environments (`arco profile`): an arco.json may then
+     *        leave `name` and `region` to a layer it was not given
      * @return array{raw: array<string, mixed>, hasArcoPhp: bool} hasArcoPhp: arco.php is the source (false for arco.json, go.mod and a layer alone)
      * @throws ConfigException config.both_files, config.not_found, config.json_*, config.layer_missing
      */
-    public static function raw(string $projectDir, ?ConfigLayer $layer): array
+    public static function raw(string $projectDir, ?ConfigLayer $layer, bool $identity = true): array
     {
         $arcoPhp = $projectDir . '/arco.php';
         $arcoJson = $projectDir . '/arco.json';
@@ -28,7 +30,7 @@ final class ProjectConfig
         }
         if (is_file($arcoJson)) {
             $raw = ArcoJson::load($arcoJson, $hasGoMod);
-            foreach (['name', 'region'] as $key) {
+            foreach ($identity ? ['name', 'region'] : [] as $key) {
                 if ($raw[$key] === null && ($layer === null || $layer->$key === null)) {
                     throw ConfigException::make('config.json_missing', ['key' => $key]);
                 }

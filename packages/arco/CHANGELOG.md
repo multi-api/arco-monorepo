@@ -18,7 +18,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   PHP; `arco.json` is a process app; with neither, a config layer and a `go.mod` make a Go app unless `composer.json`
   requires both `multiapi/arco` and `multiapi/arco-laravel`. New errors `config.both_files`, `config.json_invalid`
   (`{pointer, reason}`), `config.json_missing` (`{key}`), `config.json_runtime_missing`, `config.json_php_runtime`
-  and `config.env_required`.
+  and `config.env_required`. `arco profile` (the list and `--json`) needs neither `name` nor `region`.
 - **Added:** `queues.<name>.route` (default `/_arco/queues/<name>`) in `arco.json` and the config layer: a process
   app's queue worker (`nodejs24.x`, handler `worker.handler`, same zip) `POST`s each message to it with
   `Content-Type`, `X-Arco-Queue`, `X-Arco-Message-Id` and `X-Arco-Receive-Count`; `2xx` deletes it, anything else is a

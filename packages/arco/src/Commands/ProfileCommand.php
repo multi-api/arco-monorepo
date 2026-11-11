@@ -45,7 +45,7 @@ final class ProfileCommand extends ArcoCommand
                 if ($input->getOption('set') !== null) {
                     throw new UserError($this->t('profile.json_with_set'));
                 }
-                $environments = ConfigResolver::environments(ProjectConfig::raw($this->projectDir(), null)['raw']);
+                $environments = ConfigResolver::environments(ProjectConfig::raw($this->projectDir(), null, identity: false)['raw']);
                 if (is_string($only) && $only !== '' && ! in_array($only, $environments, true)) {
                     throw new UserError($this->t('profile.unknown_environment', ['environment' => $only, 'available' => implode(', ', $environments)]));
                 }
@@ -61,7 +61,7 @@ final class ProfileCommand extends ArcoCommand
             }
 
             if (! is_string($only)) {
-                $raw = ProjectConfig::raw($this->projectDir(), null)['raw'];
+                $raw = ProjectConfig::raw($this->projectDir(), null, identity: false)['raw'];
                 $io->table(
                     [$this->t('profile.environment'), $this->t('profile.profile')],
                     array_map(fn (string $env) => [$env, $state->profile($env) ?? '-'], ConfigResolver::environments($raw)),
