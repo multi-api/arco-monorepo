@@ -6,13 +6,13 @@ const net = require('node:net');
 const path = require('node:path');
 const { pipeAccessLog } = require('./accesslog');
 
-function prepareTmp(dir) {
-  for (const sub of [
-    'storage/app/public', 'storage/framework/cache/data', 'storage/framework/sessions',
-    'storage/framework/views', 'storage/logs', 'caddy/config', 'caddy/data',
-  ]) {
-    fs.mkdirSync(path.join(dir, sub), { recursive: true });
-  }
+const PHP_TMP_SUBDIRS = [
+  'storage/app/public', 'storage/framework/cache/data', 'storage/framework/sessions',
+  'storage/framework/views', 'storage/logs', 'caddy/config', 'caddy/data',
+];
+
+function prepareTmp(dir, subdirs = PHP_TMP_SUBDIRS) {
+  for (const sub of subdirs) fs.mkdirSync(path.join(dir, sub), { recursive: true });
 }
 
 function resolveBinary(root, tmp) {
@@ -30,19 +30,32 @@ function resolveBinary(root, tmp) {
   }
 }
 
-function spawnFrankenphp(binary, caddyfile, env, cwd, log, { accessLog = false } = {}) {
-  const stdio = accessLog ? ['inherit', 'pipe', 'inherit'] : 'inherit';
-  const child = spawn(binary, ['run', '--config', caddyfile, '--adapter', 'caddyfile'], { cwd, env, stdio });
-  if (accessLog) pipeAccessLog(child.stdout, process.stdout);
+// Starts a child, forwards SIGTERM/SIGINT to it and reports its end through onExit(code, signal).
+function spawnProcess(command, args, { env, cwd, stdio, onExit } = {}) {
+  const child = spawn(command, args, { cwd, env, stdio });
   child.on('exit', (code, signal) => {
-    log('frankenphp_exit', { code, signal });
-    process.exit(code ?? 1);
+    if (onExit) onExit(code, signal);
   });
   for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
   return child;
 }
 
-function waitForPort(host, port, timeoutMs = 9000) {
+function spawnFrankenphp(binary, caddyfile, env, cwd, log, { accessLog = false } = {}) {
+  const stdio = accessLog ? ['inherit', 'pipe', 'inherit'] : 'inherit';
+  const child = spawnProcess(binary, ['run', '--config', caddyfile, '--adapter', 'caddyfile'], {
+    cwd,
+    env,
+    stdio,
+    onExit: (code, signal) => {
+      log('frankenphp_exit', { code, signal });
+      process.exit(code ?? 1);
+    },
+  });
+  if (accessLog) pipeAccessLog(child.stdout, process.stdout);
+  return child;
+}
+
+function waitForPort(host, port, timeoutMs = 9000, name = 'FrankenPHP') {
   const deadline = Date.now() + timeoutMs;
   return new Promise((resolve, reject) => {
     const attempt = () => {
@@ -50,7 +63,7 @@ function waitForPort(host, port, timeoutMs = 9000) {
       socket.once('connect', () => { socket.destroy(); resolve(); });
       socket.once('error', () => {
         socket.destroy();
-        if (Date.now() > deadline) reject(new Error(`FrankenPHP did not listen on ${host}:${port} within ${timeoutMs} ms`));
+        if (Date.now() > deadline) reject(new Error(`${name} did not listen on ${host}:${port} within ${timeoutMs} ms`));
         else setTimeout(attempt, 25);
       });
     };
@@ -60,7 +73,8 @@ function waitForPort(host, port, timeoutMs = 9000) {
 
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer']);
 
-function startProxy(host, port, upstreamHost, upstreamPort) {
+// options is reserved for the process kind (request ids, access log, /_arco/ guard); PHP passes none.
+function startProxy(host, port, upstreamHost, upstreamPort, options = {}) {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 256 });
   const server = http.createServer((req, res) => {
     const headers = {};
@@ -87,4 +101,4 @@ function startProxy(host, port, upstreamHost, upstreamPort) {
   return new Promise((resolve) => server.listen(port, host, () => resolve(server)));
 }
 
-module.exports = { prepareTmp, resolveBinary, spawnFrankenphp, waitForPort, startProxy };
+module.exports = { prepareTmp, resolveBinary, spawnProcess, spawnFrankenphp, waitForPort, startProxy };
