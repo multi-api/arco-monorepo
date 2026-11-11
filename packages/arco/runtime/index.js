@@ -60,7 +60,9 @@ async function main({ fs = nodeFs, log = defaultLog } = {}) {
   }
 }
 
-if (require.main === module) {
+// Start on load, whoever loads this file: the Lambda Web Functions runtime may launch it as the main module or
+// through require(), and a runtime that never starts would break every app. Tests set the opt-out before requiring.
+if (globalThis.__ARCO_NO_AUTOSTART__ !== true) {
   main().catch((error) => {
     defaultLog('fatal', { error: error.message });
     process.exit(1);

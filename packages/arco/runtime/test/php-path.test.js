@@ -1,7 +1,8 @@
 'use strict';
 // Records what the PHP startup path (index.js main -> supervisor) does, with child_process, net, http, fs and
 // process.exit stubbed. The fixture was taken before the supervisor refactor; the refactor must not change it.
-// Re-record with RECORD=1 only when the PHP path is meant to change.
+// Re-record with RECORD=1 only when the PHP path is meant to change. bin/test-docker does not forward RECORD, so run:
+// docker run --rm --init --network none --user "$(id -u):$(id -g)" --mount "type=bind,source=$PWD,target=/app" --workdir /app -e RECORD=1 arco-test:php84 node --test packages/arco/runtime/test/php-path.test.js
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const childProcess = require('node:child_process');
@@ -82,6 +83,7 @@ async function record(config) {
   const signalListeners = Object.fromEntries(['SIGTERM', 'SIGINT'].map((s) => [s, process.listeners(s)]));
   delete require.cache[INDEX];
   delete require.cache[SUPERVISOR];
+  globalThis.__ARCO_NO_AUTOSTART__ = true;
   try {
     const { main } = require(INDEX);
     const fakeFs = {
@@ -93,6 +95,7 @@ async function record(config) {
     children[0].emit('exit', 3, null);
     out.signals = Object.fromEntries(['SIGTERM', 'SIGINT'].map((s) => [s, process.listeners(s).length - signalListeners[s].length]));
   } finally {
+    delete globalThis.__ARCO_NO_AUTOSTART__;
     for (const [signal, keep] of Object.entries(signalListeners)) {
       for (const listener of process.listeners(signal)) if (!keep.includes(listener)) process.removeListener(signal, listener);
     }
