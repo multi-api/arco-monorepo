@@ -100,10 +100,19 @@ final class AwsDeployer implements Deployer
             $names[] = SchedulerRule::name($config);
         }
         $resources[] = $rule;
+        // A process app's schedule rules, by the names this deploy will put: refused here, before the web
+        // revision moves, rather than in the schedule step. Checked only, never claimed: with --force the
+        // schedule step takes a rule over (and warns), and checks again as it runs.
+        $scheduleRules = [];
+        if ($config->isProcess()) {
+            foreach ($config->schedules as $schedule) {
+                $scheduleRules[] = $guard->schedulerRule(ProcessSchedules::ruleName($config, $schedule->name));
+            }
+        }
         // Read-only, before claim() tags anything: a stack refusal later would come after those tags.
         $this->checkStacks($config);
         // Refusals first: nothing more is read of a resource that is not this environment's.
-        $guard->check($config, array_values(array_filter($resources)), $this->force);
+        $guard->check($config, array_values(array_filter([...$resources, ...$scheduleRules])), $this->force);
         // Before claim() tags anything, and even with --force: the console or a worker of the other kind (PHP
         // vs process) would keep its runtime through an update, and run code it cannot start.
         self::refuseKindChange($config, array_values(array_filter($classic)));

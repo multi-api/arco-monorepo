@@ -187,7 +187,9 @@ multiapi/arco`), so run `arco`, not `vendor/bin/arco`, and Go must be on `PATH`.
 - Deploy steps for schedules: `deploy.schedule_created`, `deploy.schedule_updated`, `deploy.schedule_deleted`
   (`{schedule, rule}`) and `deploy.schedule_paused` (`{schedule}`, a new schedule that starts paused). The warning
   `deploy.schedules_failed` (`{error}`) means the deploy is live and verified but the rules were not updated: fix the
-  permissions and deploy again. `deploy --force` takes over a same-named schedule rule of another environment.
+  permissions and deploy again. A same-named schedule rule of another app or environment, or one without tags, is
+  refused with `deploy.not_owned` / `deploy.untagged_resource` before the deploy changes anything; only the user may
+  decide to take it over with `deploy --force`.
 - `info` (the table) hides the PHP-only rows (`runtime.build`, `runtime.binary`, `runtime.workers`,
   `runtime.maxThreads`, `runtime.threads`, `runtime.mode`, `scheduler`, `consoleTimeout`, `deployCommands`); `--json`
   keeps every key and appends `runtime`, `schedules` and `queues[].route`. `schedules[].paused` is `true` or `false`

@@ -1297,6 +1297,66 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([['deploy.schedule_created', ['schedule' => 'cleanup', 'rule' => $rule]]], $steps);
     }
 
+    /** @return list<Result> the ownership reads of a process schedule rule (DescribeRule, ListTagsForResource) */
+    private static function scheduleRuleTags(string $rule, array $tags): array
+    {
+        return [
+            new Result(['Name' => $rule, 'Arn' => "arn:aws:events:us-east-1:111111111111:rule/$rule", 'Description' => 'Arco: schedule cleanup (1h) on shop-production-console:live', 'State' => 'ENABLED']),
+            new Result(['Tags' => self::tagList($tags)]),
+        ];
+    }
+
+    public function test_an_untagged_schedule_rule_of_a_process_app_stops_the_deploy_before_any_change(): void
+    {
+        $config = self::processConfig(['cleanup' => ['every' => '1h']]);
+        $rule = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console', null, 'Arco console function'), self::noRule(), ...self::scheduleRuleTags($rule, [])]);
+
+        try {
+            self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep()), $config);
+            self::fail('expected deploy.untagged_resource');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.untagged_resource', $e->key);
+            self::assertSame(['resource' => $rule], $e->params);
+        }
+        self::assertSame(['GetRole', 'GetWebFunction', 'ListTags', 'GetFunctionConfiguration', 'ListTags', 'DescribeRule', 'DescribeRule', 'ListTagsForResource'], $mocks->calls, 'only reads');
+    }
+
+    public function test_a_schedule_rule_of_another_environment_stops_a_process_deploy_before_any_change(): void
+    {
+        $config = self::processConfig(['cleanup' => ['every' => '1h']]);
+        $rule = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console'), self::noRule(), ...self::scheduleRuleTags($rule, self::tags('shop', 'staging'))]);
+
+        $this->expectExceptionObject(DeployException::make('deploy.not_owned', ['resource' => $rule, 'app' => 'shop', 'environment' => 'staging']));
+        self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep()), $config);
+    }
+
+    public function test_with_force_an_untagged_schedule_rule_is_left_to_the_schedule_step(): void
+    {
+        $config = self::processConfig(['cleanup' => ['every' => '1h']]);
+        $rule = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console'), self::noRule(), ...self::scheduleRuleTags($rule, []), ...self::liveRevision()]);
+
+        self::assertSame([], self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: true), $config));
+        self::assertNotContains('TagResource', $mocks->calls, 'the schedule step takes it over, with its warning');
+        self::assertCount(0, $mocks->handler);
+    }
+
+    public function test_a_schedule_rule_of_this_environment_passes_the_preflight(): void
+    {
+        $config = self::processConfig(['cleanup' => ['every' => '1h']]);
+        $rule = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[self::roleTags(), ...self::webTags(), ...self::lambdaTags('shop-production-console'), self::noRule(), ...self::scheduleRuleTags($rule, [...self::tags(), 'arco:schedule' => 'cleanup']), ...self::liveRevision()]);
+
+        self::assertSame([], self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep()), $config));
+        self::assertCount(0, $mocks->handler);
+    }
+
     public function test_sync_scheduler_of_a_process_app_without_schedules_only_deletes_stale_rules(): void
     {
         $config = self::processConfig([]);

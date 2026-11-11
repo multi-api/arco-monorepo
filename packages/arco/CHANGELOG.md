@@ -32,7 +32,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `scheduler:resume` pause and resume every schedule of the environment; `arco remove` deletes the rules. New deploy
   steps `deploy.schedule_created`, `deploy.schedule_updated`, `deploy.schedule_deleted` (`{schedule, rule}`) and
   `deploy.schedule_paused` (`{schedule}`), and a warning `deploy.schedules_failed` (`{error}`: the deploy is live and
-  verified, the rules were not updated; deploy again) ([Schedules](docs/configuration.md#schedules)).
+  verified, the rules were not updated; deploy again). A same-named rule of another app or environment, or an untagged
+  one, is refused (`deploy.not_owned`, `deploy.untagged_resource`) before the deploy changes anything; `deploy --force`
+  takes it over ([Schedules](docs/configuration.md#schedules)).
 - **Added:** `arco remove` of a process environment deletes its schedule rules (step `remove.step_schedule`,
   `{schedule, rule}`). When the tag scan fails it warns `remove.schedule_scan_failed` (`{error}`) and carries on:
   rules that remain keep firing at the removed console function until they are deleted.

@@ -301,7 +301,7 @@ final class ProcessDeployTest extends TestCase
         $mocks->handler->append(
             AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
             AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
-            ...[...self::existingFunction('shop-production-console', 'provided.al2023'), self::noRule()],
+            ...[...self::existingFunction('shop-production-console', 'provided.al2023'), self::noRule(), self::noRule()], // the Laravel rule, the cleanup rule
         );
 
         try {
@@ -338,7 +338,7 @@ final class ProcessDeployTest extends TestCase
         $mocks->handler->append(
             AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
             AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
-            ...[...self::existingFunction('shop-production-console', 'nodejs24.x'), ...self::existingFunction('shop-production-queue-emails', 'nodejs24.x'), self::noRule(), new Result(['Stacks' => []])],
+            ...[...self::existingFunction('shop-production-console', 'nodejs24.x'), ...self::existingFunction('shop-production-queue-emails', 'nodejs24.x'), self::noRule(), self::noRule(), new Result(['Stacks' => []])],
         );
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->checkOwnership(self::config(), fn () => null);
         self::assertNotContains('TagResource', $mocks->calls);
@@ -371,7 +371,7 @@ final class ProcessDeployTest extends TestCase
             AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
             AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
             self::lambdaMissing('GetFunctionConfiguration'),
-            ...[...self::existingFunction('shop-production-queue-emails', 'nodejs22.x'), self::noRule(), new Result(['Stacks' => []])],
+            ...[...self::existingFunction('shop-production-queue-emails', 'nodejs22.x'), self::noRule(), self::noRule(), new Result(['Stacks' => []])],
         );
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->checkOwnership(self::config(), fn () => null);
 

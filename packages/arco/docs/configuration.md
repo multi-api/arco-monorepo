@@ -1838,8 +1838,9 @@ route receives. `route` is refused for PHP apps (`validation.queue_route_php`).
   `arco scheduler:resume` enables them again (both accept `--config-layer`). They find the rules by tag, print one line
   per schedule (`scheduler.schedule_paused_now`, `scheduler.schedule_resumed_now`, `scheduler.schedule_already_paused`,
   `scheduler.schedule_already_active`) and fail with `scheduler.no_schedule_rules` when AWS has none.
-  `deploy --force` takes over a schedule rule of the same name that another environment owns, like any other resource
-  (`deploy.ownership_forced`). A deploy keeps each rule's state, and a schedule added while the
+  A schedule rule of the same name that another app or environment owns, or that has no tags, stops the deploy
+  before anything changes (`deploy.not_owned`, `deploy.untagged_resource`). `deploy --force` takes it over, like any
+  other resource (`deploy.ownership_forced`). A deploy keeps each rule's state, and a schedule added while the
   environment is paused starts paused.
 - A deploy prints `deploy.schedule_created`, `deploy.schedule_updated` and `deploy.schedule_deleted`
   (`{schedule, rule}`) per rule, and `deploy.schedule_paused` (`{schedule}`) for a new rule that starts paused.
