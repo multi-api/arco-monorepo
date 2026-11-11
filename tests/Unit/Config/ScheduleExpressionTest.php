@@ -35,6 +35,25 @@ final class ScheduleExpressionTest extends TestCase
         yield 'six fields' => ['0 0 9 * * *', null];
         yield 'names' => ['0 9 * * MON', null];
         yield 'weekday out of range' => ['0 9 * * 8', null];
+        yield 'dow step' => ['0 9 * * */2', 'cron(0 9 ? * */2 *)'];
+        yield 'dow range step' => ['0 9 * * 1-5/2', 'cron(0 9 ? * 2-6/2 *)'];
+        yield 'dow full week 0-6' => ['0 9 * * 0-6', 'cron(0 9 ? * 1-7 *)'];
+        yield 'dow 5-7' => ['0 9 * * 5-7', 'cron(0 9 ? * 6-7,1 *)'];
+        yield 'dow 1-7' => ['0 9 * * 1-7', 'cron(0 9 ? * 1-7 *)'];
+        yield 'dow 0-7' => ['0 9 * * 0-7', 'cron(0 9 ? * 1-7 *)'];
+        yield 'dow 7-7' => ['0 9 * * 7-7', null];
+        yield 'minute 60' => ['60 9 * * *', null];
+        yield 'hour 24' => ['0 24 * * *', null];
+        yield 'dom 0' => ['0 9 0 * *', null];
+        yield 'dom 32' => ['0 9 32 * *', null];
+        yield 'month 0' => ['0 9 1 0 *', null];
+        yield 'month 13' => ['0 9 1 13 *', null];
+        yield 'lone dash' => ['- 9 * * *', null];
+        yield 'double comma' => ['0,,5 9 * * *', null];
+        yield 'double dash' => ['1--2 9 * * *', null];
+        yield 'step zero' => ['*/0 9 * * *', null];
+        yield 'reversed range' => ['5-1 9 * * *', null];
+        yield 'minute list range step' => ['0-30/10 9 * * *', 'cron(0-30/10 9 * * ? *)'];
     }
 
     #[DataProvider('expressions')]

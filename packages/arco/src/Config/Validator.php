@@ -104,47 +104,8 @@ final class Validator
         }
     }
 
-    public function validate(AppConfig $config, string $projectDir): ValidationResult
+    private function validatePhpRuntime(AppConfig $config, string $projectDir, ValidationResult $result): void
     {
-        $result = new ValidationResult();
-
-        if (! preg_match(self::NAME, $config->app)) {
-            $result->error('validation.app_name', ['name' => $config->app]);
-        }
-        if (! preg_match(self::NAME, $config->environment)) {
-            $result->error('validation.environment_name', ['name' => $config->environment]);
-        }
-        self::addReservedNameErrors($config, $result);
-        if (strlen($config->functionName()) > 64) {
-            $result->error('validation.function_name_length', ['name' => $config->functionName()]);
-        } elseif (strlen($config->consoleFunctionName()) > 64) {
-            $result->error('validation.console_function_name_length', ['name' => $config->consoleFunctionName()]);
-        }
-        if ($config->region === null) {
-            $result->error('validation.region_missing');
-        } elseif (! in_array($config->region, Arco::REGIONS, true)) {
-            $result->error('validation.region', ['region' => $config->region, 'regions' => implode(', ', Arco::REGIONS)]);
-        }
-        $limits = ['concurrency' => $config->concurrency, 'timeout' => $config->timeout, 'maxInstances' => $config->maxInstances, 'rateLimit' => $config->rateLimit, 'consoleTimeout' => $config->consoleTimeout, 'consoleMemory' => $config->consoleMemory];
-        foreach ($limits as $setting => $value) {
-            self::addSettingError($result, $setting, $value);
-        }
-        if (! in_array($config->auth, ['public', 'iam'], true)) {
-            $result->error('validation.auth', ['value' => $config->auth]);
-        }
-        if ($config->cacheDriver !== null) {
-            $result->error('validation.cache_driver', ['value' => $config->cacheDriver]);
-        }
-        self::addSettingError($result, 'logLevel', $config->logLevel);
-        self::addSettingError($result, 'scheduler', $config->scheduler);
-        self::addSettingError($result, 'logRetention', $config->logRetention === false ? null : $config->logRetention);
-        if ($config->scheduler !== null && $config->console === false) {
-            $result->error('validation.scheduler_needs_console');
-        }
-        if ($config->account !== null && ! preg_match('/^\d{12}$/', $config->account)) {
-            $result->error('validation.account', ['value' => $config->account]);
-        }
-
         $runtime = $config->runtime;
         if ($runtime->workers < 1 || $runtime->maxThreads < $runtime->workers) {
             $result->error('validation.workers', ['workers' => $runtime->workers, 'maxThreads' => $runtime->maxThreads]);
@@ -190,6 +151,58 @@ final class Validator
                 $result->error($e->key, $e->params);
             }
         }
+    }
+
+    public function validate(AppConfig $config, string $projectDir): ValidationResult
+    {
+        $result = new ValidationResult();
+
+        if (! preg_match(self::NAME, $config->app)) {
+            $result->error('validation.app_name', ['name' => $config->app]);
+        }
+        if (! preg_match(self::NAME, $config->environment)) {
+            $result->error('validation.environment_name', ['name' => $config->environment]);
+        }
+        self::addReservedNameErrors($config, $result);
+        if (strlen($config->functionName()) > 64) {
+            $result->error('validation.function_name_length', ['name' => $config->functionName()]);
+        } elseif (strlen($config->consoleFunctionName()) > 64) {
+            $result->error('validation.console_function_name_length', ['name' => $config->consoleFunctionName()]);
+        }
+        if ($config->region === null) {
+            $result->error('validation.region_missing');
+        } elseif (! in_array($config->region, Arco::REGIONS, true)) {
+            $result->error('validation.region', ['region' => $config->region, 'regions' => implode(', ', Arco::REGIONS)]);
+        }
+        // A process app has no console function or scheduler: those settings are refused (validateProcess), not checked.
+        $limits = ['concurrency' => $config->concurrency, 'timeout' => $config->timeout, 'maxInstances' => $config->maxInstances, 'rateLimit' => $config->rateLimit];
+        if (! $config->isProcess()) {
+            $limits += ['consoleTimeout' => $config->consoleTimeout, 'consoleMemory' => $config->consoleMemory];
+        }
+        foreach ($limits as $setting => $value) {
+            self::addSettingError($result, $setting, $value);
+        }
+        if (! in_array($config->auth, ['public', 'iam'], true)) {
+            $result->error('validation.auth', ['value' => $config->auth]);
+        }
+        if ($config->cacheDriver !== null) {
+            $result->error('validation.cache_driver', ['value' => $config->cacheDriver]);
+        }
+        self::addSettingError($result, 'logLevel', $config->logLevel);
+        if (! $config->isProcess()) {
+            self::addSettingError($result, 'scheduler', $config->scheduler);
+        }
+        self::addSettingError($result, 'logRetention', $config->logRetention === false ? null : $config->logRetention);
+        if (! $config->isProcess() && $config->scheduler !== null && $config->console === false) {
+            $result->error('validation.scheduler_needs_console');
+        }
+        if ($config->account !== null && ! preg_match('/^\d{12}$/', $config->account)) {
+            $result->error('validation.account', ['value' => $config->account]);
+        }
+
+        if (! $config->isProcess()) {
+            $this->validatePhpRuntime($config, $projectDir, $result);
+        }
 
         foreach ($config->permissions as $index => $statement) {
             $field = self::invalidStatementField($statement);
@@ -214,7 +227,7 @@ final class Validator
         self::validateDomains($config, $result);
         self::validateQueues($config, $result);
         self::validateStorage($config, $result);
-        foreach ([$config->cacheTable, $config->failedJobsTable] as $table) {
+        foreach ($config->isProcess() ? [] : [$config->cacheTable, $config->failedJobsTable] as $table) {
             if ($table?->existing !== null && ! TableConfig::isTableName($table->existing)) {
                 $result->error('validation.table_existing', ['table' => $table->kind, 'value' => $table->existing]);
             }
@@ -224,11 +237,12 @@ final class Validator
 
         // The script every command goes through (artisan), as the console runtime runs it: php <entry> <args>.
         $entry = null;
-        if ($config->deployCommands !== []) {
+        $deployCommands = $config->isProcess() ? [] : $config->deployCommands;
+        if ($deployCommands !== []) {
             $preset = ($this->presets ?? PresetRegistry::default())->detect($projectDir);
             $entry = $preset instanceof RunsCommands ? $preset->commandEntry() : null;
         }
-        foreach ($config->deployCommands as $index => $command) {
+        foreach ($deployCommands as $index => $command) {
             if (trim($command) === '') {
                 $result->error('validation.deploy_command_empty', ['index' => $index]);
                 continue;

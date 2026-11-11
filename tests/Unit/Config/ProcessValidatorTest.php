@@ -138,4 +138,30 @@ final class ProcessValidatorTest extends TestCase
         self::assertContains('validation.schedules_php', self::keys(['schedules' => ['nightly' => ['every' => '1h']]], false));
         self::assertNotContains('validation.queue_route_php', self::keys(['queues' => ['emails' => []]], false));
     }
+
+    public function test_a_refused_php_option_reports_only_that_error(): void
+    {
+        $unsupported = static fn (string $key): array => [['key' => 'validation.process_unsupported', 'params' => ['key' => $key]]];
+        self::assertSame($unsupported('runtime.binary'), self::errors(['runtime' => ['binary' => 'missing/bin']]));
+        self::assertSame($unsupported('runtime.workers'), self::errors(['runtime' => ['workers' => 0]]));
+        self::assertSame($unsupported('runtime.mode'), self::errors(['runtime' => ['mode' => 'bad']]));
+        self::assertSame($unsupported('runtime.php'), self::errors(['runtime' => ['php' => '9.9']]));
+        self::assertSame(
+            [...$unsupported('console'), ...$unsupported('scheduler')],
+            self::errors(['settings' => ['console' => false, 'scheduler' => 5]]),
+        );
+    }
+
+    public function test_a_process_app_does_not_load_the_runtime_manifest(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $broken = new Validator(\Multiapi\Arco\Binary\RuntimeManifest::fromArray([
+            'default_php' => '8.5',
+            'builds' => ['php8.5.11-fp1.13.0-r1' => ['url' => 'https://example.test/f', 'sha256' => str_repeat('a', 64), 'size' => 1, 'frankenphp' => '1.13.0', 'php' => '8.5.11']],
+        ]));
+        $raw['runtime'] = ['php' => '7.0'];
+        $withPhp = $broken->validate(ConfigResolver::resolve($raw, 'production'), sys_get_temp_dir());
+        self::assertSame(['validation.process_unsupported'], array_map(fn (array $e): string => $e['key'], $withPhp->errors));
+    }
 }
