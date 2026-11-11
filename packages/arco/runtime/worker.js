@@ -114,14 +114,19 @@ function createHandler(deps = {}) {
   }
 
   async function handleSchedule(event, context) {
-    const routes = JSON.parse(process.env.ARCO_SCHEDULES || '{}');
-    const route = Object.prototype.hasOwnProperty.call(routes, event.name) ? routes[event.name] : undefined;
+    // name => {route, timeout (seconds)}; an older console sent name => route.
+    const schedules = JSON.parse(process.env.ARCO_SCHEDULES || '{}');
+    const entry = Object.prototype.hasOwnProperty.call(schedules, event.name) ? schedules[event.name] : undefined;
+    const route = typeof entry === 'string' ? entry : entry && entry.route;
     if (!route) throw new Error(`unknown schedule: ${event.name}`);
-    const budget = remainingOf(context)() - MARGIN_MS;
-    if (budget < MIN_BUDGET_MS) {
+    const left = remainingOf(context)() - MARGIN_MS;
+    if (left < MIN_BUDGET_MS) {
       log('schedule_failed', { name: event.name, error: 'deadline' });
       throw new Error(`schedule ${event.name} not sent: invocation deadline too close`);
     }
+    // The schedule's own timeout bounds the POST; the invocation's deadline still wins.
+    const timeout = entry && typeof entry === 'object' && Number(entry.timeout) > 0 ? Number(entry.timeout) * 1000 : Infinity;
+    const budget = Math.min(timeout, left);
     let result;
     try {
       result = await post(host, port, route, { 'x-arco-schedule': event.name }, '', budget);

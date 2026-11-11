@@ -195,10 +195,19 @@ final class ConsoleFunctionTest extends TestCase
         self::assertSame('shop-production-console', $request->name);
         self::assertSame('nodejs24.x', $request->runtime);
         self::assertSame('worker.handler', $request->handler);
-        self::assertSame(['ARCO' => '1', 'ARCO_SCHEDULES' => '{"cleanup":"/_arco/schedule/cleanup","report":"/jobs/report"}'], $request->settings['Environment']['Variables']);
-        self::assertSame(300, $request->settings['Timeout'], 'the longest schedule bounds the function');
+        self::assertSame(['ARCO' => '1', 'ARCO_SCHEDULES' => '{"cleanup":{"route":"/_arco/schedule/cleanup","timeout":60},"report":{"route":"/jobs/report","timeout":300}}'], $request->settings['Environment']['Variables']);
+        self::assertSame(312, $request->settings['Timeout'], 'the longest schedule, plus the 2 s margin and the 10 s process start');
         self::assertSame(['S3Bucket' => 'bucket', 'S3Key' => 'shop/production/console-h.zip', 'S3ObjectVersion' => 'v1'], $request->code);
         self::assertSame([], $mocks->calls);
+    }
+
+    public function test_a_process_console_timeout_never_exceeds_lambdas_900_seconds(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $raw['schedules'] = ['long' => ['every' => '1d', 'timeout' => 895]];
+
+        self::assertSame(900, ConsoleFunction::timeout(ConfigResolver::resolve($raw, 'production')));
     }
 
     public function test_a_php_console_keeps_the_provided_runtime_and_its_handler(): void

@@ -248,7 +248,8 @@ final class ProcessDeployTest extends TestCase
             self::assertArrayNotHasKey('ARCO_BINARY_KEY', $create['Environment']['Variables']);
             self::assertSame('https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', $create['Environment']['Variables']['ARCO_QUEUE_EMAILS_URL']);
         }
-        self::assertSame('{"cleanup":"/_arco/schedule/cleanup"}', $console['Environment']['Variables']['ARCO_SCHEDULES']);
+        self::assertSame('{"cleanup":{"route":"/_arco/schedule/cleanup","timeout":60}}', $console['Environment']['Variables']['ARCO_SCHEDULES']);
+        self::assertSame(72, $console['Timeout']);
         self::assertSame('emails', $emails['Environment']['Variables']['ARCO_WORKER_QUEUE']);
         self::assertSame('/_arco/queues/emails', $emails['Environment']['Variables']['ARCO_QUEUE_ROUTE']);
         self::assertArrayNotHasKey('ARCO_QUEUE_FIFO', $emails['Environment']['Variables']);
@@ -326,5 +327,62 @@ final class ProcessDeployTest extends TestCase
         );
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->checkOwnership(self::config(), fn () => null);
         self::assertNotContains('TagResource', $mocks->calls);
+    }
+
+    /** @return list<\Throwable|Result> the ownership reads of a first deploy with an existing console */
+    private static function consoleReads(string $runtime, bool $queue = false): array
+    {
+        return [
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
+            ...self::existingFunction('shop-production-console', $runtime),
+            ...($queue ? [self::lambdaMissing('GetFunctionConfiguration')] : []),
+            self::noRule(),
+            new Result(['Stacks' => []]),
+        ];
+    }
+
+    public function test_the_kind_check_compares_runtime_families(): void
+    {
+        $php = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->console()
+            ->environment('production', fn (Environment $e) => $e->account('111111111111'))->toArray(), 'production');
+
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...self::consoleReads('provided.al2'));
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->checkOwnership($php, fn () => null);
+
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
+            self::lambdaMissing('GetFunctionConfiguration'),
+            ...[...self::existingFunction('shop-production-queue-emails', 'nodejs22.x'), self::noRule(), new Result(['Stacks' => []])],
+        );
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->checkOwnership(self::config(), fn () => null);
+
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...self::consoleReads('nodejs24.x'));
+        try {
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->checkOwnership($php, fn () => null);
+            self::fail('expected deploy.runtime_kind_changed');
+        } catch (DeployException $e) {
+            self::assertSame(['function' => 'shop-production-console', 'runtime' => 'nodejs24.x'], $e->params);
+        }
+    }
+
+    public function test_prune_of_a_process_deploy_leaves_the_shared_runtime_binaries_alone(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Contents' => []]),                     // ListObjectsV2 (web zips)
+            new Result(['Contents' => []]),                     // ListObjectsV2 (console zips)
+            new Result(['ResourceTagMappingList' => []]),       // GetResources, if the binaries were pruned
+            new Result(['Contents' => []]),
+        );
+        $prepared = new \Multiapi\Arco\Deploy\PreparedDeploy('rev-2', null, 'arco-111111111111-us-east-1', 'shop/production/k.zip', null, null, 'shop/production/console-k.zip', null, []);
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prune(self::config([]), $prepared, fn () => null);
+
+        self::assertSame(['ListObjectsV2', 'ListObjectsV2'], $mocks->calls, 'no FrankenPHP binaries to keep or delete');
     }
 }

@@ -160,7 +160,37 @@ test('connection refused fails every record', async () => {
 });
 
 const schedulesEnv = () => schedules;
-const schedules = { ARCO_SCHEDULES: JSON.stringify({ cleanup: '/_arco/schedule/cleanup' }) };
+const schedules = { ARCO_SCHEDULES: JSON.stringify({ cleanup: { route: '/_arco/schedule/cleanup', timeout: 60 } }) };
+
+test('schedule: the old string form (name => route) still works', async () => {
+  const a = await app((req, res) => { res.statusCode = 204; res.end(); });
+  const handler = createHandler({ port: a.port, start: async () => ({}), log: () => {} });
+  await withEnv({ ARCO_SCHEDULES: JSON.stringify({ cleanup: '/old/route' }) }, async () => {
+    await handler({ arco: 'schedule', name: 'cleanup' }, context());
+  });
+  assert.equal(a.requests[0].url, '/old/route');
+  a.close();
+});
+
+test('schedule: its own timeout bounds the POST, not the invocation time', async () => {
+  const a = await app(() => {});
+  const logs = [];
+  const handler = createHandler({ port: a.port, start: async () => ({}), log: (p, d) => logs.push([p, d]) });
+  const started = Date.now();
+  // A shrinking deadline keeps a runtime that ignores the schedule timeout from hanging for a minute.
+  const ctx = { getRemainingTimeInMillis: () => 6000 - (Date.now() - started) };
+  try {
+    await withEnv({ ARCO_SCHEDULES: JSON.stringify({ quick: { route: '/q', timeout: 1 } }) }, async () => {
+      await assert.rejects(handler({ arco: 'schedule', name: 'quick' }, ctx), /quick/);
+    });
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= 900 && elapsed < 2500, `failed after its 1 s timeout (${elapsed} ms)`);
+    assert.equal(a.requests.length, 1);
+    assert.ok(logs.some(([p]) => p === 'schedule_failed'));
+  } finally {
+    a.close();
+  }
+});
 
 test('schedule: POSTs to the route with the schedule header', async () => {
   const a = await app((req, res) => { res.statusCode = 204; res.end(); });

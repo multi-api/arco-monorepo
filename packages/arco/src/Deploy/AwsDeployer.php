@@ -137,17 +137,17 @@ final class AwsDeployer implements Deployer
     }
 
     /**
-     * Refuses an environment whose existing console or worker runs the other kind's runtime: provided.al2023
-     * for PHP, nodejs24.x for a process app. A function whose runtime was not returned is not judged.
+     * Refuses an environment whose existing console or worker runs the other kind's runtime family: provided.*
+     * for PHP, nodejs* for a process app. A function whose runtime was not returned is not judged.
      *
      * @param list<NamedResource> $functions
      * @throws DeployException deploy.runtime_kind_changed
      */
     private static function refuseKindChange(AppConfig $config, array $functions): void
     {
-        $expected = $config->isProcess() ? Arco::LAMBDA_RUNTIME : LambdaFunction::RUNTIME;
+        $family = $config->isProcess() ? 'nodejs' : 'provided.';
         foreach ($functions as $function) {
-            if ($function->runtime !== null && $function->runtime !== $expected) {
+            if ($function->runtime !== null && ! str_starts_with($function->runtime, $family)) {
                 throw DeployException::make('deploy.runtime_kind_changed', ['function' => $function->name, 'runtime' => $function->runtime]);
             }
         }
@@ -756,15 +756,18 @@ final class AwsDeployer implements Deployer
         } catch (AwsException $e) {
             $step('deploy.prune_packages_failed', ['bucket' => $prepared->bucket, 'error' => self::awsError($e)]);
         }
-        try {
-            // Shared by every Arco app of the account and region: a binary goes only when no published
-            // version of any Arco function references it (each can be rolled back to). This deploy's own
-            // binary is kept outright: the tag listing may not show a function created seconds ago.
-            $aws = $this->aws;
-            (new RuntimeBinaries($aws->taggingApi(), $aws->lambda(), $aws->s3()))
-                ->prune($prepared->bucket, (new \DateTimeImmutable())->setTimestamp((int) $this->sleeper->now()), $prepared->binaryKey === null ? [] : [$prepared->binaryKey]);
-        } catch (\Exception $e) {
-            $step('deploy.prune_runtime_failed', ['bucket' => $prepared->bucket, 'error' => $e instanceof AwsException ? self::awsError($e) : $e->getMessage()]);
+        // A process app uses no FrankenPHP binary: the account-wide clean-up is left to the PHP deploys.
+        if (! $config->isProcess()) {
+            try {
+                // Shared by every Arco app of the account and region: a binary goes only when no published
+                // version of any Arco function references it (each can be rolled back to). This deploy's own
+                // binary is kept outright: the tag listing may not show a function created seconds ago.
+                $aws = $this->aws;
+                (new RuntimeBinaries($aws->taggingApi(), $aws->lambda(), $aws->s3()))
+                    ->prune($prepared->bucket, (new \DateTimeImmutable())->setTimestamp((int) $this->sleeper->now()), $prepared->binaryKey === null ? [] : [$prepared->binaryKey]);
+            } catch (\Exception $e) {
+                $step('deploy.prune_runtime_failed', ['bucket' => $prepared->bucket, 'error' => $e instanceof AwsException ? self::awsError($e) : $e->getMessage()]);
+            }
         }
         if ($prepared->leftVpc) {
             // Before the next deploy drops the ENI statements from the execution role, which Lambda needs to delete them.

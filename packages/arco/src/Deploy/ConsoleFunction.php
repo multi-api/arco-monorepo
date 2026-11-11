@@ -63,12 +63,12 @@ final class ConsoleFunction
             $code['S3ObjectVersion'] = $versionId;
         }
         if ($config->isProcess()) {
-            // worker.js posts each schedule's event to its route, read from ARCO_SCHEDULES.
-            $routes = [];
+            // worker.js posts each schedule's event to its route, for at most its timeout, read from ARCO_SCHEDULES.
+            $schedules = [];
             foreach ($config->schedules as $schedule) {
-                $routes[$schedule->name] = $schedule->route();
+                $schedules[$schedule->name] = ['route' => $schedule->route(), 'timeout' => $schedule->timeout];
             }
-            $variables = [...$variables, 'ARCO_SCHEDULES' => json_encode((object) $routes, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)];
+            $variables = [...$variables, 'ARCO_SCHEDULES' => json_encode((object) $schedules, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES)];
             return $this->function->request($config->consoleFunctionName(), WorkerFunctions::PROCESS_HANDLER, $code, self::settings($config, $roleArn, $variables, $detachVpc), $tags, $roleJustCreated, Arco::LAMBDA_RUNTIME);
         }
         return $this->function->request($config->consoleFunctionName(), 'arco.console', $code, self::settings($config, $roleArn, $variables, $detachVpc), $tags, $roleJustCreated);
@@ -102,16 +102,20 @@ final class ConsoleFunction
         return $settings;
     }
 
+    /** Seconds a process console adds to its longest schedule: worker.js's 2 s margin and up to 10 s of process start. */
+    public const PROCESS_OVERHEAD_SECONDS = 12;
+
     /**
-     * The function's timeout: the console setting, or for a process app the longest schedule's (one
-     * function runs every schedule, and worker.js gives each the time left in its invocation).
+     * The function's timeout: the console setting, or for a process app the longest schedule's timeout plus
+     * PROCESS_OVERHEAD_SECONDS, at most Lambda's 900 (worker.js bounds each schedule's POST by its own timeout).
      */
     public static function timeout(AppConfig $config): int
     {
         if (! $config->isProcess() || $config->schedules === []) {
             return $config->consoleTimeout;
         }
-        return max(array_map(static fn ($schedule): int => $schedule->timeout, $config->schedules));
+        $longest = max(array_map(static fn ($schedule): int => $schedule->timeout, $config->schedules));
+        return min(900, $longest + self::PROCESS_OVERHEAD_SECONDS);
     }
 
     /** Waits until the function is neither being created nor updated. */
