@@ -181,4 +181,33 @@ final class ConsoleFunctionTest extends TestCase
         self::assertSame(['SubnetIds' => [], 'SecurityGroupIds' => []], ConsoleFunction::settings($this->config(), 'arn:role', [], true)['VpcConfig']);
         self::assertArrayNotHasKey('VpcConfig', ConsoleFunction::settings($this->config(), 'arn:role', []));
     }
+
+    public function test_a_process_console_runs_node_with_the_worker_handler_and_the_schedule_routes(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $raw['schedules'] = ['cleanup' => ['every' => '1h'], 'report' => ['every' => '1d', 'route' => '/jobs/report', 'timeout' => 300]];
+        $config = ConfigResolver::resolve($raw, 'production');
+        $mocks = new AwsMocks();
+
+        $request = $this->console($mocks)->request($config, 'bucket', 'shop/production/console-h.zip', 'v1', 'arn:role', ['ARCO' => '1'], self::TAGS);
+
+        self::assertSame('shop-production-console', $request->name);
+        self::assertSame('nodejs24.x', $request->runtime);
+        self::assertSame('worker.handler', $request->handler);
+        self::assertSame(['ARCO' => '1', 'ARCO_SCHEDULES' => '{"cleanup":"/_arco/schedule/cleanup","report":"/jobs/report"}'], $request->settings['Environment']['Variables']);
+        self::assertSame(300, $request->settings['Timeout'], 'the longest schedule bounds the function');
+        self::assertSame(['S3Bucket' => 'bucket', 'S3Key' => 'shop/production/console-h.zip', 'S3ObjectVersion' => 'v1'], $request->code);
+        self::assertSame([], $mocks->calls);
+    }
+
+    public function test_a_php_console_keeps_the_provided_runtime_and_its_handler(): void
+    {
+        $request = $this->console(new AwsMocks())->request($this->config(), 'bucket', 'key.zip', null, 'arn:role', ['A' => '1'], self::TAGS);
+
+        self::assertSame('provided.al2023', $request->runtime);
+        self::assertSame('arco.console', $request->handler);
+        self::assertSame(['A' => '1'], $request->settings['Environment']['Variables']);
+        self::assertSame(900, $request->settings['Timeout']);
+    }
 }

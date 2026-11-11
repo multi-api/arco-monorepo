@@ -328,6 +328,32 @@ final class PackagerTest extends TestCase
         $zip->close();
     }
 
+    public function test_a_process_package_passes_the_deploy_check_through_worker_js(): void
+    {
+        file_put_contents("$this->runtimeDir/worker.js", '// worker');
+        $base = TempPaths::path('arco-proc-');
+        mkdir("$base/staging/app/bin", 0777, true);
+        file_put_contents("$base/staging/app/bin/app", 'ELF');
+        $raw = App::make('api')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $config = ConfigResolver::resolve($raw, 'production');
+        $preset = new \Multiapi\Arco\Build\ProcessPreset($config->process ?? throw new \LogicException());
+        $package = (new Packager($this->runtimeDir))->package(new BuildResult("$base/staging", "$base/staging/app", []), '', $config, $preset);
+
+        self::assertSame([], PackageReader::check(PackageReader::open($package->path), $config, $preset, null), 'no bootstrap: the process functions run worker.js');
+
+        $zip = new ZipArchive();
+        $zip->open($package->path);
+        $zip->deleteName('worker.js');
+        $zip->close();
+        try {
+            PackageReader::check(PackageReader::open($package->path), $config, $preset, null);
+            self::fail('expected package.no_console_runtime');
+        } catch (\Multiapi\Arco\Build\BuildException $e) {
+            self::assertSame('package.no_console_runtime', $e->key);
+        }
+    }
+
     public function test_php_packages_never_carry_worker_js_or_a_kind(): void
     {
         file_put_contents("$this->runtimeDir/worker.js", '// worker');

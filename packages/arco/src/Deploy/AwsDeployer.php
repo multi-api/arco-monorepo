@@ -75,6 +75,8 @@ final class AwsDeployer implements Deployer
         $guard = new OwnershipGuard($this->aws);
         $names = [];
         $resources = [];
+        /** @var list<NamedResource|null> $classic the console and the workers */
+        $classic = [];
         if ($config->role === null) {
             $role = $guard->role($names[] = ExecutionRole::roleName($config));
             // Before any change (bucket, upload, policy), and even with --force: it overrides ownership, not the region.
@@ -85,9 +87,9 @@ final class AwsDeployer implements Deployer
         }
         $resources[] = $web = $guard->webFunction($names[] = $config->functionName(), self::prefix($config));
         // Checked whether the console is on or off: a deploy updates it, or deletes it once verified.
-        $resources[] = $guard->lambdaFunction($names[] = $config->consoleFunctionName(), OwnershipGuard::CONSOLE_MARKER);
+        $resources[] = $classic[] = $guard->lambdaFunction($names[] = $config->consoleFunctionName(), OwnershipGuard::CONSOLE_MARKER);
         foreach ($config->queues as $queue) {
-            $resources[] = $guard->lambdaFunction($names[] = $config->workerFunctionName($queue->name), OwnershipGuard::WORKER_MARKER);
+            $resources[] = $classic[] = $guard->lambdaFunction($names[] = $config->workerFunctionName($queue->name), OwnershipGuard::WORKER_MARKER);
         }
         $rule = $guard->schedulerRule(SchedulerRule::name($config));
         if ($rule !== null && OwnershipGuard::isUndescribed($rule) && ! ($config->consoleEnabled() && $config->scheduler !== null)) {
@@ -102,6 +104,9 @@ final class AwsDeployer implements Deployer
         $this->checkStacks($config);
         // Refusals first: nothing more is read of a resource that is not this environment's.
         $guard->check($config, array_values(array_filter($resources)), $this->force);
+        // Before claim() tags anything, and even with --force: the console or a worker of the other kind (PHP
+        // vs process) would keep its runtime through an update, and run code it cannot start.
+        self::refuseKindChange($config, array_values(array_filter($classic)));
         // prepare() needs the connector the live revision pins: the one to keep with vpc(), or a leftover
         // to remove without it. A lambda-web read; lambda-core is only asked with vpc() or once a revision pins one.
         $live = null;
@@ -128,6 +133,23 @@ final class AwsDeployer implements Deployer
         $guard->claim($config, array_values(array_filter($resources)), $this->force, $onStep);
         foreach ($names as $name) {
             $this->verified[$name] = true;
+        }
+    }
+
+    /**
+     * Refuses an environment whose existing console or worker runs the other kind's runtime: provided.al2023
+     * for PHP, nodejs24.x for a process app. A function whose runtime was not returned is not judged.
+     *
+     * @param list<NamedResource> $functions
+     * @throws DeployException deploy.runtime_kind_changed
+     */
+    private static function refuseKindChange(AppConfig $config, array $functions): void
+    {
+        $expected = $config->isProcess() ? Arco::LAMBDA_RUNTIME : LambdaFunction::RUNTIME;
+        foreach ($functions as $function) {
+            if ($function->runtime !== null && $function->runtime !== $expected) {
+                throw DeployException::make('deploy.runtime_kind_changed', ['function' => $function->name, 'runtime' => $function->runtime]);
+            }
         }
     }
 
@@ -1312,8 +1334,11 @@ final class AwsDeployer implements Deployer
     public function removeConsole(AppConfig $config, Closure $onStep): void
     {
         $this->claimOne($config, $config->consoleFunctionName(), fn (OwnershipGuard $guard) => $guard->lambdaFunction($config->consoleFunctionName(), OwnershipGuard::CONSOLE_MARKER), $onStep);
-        // The scheduler rule goes before the function it invokes.
-        $this->removeScheduler($config, $onStep);
+        // The scheduler rule goes before the function it invokes. A process app has no Laravel rule: its
+        // schedule rules went in syncScheduler(), which the pipeline runs first.
+        if (! $config->isProcess()) {
+            $this->removeScheduler($config, $onStep);
+        }
         $this->consoleFunction()->delete($config->consoleFunctionName());
         $onStep('deploy.console_removed', ['function' => $config->consoleFunctionName()]);
     }
@@ -1336,6 +1361,11 @@ final class AwsDeployer implements Deployer
 
     public function syncScheduler(AppConfig $config, Closure $onStep): void
     {
+        if ($config->isProcess()) {
+            // Never the Laravel rule: a process app has one rule per schedule.
+            $this->syncProcessSchedules($config, $onStep);
+            return;
+        }
         if ($config->scheduler === null) {
             // Without EventBridge read access, only a rule this console's alias still lets in is worth a warning.
             $unreadable = function (string $error) use ($config, $onStep): void {
@@ -1358,6 +1388,15 @@ final class AwsDeployer implements Deployer
         if ($paused) {
             $onStep('deploy.scheduler_paused', ['environment' => $config->environment]);
         }
+    }
+
+    /**
+     * A process app's schedule rules, pointed at the console's live alias; called after verification, with
+     * or without schedules (none left: the stale rules go). The seam for ProcessSchedules: until it
+     * lands, no rule is put.
+     */
+    private function syncProcessSchedules(AppConfig $config, Closure $onStep): void
+    {
     }
 
     /** Days CloudWatch keeps the logs of an environment without a logRetention() setting. */

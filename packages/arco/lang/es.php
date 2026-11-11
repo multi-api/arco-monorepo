@@ -355,6 +355,8 @@ return [
     'deploy.worker_update_failed' => 'Falló la actualización de la función worker {function}: {reason}',
     'deploy.needs_packages' => "Al paquete que se despliega le faltan paquetes que arco.php necesita:\n{list}\nNo se cambió nada. Ejecuta `composer require {packages}` y vuelve a desplegar.",
     'deploy.workers_package_too_large' => 'Los workers de las colas ejecutan el paquete de consola, que supera el límite de {max} MB de Lambda para funciones clásicas, así que las colas nunca se leerían. No se cambió nada. Reduce el tamaño del paquete y vuelve a desplegar.',
+    'deploy.process_package_too_large' => 'El paquete ocupa {size} MB descomprimido. Las funciones de colas y de tareas programadas lo ejecutan como funciones clásicas de Lambda, que admiten como máximo {max} MB. No se cambió nada. Reduce el tamaño del paquete (menos archivos en include, un binario más pequeño) y vuelve a desplegar.',
+    'deploy.runtime_kind_changed' => 'La función {function} ejecuta {runtime}, del otro tipo de app (PHP o proceso): este entorno se desplegó como el otro tipo. No se cambió nada. Ejecuta primero "arco remove" para el entorno y luego vuelve a desplegar.',
     'remove.step_worker' => 'Eliminando la función worker {function} (cola {queue}) y sus mapeos de origen de eventos',
     'remove.step_resources' => 'Eliminando el stack de recursos {stack} (sus colas, buckets y tablas se conservan)',
     'remove.queue_kept' => 'La cola {queue} se conservó en AWS con sus mensajes (unos {messages}): {url}. Mueve o lee los mensajes que necesites y elimínala en la consola de SQS cuando ya no la necesites.',

@@ -355,6 +355,8 @@ return [
     'deploy.worker_update_failed' => 'Updating the worker function {function} failed: {reason}',
     'deploy.needs_packages' => "The package being deployed lacks packages that arco.php needs:\n{list}\nNothing was changed. Run `composer require {packages}` and deploy again.",
     'deploy.workers_package_too_large' => 'The queue workers run the console package, which is over Lambda\'s {max} MB limit for classic functions, so the queues would never be read. Nothing was changed. Make the package smaller and deploy again.',
+    'deploy.process_package_too_large' => 'The package is {size} MB unzipped. The queue and schedule functions run it as classic Lambda functions, which take at most {max} MB. Nothing was changed. Make the package smaller (fewer include files, a smaller binary) and deploy again.',
+    'deploy.runtime_kind_changed' => 'Function {function} runs {runtime}, the other kind of app (PHP or process): this environment was deployed as the other kind. Nothing was changed. Run "arco remove" for the environment first, then deploy again.',
     'remove.step_worker' => 'Deleting worker function {function} (queue {queue}) and its event source mappings',
     'remove.step_resources' => 'Deleting resources stack {stack} (its queues, buckets and tables stay)',
     'remove.queue_kept' => 'The queue {queue} was kept in AWS with its messages (about {messages}): {url}. Move or read any messages you need, then delete it in the SQS console when it is no longer needed.',

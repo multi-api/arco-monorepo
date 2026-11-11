@@ -244,4 +244,16 @@ final class ResourcesStackTest extends TestCase
 
         self::assertSame([], ResourcesStack::template(ConfigResolver::resolve($raw, 'production'))['Resources']);
     }
+
+    public function test_a_process_queue_redrives_after_tries_and_a_php_one_after_tries_plus_the_extra_receives(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e->account('123456789012'))->toArray();
+        $raw['queues'] = ['emails' => ['tries' => 3]];
+        $php = ResourcesStack::template(ConfigResolver::resolve($raw, 'production'));
+        $raw['process'] = ['language' => 'go'];
+        $process = ResourcesStack::template(ConfigResolver::resolve($raw, 'production'));
+
+        self::assertSame(3, $process['Resources']['QueueEmails']['Properties']['RedrivePolicy']['maxReceiveCount'], 'the process sees every receive: tries is the limit');
+        self::assertSame(5, $php['Resources']['QueueEmails']['Properties']['RedrivePolicy']['maxReceiveCount']);
+    }
 }
