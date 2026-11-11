@@ -105,4 +105,50 @@ final class ProcessCommandsTest extends TestCase
 
         $tester->assertCommandIsSuccessful();
     }
+
+    public function test_with_both_arco_php_and_arco_json_the_config_load_refuses_with_both_files(): void
+    {
+        $this->project = new ProjectFixture(ProjectFixture::standardConfig());
+        file_put_contents($this->project->dir . '/arco.json', '{"name":"shop","region":"us-east-1","runtime":{"kind":"process","language":"go"}}');
+        $before = (string) file_get_contents($this->project->dir . '/arco.php');
+
+        $tester = new \Symfony\Component\Console\Tester\CommandTester(Application::create()->find('queue:add'));
+        $tester->execute(['name' => 'emails', '--env' => 'production'], ['interactive' => false]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('has both arco.php and arco.json', $display);
+        self::assertStringNotContainsString('is not available for process apps', $display);
+        self::assertSame($before, file_get_contents($this->project->dir . '/arco.php'));
+    }
+
+    /** @return iterable<string, array{string, array<string, mixed>}> */
+    public static function workingCommands(): iterable
+    {
+        yield 'queue:list --json' => ['queue:list', ['--env' => 'production', '--json' => true]];
+        yield 'storage:list --json' => ['storage:list', ['--env' => 'production', '--json' => true]];
+        yield 'scheduler:pause' => ['scheduler:pause', ['--env' => 'production']];
+    }
+
+    /** @param array<string, mixed> $input */
+    #[DataProvider('workingCommands')]
+    public function test_a_command_that_works_in_a_process_project_is_not_refused(string $name, array $input): void
+    {
+        $this->processProject();
+        $command = Application::create()->find($name);
+        self::assertNotInstanceOf(\Multiapi\Arco\Cli\LaravelOnly::class, $command);
+
+        $tester = new \Symfony\Component\Console\Tester\CommandTester($command);
+        try {
+            $tester->execute($input, ['interactive' => false]);
+            $display = $tester->getDisplay();
+        } catch (\Throwable $e) {
+            // Without AWS it may fail later for other reasons; only the refusal matters here.
+            $display = $e->getMessage();
+        }
+
+        self::assertStringNotContainsString('is not available for process apps', (string) preg_replace('/\s+/', ' ', $display));
+        self::assertStringNotContainsString('config.process_unsupported_command', $display);
+    }
 }
+

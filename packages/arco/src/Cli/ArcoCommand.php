@@ -20,6 +20,8 @@ abstract class ArcoCommand extends Command
         if ($this instanceof LaravelOnly) {
             $refusal = $this->refuseInProcessProject((string) $this->getName());
             if ($refusal !== null) {
+                // None of the refused commands has --json today. One that gains it must print the refusal as its
+                // JSON error document, with the key config.process_unsupported_command ($refusal->key), not this text.
                 (new SymfonyStyle($input, $output))->getErrorStyle()->error($refusal->getMessage());
                 return self::FAILURE;
             }
@@ -27,12 +29,19 @@ abstract class ArcoCommand extends Command
         return parent::run($input, $output);
     }
 
-    /** The error for `arco <command>` in a process project (arco.json, or a go.mod alone); null in a PHP project. */
+    /**
+     * The error for `arco <command>` in a process project (arco.json, or a go.mod alone); null in a PHP project. With
+     * both arco.php and arco.json it is config.both_files, as a config load gives: the arco.php editors read arco.php
+     * directly and would otherwise edit it next to an arco.json.
+     */
     protected function refuseInProcessProject(string $command): ?UserError
     {
-        return ProjectConfig::isProcess($this->projectDir())
-            ? $this->userError('config.process_unsupported_command', ['command' => $command])
-            : null;
+        $dir = $this->projectDir();
+        return match (true) {
+            ! ProjectConfig::isProcess($dir) => null,
+            is_file($dir . '/arco.php') => $this->userError('config.both_files'),
+            default => $this->userError('config.process_unsupported_command', ['command' => $command]),
+        };
     }
 
     /** @param array<string, string|int> $params */

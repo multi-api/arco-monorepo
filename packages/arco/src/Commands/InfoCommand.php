@@ -44,6 +44,9 @@ final class InfoCommand extends ArcoCommand
 {
     use ResolvesTarget;
 
+    /** Settings rows the table leaves out for a process app (the --json `settings` keeps every key). */
+    private const PHP_ONLY_SETTINGS = ['runtime.build', 'runtime.binary', 'runtime.workers', 'runtime.maxThreads', 'runtime.threads', 'runtime.mode', 'scheduler', 'consoleTimeout', 'deployCommands'];
+
     /** @var Closure(AwsClients): Deployer */
     private Closure $deployerFactory;
 
@@ -142,6 +145,9 @@ final class InfoCommand extends ArcoCommand
         ]));
         $rows = [];
         foreach ($settings as $key => $row) {
+            if ($config->isProcess() && in_array($key, self::PHP_ONLY_SETTINGS, true)) {
+                continue;
+            }
             $value = $this->display($key, $row[0], $status);
             if ($key === 'auth' && RevisionFactory::protectsEndpoint($config)) {
                 // domain() makes the endpoint IamAuth whatever auth() says: only CloudFront may invoke it.

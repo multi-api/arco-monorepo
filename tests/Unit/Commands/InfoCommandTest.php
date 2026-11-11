@@ -864,7 +864,6 @@ final class InfoCommandTest extends TestCase
         $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
         self::assertSame(['kind' => 'process', 'language' => 'go', 'command' => ['bin/app'], 'healthPath' => '/'], $json['runtime']);
         self::assertSame('/_arco/queues/emails', $json['queues'][0]['route']);
-        $config = \Multiapi\Arco\Config\ConfigResolver::resolve(\Multiapi\Arco\Config\App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
         self::assertSame([
             [
                 'name' => 'cleanup',
@@ -872,7 +871,7 @@ final class InfoCommandTest extends TestCase
                 'expression' => 'cron(0 * * * ? *)',
                 'route' => '/_arco/schedule/cleanup',
                 'timeout' => 60,
-                'rule' => \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup'),
+                'rule' => 'arco-shop-production-cleanup-41a1d7d9-scheduler',
                 'paused' => true,
             ],
             [
@@ -881,7 +880,7 @@ final class InfoCommandTest extends TestCase
                 'expression' => 'cron(30 2 ? * 2-6 *)',
                 'route' => '/jobs/report',
                 'timeout' => 300,
-                'rule' => \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'report'),
+                'rule' => 'arco-shop-production-report-21336c15-scheduler',
                 'paused' => null,
             ],
         ], $json['schedules']);
@@ -905,6 +904,16 @@ final class InfoCommandTest extends TestCase
         self::assertMatchesRegularExpression('#cleanup\s+1h\s+cron\(0 \* \* \* \? \*\)\s+/_arco/schedule/cleanup\s+60\s+paused#', $display);
         self::assertMatchesRegularExpression('#report\s+30 2 \* \* 1-5\s+cron\(30 2 \? \* 2-6 \*\)\s+/jobs/report\s+300\s+active#', $display);
         self::assertMatchesRegularExpression('#emails\s+/_arco/queues/emails#', $display);
+        foreach (['runtime.build', 'runtime.binary', 'runtime.workers', 'runtime.maxThreads', 'runtime.threads', 'runtime.mode', 'scheduler', 'consoleTimeout', 'deployCommands'] as $phpOnly) {
+            self::assertDoesNotMatchRegularExpression('/^\s*' . preg_quote($phpOnly, '/') . '\s/m', $display, "$phpOnly is PHP only");
+        }
+        self::assertMatchesRegularExpression('/^\s*concurrency\s/m', $display, 'the shared settings stay');
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $settings = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR)['settings'];
+        foreach (['runtime.build', 'runtime.binary', 'runtime.workers', 'runtime.maxThreads', 'runtime.threads', 'runtime.mode', 'scheduler', 'schedulerPaused', 'consoleTimeout', 'deployCommands'] as $key) {
+            self::assertArrayHasKey($key, $settings, "--json settings keep $key");
+        }
         putenv('AWS_PROFILE');
         $project->restore();
     }
