@@ -1,6 +1,6 @@
 'use strict';
 // Arco runtime for AWS Lambda Web Functions: loads the variable bundle, resolves secrets, then runs FrankenPHP.
-const fs = require('node:fs');
+const nodeFs = require('node:fs');
 const path = require('node:path');
 const { resolveSecrets } = require('./lib/secrets');
 const { POINTER, loadVariables } = require('./lib/variables');
@@ -11,9 +11,10 @@ const supervisor = require('./lib/supervisor');
 const ROOT = __dirname;
 const TMP = '/tmp/arco';
 const started = Date.now();
-const log = (phase, data = {}) => console.log(JSON.stringify({ arco: phase, ms: Date.now() - started, ...data }));
+const defaultLog = (phase, data = {}) => console.log(JSON.stringify({ arco: phase, ms: Date.now() - started, ...data }));
 
-async function main() {
+// deps: { fs, log } are injectable so tests can run the startup path without touching the disk.
+async function main({ fs = nodeFs, log = defaultLog } = {}) {
   const config = JSON.parse(fs.readFileSync(path.join(ROOT, 'arco-runtime.json'), 'utf8'));
   const [host, portString] = (process.env.AWS_LAMBDA_HTTP_ENDPOINT || '0.0.0.0:3000').split(':');
   const port = Number(portString);
@@ -59,7 +60,11 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  log('fatal', { error: error.message });
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    defaultLog('fatal', { error: error.message });
+    process.exit(1);
+  });
+}
+
+module.exports = { main };
