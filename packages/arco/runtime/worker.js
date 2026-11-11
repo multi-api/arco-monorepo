@@ -63,7 +63,7 @@ function createHandler(deps = {}) {
     }
   }
 
-  async function deliver(record, fifoSkip, remaining) {
+  async function deliver(record, remaining) {
     const attribute = record.messageAttributes && record.messageAttributes.contentType;
     const headers = {
       'content-type': (attribute && attribute.stringValue) || 'application/octet-stream',
@@ -91,7 +91,7 @@ function createHandler(deps = {}) {
         failures.push({ itemIdentifier: record.messageId });
         continue;
       }
-      if (!(await deliver(record, fifo, remaining))) failures.push({ itemIdentifier: record.messageId });
+      if (!(await deliver(record, remaining))) failures.push({ itemIdentifier: record.messageId });
     }
     return { batchItemFailures: failures };
   }
