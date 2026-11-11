@@ -18,6 +18,7 @@ return [
     'config.layer_invalid' => 'The config layer is not valid at "{path}": {reason}.',
     'config.layer_missing' => 'Without arco.php the config layer must set "{key}".',
     'config.both_files' => 'This project has both arco.php and arco.json. Keep one: arco.php for PHP apps, arco.json for process apps.',
+    'config.process_unsupported_command' => 'arco {command} is not available for process apps (arco.json or go.mod); it works only for Laravel apps with arco.php.',
     'config.json_invalid' => 'arco.json is not valid at "{pointer}": {reason}.',
     'config.json_missing' => 'arco.json must set "{key}" (or the config layer must).',
     'config.json_runtime_missing' => 'arco.json has no "runtime" and there is no go.mod to infer one from. Add "runtime": {"language": "go"}.',

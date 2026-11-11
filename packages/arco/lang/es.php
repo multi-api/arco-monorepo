@@ -18,6 +18,7 @@ return [
     'config.layer_invalid' => 'La capa de configuración no es válida en "{path}": {reason}.',
     'config.layer_missing' => 'Sin arco.php, la capa de configuración debe definir "{key}".',
     'config.both_files' => 'Este proyecto tiene arco.php y arco.json. Deja solo uno: arco.php para apps PHP, arco.json para apps de proceso.',
+    'config.process_unsupported_command' => 'arco {command} no está disponible para apps de proceso (arco.json o go.mod); solo funciona para apps Laravel con arco.php.',
     'config.json_invalid' => 'arco.json no es válido en "{pointer}": {reason}.',
     'config.json_missing' => 'arco.json debe definir "{key}" (o la capa de configuración).',
     'config.json_runtime_missing' => 'arco.json no tiene "runtime" y no hay go.mod para deducirlo. Añade "runtime": {"language": "go"}.',
