@@ -9,6 +9,7 @@ use Multiapi\Arco\Binary\BinaryProvider;
 use Multiapi\Arco\Binary\GuzzleDownloader;
 use Multiapi\Arco\Binary\RuntimeManifest;
 use Multiapi\Arco\Build\Builder;
+use Multiapi\Arco\Build\FrameworkPreset;
 use Multiapi\Arco\Build\PresetRegistry;
 use Multiapi\Arco\Build\ProcessBuilder;
 use Multiapi\Arco\Commands\DeployCommand;
@@ -16,6 +17,7 @@ use Multiapi\Arco\Deploy\DeployPipeline;
 use Multiapi\Arco\Package\Package;
 use Multiapi\Arco\Package\Packager;
 use Multiapi\Arco\Tests\Unit\Build\FakeRunner;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -24,6 +26,8 @@ final class GoProjectDeployTest extends TestCase
 {
     private ?ProjectFixture $project = null;
     private ?FakeRunner $runner = null;
+    /** the runner of the PHP builder (and so of ConfigLoader's neighbours): a process app never uses it */
+    private ?FakeRunner $phpRunner = null;
     private MockHandler $aws;
     private bool $zipChecked = false;
     /** @var array<string, string|false> */
@@ -83,15 +87,25 @@ final class GoProjectDeployTest extends TestCase
         return ($this->project ?? throw new \LogicException('No project.'))->tester(new DeployCommand(
             awsFactory: fn (?string $profile, string $region) => new AwsClients($profile, $region, ['handler' => $this->aws, 'credentials' => false]),
             pipeline: new DeployPipeline(
-                new Builder(new FakeRunner()),
-                new BinaryProvider(new GuzzleDownloader(), sys_get_temp_dir(), RuntimeManifest::load()),
+                new Builder($this->phpRunner = new FakeRunner()),
+                new BinaryProvider(new GuzzleDownloader(), TempPaths::path('arco-cache-'), RuntimeManifest::load()),
                 new Packager(),
                 fn () => throw new \LogicException('process apps have no Laravel schedule'),
                 new ProcessBuilder($this->runner, 'go', fn (): bool => true),
             ),
             deployerFactory: fn () => $deployer,
             verifierFactory: fn () => new FakeVerifier(true, 800),
-            presets: new PresetRegistry([]),
+            presets: new PresetRegistry([new class () implements FrameworkPreset {
+                public function name(): string { throw new \LogicException('PresetRegistry was consulted'); }
+                public function detects(string $projectDir): bool { throw new \LogicException('PresetRegistry was consulted'); }
+                public function prepare(string $appDir): void { throw new \LogicException('PresetRegistry was consulted'); }
+                public function buildSteps(): array { throw new \LogicException('PresetRegistry was consulted'); }
+                public function workerScript(): ?string { throw new \LogicException('PresetRegistry was consulted'); }
+                public function publicDir(): string { throw new \LogicException('PresetRegistry was consulted'); }
+                public function defaultVariables(): array { throw new \LogicException('PresetRegistry was consulted'); }
+                public function excludeRules(): array { throw new \LogicException('PresetRegistry was consulted'); }
+                public function healthPath(): string { throw new \LogicException('PresetRegistry was consulted'); }
+            }]),
             consoleFactory: fn () => throw new \LogicException('No console expected.'),
         ));
     }
@@ -134,7 +148,12 @@ final class GoProjectDeployTest extends TestCase
         foreach (($this->runner ?? throw new \LogicException('No runner.'))->calls as $call) {
             self::assertStringNotContainsString('load-config.php', implode(' ', $call['command']));
         }
+        self::assertSame([], $this->phpRunner?->calls, 'the PHP builder ran nothing');
         self::assertSame('go', $deployer->preparedConfig?->process?->language);
+        $schedules = $deployer->preparedConfig->schedules;
+        self::assertSame(['cleanup'], array_map(fn ($s) => $s->name, $schedules));
+        self::assertSame('1h', $schedules[0]->every);
+        self::assertNull($schedules[0]->route, 'the default route /_arco/schedule/cleanup is applied by the runtime');
     }
 
     public function test_an_arco_json_go_project_deploys_without_composer_json(): void
@@ -163,8 +182,9 @@ final class GoProjectDeployTest extends TestCase
         $deployer->onPrepare = fn (Package $package) => $this->assertZip($package);
 
         $tester = $this->tester($deployer);
-        $this->deploy($tester, $layerPath);
+        $result = $this->deploy($tester, $layerPath);
 
+        self::assertSame('result', $result['type']);
         self::assertSame(0, $tester->getStatusCode(), $tester->getDisplay());
         $this->assertProcessDeploy($deployer);
     }
