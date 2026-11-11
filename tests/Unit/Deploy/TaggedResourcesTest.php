@@ -419,4 +419,33 @@ final class TaggedResourcesTest extends TestCase
         self::assertSame(['source' => 'cloud', 'options' => ['domains' => ['b.com'], 'dns' => null, 'certificate' => null]], $byName['cloudfront:function arco-shop-production-host']);
         self::assertSame(['source' => null, 'options' => null], $byName['cloudfront:function someone-elses-function']);
     }
+
+    public function test_a_process_schedule_rule_invokes_the_console_and_carries_its_schedule_options(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $raw['schedules'] = ['cleanup' => ['every' => '1h', 'timeout' => 120]];
+        $config = ConfigResolver::resolve($raw, 'production');
+        $console = 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console';
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['ResourceTagMappingList' => [
+            self::mapping($console),
+            self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-cleanup-1a2b3c4d-scheduler', extra: ['arco:schedule' => 'cleanup']),
+            self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-gone-5e6f7a8b-scheduler', extra: ['arco:schedule' => 'gone']),
+        ]]), AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404));
+
+        $resources = [];
+        foreach (self::subject($mocks)->list($config) as $resource) {
+            $resources[$resource['type'] . ' ' . $resource['name']] = $resource;
+        }
+
+        $cleanup = $resources['events:rule arco-shop-production-cleanup-1a2b3c4d-scheduler'];
+        self::assertSame([['type' => 'invokes', 'target' => $console]], $cleanup['relations']);
+        self::assertSame('arco.php', $cleanup['source']);
+        self::assertSame(['every' => '1h', 'route' => '/_arco/schedule/cleanup', 'timeout' => 120], $cleanup['options']);
+        $gone = $resources['events:rule arco-shop-production-gone-5e6f7a8b-scheduler'];
+        self::assertSame([['type' => 'invokes', 'target' => $console]], $gone['relations'], 'a stale rule still targets the console until a deploy deletes it');
+        self::assertNull($gone['source']);
+        self::assertNull($gone['options']);
+    }
 }

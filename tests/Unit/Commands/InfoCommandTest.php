@@ -336,8 +336,8 @@ final class InfoCommandTest extends TestCase
 
         $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
         self::assertSame([
-            ['name' => 'emails', 'url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', 'existing' => false, 'dlq' => 'shop-production-emails-dlq', 'worker' => ['function' => 'shop-production-queue-emails', 'version' => '4']],
-            ['name' => 'legacy', 'url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/legacy-jobs', 'existing' => true, 'dlq' => null, 'worker' => ['function' => 'shop-production-queue-legacy', 'version' => null]],
+            ['name' => 'emails', 'url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/shop-production-emails', 'existing' => false, 'dlq' => 'shop-production-emails-dlq', 'worker' => ['function' => 'shop-production-queue-emails', 'version' => '4'], 'route' => null],
+            ['name' => 'legacy', 'url' => 'https://sqs.us-east-1.amazonaws.com/111111111111/legacy-jobs', 'existing' => true, 'dlq' => null, 'worker' => ['function' => 'shop-production-queue-legacy', 'version' => null], 'route' => null],
         ], json_decode($tester->getDisplay(), true)['queues']);
         putenv('AWS_PROFILE');
         $project->restore();
@@ -350,7 +350,7 @@ final class InfoCommandTest extends TestCase
 
         $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
         self::assertSame(
-            [['name' => 'emails', 'url' => null, 'existing' => false, 'dlq' => 'shop-production-emails-dlq', 'worker' => ['function' => 'shop-production-queue-emails', 'version' => null]]],
+            [['name' => 'emails', 'url' => null, 'existing' => false, 'dlq' => 'shop-production-emails-dlq', 'worker' => ['function' => 'shop-production-queue-emails', 'version' => null], 'route' => null]],
             json_decode($tester->getDisplay(), true)['queues'],
         );
 
@@ -556,7 +556,7 @@ final class InfoCommandTest extends TestCase
         self::assertSame('schema', array_key_first($json), 'first key, as in info --resources');
         unset($json['schema']);
         self::assertSame(
-            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables', 'permissions_boundary', 'endpoint_auth', 'vpc'],
+            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables', 'permissions_boundary', 'endpoint_auth', 'vpc', 'runtime', 'schedules'],
             array_keys($json),
         );
         $project->restore();
@@ -676,7 +676,7 @@ final class InfoCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--json' => true, '--permissions-boundary' => 'arn:aws:iam::123456789012:policy/flag'], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
         self::assertSame('arn:aws:iam::123456789012:policy/flag', $json['permissions_boundary']);
-        self::assertSame(['permissions_boundary', 'endpoint_auth', 'vpc'], array_slice(array_keys($json), -3), 'appended after tables, then endpoint_auth (0.11.4), vpc (0.12)');
+        self::assertSame(['permissions_boundary', 'endpoint_auth', 'vpc', 'runtime', 'schedules'], array_slice(array_keys($json), -5), 'appended after tables, then endpoint_auth (0.11.4), vpc (0.12), runtime and schedules (process runtime)');
         self::assertArrayNotHasKey('permissionsBoundary', $json['settings'], 'the top-level key carries it; settings keep their keys');
         $project->restore();
     }
@@ -797,7 +797,7 @@ final class InfoCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--profile' => 'p', '--json' => true], ['interactive' => false]);
 
         $keys = array_keys(json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR));
-        self::assertSame(['tables', 'permissions_boundary', 'endpoint_auth', 'vpc', 'error'], array_slice($keys, -5));
+        self::assertSame(['tables', 'permissions_boundary', 'endpoint_auth', 'vpc', 'runtime', 'schedules', 'error'], array_slice($keys, -7));
         $project->restore();
     }
 
@@ -815,6 +815,109 @@ final class InfoCommandTest extends TestCase
         $tester->execute(['--env' => 'production'], ['interactive' => false]);
         self::assertSame(1, $tester->getStatusCode());
         self::assertStringContainsString('role()', $tester->getDisplay());
+        $project->restore();
+    }
+
+    public function test_json_of_a_php_app_keeps_its_keys_and_appends_runtime_and_schedules(): void
+    {
+        $project = new ProjectFixture(str_replace('->concurrency(48)', "->concurrency(48)->queue('emails')", ProjectFixture::standardConfig()));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame([
+            'schema', 'function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache',
+            'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables', 'permissions_boundary', 'endpoint_auth', 'vpc',
+            'runtime', 'schedules',
+        ], array_keys($json));
+        self::assertSame(['name', 'url', 'existing', 'dlq', 'worker', 'route'], array_keys($json['queues'][0]));
+        self::assertNull($json['queues'][0]['route']);
+        self::assertSame(['kind' => 'php'], $json['runtime']);
+        self::assertSame([], $json['schedules']);
+        $project->restore();
+    }
+
+    /** A process project (arco.json): a queue and an hourly schedule, deployed with that schedule paused. */
+    private static function processProject(): ProjectFixture
+    {
+        $project = new ProjectFixture();
+        file_put_contents($project->dir . '/arco.json', (string) json_encode([
+            'name' => 'shop',
+            'region' => 'us-east-1',
+            'runtime' => ['kind' => 'process', 'language' => 'go'],
+            'queues' => ['emails' => new \stdClass()],
+            'schedules' => ['cleanup' => ['every' => '1h'], 'report' => ['every' => '30 2 * * 1-5', 'route' => '/jobs/report', 'timeout' => 300]],
+        ]));
+        return $project;
+    }
+
+    public function test_json_of_a_process_app_shows_the_runtime_schedules_and_queue_routes(): void
+    {
+        $project = self::processProject();
+        putenv('AWS_PROFILE=p');
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', schedules: ['cleanup' => true]);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $status)));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(['kind' => 'process', 'language' => 'go', 'command' => ['bin/app'], 'healthPath' => '/'], $json['runtime']);
+        self::assertSame('/_arco/queues/emails', $json['queues'][0]['route']);
+        $config = \Multiapi\Arco\Config\ConfigResolver::resolve(\Multiapi\Arco\Config\App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+        self::assertSame([
+            [
+                'name' => 'cleanup',
+                'every' => '1h',
+                'expression' => 'cron(0 * * * ? *)',
+                'route' => '/_arco/schedule/cleanup',
+                'timeout' => 60,
+                'rule' => \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup'),
+                'paused' => true,
+            ],
+            [
+                'name' => 'report',
+                'every' => '30 2 * * 1-5',
+                'expression' => 'cron(30 2 ? * 2-6 *)',
+                'route' => '/jobs/report',
+                'timeout' => 300,
+                'rule' => \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'report'),
+                'paused' => null,
+            ],
+        ], $json['schedules']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_the_table_of_a_process_app_shows_the_runtime_schedules_and_queue_routes(): void
+    {
+        $project = self::processProject();
+        putenv('AWS_PROFILE=p');
+        $status = new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1', schedules: ['cleanup' => true, 'report' => false]);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => new FakeDeployer(status: $status)));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('Runtime: process (go, bin/app)', $display);
+        self::assertStringContainsString('Schedules', $display);
+        self::assertMatchesRegularExpression('#cleanup\s+1h\s+cron\(0 \* \* \* \? \*\)\s+/_arco/schedule/cleanup\s+60\s+paused#', $display);
+        self::assertMatchesRegularExpression('#report\s+30 2 \* \* 1-5\s+cron\(30 2 \? \* 2-6 \*\)\s+/jobs/report\s+300\s+active#', $display);
+        self::assertMatchesRegularExpression('#emails\s+/_arco/queues/emails#', $display);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_the_table_of_a_php_app_names_the_php_runtime_and_has_no_schedules_block(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+
+        self::assertStringContainsString('Runtime: php', $tester->getDisplay());
+        self::assertStringNotContainsString('Schedules', $tester->getDisplay());
         $project->restore();
     }
 }
