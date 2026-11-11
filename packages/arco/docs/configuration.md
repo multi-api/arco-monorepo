@@ -1877,7 +1877,8 @@ starting with `ARCO` stay reserved.
   by hand. With both `arco.php` and `arco.json` they fail with `config.both_files` instead (the editors would
   otherwise change `arco.php` next to an `arco.json`). The refusal is text only: these commands have no `--json`. `deploy`,
   `package`, `info`, `logs`, `remove`, `resources`, `scheduler:pause`, `scheduler:resume`, `queue:list`, `queue:dlq`
-  and `storage:list` work. `arco init` writes `arco.php`, for PHP apps.
+  and `storage:list` work; `resources` prints the plain listing and never opens its picker, whose commands write
+  `arco.php`. `arco init` writes `arco.php`, for PHP apps.
 - An environment deployed as a PHP app cannot be redeployed as a process app, or the other way round: the deploy
   stops before any change with `deploy.runtime_kind_changed` (`{function, runtime}`) when the existing console or a
   worker runs the other kind's runtime. Run `arco remove --env=<env>` first (queues, buckets and tables stay).

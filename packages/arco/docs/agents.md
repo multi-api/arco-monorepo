@@ -171,7 +171,8 @@ A project with `arco.json` (or, with a config layer and no config file, a `go.mo
 multiapi/arco`), so run `arco`, not `vendor/bin/arco`, and Go must be on `PATH`.
 
 - `deploy`, `package`, `info`, `logs`, `remove`, `resources`, `scheduler:pause`, `scheduler:resume`, `queue:list`,
-  `queue:dlq` and `storage:list` work as for PHP. `info --json` adds `runtime`, `schedules`
+  `queue:dlq` and `storage:list` work as for PHP, except that `resources` never opens its picker (it prints the plain
+  listing, as with `-n`). `info --json` adds `runtime`, `schedules`
   (`[{name, every, expression, route, timeout, rule, paused}]`) and `queues[].route`.
 - These 30 commands refuse with `config.process_unsupported_command` (`{command}`) and change nothing: `cache:add`, `cache:remove`, `certificate:remove`, `certificate:set`, `command`, `console:add`, `console:remove`, `domain:add`, `domain:remove`, `failed-jobs:add`, `failed-jobs:remove`, `logs:retention`, `queue:add`, `queue:failed-table`, `queue:remove`, `queue:set`, `scheduler:remove`, `scheduler:set`, `set`, `storage:add`, `storage:cors`, `storage:expire`, `storage:public`, `storage:remove`, `table:add`, `table:remove`, `tinker`, `unset`, `vpc:remove` and `vpc:set`.
   The refusal is text only (exit 1, no `--json` document, because none of them has `--json`); do not parse it. With

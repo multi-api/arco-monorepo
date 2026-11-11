@@ -96,7 +96,8 @@ final class ResourcesCommand extends ArcoCommand
             // Symfony leaves the input interactive on a piped STDIN, where laravel/prompts would silently take defaults:
             // without a terminal (and no injected UI) the run falls through to the plain listing.
             $terminal = $this->ui !== null || (defined('STDIN') && stream_isatty(STDIN));
-            if (! $json && $input->isInteractive() && $terminal) {
+            // A process app has no arco.php for the picker's editing commands (they refuse it): the plain listing.
+            if (! $json && ! $config->isProcess() && $input->isInteractive() && $terminal) {
                 // Spec §7 step 1: the default profile may be a personal account, so it is confirmed before any listing.
                 $picker = $this->picker($input, $output);
                 try {

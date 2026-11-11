@@ -63,7 +63,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   (`{function, runtime}`, an environment deployed as the other kind of app); and `config.process_unsupported_command`
   (`{command}`) for the 30 commands that only work for Laravel apps: `cache:add`, `cache:remove`, `certificate:remove`, `certificate:set`, `command`, `console:add`, `console:remove`, `domain:add`, `domain:remove`, `failed-jobs:add`, `failed-jobs:remove`, `logs:retention`, `queue:add`, `queue:failed-table`, `queue:remove`, `queue:set`, `scheduler:remove`, `scheduler:set`, `set`, `storage:add`, `storage:cors`, `storage:expire`, `storage:public`, `storage:remove`, `table:add`, `table:remove`, `tinker`, `unset`, `vpc:remove` and `vpc:set`. They fail before reading
   their input and have no `--json` document: the refusal is text (exit 1); with both `arco.php` and `arco.json` it is
-  `config.both_files`.
+  `config.both_files`. In a process project `arco resources` prints the plain listing and never opens its picker.
 - **Changed:** a project with both `arco.php` and `arco.json` fails with `config.both_files`, and a layer-only
   project with a `go.mod` whose `composer.json` does not require both `multiapi/arco` and `multiapi/arco-laravel`
   deploys as a Go app ([Upgrading](docs/upgrading.md#unreleased)). PHP apps are otherwise unchanged: the runtime's PHP
