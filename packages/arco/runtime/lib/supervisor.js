@@ -88,16 +88,27 @@ function targetPath(rawUrl) {
   return null;
 }
 
-// True for /_arco and /_arco/..., however the target is spelled: absolute-form, percent-encoded, with repeated
-// slashes or with dot segments. A target without a usable path or an undecodable one counts as internal (fail closed).
+// At most this many decodes, the last of which must change nothing (so up to 4 levels of percent-encoding).
+const MAX_DECODES = 5;
+
+// True for /_arco and /_arco/..., however the target is spelled: absolute-form, percent-encoded (at any depth: a
+// router that unescapes twice must not reach it either), with repeated slashes or with dot segments. A target
+// without a usable path, an undecodable one, or one still changing after MAX_DECODES counts as internal (fail
+// closed). The validator's healthPath check (Validator::isInternalPath) follows the same rule.
 function isInternalPath(rawUrl) {
   const raw = targetPath(rawUrl);
   if (raw === null) return true;
-  let decoded;
-  try {
-    decoded = decodeURIComponent(raw);
-  } catch {
-    return true;
+  let decoded = raw;
+  for (let round = 0; ; round++) {
+    if (round === MAX_DECODES) return true;
+    let next;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      return true;
+    }
+    if (next === decoded) break;
+    decoded = next;
   }
   const segments = [];
   for (const segment of decoded.split('/')) {

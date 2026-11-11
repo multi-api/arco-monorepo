@@ -9,7 +9,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   Arco builds one static `linux/arm64` binary (`CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath`) with the
   `go` on `PATH`, packages it with the Node runtime and no FrankenPHP, and starts it on the Web Function with
   `PORT=8000` and `HOST=127.0.0.1` behind the proxy, which passes or generates `X-Request-ID`, writes the access log
-  with `accessLog` and answers `404` to every `/_arco/` path. Arco runs as a global install
+  with `accessLog` and answers `404` to every `/_arco/` path (however often it is percent-encoded). Arco runs as a global install
   (`composer global require multiapi/arco`): a Go project needs no `composer.json`, `vendor/` or `arco.php`
   ([Go apps](docs/getting-started.md#go-apps)).
 - **Added:** `arco.json`, the JSON stand-in for `arco.php` in process apps, with the keys `schema`, `name`, `region`,

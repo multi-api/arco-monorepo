@@ -1774,7 +1774,8 @@ log.Fatal(http.ListenAndServe(addr, mux))
 - `/tmp` is the only writable disk, and it belongs to one instance: keep files in [storage](#storage).
 
 **`/_arco/` is private.** The proxy answers `404 Not Found` to any path that is `/_arco` or starts with `/_arco/`
-(also percent-encoded, with `//` or `..`, or in absolute form) and never forwards it. Queue and schedule deliveries
+(also percent-encoded, even more than once, with `//` or `..`, or in absolute form; a path that does not decode, or
+is still changing after five decodes, counts as one) and never forwards it. Queue and schedule deliveries
 reach the process directly on `127.0.0.1`, so keep their routes under `/_arco/`: a route elsewhere is public as well.
 A `healthPath` under `/_arco/` (in any of those spellings) is refused with `validation.health_path_internal`. The
 `X-Arco-*` headers identify a delivery but are not authentication.

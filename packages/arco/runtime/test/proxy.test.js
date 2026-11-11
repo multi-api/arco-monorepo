@@ -50,6 +50,19 @@ test('blockInternal answers 404 Not Found for every spelling of /_arco and never
   assert.equal(seen.length, 0);
 });
 
+test('blockInternal decodes until the path stops changing, and fails closed when it does not', async (t) => {
+  const { seen, request } = await setup(t, { blockInternal: true });
+  // %25 is "%": each level is one more decode a router might apply. Five levels never settle within the bound.
+  for (const path of ['/%255Farco/x', '/%25255Farco/x', '/%2525255farco', '/%252525255Farco/x', '/%2525zz', '/a/%252E%252E/_arco/x']) {
+    const response = await request(path);
+    assert.equal(response.status, 404, path);
+  }
+  assert.equal(seen.length, 0);
+  assert.equal((await request('/%2541rco/x')).status, 200, 'decodes to /Arco/x');
+  assert.equal((await request('/%255Farcox')).status, 200);
+  assert.equal(seen.length, 2);
+});
+
 test('blockInternal forwards paths that only look similar', async (t) => {
   const { seen, request } = await setup(t, { blockInternal: true });
   assert.equal((await request('/_arcox')).status, 200);
