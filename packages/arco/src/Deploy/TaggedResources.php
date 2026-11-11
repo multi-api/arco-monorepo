@@ -273,8 +273,9 @@ final class TaggedResources
             $type === 'lambda:network-connector' => true,
             str_starts_with($type, 'lambda:') => $name === $config->functionName() || $name === $config->consoleFunctionName()
                 || str_starts_with($name, $config->functionName() . '-queue-'),
-            // The Laravel scheduler rule, or a process app's schedule rule (ProcessSchedules, tagged arco:schedule).
-            $type === 'events:rule' => $name === SchedulerRule::name($config) || ($tags[ProcessSchedules::TAG] ?? '') !== '',
+            // The Laravel scheduler rule, or a process app's schedule rule (ProcessSchedules, tagged arco:schedule):
+            // remove deletes those only for a process app.
+            $type === 'events:rule' => $name === SchedulerRule::name($config) || ($config->isProcess() && ($tags[ProcessSchedules::TAG] ?? '') !== ''),
             $type === 'cloudformation:stack' => in_array($name, [ResourcesStack::name($config), $domainStack], true),
             $type === 'resource-groups:group' => $name === EnvironmentGroup::name($config),
             $type === 'iam:role' => $name === ExecutionRole::roleName($config),

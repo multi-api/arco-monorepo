@@ -1299,7 +1299,7 @@ final class AwsDeployer implements Deployer
     {
         try {
             return $this->processSchedules()->all($config);
-        } catch (\Throwable $e) {
+        } catch (AwsException $e) {
             $step('remove.schedule_scan_failed', ['error' => self::errorText($e)]);
             return [];
         }

@@ -98,7 +98,7 @@ final class TaggedResourcesTest extends TestCase
             'ssm:parameter /shop/production/app-key' => true,
             'logs:log-group /aws/lambda/web/shop-production' => true,
             'events:rule arco-shop-production-scheduler' => false,
-            'events:rule arco-shop-production-cleanup-1a2b3c4d-scheduler' => false,
+            'events:rule arco-shop-production-cleanup-1a2b3c4d-scheduler' => true, // a PHP app's remove never deletes a schedule rule
             'events:rule someone-elses-rule' => true,
             'cloudformation:stack arco-shop-production-resources' => false,
             'cloudfront:distribution E1ABC' => false,
@@ -447,5 +447,7 @@ final class TaggedResourcesTest extends TestCase
         self::assertSame([['type' => 'invokes', 'target' => $console]], $gone['relations'], 'a stale rule still targets the console until a deploy deletes it');
         self::assertNull($gone['source']);
         self::assertNull($gone['options']);
+        self::assertFalse($cleanup['retained'], 'a process app\'s remove deletes its schedule rules');
+        self::assertFalse($gone['retained']);
     }
 }

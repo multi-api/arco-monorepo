@@ -43,7 +43,8 @@ final class ProcessSchedules
     {
         $tail = '-' . self::hash($config, $schedule) . self::SUFFIX;
         $readable = "arco-{$config->app}-{$config->environment}-$schedule";
-        return substr($readable, 0, self::MAX_NAME - strlen($tail)) . $tail;
+        // A cut that ends on a hyphen would give `--<hash>`.
+        return rtrim(substr($readable, 0, self::MAX_NAME - strlen($tail)), '-') . $tail;
     }
 
     /** The statement letting EventBridge invoke the console's live alias for one schedule's rule. */
@@ -87,8 +88,10 @@ final class ProcessSchedules
         foreach ($found as $rule) {
             $paused = $paused || $rule['state'] === self::DISABLED;
             $schedule = $declared[$rule['rule']] ?? null;
-            if ($schedule !== null && $schedule->name === $rule['schedule']) {
-                $existing[$rule['rule']] = ['state' => $rule['state'], 'retag' => false];
+            if ($schedule !== null) {
+                // A declared rule's own name: this environment's (listed by its tags), never stale. An
+                // `arco:schedule` tag naming another schedule is corrected below, without a warning.
+                $existing[$rule['rule']] = ['state' => $rule['state'], 'retag' => $schedule->name !== $rule['schedule'], 'forced' => false];
             } else {
                 $stale[] = $rule;
             }
@@ -106,8 +109,11 @@ final class ProcessSchedules
             $ruleTags = Aws::tagMap($this->events->listTagsForResource(['ResourceARN' => $rule['arn']])['Tags'] ?? []);
             Ownership::check($ruleTags, $config, $name, $force);
             $paused = $paused || $rule['state'] === self::DISABLED;
-            $retag = ! Ownership::tagged($ruleTags, $config) || ($ruleTags[self::TAG] ?? null) !== $schedule->name;
-            $existing[$name] = ['state' => $rule['state'], 'retag' => $retag];
+            // Another owner's (only past Ownership::check with --force) or untagged: taken over, with a warning.
+            // This environment's with only `arco:schedule` missing or different: retagged silently.
+            $forced = ! Ownership::tagged($ruleTags, $config);
+            $retag = $forced || ($ruleTags[self::TAG] ?? null) !== $schedule->name;
+            $existing[$name] = ['state' => $rule['state'], 'retag' => $retag, 'forced' => $forced];
         }
         if ($declared !== [] && $aliasArn === null) {
             throw new \LogicException('Schedules need the console alias.');
@@ -124,6 +130,8 @@ final class ProcessSchedules
             $ruleArn = $this->put($config, $name, $schedule->name, $schedule->every, $state, (string) $aliasArn, $ruleTags);
             if ($existing[$name]['retag'] ?? false) {
                 $this->events->tagResource(['ResourceARN' => $ruleArn, 'Tags' => self::tagList($ruleTags)]);
+            }
+            if ($existing[$name]['forced'] ?? false) {
                 $onStep('deploy.ownership_forced', ['resource' => $name, 'app' => $config->app, 'environment' => $config->environment]);
             }
             $onStep(isset($existing[$name]) ? 'deploy.schedule_updated' : 'deploy.schedule_created', ['schedule' => $schedule->name, 'rule' => $name]);

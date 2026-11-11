@@ -89,7 +89,8 @@ final class ProcessSchedulesTest extends TestCase
         $schedule = str_repeat('s', 40);
         $name = ProcessSchedules::ruleName(self::config([], $app), $schedule);
 
-        self::assertSame(64, strlen($name));
+        self::assertLessThanOrEqual(64, strlen($name));
+        self::assertStringNotContainsString('--', $name);
         self::assertStringEndsWith('-' . substr(hash('sha256', "$app/production/$schedule"), 0, 8) . '-scheduler', $name);
         self::assertStringStartsWith("arco-$app-", $name);
     }
@@ -248,6 +249,103 @@ final class ProcessSchedulesTest extends TestCase
 
         self::assertSame('DISABLED', $mocks->params[3]['State']);
         self::assertSame('deploy.schedule_updated', $steps[0][0]);
+    }
+
+    public function test_a_cut_ending_on_a_hyphen_leaves_no_double_hyphen(): void
+    {
+        // The readable part keeps 46 characters: with a 40-character app, `arco-<app>-` is exactly 46 and the cut ends on a hyphen.
+        foreach (range(30, 45) as $length) {
+            $name = ProcessSchedules::ruleName(self::config([], str_repeat('a', $length)), 'daily-cleanup-job');
+            self::assertLessThanOrEqual(64, strlen($name));
+            self::assertStringNotContainsString('--', $name, "app of $length characters");
+            self::assertStringEndsWith('-scheduler', $name);
+        }
+    }
+
+    public function test_a_same_name_rule_of_another_environment_is_taken_over_with_force(): void
+    {
+        $config = self::config(['cleanup' => ['every' => '1h']]);
+        $cleanup = ProcessSchedules::ruleName($config, 'cleanup');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            self::listed([]),
+            new Result(['Name' => $cleanup, 'Arn' => self::arn($cleanup), 'State' => 'ENABLED']),
+            new Result(['Tags' => [['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'staging']]]),
+            ...self::put($cleanup),
+            new Result([]),                                                              // TagResource
+        ]);
+        $steps = [];
+
+        self::schedules($mocks)->sync($config, self::ALIAS, self::TAGS, self::recorder($steps), force: true);
+
+        self::assertSame(['GetResources', 'DescribeRule', 'ListTagsForResource', 'PutRule', 'PutTargets', 'AddPermission', 'TagResource'], $mocks->calls);
+        self::assertSame(self::arn($cleanup), $mocks->params[6]['ResourceARN']);
+        self::assertSame([['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production'], ['Key' => 'arco:schedule', 'Value' => 'cleanup']], $mocks->params[6]['Tags']);
+        self::assertSame([
+            ['deploy.ownership_forced', ['resource' => $cleanup, 'app' => 'shop', 'environment' => 'production']],
+            ['deploy.schedule_updated', ['schedule' => 'cleanup', 'rule' => $cleanup]],
+        ], $steps);
+    }
+
+    public function test_an_untagged_same_name_rule_is_refused_without_force_before_any_change(): void
+    {
+        $config = self::config(['cleanup' => ['every' => '1h']]);
+        $cleanup = ProcessSchedules::ruleName($config, 'cleanup');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::listed([]),
+            new Result(['Name' => $cleanup, 'Arn' => self::arn($cleanup), 'State' => 'ENABLED']),
+            new Result(['Tags' => []]),
+        );
+
+        try {
+            self::schedules($mocks)->sync($config, self::ALIAS, self::TAGS, fn () => null);
+            self::fail('expected a refusal');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.untagged_resource', $e->key);
+            self::assertSame(['resource' => $cleanup], $e->params);
+        }
+        self::assertSame(['GetResources', 'DescribeRule', 'ListTagsForResource'], $mocks->calls);
+    }
+
+    public function test_a_declared_rule_whose_schedule_tag_differs_is_retagged_silently_never_deleted(): void
+    {
+        $config = self::config(['cleanup' => ['every' => '1h']]);
+        $cleanup = ProcessSchedules::ruleName($config, 'cleanup');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            self::listed([$cleanup => [...self::TAGS, 'arco:schedule' => 'old']]),
+            new Result(['Name' => $cleanup, 'State' => 'ENABLED']),
+            ...self::put($cleanup),
+            new Result([]),                                                              // TagResource
+        ]);
+        $steps = [];
+
+        self::schedules($mocks)->sync($config, self::ALIAS, self::TAGS, self::recorder($steps));
+
+        self::assertSame(['GetResources', 'DescribeRule', 'PutRule', 'PutTargets', 'AddPermission', 'TagResource'], $mocks->calls);
+        self::assertSame(['Key' => 'arco:schedule', 'Value' => 'cleanup'], $mocks->params[5]['Tags'][2]);
+        self::assertSame([['deploy.schedule_updated', ['schedule' => 'cleanup', 'rule' => $cleanup]]], $steps);
+    }
+
+    public function test_a_listing_missed_rule_of_this_environment_without_its_schedule_tag_is_retagged_silently(): void
+    {
+        $config = self::config(['cleanup' => ['every' => '1h']]);
+        $cleanup = ProcessSchedules::ruleName($config, 'cleanup');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            self::listed([]),
+            new Result(['Name' => $cleanup, 'Arn' => self::arn($cleanup), 'State' => 'ENABLED']),
+            new Result(['Tags' => [['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']]]),
+            ...self::put($cleanup),
+            new Result([]),
+        ]);
+        $steps = [];
+
+        self::schedules($mocks)->sync($config, self::ALIAS, self::TAGS, self::recorder($steps));
+
+        self::assertSame(['GetResources', 'DescribeRule', 'ListTagsForResource', 'PutRule', 'PutTargets', 'AddPermission', 'TagResource'], $mocks->calls);
+        self::assertSame([['deploy.schedule_updated', ['schedule' => 'cleanup', 'rule' => $cleanup]]], $steps);
     }
 
     public function test_rules_pause_resume_and_delete_all_by_tag(): void
