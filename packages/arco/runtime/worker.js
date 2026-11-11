@@ -11,6 +11,9 @@ const processKind = require('./lib/process');
 const ROOT = __dirname;
 const TMP = '/tmp/arco';
 const BODY_LOG_BYTES = 1024;
+const MARGIN_MS = 2000; // kept free at the end of every invocation
+const MIN_BUDGET_MS = 500; // below this a record is not worth sending
+const DEFAULT_REMAINING_MS = 30000;
 const started = Date.now();
 const defaultLog = (phase, data = {}) => console.log(JSON.stringify({ arco: phase, ms: Date.now() - started, ...data }));
 
@@ -35,6 +38,10 @@ function post(host, port, route, headers, body, timeoutMs) {
   });
 }
 
+function remainingOf(context) {
+  return () => (context && typeof context.getRemainingTimeInMillis === 'function' ? context.getRemainingTimeInMillis() : DEFAULT_REMAINING_MS);
+}
+
 // deps: { fs, log, host, port, start } are injectable; start() launches the process and resolves its child handle.
 function createHandler(deps = {}) {
   const { fs = nodeFs, log = defaultLog, host = processKind.HOST, port = processKind.PORT } = deps;
@@ -45,6 +52,7 @@ function createHandler(deps = {}) {
     return processKind.startProcess(ROOT, config, process.env, log);
   });
   let init = null;
+  let dead = false;
 
   async function ready() {
     if (!init) {
@@ -58,12 +66,18 @@ function createHandler(deps = {}) {
       init = null;
       throw error;
     }
-    if (child && (child.exitCode != null || child.signalCode != null)) {
-      throw new Error('process exited');
+    if (child && !child.__arcoWatched) {
+      child.__arcoWatched = true;
+      if (typeof child.once === 'function') child.once('exit', () => { dead = true; });
     }
+    if (dead || isDead(child)) throw new Error('process exited');
   }
 
-  async function deliver(record, remaining) {
+  function isDead(child) {
+    return dead || Boolean(child && (child.exitCode != null || child.signalCode != null));
+  }
+
+  async function deliver(record, timeout) {
     const attribute = record.messageAttributes && record.messageAttributes.contentType;
     const headers = {
       'content-type': (attribute && attribute.stringValue) || 'application/octet-stream',
@@ -71,7 +85,6 @@ function createHandler(deps = {}) {
       'x-arco-message-id': record.messageId,
       'x-arco-receive-count': String((record.attributes && record.attributes.ApproximateReceiveCount) || '1'),
     };
-    const timeout = Math.max(1000, remaining() - 2000);
     try {
       const { status, body } = await post(host, port, process.env.ARCO_QUEUE_ROUTE, headers, record.body ?? '', timeout);
       if (status >= 200 && status < 300) return true;
@@ -83,16 +96,20 @@ function createHandler(deps = {}) {
   }
 
   async function handleQueue(event, context) {
-    const remaining = () => (context && typeof context.getRemainingTimeInMillis === 'function' ? context.getRemainingTimeInMillis() : 30000);
+    const remaining = remainingOf(context);
     const fifo = process.env.ARCO_QUEUE_FIFO === '1';
     const failures = [];
+    let skipped = 0;
     for (const record of event.Records) {
-      if (fifo && failures.length > 0) {
+      const budget = remaining() - MARGIN_MS;
+      if ((fifo && failures.length > 0) || dead || budget < MIN_BUDGET_MS) {
+        if (!(fifo && failures.length > 0)) skipped += 1;
         failures.push({ itemIdentifier: record.messageId });
         continue;
       }
-      if (!(await deliver(record, remaining))) failures.push({ itemIdentifier: record.messageId });
+      if (!(await deliver(record, budget))) failures.push({ itemIdentifier: record.messageId });
     }
+    if (skipped > 0) log('record_skipped', { queue: process.env.ARCO_WORKER_QUEUE, skipped, reason: dead ? 'process_exited' : 'deadline' });
     return { batchItemFailures: failures };
   }
 
@@ -100,10 +117,14 @@ function createHandler(deps = {}) {
     const routes = JSON.parse(process.env.ARCO_SCHEDULES || '{}');
     const route = Object.prototype.hasOwnProperty.call(routes, event.name) ? routes[event.name] : undefined;
     if (!route) throw new Error(`unknown schedule: ${event.name}`);
-    const left = context && typeof context.getRemainingTimeInMillis === 'function' ? context.getRemainingTimeInMillis() : 30000;
+    const budget = remainingOf(context)() - MARGIN_MS;
+    if (budget < MIN_BUDGET_MS) {
+      log('schedule_failed', { name: event.name, error: 'deadline' });
+      throw new Error(`schedule ${event.name} not sent: invocation deadline too close`);
+    }
     let result;
     try {
-      result = await post(host, port, route, { 'x-arco-schedule': event.name }, '', Math.max(1000, left - 2000));
+      result = await post(host, port, route, { 'x-arco-schedule': event.name }, '', budget);
     } catch (error) {
       log('schedule_failed', { name: event.name, error: error.message });
       throw new Error(`schedule ${event.name} failed: ${error.message}`);

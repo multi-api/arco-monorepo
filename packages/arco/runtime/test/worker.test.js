@@ -87,6 +87,56 @@ test('a record that never answers fails before the invocation times out, the nex
   a.close();
 });
 
+test('hung records never overrun the invocation deadline', async () => {
+  const a = await app(() => {});
+  const handler = createHandler({ port: a.port, start: async () => ({}), log: () => {} });
+  const begin = Date.now();
+  const ctx = { getRemainingTimeInMillis: () => 3300 - (Date.now() - begin) };
+  await withEnv(queueEnv, async () => {
+    const result = await handler({ Records: ['m1', 'm2', 'm3', 'm4'].map((id) => record(id, id)) }, ctx);
+    assert.equal(result.batchItemFailures.length, 4);
+  });
+  assert.ok(Date.now() - begin <= 3300 - 2000 + 150, 'returned with the safety margin left');
+  a.close();
+});
+
+test('with under 2500 ms left nothing is sent and every record fails', async () => {
+  const a = await app((req, res) => { res.statusCode = 204; res.end(); });
+  const logs = [];
+  const handler = createHandler({ port: a.port, start: async () => ({}), log: (p, d) => logs.push([p, d]) });
+  await withEnv(queueEnv, async () => {
+    const result = await handler({ Records: [record('m1', 'a'), record('m2', 'b')] }, context(1200));
+    assert.equal(result.batchItemFailures.length, 2);
+  });
+  assert.equal(a.requests.length, 0);
+  assert.equal(logs.filter(([p]) => p === 'record_skipped').length, 1);
+  a.close();
+});
+
+test('schedule with too little time left throws without sending', async () => {
+  const a = await app(() => {});
+  const handler = createHandler({ port: a.port, start: async () => ({}), log: () => {} });
+  await withEnv(schedulesEnv(), async () => {
+    await assert.rejects(handler({ arco: 'schedule', name: 'cleanup' }, context(2400)));
+  });
+  assert.equal(a.requests.length, 0);
+  a.close();
+});
+
+test('a child that dies mid-batch fails the in-flight and remaining records, and the next invocation', async () => {
+  const child = new (require('node:events').EventEmitter)();
+  child.exitCode = null;
+  const a = await app((req, res) => { child.exitCode = 1; child.emit('exit', 1, null); res.socket.destroy(); });
+  const handler = createHandler({ port: a.port, start: async () => child, log: () => {} });
+  await withEnv(queueEnv, async () => {
+    const result = await handler({ Records: [record('m1', 'a'), record('m2', 'b'), record('m3', 'c')] }, context());
+    assert.deepEqual(result.batchItemFailures.map((f) => f.itemIdentifier), ['m1', 'm2', 'm3']);
+    await assert.rejects(handler({ Records: [record('m4', 'd')] }, context()), /exited/);
+  });
+  assert.equal(a.requests.length, 1);
+  a.close();
+});
+
 test('FIFO: after the first failure the rest is failed without being sent', async () => {
   const a = await app((req, res) => { res.statusCode = 500; res.end(); });
   const handler = createHandler({ port: a.port, start: async () => ({}), log: () => {} });
@@ -109,6 +159,7 @@ test('connection refused fails every record', async () => {
   });
 });
 
+const schedulesEnv = () => schedules;
 const schedules = { ARCO_SCHEDULES: JSON.stringify({ cleanup: '/_arco/schedule/cleanup' }) };
 
 test('schedule: POSTs to the route with the schedule header', async () => {
