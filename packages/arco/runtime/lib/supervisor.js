@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const http = require('node:http');
 const net = require('node:net');
 const path = require('node:path');
-const { pipeAccessLog } = require('./accesslog');
+const crypto = require('node:crypto');
+const { MAX_PATH, requestId: requestIdOf, pipeAccessLog } = require('./accesslog');
 
 const PHP_TMP_SUBDIRS = [
   'storage/app/public', 'storage/framework/cache/data', 'storage/framework/sessions',
@@ -71,12 +72,59 @@ function waitForPort(host, port, timeoutMs = 9000, name = 'FrankenPHP') {
   });
 }
 
+// True for /_arco and /_arco/..., however the path is spelled: percent-encoded, with repeated slashes or with dot
+// segments. An undecodable path counts as internal.
+function isInternalPath(rawUrl) {
+  let decoded;
+  try {
+    decoded = decodeURIComponent(String(rawUrl).split('?', 1)[0]);
+  } catch {
+    return true;
+  }
+  const segments = [];
+  for (const segment of decoded.split('/')) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') segments.pop();
+    else segments.push(segment);
+  }
+  return segments[0] === '_arco';
+}
+
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'upgrade', 'te', 'trailer']);
 
-// options is reserved for the process kind (request ids, access log, /_arco/ guard); PHP passes none.
+// options is for the process kind (PHP passes none): blockInternal answers 404 for /_arco/ paths, requestIds adds an
+// X-Request-ID when the request carries no id, accessLog writes one {"arco":"request",...} line per response to `output`.
 function startProxy(host, port, upstreamHost, upstreamPort, options = {}) {
+  const { blockInternal = false, requestIds = false, accessLog = false, output = process.stdout } = options;
   const agent = new http.Agent({ keepAlive: true, maxSockets: 256 });
   const server = http.createServer((req, res) => {
+    const startedAt = process.hrtime.bigint();
+    const state = { requestId: null };
+    if (accessLog) {
+      res.once('close', () => {
+        const [path] = String(req.url).split('?', 1);
+        output.write(`${JSON.stringify({
+          arco: 'request',
+          status: res.statusCode,
+          method: req.method,
+          path: path.slice(0, MAX_PATH),
+          ms: Math.round(Number(process.hrtime.bigint() - startedAt) / 1e6),
+          requestId: state.requestId,
+        })}\n`);
+      });
+    }
+    if (requestIds) {
+      state.requestId = requestIdOf(req.headers);
+      if (state.requestId === null) {
+        state.requestId = crypto.randomUUID();
+        req.headers['x-request-id'] = state.requestId;
+      }
+    }
+    if (blockInternal && isInternalPath(req.url)) {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('Not Found');
+      return;
+    }
     const headers = {};
     for (const [name, value] of Object.entries(req.headers)) if (!HOP_BY_HOP.has(name)) headers[name] = value;
     const remote = req.socket.remoteAddress;
@@ -101,4 +149,4 @@ function startProxy(host, port, upstreamHost, upstreamPort, options = {}) {
   return new Promise((resolve) => server.listen(port, host, () => resolve(server)));
 }
 
-module.exports = { prepareTmp, resolveBinary, spawnProcess, spawnFrankenphp, waitForPort, startProxy };
+module.exports = { prepareTmp, resolveBinary, spawnProcess, spawnFrankenphp, waitForPort, startProxy, isInternalPath };

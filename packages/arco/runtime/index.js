@@ -1,5 +1,5 @@
 'use strict';
-// Arco runtime for AWS Lambda Web Functions: loads the variable bundle, resolves secrets, then runs FrankenPHP.
+// Arco runtime for AWS Lambda Web Functions: loads the variable bundle, resolves secrets, then runs FrankenPHP (or, for the process kind, the customer's binary).
 const nodeFs = require('node:fs');
 const path = require('node:path');
 const { resolveSecrets } = require('./lib/secrets');
@@ -7,6 +7,7 @@ const { POINTER, loadVariables } = require('./lib/variables');
 const { createFetchers } = require('./lib/aws');
 const { buildCaddyfile } = require('./lib/caddyfile');
 const supervisor = require('./lib/supervisor');
+const processKind = require('./lib/process');
 
 const ROOT = __dirname;
 const TMP = '/tmp/arco';
@@ -35,6 +36,19 @@ async function main({ fs = nodeFs, log = defaultLog } = {}) {
   }
   Object.assign(process.env, resolved);
   log('secrets', { resolved: Object.keys(resolved).length });
+
+  if (config.kind === 'process') {
+    // No Laravel storage/ or caddy/ folders: only bin/ for an executable copy.
+    supervisor.prepareTmp(TMP, ['bin']);
+    await processKind.startProcess(ROOT, config, process.env, log);
+    await supervisor.startProxy(host, port, processKind.HOST, processKind.PORT, {
+      blockInternal: true,
+      requestIds: true,
+      accessLog: config.accessLog === true,
+    });
+    log('proxy_ready');
+    return;
+  }
 
   supervisor.prepareTmp(TMP);
   const proxy = config.mode === 'proxy';
