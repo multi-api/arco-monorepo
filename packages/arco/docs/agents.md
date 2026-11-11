@@ -675,7 +675,7 @@ not. The most common ones:
 | `config.json_runtime_missing`, `config.json_php_runtime` | `arco.json` without `runtime` and no `go.mod`; or `runtime.kind: "php"` | Add `"runtime": {"language": "go"}` (and a `go.mod`); PHP apps use `arco.php` |
 | `config.env_required` | `arco.json` declares no environments and there is no `--env` | Pass `--env=<env>` |
 | `validation.process_unsupported` | A PHP-only setting (`console`, `scheduler`, `cache`, `failedJobsTable`, `deployCommands`, ...) in a Go app, `key` names it | Remove it from `arco.json` or the layer |
-| `validation.process_main_flag`, `validation.process_main`, `validation.process_command`, `validation.process_language`, `validation.route` | Bad `runtime` value, or a route not starting with `/` | Fix the value the message names |
+| `validation.process_main_flag`, `validation.process_main`, `validation.process_command`, `validation.process_language`, `validation.route`, `validation.health_path_internal` | Bad `runtime` value, a route or `healthPath` that is not a plain path (see [Route paths](configuration.md#route-paths)), or a `healthPath` under `/_arco/` | Fix the value the message names |
 | `validation.schedule_name`, `validation.schedule_every`, `validation.schedule_timeout` | Bad schedule name, `every` (`5m`, `1h`, `1d` or 5-field cron in UTC) or `timeout` (1 to 900) | Fix the schedule |
 | `validation.queue_variable_collision` | Two queue names give the same `ARCO_QUEUE_<NAME>_URL` | Rename one queue |
 | `validation.queue_route_php`, `validation.schedules_php` | A queue `route` or `schedules` in a PHP app | Remove them; PHP apps use `scheduler()` |

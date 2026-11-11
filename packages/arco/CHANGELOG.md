@@ -52,7 +52,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 - **Added:** validation and errors for process apps: `validation.process_unsupported` (`{key}`, a PHP-only setting
   such as `console`, `scheduler`, `consoleTimeout`, `consoleMemory`, `cache`, `failedJobsTable`, `deployCommands` or a
   PHP `runtime` option), `validation.process_language` (`{language}`), `validation.process_main`,
-  `validation.process_main_flag` (`{main}`), `validation.process_command`, `validation.route` (`{kind, name}`),
+  `validation.process_main_flag` (`{main}`), `validation.process_command`, `validation.route` (`{kind, name}`: a
+  queue or schedule `route` or the `healthPath` that is not an origin-form path of RFC 3986 path characters),
+  `validation.health_path_internal` (`{path}`, a `healthPath` under `/_arco/`),
   `validation.schedule_name` (`{name}`), `validation.schedule_every` (`{schedule, every}`),
   `validation.schedule_timeout` (`{schedule, value}`), `validation.queue_variable_collision` (`{queues, variable}`),
   `validation.queue_route_php` (`{queue}`) and `validation.schedules_php` (`{schedules}`); build keys `build.go`

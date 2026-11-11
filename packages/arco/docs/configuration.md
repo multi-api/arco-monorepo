@@ -1723,7 +1723,7 @@ Without `environments`, any `--env` names an environment (as a layer-added one d
 | `language` | `go` with a `go.mod` | Only `go` in this release (`validation.process_language`) |
 | `main` | detected | The Go package to build, such as `./cmd/api`. Not empty (`validation.process_main`) and not starting with `-` (`validation.process_main_flag`) |
 | `command` | `["bin/app"]` | What the runtime starts, relative to `app/` in the package: a list of non-empty strings (`validation.process_command`), or a string split on whitespace (no quoting: use the list for arguments with spaces) |
-| `healthPath` | `/` | The path `deploy` requests to verify a new revision; must start with `/` (`validation.route`) |
+| `healthPath` | `/` | The path `deploy` requests to verify a new revision; a [route path](#route-paths) (`validation.route`), not under `/_arco/` (`validation.health_path_internal`) |
 
 ### Build and package
 
@@ -1776,14 +1776,21 @@ log.Fatal(http.ListenAndServe(addr, mux))
 **`/_arco/` is private.** The proxy answers `404 Not Found` to any path that is `/_arco` or starts with `/_arco/`
 (also percent-encoded, with `//` or `..`, or in absolute form) and never forwards it. Queue and schedule deliveries
 reach the process directly on `127.0.0.1`, so keep their routes under `/_arco/`: a route elsewhere is public as well.
-Do not put `healthPath` under `/_arco/`. The `X-Arco-*` headers identify a delivery but are not authentication.
+A `healthPath` under `/_arco/` (in any of those spellings) is refused with `validation.health_path_internal`. The
+`X-Arco-*` headers identify a delivery but are not authentication.
+
+#### Route paths
+
+A queue or schedule `route` and `runtime.healthPath` are plain paths: they start with `/` and hold only letters,
+digits, `-._~!$&'()*+,;=:@/` and `%XX` escapes (RFC 3986 path characters). Spaces, control characters, non-ASCII
+characters (escape them as `%XX`), `?` and `#` are refused with `validation.route` (`{kind, name}`).
 
 ### Queues for process apps
 
 Each `queues.<name>` gets an SQS queue (and dead-letter queue) as for PHP, and a worker function
 `<app>-<env>-queue-<name>` on `nodejs24.x` that runs `worker.js` from the same zip. The worker starts the process once
 per instance (with the same variables as the web function) and `POST`s each message, one at a time and in order, to
-the queue's `route` (default `/_arco/queues/<name>`), with the raw message body and these headers:
+the queue's `route` (default `/_arco/queues/<name>`, a [route path](#route-paths)), with the raw message body and these headers:
 
 | Header | Value |
 |---|---|
@@ -1814,7 +1821,7 @@ route receives. `route` is refused for PHP apps (`validation.queue_route_php`).
 | Option | Default | What it does |
 |---|---|---|
 | `every` | required | `<n>m` (1 to 59), `<n>h` (1 to 23), `1d`, or a standard 5-field cron expression (`minute hour day-of-month month day-of-week`, in UTC; day-of-month and day-of-week cannot both be set; `0` and `7` are Sunday) |
-| `route` | `/_arco/schedule/<name>` | The path that receives the call; must start with `/` |
+| `route` | `/_arco/schedule/<name>` | The path that receives the call; a [route path](#route-paths) |
 | `timeout` | 60 | Seconds the call may take, 1 to 900 |
 
 - Names are lowercase letters, digits and hyphens, starting with a letter or digit, at most 40 characters

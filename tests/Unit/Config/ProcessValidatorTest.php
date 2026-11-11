@@ -118,6 +118,73 @@ final class ProcessValidatorTest extends TestCase
         self::assertContains(['key' => 'validation.route', 'params' => ['kind' => 'queue', 'name' => 'emails']], self::errors(['queues' => ['emails' => ['route' => 'jobs']]]));
     }
 
+    /** @return iterable<string, array{string}> paths Node cannot send as a request target, or that are not origin-form */
+    public static function badRoutes(): iterable
+    {
+        yield 'space' => ['/_arco/my job'];
+        yield 'tab' => ["/jobs\tx"];
+        yield 'newline' => ["/jobs\nx"];
+        yield 'control' => ["/jobs\x01"];
+        yield 'delete' => ["/jobs\x7f"];
+        yield 'query' => ['/jobs?x=1'];
+        yield 'fragment' => ['/jobs#x'];
+        yield 'non-ascii' => ['/trabajos/año'];
+        yield 'quote' => ['/jobs/"x"'];
+        yield 'angle' => ['/jobs/<x>'];
+        yield 'backslash' => ['/jobs\\x'];
+        yield 'brace' => ['/jobs/{id}'];
+        yield 'bad percent' => ['/jobs/%zz'];
+        yield 'short percent' => ['/jobs/%4'];
+    }
+
+    #[DataProvider('badRoutes')]
+    public function test_routes_must_be_origin_form_paths(string $route): void
+    {
+        self::assertContains(['key' => 'validation.route', 'params' => ['kind' => 'schedule', 'name' => 'nightly']], self::errors(['schedules' => ['nightly' => ['every' => '1h', 'route' => $route]]]));
+        self::assertContains(['key' => 'validation.route', 'params' => ['kind' => 'queue', 'name' => 'emails']], self::errors(['queues' => ['emails' => ['route' => $route]]]));
+        self::assertContains(['key' => 'validation.route', 'params' => ['kind' => 'healthPath', 'name' => $route]], self::errors(['process' => ['healthPath' => $route]]));
+    }
+
+    public function test_every_rfc_3986_path_character_is_accepted(): void
+    {
+        $route = "/a-z_A.Z~0/9!\$&'()*+,;=:@/%5B%c3%b1/";
+        self::assertSame([], self::errors([
+            'process' => ['healthPath' => $route],
+            'queues' => ['emails' => ['route' => $route]],
+            'schedules' => ['nightly' => ['every' => '1h', 'route' => $route]],
+        ]));
+        self::assertSame([], self::errors(['process' => ['healthPath' => '/']]));
+    }
+
+    /** @return iterable<string, array{string}> */
+    public static function internalHealthPaths(): iterable
+    {
+        foreach (['/_arco', '/_arco/', '/_arco/health', '/%5Farco/health', '/%5farco/x', '//_arco/x', '/a/../_arco/x', '/./_arco', '/%255Farco/x'] as $path) {
+            yield $path => [$path];
+        }
+    }
+
+    #[DataProvider('internalHealthPaths')]
+    public function test_health_path_under_arco_is_refused(string $path): void
+    {
+        self::assertContains(['key' => 'validation.health_path_internal', 'params' => ['path' => $path]], self::errors(['process' => ['healthPath' => $path]]));
+    }
+
+    public function test_health_paths_that_only_look_internal_are_accepted(): void
+    {
+        foreach (['/_arcox', '/api/_arco', '/_arco_health', '/healthz'] as $path) {
+            self::assertNotContains('validation.health_path_internal', self::keys(['process' => ['healthPath' => $path]]), $path);
+        }
+    }
+
+    public function test_route_messages_exist_in_both_languages(): void
+    {
+        foreach (['en', 'es'] as $lang) {
+            $translator = new \Multiapi\Arco\Cli\Translator($lang, \Multiapi\Arco\Arco::packageRoot() . '/lang');
+            self::assertStringContainsString('/_arco/x', $translator->trans('validation.health_path_internal', ['path' => '/_arco/x']));
+        }
+    }
+
     public function test_queue_names_that_share_a_url_variable_are_refused(): void
     {
         self::assertContains(

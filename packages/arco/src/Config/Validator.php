@@ -337,8 +337,11 @@ final class Validator
                 // `go build` would read it as a flag.
                 $result->error('validation.process_main_flag', ['main' => $process->main]);
             }
-            if (! str_starts_with($process->healthPath, '/')) {
+            if (! self::isRoute($process->healthPath)) {
                 $result->error('validation.route', ['kind' => 'healthPath', 'name' => $process->healthPath]);
+            } elseif (self::isInternalPath($process->healthPath)) {
+                // The proxy answers 404 there: the deploy's check would fail and roll back.
+                $result->error('validation.health_path_internal', ['path' => $process->healthPath]);
             }
             foreach ($process->command as $part) {
                 if (trim($part) === '') {
@@ -349,7 +352,7 @@ final class Validator
         }
 
         foreach ($config->queues as $queue) {
-            if (! str_starts_with($queue->route(), '/')) {
+            if (! self::isRoute($queue->route())) {
                 $result->error('validation.route', ['kind' => 'queue', 'name' => $queue->name]);
             }
         }
@@ -373,10 +376,58 @@ final class Validator
             if ($schedule->timeout < 1 || $schedule->timeout > 900) {
                 $result->error('validation.schedule_timeout', ['schedule' => $schedule->name, 'value' => $schedule->timeout]);
             }
-            if (! str_starts_with($schedule->route(), '/')) {
+            if (! self::isRoute($schedule->route())) {
                 $result->error('validation.route', ['kind' => 'schedule', 'name' => $schedule->name]);
             }
         }
+    }
+
+    /**
+     * An origin-form path Node can send as a request target: a leading `/`, then only RFC 3986 path characters
+     * (unreserved, sub-delims, `:`, `@`, `/`) and `%XX` escapes. No whitespace, control characters, `?` or `#`.
+     */
+    private static function isRoute(string $route): bool
+    {
+        return preg_match("~^/(?:[A-Za-z0-9\\-._\\~!$&'()*+,;=:@/]|%[0-9A-Fa-f]{2})*\\z~", $route) === 1;
+    }
+
+    /**
+     * Whether the process proxy treats the path as /_arco or /_arco/... and answers 404 (runtime/lib/supervisor.js
+     * isInternalPath): decoded until stable (at most 5 decodes, the last one changing nothing), with empty and `.`
+     * segments dropped and `..` applied. A path that does not decode, or is still changing, counts as internal.
+     */
+    private static function isInternalPath(string $path): bool
+    {
+        $decoded = $path;
+        for ($round = 0; ; $round++) {
+            if ($round === 5) {
+                return true;
+            }
+            // decodeURIComponent() throws on a `%` without two hex digits, and on bytes that are not UTF-8.
+            if (preg_match('/%(?![0-9A-Fa-f]{2})/', $decoded) === 1) {
+                return true;
+            }
+            $next = rawurldecode($decoded);
+            if (preg_match('//u', $next) !== 1) {
+                return true;
+            }
+            if ($next === $decoded) {
+                break;
+            }
+            $decoded = $next;
+        }
+        $segments = [];
+        foreach (explode('/', $decoded) as $segment) {
+            if ($segment === '' || $segment === '.') {
+                continue;
+            }
+            if ($segment === '..') {
+                array_pop($segments);
+            } else {
+                $segments[] = $segment;
+            }
+        }
+        return ($segments[0] ?? null) === '_arco';
     }
 
     /**
