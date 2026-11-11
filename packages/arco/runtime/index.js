@@ -2,9 +2,7 @@
 // Arco runtime for AWS Lambda Web Functions: loads the variable bundle, resolves secrets, then runs FrankenPHP (or, for the process kind, the customer's binary).
 const nodeFs = require('node:fs');
 const path = require('node:path');
-const { resolveSecrets } = require('./lib/secrets');
-const { POINTER, loadVariables } = require('./lib/variables');
-const { createFetchers } = require('./lib/aws');
+const { loadEnvironment } = require('./lib/boot');
 const { buildCaddyfile } = require('./lib/caddyfile');
 const supervisor = require('./lib/supervisor');
 const processKind = require('./lib/process');
@@ -21,21 +19,7 @@ async function main({ fs = nodeFs, log = defaultLog } = {}) {
   const port = Number(portString);
   log('boot', { mode: config.mode, endpoint: `${host}:${port}` });
 
-  const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
-  const fetchers = createFetchers(region);
-  if (process.env[POINTER]) {
-    // bundleVariables(): before the secrets, so references inside the bundle are resolved too.
-    const loaded = await loadVariables(process.env, fetchers.getObject);
-    Object.assign(process.env, loaded);
-    log('variables', { loaded: Object.keys(loaded).length });
-  }
-  const { resolved, missing } = await resolveSecrets(process.env, fetchers);
-  if (missing.length > 0) {
-    log('secrets_missing', { missing });
-    process.exit(1);
-  }
-  Object.assign(process.env, resolved);
-  log('secrets', { resolved: Object.keys(resolved).length });
+  await loadEnvironment(log);
 
   if (config.kind === 'process') {
     // No Laravel storage/ or caddy/ folders: only bin/ for an executable copy.
