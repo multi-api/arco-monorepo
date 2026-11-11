@@ -72,12 +72,30 @@ function waitForPort(host, port, timeoutMs = 9000, name = 'FrankenPHP') {
   });
 }
 
-// True for /_arco and /_arco/..., however the path is spelled: percent-encoded, with repeated slashes or with dot
-// segments. An undecodable path counts as internal.
+// The path of a request target, without query or fragment: origin-form (`/a?b`) as is, absolute-form
+// (`http://host/a?b`, which Go's net/http routes by its path) by its pathname. Anything else (`*`, authority-form,
+// garbage) has no path: null.
+function targetPath(rawUrl) {
+  const target = String(rawUrl);
+  if (target.startsWith('/')) return target.split(/[?#]/, 1)[0];
+  if (/^https?:\/\//i.test(target)) {
+    try {
+      return new URL(target).pathname;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+// True for /_arco and /_arco/..., however the target is spelled: absolute-form, percent-encoded, with repeated
+// slashes or with dot segments. A target without a usable path or an undecodable one counts as internal (fail closed).
 function isInternalPath(rawUrl) {
+  const raw = targetPath(rawUrl);
+  if (raw === null) return true;
   let decoded;
   try {
-    decoded = decodeURIComponent(String(rawUrl).split('?', 1)[0]);
+    decoded = decodeURIComponent(raw);
   } catch {
     return true;
   }
@@ -102,7 +120,9 @@ function startProxy(host, port, upstreamHost, upstreamPort, options = {}) {
     const state = { requestId: null };
     if (accessLog) {
       res.once('close', () => {
-        const [path] = String(req.url).split('?', 1);
+        // A client that went away before the answer finished is not a response: nothing to log.
+        if (!res.writableFinished) return;
+        const path = targetPath(req.url) ?? '';
         output.write(`${JSON.stringify({
           arco: 'request',
           status: res.statusCode,

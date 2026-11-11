@@ -11,6 +11,7 @@ async function setup(t, options) {
   const seen = [];
   const upstream = http.createServer((req, res) => {
     seen.push({ url: req.url, headers: req.headers });
+    if (req.url === '/hang') return;
     res.writeHead(req.method === 'POST' ? 201 : 200, { 'content-type': 'text/plain' });
     res.end('upstream');
   });
@@ -33,7 +34,7 @@ async function setup(t, options) {
     req.on('error', reject);
     req.end();
   });
-  return { seen, lines, request };
+  return { seen, lines, request, proxyPort };
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -101,5 +102,36 @@ test('without options the proxy blocks nothing, adds no id and writes no line', 
   assert.equal(response.status, 200);
   assert.equal(seen[0].headers['x-request-id'], undefined);
   await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(lines, []);
+});
+
+test('blockInternal also blocks absolute-form targets and fails closed on non-origin targets', async (t) => {
+  const { seen, request } = await setup(t, { blockInternal: true });
+  for (const path of ['http://h/_arco/x', 'HTTP://h/_arco', 'http://h/%5Farco/x', 'http://h/a/../_arco/x?y=1', '*', 'h:80', 'ftp://h/ok']) {
+    const response = await request(path);
+    // Node's own parser may refuse a malformed target with 400 first; either way it is never forwarded.
+    assert.ok([400, 404].includes(response.status), `${path}: ${response.status}`);
+  }
+  assert.equal(seen.length, 0);
+  assert.equal((await request('http://h/ok')).status, 200);
+  assert.equal(seen.length, 1);
+});
+
+test('accessLog path is the pathname without scheme, host or query', async (t) => {
+  const { lines, request } = await setup(t, { blockInternal: true, accessLog: true });
+  await request('http://h/orders/42?x=1');
+  await request('http://h/_arco/x?y=1');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(lines.map((l) => JSON.parse(l).path), ['/orders/42', '/_arco/x']);
+});
+
+test('accessLog writes nothing for a request the client abandoned before the answer', async (t) => {
+  const { seen, lines, proxyPort } = await setup(t, { accessLog: true });
+  const req = http.request({ host: '127.0.0.1', port: proxyPort, path: '/hang', agent: false });
+  req.on('error', () => {});
+  req.end();
+  while (seen.length === 0) await new Promise((resolve) => setTimeout(resolve, 5));
+  req.destroy();
+  await new Promise((resolve) => setTimeout(resolve, 50));
   assert.deepEqual(lines, []);
 });
