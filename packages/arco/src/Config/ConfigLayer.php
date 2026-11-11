@@ -109,8 +109,14 @@ final readonly class ConfigLayer
         return new self($path, $name, $region, $environment, $entry);
     }
 
-    /** @param array<mixed> $entry */
-    private static function checkEntry(array $entry, string $base): void
+    /**
+     * Checks the keys an environment entry (and arco.json's top level) shares: unknown keys, wrong types.
+     *
+     * @param array<mixed> $entry
+     * @param bool $allowFalse a named entry may be `false` (arco.json's environment level: it frees the app level's name)
+     * @throws ConfigException config.layer_invalid, with the JSON pointer in `path`
+     */
+    public static function checkEntry(array $entry, string $base, bool $allowFalse = false): void
     {
         foreach ($entry as $key => $value) {
             $at = $base . '/' . self::pointer((string) $key);
@@ -119,10 +125,10 @@ final readonly class ConfigLayer
                 'variables' => self::checkMap($value, $at, fn (mixed $v, string $p) => self::expect(is_string($v), $p, 'expected string')),
                 'permissions' => self::checkPermissions($value, $at),
                 'domains' => self::checkStrings($value, $at),
-                'queues' => self::checkNamed($value, $at, self::QUEUE),
-                'schedules' => self::checkNamed($value, $at, self::SCHEDULE),
-                'storage' => self::checkNamed($value, $at, self::STORAGE),
-                'tables' => self::checkNamed($value, $at, self::TABLE),
+                'queues' => self::checkNamed($value, $at, self::QUEUE, $allowFalse),
+                'schedules' => self::checkNamed($value, $at, self::SCHEDULE, $allowFalse),
+                'storage' => self::checkNamed($value, $at, self::STORAGE, $allowFalse),
+                'tables' => self::checkNamed($value, $at, self::TABLE, $allowFalse),
                 default => throw self::invalid($at, 'unknown key'),
             };
         }
@@ -191,9 +197,12 @@ final readonly class ConfigLayer
     }
 
     /** @param array<string, string> $options option name => type */
-    private static function checkNamed(mixed $named, string $at, array $options): void
+    private static function checkNamed(mixed $named, string $at, array $options, bool $allowFalse = false): void
     {
-        self::checkMap($named, $at, null, function (string $name, mixed $entry, string $p) use ($options): void {
+        self::checkMap($named, $at, null, function (string $name, mixed $entry, string $p) use ($options, $allowFalse): void {
+            if ($allowFalse && $entry === false) {
+                return;
+            }
             self::checkMap($entry, $p, null, function (string $key, mixed $value, string $q) use ($options): void {
                 if (! isset($options[$key])) {
                     throw self::invalid($q, 'unknown key');
@@ -222,7 +231,7 @@ final readonly class ConfigLayer
         };
     }
 
-    private static function checkStrings(mixed $value, string $at): void
+    public static function checkStrings(mixed $value, string $at): void
     {
         if (! is_array($value) || ! array_is_list($value)) {
             throw self::invalid($at, 'expected a list of strings');
@@ -277,7 +286,7 @@ final readonly class ConfigLayer
     }
 
     /** One JSON pointer segment (RFC 6901). */
-    private static function pointer(string $segment): string
+    public static function pointer(string $segment): string
     {
         return str_replace(['~', '/'], ['~0', '~1'], $segment);
     }

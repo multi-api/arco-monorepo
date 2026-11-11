@@ -9,7 +9,7 @@ use Multiapi\Arco\Cli\UserError;
 use Multiapi\Arco\Commands\Concerns\ResolvesTarget;
 use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Config\ConfigLayer;
-use Multiapi\Arco\Config\ConfigLoader;
+use Multiapi\Arco\Config\ProjectConfig;
 use LogicException;
 use Multiapi\Arco\Resources\Annotator;
 use Multiapi\Arco\Resources\Inventory;
@@ -134,8 +134,7 @@ final class ResourcesCommand extends ArcoCommand
             if ($picker !== null) {
                 try {
                     // The preview shows vpc() at the environment's level, the one vpc:set and vpc:remove write.
-                    $arcoPhp = $this->projectDir() . '/arco.php';
-                    $environmentVpc = SelectionPlan::environmentVpc(is_file($arcoPhp) ? (new ConfigLoader())->load($arcoPhp) : [], $located->environment);
+                    $environmentVpc = SelectionPlan::environmentVpc(ProjectConfig::hasFile($this->projectDir()) ? ProjectConfig::raw($this->projectDir(), null)['raw'] : [], $located->environment);
                     return $picker->run($located, $result, $all, $environmentVpc);
                 } catch (PromptsUnavailable $e) {
                     // Questions come before any command runs: nothing was written.
