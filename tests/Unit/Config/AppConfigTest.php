@@ -21,11 +21,13 @@ final class AppConfigTest extends TestCase
             : [$type instanceof \ReflectionNamedType ? $type->getName() : 'mixed'];
         return match (true) {
             in_array(RuntimeConfig::class, $names, true) => (new \ReflectionClass(RuntimeConfig::class))->newInstanceWithoutConstructor(),
+            in_array(\Multiapi\Arco\Config\ProcessRuntime::class, $names, true) => new \Multiapi\Arco\Config\ProcessRuntime('go', './cmd/app'),
             in_array(VpcConfig::class, $names, true) => new VpcConfig(['subnet-a1'], ['sg-b2']),
             in_array(TableConfig::class, $names, true) => new TableConfig('cache', existing: 'sample-' . $parameter->getName()),
             in_array('array', $names, true) => match ($parameter->getName()) {
                 'queues' => [new QueueConfig('emails')],
                 'storage' => [new StorageConfig('files')],
+                'schedules' => [new \Multiapi\Arco\Config\ScheduleConfig('cleanup', 'rate(1 day)')],
                 default => ['sample-' . $parameter->getName() => 'x'],
             },
             in_array('int', $names, true) => 7 + $parameter->getPosition(),

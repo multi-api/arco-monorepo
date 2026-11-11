@@ -29,7 +29,14 @@ final readonly class QueueConfig
         public bool $conflictingConcurrency = false,
         /** a config layer entry with `adopt: true`: a deploy may import the existing queue (and its DLQ) */
         public bool $adopt = false,
+        /** process apps: the path the queue's messages are posted to; null: /_arco/queues/<name> */
+        public ?string $route = null,
     ) {
+    }
+
+    public function route(): string
+    {
+        return $this->route ?? '/_arco/queues/' . $this->name;
     }
 
     /**

@@ -27,8 +27,9 @@ final readonly class ConfigLayer
     ];
     private const QUEUE = [
         'timeout' => 'int', 'memory' => 'int', 'maxInstances' => 'int', 'batchSize' => 'int', 'tries' => 'int',
-        'dlq' => 'bool', 'fifo' => 'bool', 'default' => 'bool', 'adopt' => 'bool', 'existing' => 'string',
+        'dlq' => 'bool', 'fifo' => 'bool', 'default' => 'bool', 'adopt' => 'bool', 'existing' => 'string', 'route' => 'string',
     ];
+    private const SCHEDULE = ['every' => 'string', 'route' => 'string', 'timeout' => 'int'];
     private const STORAGE = [
         'public' => 'strings', 'expire' => 'intmap', 'cors' => 'strings', 'existing' => 'string',
         'default' => 'bool', 'adopt' => 'bool',
@@ -36,7 +37,7 @@ final readonly class ConfigLayer
     private const TABLE = ['ttl' => 'string', 'existing' => 'string', 'adopt' => 'bool'];
 
     /**
-     * @param array{settings?: array<string, mixed>, variables?: array<string, string>, permissions?: list<array<string, mixed>>, domains?: list<string>, queues?: array<string, array<string, mixed>>, storage?: array<string, array<string, mixed>>, tables?: array<string, array<string, mixed>>} $entry the environment's array as written, `adopt` included
+     * @param array{settings?: array<string, mixed>, variables?: array<string, string>, permissions?: list<array<string, mixed>>, domains?: list<string>, queues?: array<string, array<string, mixed>>, schedules?: array<string, array<string, mixed>>, storage?: array<string, array<string, mixed>>, tables?: array<string, array<string, mixed>>} $entry the environment's array as written, `adopt` included
      */
     public function __construct(
         public string $path,
@@ -104,7 +105,7 @@ final readonly class ConfigLayer
 
         self::checkEntry($entry, $base);
 
-        /** @var array{settings?: array<string, mixed>, variables?: array<string, string>, permissions?: list<array<string, mixed>>, domains?: list<string>, queues?: array<string, array<string, mixed>>, storage?: array<string, array<string, mixed>>, tables?: array<string, array<string, mixed>>} $entry */
+        /** @var array{settings?: array<string, mixed>, variables?: array<string, string>, permissions?: list<array<string, mixed>>, domains?: list<string>, queues?: array<string, array<string, mixed>>, schedules?: array<string, array<string, mixed>>, storage?: array<string, array<string, mixed>>, tables?: array<string, array<string, mixed>>} $entry */
         return new self($path, $name, $region, $environment, $entry);
     }
 
@@ -119,6 +120,7 @@ final readonly class ConfigLayer
                 'permissions' => self::checkPermissions($value, $at),
                 'domains' => self::checkStrings($value, $at),
                 'queues' => self::checkNamed($value, $at, self::QUEUE),
+                'schedules' => self::checkNamed($value, $at, self::SCHEDULE),
                 'storage' => self::checkNamed($value, $at, self::STORAGE),
                 'tables' => self::checkNamed($value, $at, self::TABLE),
                 default => throw self::invalid($at, 'unknown key'),

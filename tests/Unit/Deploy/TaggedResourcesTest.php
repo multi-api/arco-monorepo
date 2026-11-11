@@ -354,7 +354,7 @@ final class TaggedResourcesTest extends TestCase
             $byName[$resource['type'] . ' ' . $resource['name']] = ['source' => $resource['source'], 'options' => $resource['options']];
         }
 
-        $queue = ['source' => 'arco.php', 'options' => ['timeout' => 120, 'memory' => 1024, 'maxInstances' => null, 'batchSize' => 1, 'tries' => 3, 'dlq' => true, 'fifo' => false, 'existing' => null, 'default' => true]];
+        $queue = ['source' => 'arco.php', 'options' => ['timeout' => 120, 'memory' => 1024, 'maxInstances' => null, 'batchSize' => 1, 'tries' => 3, 'dlq' => true, 'fifo' => false, 'existing' => null, 'default' => true, 'route' => null]];
         self::assertSame($queue, $byName['sqs shop-production-emails']);
         self::assertSame($queue, $byName['sqs shop-production-emails-dlq']);
         self::assertSame($queue, $byName['lambda:function shop-production-queue-emails']);
