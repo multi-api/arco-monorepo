@@ -189,6 +189,21 @@ final class ProcessDeployTest extends TestCase
         self::assertContains('removeConsole', $deployer->calls);
     }
 
+    public function test_a_failed_schedule_sync_is_a_warning_that_names_no_laravel_rule(): void
+    {
+        $deployer = new FakeDeployer('rev-1');
+        $deployer->syncSchedulerError = new \RuntimeException('not authorized to perform: tag:GetResources');
+        $config = self::config([], []);
+        $steps = [];
+
+        $outcome = self::pipeline()->deployPackage($config, self::preset($config), self::processZip(), $deployer, new FakeVerifier(true), function (string $key, array $params = []) use (&$steps): void { $steps[$key] = $params; });
+
+        self::assertTrue($outcome->verification->ok);
+        self::assertArrayNotHasKey('deploy.scheduler_failed', $steps);
+        self::assertSame(['error' => 'not authorized to perform: tag:GetResources'], $steps['deploy.schedules_failed'] ?? null);
+        self::assertContains('deploy.schedules_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+    }
+
     private static function lambdaMissing(string $operation): LambdaException
     {
         return AwsMocks::error(LambdaException::class, $operation, 'ResourceNotFoundException', 404);

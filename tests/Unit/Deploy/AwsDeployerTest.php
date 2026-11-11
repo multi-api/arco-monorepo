@@ -1191,6 +1191,160 @@ final class AwsDeployerTest extends TestCase
         self::assertSame(['remove.step_scheduler', 'remove.step_console', 'remove.step_function'], $steps);
     }
 
+    /** @param array<string, array<string, mixed>> $schedules */
+    private static function processConfig(array $schedules): AppConfig
+    {
+        $raw = App::make('shop')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $raw['schedules'] = $schedules;
+        return ConfigResolver::resolve($raw, 'production');
+    }
+
+    /** @param array<string, string> $rules rule name => schedule name */
+    private static function scheduleRules(array $rules): Result
+    {
+        $list = [];
+        foreach ($rules as $rule => $schedule) {
+            $list[] = ['ResourceARN' => "arn:aws:events:us-east-1:111111111111:rule/$rule", 'Tags' => self::tagList([...self::tags(), 'arco:schedule' => $schedule])];
+        }
+        return new Result(['ResourceTagMappingList' => $list]);
+    }
+
+    public function test_remove_of_a_process_app_deletes_every_schedule_rule_before_the_console(): void
+    {
+        $config = self::processConfig(['cleanup' => ['every' => '1h']]);
+        $cleanup = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup');
+        $gone = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'gone');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
+            self::noRule(), ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(),
+            self::scheduleRules([$cleanup => 'cleanup', $gone => 'gone']),                    // GetResources: schedule rules
+            new Result(['State' => 'ENABLED']), new Result(['State' => 'DISABLED']),            // DescribeRule ×2
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+            self::noRule(),                                                                     // no Laravel rule
+            new Result([]), new Result([]), new Result([]),                                     // cleanup: RemoveTargets, DeleteRule, RemovePermission
+            new Result([]), new Result([]), new Result([]),                                     // gone
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // no resources stack
+            new Result([]),                                                                     // DeleteFunction (console)
+            new Result([]),                                                                     // DeleteWebFunction
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
+            new Result([]), new Result([]),                                                     // DeleteRolePolicy, DeleteRole
+            self::noGroup(),
+        ]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($config, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION,
+            'GetResources', 'DescribeRule', 'DescribeRule', 'DescribeStacks', 'DescribeRule',
+            'RemoveTargets', 'DeleteRule', 'RemovePermission', 'RemoveTargets', 'DeleteRule', 'RemovePermission',
+            'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery'], $mocks->calls);
+        self::assertSame($cleanup, $mocks->params[15]['Name']);
+        self::assertSame($gone, $mocks->params[18]['Name']);
+        self::assertSame([
+            ['remove.step_schedule', ['schedule' => 'cleanup', 'rule' => $cleanup]],
+            ['remove.step_schedule', ['schedule' => 'gone', 'rule' => $gone]],
+            ['remove.step_console', ['function' => 'shop-production-console']],
+            ['remove.step_function', ['function' => 'shop-production']],
+        ], $steps);
+    }
+
+    public function test_remove_of_a_process_app_warns_when_the_schedule_rules_cannot_be_listed(): void
+    {
+        $config = self::processConfig(['cleanup' => ['every' => '1h']]);
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            new Result(['ResourceTagMappingList' => []]),
+            self::noRule(), ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(),
+            AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'AccessDeniedException', 400, 'denied'),
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+            self::noRule(),
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+            new Result([]), new Result([]),
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
+            new Result([]), new Result([]),
+            self::noGroup(),
+        ]);
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients('us-east-1', ['retries' => 0]), AwsMocks::noSleep()))->remove($config, function (string $key, array $params = []) use (&$steps): void { $steps[] = $key; });
+
+        self::assertSame(['remove.schedule_scan_failed', 'remove.step_console', 'remove.step_function'], $steps);
+        self::assertContains('remove.schedule_scan_failed', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
+        self::assertNotContains('DeleteRule', $mocks->calls);
+    }
+
+    public function test_sync_scheduler_of_a_process_app_puts_one_rule_per_schedule_on_the_live_alias(): void
+    {
+        $config = self::processConfig(['cleanup' => ['every' => '1h']]);
+        $rule = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup');
+        $alias = 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console:live';
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['AliasArn' => $alias, 'FunctionVersion' => '7']),
+            new Result(['ResourceTagMappingList' => []]),
+            self::noRule(),
+            new Result(['RuleArn' => "arn:aws:events:us-east-1:111111111111:rule/$rule"]), new Result(['FailedEntryCount' => 0]), new Result([]),
+        );
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncScheduler($config, function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['GetAlias', 'GetResources', 'DescribeRule', 'PutRule', 'PutTargets', 'AddPermission'], $mocks->calls);
+        self::assertSame($alias, $mocks->params[4]['Targets'][0]['Arn']);
+        self::assertSame([...self::tagList(self::tags()), ['Key' => 'arco:schedule', 'Value' => 'cleanup']], $mocks->params[3]['Tags']);
+        self::assertSame([['deploy.schedule_created', ['schedule' => 'cleanup', 'rule' => $rule]]], $steps);
+    }
+
+    public function test_sync_scheduler_of_a_process_app_without_schedules_only_deletes_stale_rules(): void
+    {
+        $config = self::processConfig([]);
+        $rule = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'gone');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::scheduleRules([$rule => 'gone']), new Result(['State' => 'ENABLED']), new Result([]), new Result([]), new Result([]));
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncScheduler($config, function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame(['GetResources', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission'], $mocks->calls);
+        self::assertSame([['deploy.schedule_deleted', ['schedule' => 'gone', 'rule' => $rule]]], $steps);
+    }
+
+    public function test_sync_scheduler_of_a_process_app_needs_the_console_alias(): void
+    {
+        $config = self::processConfig(['cleanup' => ['every' => '1h']]);
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::lambdaMissing('GetAlias'));
+
+        try {
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->syncScheduler($config, fn () => null);
+            self::fail('expected deploy.console_missing');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.console_missing', $e->key);
+        }
+        self::assertSame(['GetAlias'], $mocks->calls);
+    }
+
+    public function test_describe_of_a_process_app_reads_whether_each_schedule_is_paused(): void
+    {
+        $config = self::processConfig(['cleanup' => ['every' => '1h'], 'report' => ['every' => '1d']]);
+        $cleanup = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup');
+        $report = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'report');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']), new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => []]),
+            new Result(['FunctionVersion' => '7']),
+            self::scheduleRules([$cleanup => 'cleanup', $report => 'report']), new Result(['State' => 'DISABLED']), new Result(['State' => 'ENABLED']),
+        );
+
+        $status = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->describe($config);
+
+        self::assertSame(['cleanup' => true, 'report' => false], $status?->schedules);
+        self::assertNull($status->schedulerPaused);
+        self::assertNotContains('arco-shop-production-scheduler', array_map(fn (array $p) => $p['Name'] ?? null, $mocks->params));
+    }
+
     public function test_sync_scheduler_points_the_rule_at_the_live_alias(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->scheduler(5)->environment('production')->toArray(), 'production');

@@ -612,7 +612,10 @@ final class DeployPipeline
         try {
             $deployer->syncScheduler($config, $onStep(...));
         } catch (Throwable $e) {
-            $onStep('deploy.scheduler_failed', ['rule' => SchedulerRule::name($config), 'error' => self::errorMessage($e)]);
+            // A process app has no Laravel rule to name: its schedule rules are found by tag.
+            $config->isProcess()
+                ? $onStep('deploy.schedules_failed', ['error' => self::errorMessage($e)])
+                : $onStep('deploy.scheduler_failed', ['rule' => SchedulerRule::name($config), 'error' => self::errorMessage($e)]);
         }
     }
 

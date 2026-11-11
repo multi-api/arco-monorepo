@@ -1110,6 +1110,8 @@ final class AwsDeployer implements Deployer
                 $networks = null;
             }
         }
+        // A process app's schedule rules, found by tag (so all this environment's), read before anything is deleted.
+        $scheduleRules = $config->isProcess() ? $this->scheduleRulesToRemove($config, $step) : [];
         if ($config->domains !== [] || $this->stackExists($config)) {
             $this->customDomains($config)->remove($config, $step);
         }
@@ -1117,6 +1119,10 @@ final class AwsDeployer implements Deployer
         if ($this->schedulerRuleExists($config, fn (string $error) => $step('remove.scheduler_unreadable', ['rule' => SchedulerRule::name($config), 'error' => $error]))) {
             $step('remove.step_scheduler', ['rule' => SchedulerRule::name($config)]);
             $this->schedulerRule()->delete($config);
+        }
+        foreach ($scheduleRules as $rule) {
+            $step('remove.step_schedule', ['schedule' => $rule['schedule'], 'rule' => $rule['rule']]);
+            $this->processSchedules()->delete($config, $rule['schedule'], $rule['rule']);
         }
         $this->removeWorkers($config, $queues, $step);
         $this->removeResources($config, $step);
@@ -1283,6 +1289,23 @@ final class AwsDeployer implements Deployer
     }
 
     /**
+     * The schedule rules of a process environment (ProcessSchedules::all()). A failed lookup is a warning: the
+     * rules, if any, are left (they then fail to invoke the removed console).
+     *
+     * @param callable(string, array<string, string|int>): void $step
+     * @return list<array{schedule: string, rule: string, state: string}>
+     */
+    private function scheduleRulesToRemove(AppConfig $config, callable $step): array
+    {
+        try {
+            return $this->processSchedules()->all($config);
+        } catch (\Throwable $e) {
+            $step('remove.schedule_scan_failed', ['error' => self::errorText($e)]);
+            return [];
+        }
+    }
+
+    /**
      * Deletes the event source mappings and functions of the environment's workers (workerQueues()).
      *
      * @param list<string> $queues
@@ -1395,11 +1418,16 @@ final class AwsDeployer implements Deployer
 
     /**
      * A process app's schedule rules, pointed at the console's live alias; called after verification, with
-     * or without schedules (none left: the stale rules go). The seam for ProcessSchedules: until it
-     * lands, no rule is put.
+     * or without schedules (none left: only the stale rules go, see ProcessSchedules::sync()).
      */
     private function syncProcessSchedules(AppConfig $config, Closure $onStep): void
     {
+        $alias = null;
+        if ($config->schedules !== []) {
+            $function = $config->consoleFunctionName();
+            $alias = $this->consoleFunction()->aliasArn($function) ?? throw DeployException::make('deploy.console_missing', ['function' => $function]);
+        }
+        $this->processSchedules()->sync($config, $alias, self::tags($config), $onStep, $this->force);
     }
 
     /** Days CloudWatch keeps the logs of an environment without a logRetention() setting. */
@@ -1492,6 +1520,16 @@ final class AwsDeployer implements Deployer
                 // Unknown without EventBridge read access; the rest of the status still shows.
             }
         }
+        $schedules = [];
+        if ($config->isProcess()) {
+            try {
+                foreach ($this->processSchedules()->rules($config) as $name => $rule) {
+                    $schedules[$name] = $rule['state'] === ProcessSchedules::DISABLED;
+                }
+            } catch (AwsException) {
+                // Unknown without tag:GetResources or EventBridge read access; the rest of the status still shows.
+            }
+        }
         $vpc = null;
         if (RevisionFactory::usesVpc($config)) {
             try {
@@ -1521,6 +1559,7 @@ final class AwsDeployer implements Deployer
             $located?->account,
             $vpc,
             $endpoints,
+            $schedules,
         );
     }
 
@@ -1980,6 +2019,11 @@ final class AwsDeployer implements Deployer
     private function workerFunctions(): WorkerFunctions
     {
         return new WorkerFunctions($this->aws->lambda(), $this->sleeper, new Queues($this->aws->sqs(), $this->aws->lambda()), $this->aws->taggingApi());
+    }
+
+    private function processSchedules(): ProcessSchedules
+    {
+        return new ProcessSchedules($this->aws->eventBridge(), $this->aws->lambda(), $this->aws->taggingApi());
     }
 
     private function schedulerRule(): SchedulerRule

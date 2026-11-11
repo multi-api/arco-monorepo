@@ -62,6 +62,8 @@ final class TaggedResourcesTest extends TestCase
                 self::mapping('arn:aws:ssm:us-east-1:111111111111:parameter/shop/production/app-key'),
                 self::mapping('arn:aws:logs:us-east-1:111111111111:log-group:/aws/lambda/web/shop-production'),
                 self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-scheduler'),
+                self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-cleanup-1a2b3c4d-scheduler', extra: ['arco:schedule' => 'cleanup']),
+                self::mapping('arn:aws:events:us-east-1:111111111111:rule/someone-elses-rule'),
                 self::mapping('arn:aws:cloudformation:us-east-1:111111111111:stack/arco-shop-production-resources/0a1b2c'),
             ], 'PaginationToken' => 'next']),
             new Result(['ResourceTagMappingList' => [
@@ -96,6 +98,8 @@ final class TaggedResourcesTest extends TestCase
             'ssm:parameter /shop/production/app-key' => true,
             'logs:log-group /aws/lambda/web/shop-production' => true,
             'events:rule arco-shop-production-scheduler' => false,
+            'events:rule arco-shop-production-cleanup-1a2b3c4d-scheduler' => false,
+            'events:rule someone-elses-rule' => true,
             'cloudformation:stack arco-shop-production-resources' => false,
             'cloudfront:distribution E1ABC' => false,
             'acm:certificate abc' => false,

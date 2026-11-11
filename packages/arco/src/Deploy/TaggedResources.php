@@ -253,7 +253,7 @@ final class TaggedResources
 
     /**
      * Whether `arco remove` deletes the resource: the functions (web, console, every worker found by
-     * tag), the scheduler rule, both stacks with what the domain stack made, the managed certificate and
+     * tag), the scheduler rule, the schedule rules, both stacks with what the domain stack made, the managed certificate and
      * the Resource Group. The resources stack's queues, buckets and tables are retained.
      *
      * @param array<string, string> $tags
@@ -266,7 +266,8 @@ final class TaggedResources
             $type === 'lambda:network-connector' => true,
             str_starts_with($type, 'lambda:') => $name === $config->functionName() || $name === $config->consoleFunctionName()
                 || str_starts_with($name, $config->functionName() . '-queue-'),
-            $type === 'events:rule' => $name === SchedulerRule::name($config),
+            // The Laravel scheduler rule, or a process app's schedule rule (ProcessSchedules, tagged arco:schedule).
+            $type === 'events:rule' => $name === SchedulerRule::name($config) || ($tags[ProcessSchedules::TAG] ?? '') !== '',
             $type === 'cloudformation:stack' => in_array($name, [ResourcesStack::name($config), $domainStack], true),
             $type === 'resource-groups:group' => $name === EnvironmentGroup::name($config),
             $type === 'iam:role' => $name === ExecutionRole::roleName($config),
