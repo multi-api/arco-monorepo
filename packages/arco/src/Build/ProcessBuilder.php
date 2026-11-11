@@ -35,16 +35,16 @@ final class ProcessBuilder
 
         $staging = sys_get_temp_dir() . '/arco-build-' . bin2hex(random_bytes(6));
         $appDir = "$staging/app";
-        mkdir("$appDir/bin", 0777, true);
-
         $result = new BuildResult($staging, $appDir, []);
         try {
+            mkdir("$appDir/bin", 0777, true);
             $step('build.copying', []);
             // Only what `include` names is copied; `exclude` then applies to those files.
-            $matcher = new PathMatcher(['**'], $config->include, Builder::NEVER_PACKAGED);
+            $matcher = new PathMatcher(['**'], $config->include, [...Builder::NEVER_PACKAGED, ...Builder::ALWAYS_EXCLUDED], descend: true);
             $skipped = ProjectCopier::copy($projectDir, $appDir, $matcher);
             $result = new BuildResult($staging, $appDir, $skipped);
             self::applyExclude($appDir, $config->exclude);
+            self::removeEmptyDirectories($appDir);
 
             $step('build.go', ['main' => $main]);
             try {
@@ -56,7 +56,7 @@ final class ProcessBuilder
             } catch (ProcessStartFailedException) {
                 throw BuildException::make('build.go_missing');
             }
-        } catch (BuildException $e) {
+        } catch (\Throwable $e) {
             $result->cleanup();
             throw $e;
         }
@@ -106,13 +106,14 @@ final class ProcessBuilder
     /** The name in the `package` clause, after comments; null when there is none or the file is `//go:build ignore`. */
     private static function packageName(string $source): ?string
     {
+        $source = str_starts_with($source, "\xEF\xBB\xBF") ? substr($source, 3) : $source;
         $offset = 0;
         $length = strlen($source);
         while ($offset < $length) {
             if (preg_match('/\G\s+/', $source, $m, 0, $offset) === 1) {
                 $offset += strlen($m[0]);
             } elseif (preg_match('#\G//[^\n]*#', $source, $m, 0, $offset) === 1) {
-                if (preg_match('#^//go:build\s+ignore\s*$#', $m[0]) === 1) {
+                if (preg_match('#^//(?:go:build\s+ignore|\s*\+build\s+ignore)\s*$#', $m[0]) === 1) {
                     return null;
                 }
                 $offset += strlen($m[0]);
@@ -123,6 +124,27 @@ final class ProcessBuilder
             }
         }
         return preg_match('/\Gpackage\s+([A-Za-z_][A-Za-z0-9_]*)/', $source, $m, 0, $offset) === 1 ? $m[1] : null;
+    }
+
+    /** The copy walks every directory so wildcard includes work; the ones that matched nothing are dropped. */
+    private static function removeEmptyDirectories(string $dir): bool
+    {
+        $empty = true;
+        foreach (scandir($dir) ?: [] as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+            $path = "$dir/$entry";
+            if (is_dir($path) && ! is_link($path) && self::removeEmptyDirectories($path)) {
+                continue;
+            }
+            $empty = false;
+        }
+        if ($empty && basename($dir) !== 'app' && basename($dir) !== 'bin') {
+            rmdir($dir);
+            return true;
+        }
+        return false;
     }
 
     /** @param list<string> $exclude */

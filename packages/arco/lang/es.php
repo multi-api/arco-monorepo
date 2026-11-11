@@ -744,6 +744,7 @@ return [
     'validation.process_unsupported' => 'Una app de proceso no puede usar {key}: solo se aplica a apps PHP. Quítalo.',
     'validation.process_language' => 'el language de process debe ser "go", recibido "{language}".',
     'validation.process_main' => 'main de process no puede estar vacío: indica el paquete o archivo a compilar, o quítalo.',
+    'validation.process_main_flag' => 'process main no puede empezar por "-" ("{main}"): indica un paquete como "./cmd/api".',
     'validation.process_command' => 'command de process debe ser una lista de textos no vacíos, por ejemplo ["bin/app", "--serve"].',
     'validation.route' => 'La ruta de {kind} "{name}" debe empezar por "/".',
     'validation.schedule_name' => 'El nombre de schedule "{name}" no es válido: usa letras minúsculas, dígitos y guiones, empezando por letra o dígito, de 40 caracteres como máximo.',

@@ -196,4 +196,66 @@ final class ProcessBuilderTest extends TestCase
         self::assertSame([], $preset->defaultVariables());
         self::assertFalse($preset->detects($this->project));
     }
+
+    public function test_a_wildcard_leading_include_stages_nested_files(): void
+    {
+        $this->write('main.go', "package main\n");
+        $this->write('a.html', '');
+        $this->write('templates/a.html', '');
+        $this->write('templates/.env', 'X=1');
+        $this->write('.env', 'X=1');
+        $this->write('node_modules/x/b.html', '');
+        $this->write('docs/readme.txt', '');
+
+        $result = $this->builder(new FakeRunner())->build($this->config(['language' => 'go'], ['**/*.html', '**/.env']), $this->project);
+        try {
+            self::assertFileExists("$result->appDir/a.html");
+            self::assertFileExists("$result->appDir/templates/a.html");
+            self::assertFileDoesNotExist("$result->appDir/.env");
+            self::assertFileDoesNotExist("$result->appDir/templates/.env");
+            self::assertFileDoesNotExist("$result->appDir/docs/readme.txt");
+            self::assertDirectoryDoesNotExist("$result->appDir/docs");
+            self::assertFileDoesNotExist("$result->appDir/node_modules/x/b.html");
+        } finally {
+            $result->cleanup();
+        }
+    }
+
+    public function test_any_failure_removes_the_staging_directory(): void
+    {
+        $this->write('main.go', "package main\n");
+        $before = glob(sys_get_temp_dir() . '/arco-build-*') ?: [];
+        $runner = new FakeRunner(onRun: function (): void {
+            throw new \RuntimeException('boom');
+        });
+
+        try {
+            $this->builder($runner)->build($this->config(), $this->project);
+            self::fail('expected RuntimeException');
+        } catch (\RuntimeException) {
+        }
+        self::assertSame($before, glob(sys_get_temp_dir() . '/arco-build-*') ?: []);
+    }
+
+    public function test_the_package_clause_survives_a_bom_and_ignore_constraints_skip_a_file(): void
+    {
+        $this->write('main.go', "\xEF\xBB\xBFpackage main\n");
+        self::assertSame('.', ProcessBuilder::mainPackage($this->project, null));
+
+        $this->write('main.go', "//go:build ignore\n\npackage main\n");
+        $this->write('cmd/api/main.go', "// +build ignore\n\npackage main\n");
+        $this->write('cmd/api/real.go', "package main\n");
+        self::assertSame('./cmd/api', ProcessBuilder::mainPackage($this->project, null));
+        unlink("$this->project/cmd/api/real.go");
+        $this->expectException(BuildException::class);
+        ProcessBuilder::mainPackage($this->project, null);
+    }
+
+    public function test_only_cmd_directories_with_package_main_count(): void
+    {
+        $this->write('cmd/api/main.go', "package main\n");
+        $this->write('cmd/internal/x.go', "package internal\n");
+
+        self::assertSame('./cmd/api', ProcessBuilder::mainPackage($this->project, null));
+    }
 }

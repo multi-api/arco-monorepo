@@ -744,6 +744,7 @@ return [
     'validation.process_unsupported' => 'A process app cannot use {key}: it only applies to PHP apps. Remove it.',
     'validation.process_language' => 'process language must be "go", got "{language}".',
     'validation.process_main' => 'process main must not be empty: name the package or file to build, or leave it out.',
+    'validation.process_main_flag' => 'process main must not start with "-" ("{main}"): name a package such as "./cmd/api".',
     'validation.process_command' => 'process command must be a list of non-empty strings, for example ["bin/app", "--serve"].',
     'validation.route' => 'The route of {kind} "{name}" must start with "/".',
     'validation.schedule_name' => 'Schedule name "{name}" is not valid: use lowercase letters, digits and hyphens, starting with a letter or digit, at most 40 characters.',

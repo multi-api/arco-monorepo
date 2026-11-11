@@ -333,6 +333,9 @@ final class Validator
             }
             if ($process->main !== null && trim($process->main) === '') {
                 $result->error('validation.process_main');
+            } elseif ($process->main !== null && str_starts_with($process->main, '-')) {
+                // `go build` would read it as a flag.
+                $result->error('validation.process_main_flag', ['main' => $process->main]);
             }
             if (! str_starts_with($process->healthPath, '/')) {
                 $result->error('validation.route', ['kind' => 'healthPath', 'name' => $process->healthPath]);

@@ -85,6 +85,8 @@ final class ProcessValidatorTest extends TestCase
         self::assertContains(['key' => 'validation.route', 'params' => ['kind' => 'healthPath', 'name' => 'healthz']], self::errors(['process' => ['healthPath' => 'healthz']]));
         self::assertContains(['key' => 'validation.route', 'params' => ['kind' => 'healthPath', 'name' => '']], self::errors(['process' => ['healthPath' => '']]));
         self::assertContains('validation.process_main', self::keys(['process' => ['main' => '']]));
+        self::assertContains(['key' => 'validation.process_main_flag', 'params' => ['main' => '-race']], self::errors(['process' => ['main' => '-race']]));
+        self::assertNotContains('validation.process_main_flag', self::keys(['process' => ['main' => './cmd/api']]));
     }
 
     public function test_command_must_be_a_list_of_non_empty_strings(): void
