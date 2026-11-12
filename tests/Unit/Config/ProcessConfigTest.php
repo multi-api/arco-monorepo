@@ -100,7 +100,7 @@ final class ProcessConfigTest extends TestCase
             ConfigResolver::resolve($raw, 'production', self::layer(['schedules' => ['cleanup' => ['every' => 'rate(5 minutes)']]]));
             self::fail('a conflict was expected');
         } catch (LayerConflicts $e) {
-            self::assertSame([['key' => 'config.layer_conflict', 'params' => ['kind' => 'schedule', 'name' => 'cleanup']]], $e->errors);
+            self::assertSame([['key' => 'config.layer_conflict', 'params' => ['kind' => 'schedule', 'name' => 'cleanup', 'file' => 'arco.json']]], $e->errors);
         }
     }
 

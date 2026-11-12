@@ -49,7 +49,7 @@ final class ConfigResolverLayerTest extends TestCase
     /** @return array{key: string, params: array<string, string>} */
     private static function conflict(string $kind, string $name): array
     {
-        return ['key' => 'config.layer_conflict', 'params' => ['kind' => $kind, 'name' => $name]];
+        return ['key' => 'config.layer_conflict', 'params' => ['kind' => $kind, 'name' => $name, 'file' => 'arco.php']];
     }
 
     public function test_layer_adds_queue_after_arco_php_queues(): void

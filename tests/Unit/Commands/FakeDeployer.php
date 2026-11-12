@@ -247,6 +247,14 @@ final class FakeDeployer implements Deployer
             throw $this->groupError;
         }
     }
+    /** @var array<string, bool> what schedulePauses() returns */
+    public array $schedulePauses = [];
+    public ?\Throwable $schedulePausesError = null;
+    public function schedulePauses(AppConfig $config): array
+    {
+        $this->calls[] = 'schedulePauses';
+        return $this->schedulePausesError !== null ? throw $this->schedulePausesError : $this->schedulePauses;
+    }
     public function resources(AppConfig $config): array
     {
         return $this->taggedError !== null ? throw $this->taggedError : $this->tagged;

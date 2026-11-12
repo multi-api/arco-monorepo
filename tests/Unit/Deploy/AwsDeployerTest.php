@@ -1405,6 +1405,29 @@ final class AwsDeployerTest extends TestCase
         self::assertNotContains('arco-shop-production-scheduler', array_map(fn (array $p) => $p['Name'] ?? null, $mocks->params));
     }
 
+    public function test_schedule_pauses_reads_only_the_schedule_rules(): void
+    {
+        $config = self::processConfig(['cleanup' => ['every' => '1h'], 'report' => ['every' => '1d']]);
+        $cleanup = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup');
+        $report = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'report');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(self::scheduleRules([$cleanup => 'cleanup', $report => 'report']), new Result(['State' => 'DISABLED']), new Result(['State' => 'ENABLED']));
+
+        $paused = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->schedulePauses($config);
+
+        self::assertSame(['cleanup' => true, 'report' => false], $paused);
+        self::assertNotContains('GetFunction', $mocks->calls, 'not the whole status');
+    }
+
+    public function test_schedule_pauses_of_a_php_app_makes_no_call(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+
+        self::assertSame([], (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->schedulePauses($config));
+        self::assertSame([], $mocks->calls);
+    }
+
     public function test_sync_scheduler_points_the_rule_at_the_live_alias(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->scheduler(5)->environment('production')->toArray(), 'production');
