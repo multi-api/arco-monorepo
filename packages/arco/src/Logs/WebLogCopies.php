@@ -3,10 +3,11 @@
 namespace Multiapi\Arco\Logs;
 
 /**
- * Lambda Web Functions write every line twice: to /aws/lambda/web/<function>, in a stream named
- * "<stream>-<account>-<region>", and to "/aws/lambda/web/<function>.local", in "<stream>". Both groups are
- * read (the .local copy arrives first), so the second copy of a line is dropped: same function, stream,
- * timestamp and message.
+ * Lambda Web Functions write every line to the in-Region "/aws/lambda/web/<function>.local" group (stream
+ * "<stream>") and then centralize it, without removing it, into "/aws/lambda/web/<function>" in the home Region
+ * (stream "<stream>-<account>-<region>"): https://docs.aws.amazon.com/lambda/latest/dg/web-functions-logging.html
+ * Both groups are read (the .local copy arrives seconds earlier), so the second copy of a line is dropped: same
+ * function, stream, timestamp and message.
  */
 final class WebLogCopies
 {
