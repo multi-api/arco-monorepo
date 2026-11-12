@@ -229,7 +229,7 @@ tables](getting-started.md#permissions-for-storage-and-tables).
   singletons; a domain's options are `{domain, dns, certificate}`, a schedule's `{every, route, timeout}`). A queue's
   options have `route`: its route in a process app, `null` in a PHP app. Schedule rules (`events:rule`) are listed as
   resources with their schedule's options.
-- `schedules` (0.20.2, after `config`): the same list as `arco info --json` below, `[]` for a PHP app. `paused` is read
+- `schedules` (0.20.3, after `config`): the same list as `arco info --json` below, `[]` for a PHP app. `paused` is read
   from the schedule rules only, and is `null` when they cannot be read; the rest of the document still shows.
 
 `arco info --json` has `runtime` (`{"kind": "php"}`, or `{"kind": "process", "language": "go", "command": [...],

@@ -489,7 +489,7 @@ final class InfoCommandTest extends TestCase
         $tester->assertCommandIsSuccessful();
         $json = json_decode($tester->getDisplay(), true);
         self::assertIsArray($json);
-        self::assertSame(['schema', 'app', 'environment', 'group', 'resources', 'variables', 'config', 'schedules'], array_keys($json), 'schedules appended (0.20.2)');
+        self::assertSame(['schema', 'app', 'environment', 'group', 'resources', 'variables', 'config', 'schedules'], array_keys($json), 'schedules appended (0.20.3)');
         self::assertIsArray($json['variables']);
         self::assertNotSame([], $json['variables'], 'the standard config declares variables');
         foreach ($json['variables'] as $variable) {
