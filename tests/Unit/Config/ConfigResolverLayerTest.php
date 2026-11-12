@@ -257,7 +257,7 @@ final class ConfigResolverLayerTest extends TestCase
         self::assertSame(60, $config->queues[0]->timeout);
         self::assertFalse($config->queues[0]->adopt);
         self::assertSame('app', $config->sources['queue:emails']);
-        self::assertSame([['key' => 'config.layer_adopt_waiting', 'params' => ['kind' => 'queue', 'name' => 'emails']]], $config->notes);
+        self::assertSame([['key' => 'config.layer_adopt_waiting', 'params' => ['kind' => 'queue', 'name' => 'emails', 'file' => 'arco.php']]], $config->notes);
     }
 
     public function test_adopt_entry_is_used_when_arco_php_does_not_declare_it(): void
