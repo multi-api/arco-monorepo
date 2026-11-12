@@ -11,7 +11,7 @@ composer require multiapi/arco-laravel:^0.12
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
-## Unreleased
+## Upgrading to 0.20
 
 Nothing is required for PHP apps: `arco.php`, the Laravel package, the runtime files and every `--json` key behave
 as before. The release adds [Go apps](configuration.md#process-runtime-go) (`arco.json`), and with them a few things

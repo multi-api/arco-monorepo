@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.20.0
 
 - **Added:** the process runtime, for Go apps ([Process runtime (Go)](docs/configuration.md#process-runtime-go)).
   Arco builds one static `linux/arm64` binary (`CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath`) with the
@@ -66,7 +66,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `config.both_files`. In a process project `arco resources` prints the plain listing and never opens its picker.
 - **Changed:** a project with both `arco.php` and `arco.json` fails with `config.both_files`, and a layer-only
   project with a `go.mod` whose `composer.json` does not require both `multiapi/arco` and `multiapi/arco-laravel`
-  deploys as a Go app ([Upgrading](docs/upgrading.md#unreleased)). PHP apps are otherwise unchanged: the runtime's PHP
+  deploys as a Go app ([Upgrading](docs/upgrading.md#upgrading-to-020)). PHP apps are otherwise unchanged: the runtime's PHP
   path is proven byte for byte the same by a test.
 
 ## 0.19.2
