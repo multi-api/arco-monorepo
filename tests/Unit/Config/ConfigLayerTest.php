@@ -185,6 +185,14 @@ final class ConfigLayerTest extends TestCase
         self::assertSame(['s3' => 'vpce-1'], $layer->entry['settings']['vpc']['endpoints']);
     }
 
+    public function test_schedules_accept_adopt(): void
+    {
+        $layer = ConfigLayer::load($this->write($this->layer(['schedules' => ['cleanup' => ['every' => '1h', 'route' => '/jobs/cleanup', 'timeout' => 60, 'adopt' => true]]])));
+
+        self::assertTrue($layer->entry['schedules']['cleanup']['adopt'] ?? null);
+        $this->invalid($this->layer(['schedules' => ['cleanup' => ['every' => '1h', 'adopt' => 'yes']]]), '/environments/production/schedules/cleanup/adopt');
+    }
+
     public function test_adopt_with_existing_is_refused(): void
     {
         $this->invalid(

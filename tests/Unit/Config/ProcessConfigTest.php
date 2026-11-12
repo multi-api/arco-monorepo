@@ -116,6 +116,55 @@ final class ProcessConfigTest extends TestCase
         self::assertSame('rate(5 minutes)', $config->schedules[0]->every);
     }
 
+    public function test_adopt_schedule_waits_while_arco_json_declares_it(): void
+    {
+        $raw = self::raw();
+        $raw['process'] = ['language' => 'go'];
+        $raw['schedules'] = ['cleanup' => ['every' => 'rate(1 day)', 'route' => '/jobs/cleanup']];
+
+        $config = ConfigResolver::resolve($raw, 'production', self::layer(['schedules' => ['cleanup' => ['every' => 'rate(5 minutes)', 'route' => '/jobs/other', 'timeout' => 30, 'adopt' => true]]]));
+
+        self::assertCount(1, $config->schedules);
+        self::assertSame('rate(1 day)', $config->schedules[0]->every, "the file's entry wins while it declares the name");
+        self::assertSame('/jobs/cleanup', $config->schedules[0]->route());
+        self::assertSame(60, $config->schedules[0]->timeout);
+        self::assertSame('app', $config->sources['schedule:cleanup']);
+        self::assertSame([['key' => 'config.layer_adopt_waiting', 'params' => ['kind' => 'schedule', 'name' => 'cleanup', 'file' => 'arco.json']]], $config->notes);
+    }
+
+    public function test_adopt_schedule_takes_over_once_arco_json_lets_it_go(): void
+    {
+        $raw = self::raw();
+        $raw['process'] = ['language' => 'go'];
+
+        $config = ConfigResolver::resolve($raw, 'production', self::layer(['schedules' => ['cleanup' => ['every' => 'rate(5 minutes)', 'route' => '/jobs/cleanup', 'timeout' => 30, 'adopt' => true]]]));
+
+        self::assertSame(['cleanup'], array_map(fn ($s) => $s->name, $config->schedules));
+        self::assertSame('rate(5 minutes)', $config->schedules[0]->every);
+        self::assertSame('/jobs/cleanup', $config->schedules[0]->route());
+        self::assertSame(30, $config->schedules[0]->timeout);
+        self::assertSame('cloud', $config->sources['schedule:cleanup']);
+        self::assertSame([], $config->notes);
+        // The rule name comes from app/env/name alone: the rule arco.json made is the one kept.
+        self::assertSame('arco-shop-production-cleanup-' . substr(hash('sha256', 'shop/production/cleanup'), 0, 8) . '-scheduler', \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup'));
+        $items = array_values(array_filter(ConfigItems::list($config), fn (array $i): bool => $i['kind'] === 'schedule'));
+        self::assertSame([['kind' => 'schedule', 'name' => 'cleanup', 'source' => 'cloud', 'options' => ['every' => 'rate(5 minutes)', 'route' => '/jobs/cleanup', 'timeout' => 30]]], $items, 'adopt never reaches the options');
+    }
+
+    public function test_adopt_false_schedule_still_conflicts(): void
+    {
+        $raw = self::raw();
+        $raw['process'] = ['language' => 'go'];
+        $raw['schedules'] = ['cleanup' => ['every' => 'rate(1 day)']];
+
+        try {
+            ConfigResolver::resolve($raw, 'production', self::layer(['schedules' => ['cleanup' => ['every' => 'rate(1 day)', 'adopt' => false]]]));
+            self::fail('a conflict was expected');
+        } catch (LayerConflicts $e) {
+            self::assertSame([['key' => 'config.layer_conflict', 'params' => ['kind' => 'schedule', 'name' => 'cleanup', 'file' => 'arco.json']]], $e->errors);
+        }
+    }
+
     public function test_layer_queue_route(): void
     {
         $raw = self::raw();

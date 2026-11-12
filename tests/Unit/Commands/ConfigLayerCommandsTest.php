@@ -252,7 +252,7 @@ final class ConfigLayerCommandsTest extends TestCase
 
         $warnings = array_values(array_filter(self::lines($tester), fn (array $line) => ($line['status'] ?? null) === 'warning'));
         self::assertSame('config.layer_adopt_waiting', $warnings[0]['key'] ?? null);
-        self::assertSame(['kind' => 'queue', 'name' => 'emails'], $warnings[0]['params']);
+        self::assertSame(['kind' => 'queue', 'name' => 'emails', 'file' => 'arco.php'], $warnings[0]['params']);
 
         $this->aws->append(new Result(['Account' => '222222222222']));
         $tester = $this->deployTester(new FakeDeployer('rev-1'));
