@@ -77,6 +77,55 @@ final class LogsCommandTest extends TestCase
         self::assertArrayNotHasKey('filterPattern', $this->mocks->params[1]);
     }
 
+    /** Lambda writes every Web Function line to the group and again to "<group>.local", whose stream lacks the "-<account>-<region>" suffix. */
+    public function test_a_web_line_is_printed_once_though_it_is_in_both_web_groups(): void
+    {
+        $stream = '2026/10/15/shop-staging[rev-abc12]0123456789abcdef0123456789abcdef';
+        $this->mocks->handler->append(
+            new Result(['events' => [
+                ['eventId' => 'w1', 'logStreamName' => "$stream-111111111111-us-east-1", 'timestamp' => self::T, 'message' => '{"arco":"process_ready","ms":37}'],
+                ['eventId' => 'w2', 'logStreamName' => "$stream-111111111111-us-east-1", 'timestamp' => self::T + 1, 'message' => 'same text'],
+                ['eventId' => 'w3', 'logStreamName' => "$stream-111111111111-us-east-1", 'timestamp' => self::T + 2, 'message' => 'same text'],
+            ]]),
+            new Result(['events' => [
+                ['eventId' => 'l1', 'logStreamName' => $stream, 'timestamp' => self::T, 'message' => '{"arco":"process_ready","ms":37}'],
+                ['eventId' => 'l2', 'logStreamName' => $stream, 'timestamp' => self::T + 1, 'message' => 'same text'],
+                ['eventId' => 'l3', 'logStreamName' => $stream, 'timestamp' => self::T + 2, 'message' => 'same text'],
+                // Not yet copied to the main group: still printed.
+                ['eventId' => 'l4', 'logStreamName' => $stream, 'timestamp' => self::T + 3, 'message' => 'newest'],
+            ]]),
+        );
+
+        $tester = $this->tester();
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--source' => 'web', '--json' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $lines = array_map(fn (string $line) => json_decode($line, true), explode("\n", trim($tester->getDisplay())));
+        self::assertSame(['{"arco":"process_ready","ms":37}', 'same text', 'same text', 'newest'], array_column($lines, 'message'));
+        self::assertSame(['/aws/lambda/web/shop-staging', '/aws/lambda/web/shop-staging', '/aws/lambda/web/shop-staging', '/aws/lambda/web/shop-staging.local'], array_column($lines, 'logGroup'));
+    }
+
+    public function test_follow_does_not_print_the_local_copy_of_a_history_line(): void
+    {
+        $stream = '2026/10/15/shop-staging[rev-abc12]0123456789abcdef0123456789abcdef';
+        $this->mocks->handler->append(
+            new Result(['events' => [['eventId' => 'w1', 'logStreamName' => "$stream-111111111111-us-east-1", 'timestamp' => self::T, 'message' => 'history line']]]),
+            self::missing(),                                                     // web .local, not created yet
+            new Result(['events' => [['eventId' => 'w1', 'logStreamName' => "$stream-111111111111-us-east-1", 'timestamp' => self::T, 'message' => 'history line']]]),
+            new Result(['events' => [
+                ['eventId' => 'l1', 'logStreamName' => $stream, 'timestamp' => self::T, 'message' => 'history line'],
+                ['eventId' => 'l2', 'logStreamName' => $stream, 'timestamp' => self::T + 5, 'message' => 'new line'],
+            ]]),
+        );
+
+        $tester = $this->tester();
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--source' => 'web', '--follow' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(1, substr_count($tester->getDisplay(), 'history line'));
+        self::assertSame(1, substr_count($tester->getDisplay(), 'new line'));
+    }
+
     public function test_level_request_and_text_filters(): void
     {
         $this->mocks->handler->append(
