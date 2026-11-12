@@ -235,7 +235,7 @@ final class ConfigLayerCommandsTest extends TestCase
         $result = self::finalLine($tester);
         self::assertSame('refused', $result['outcome']);
         self::assertSame('config.layer_conflict', $result['error']['key']);
-        self::assertSame(['kind' => 'queue', 'name' => 'emails'], $result['error']['params']);
+        self::assertSame(['kind' => 'queue', 'name' => 'emails', 'file' => 'arco.php'], $result['error']['params']);
         self::assertStringContainsString('queue "emails"', $result['error']['message']);
         self::assertSame([], $deployer->calls);
         self::assertSame(1, $this->aws->count(), 'no AWS call: the account was never asked');
