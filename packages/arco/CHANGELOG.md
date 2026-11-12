@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.20.3
 
 - **Added:** `arco info --resources --json` has `schedules`, appended after `config` (before `error`): the same list as
   `arco info --json`, `[{name, every, expression, route, timeout, rule, paused}]`, `[]` for a PHP app. `paused` comes
