@@ -429,12 +429,13 @@ final class StepPrinterTest extends TestCase
 
     public function test_the_default_retention_and_changed_resource_lines_are_plain_bullets_in_both_languages(): void
     {
-        foreach (['en' => ['Log retention: 30 days by default on the web log groups', 'Storage files: bucket b updated', 'The cache table t was updated'], 'es' => ['Retención de logs: 30 días por defecto en los grupos de logs de web', 'Almacenamiento files: bucket b actualizado', 'La tabla de caché t se actualizó']] as $locale => $expected) {
+        foreach (['en' => ['Log retention: 30 days by default on the web log groups', 'Log retention: 30 days by default on the web log groups ("logRetention": false in arco.json settings keeps them forever)', 'Storage files: bucket b updated', 'The cache table t was updated'], 'es' => ['Retención de logs: 30 días por defecto en los grupos de logs de web', 'Retención de logs: 30 días por defecto en los grupos de logs de web ("logRetention": false en los settings de arco.json los conserva para siempre)', 'Almacenamiento files: bucket b actualizado', 'La tabla de caché t se actualizó']] as $locale => $expected) {
             $translator = new \Multiapi\Arco\Cli\Translator($locale, dirname(__DIR__, 3) . '/packages/arco/lang');
             $output = new BufferedOutput();
             $printer = new StepPrinter(new SymfonyStyle(new ArrayInput([]), $output), $translator->trans(...), false);
 
             $printer('deploy.log_retention_default', ['groups' => 'web']);
+            $printer('deploy.log_retention_default_json', ['groups' => 'web']);
             $printer('deploy.storage_changed', ['storage' => 'files', 'bucket' => 'b']);
             $printer('deploy.table_changed', ['kind' => 'cache', 'name' => 't']);
             $printer('deploy.log_tags_not_added', ['groups' => 'g', 'error' => 'denied']);

@@ -1532,6 +1532,17 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([['deploy.log_retention_default', ['groups' => 'web_queues']]], $steps);
     }
 
+    public function test_the_default_retention_hint_of_a_process_app_names_arco_json(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...array_fill(0, 6, new Result()));
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->applyLogRetention(self::processConfig([]), function (string $key, array $params) use (&$steps): void { $steps[] = [$key, $params]; });
+
+        self::assertSame([['deploy.log_retention_default_json', ['groups' => 'web']]], $steps);
+    }
+
     /** A DescribeLogGroups answer: the group with its retention (null: never expires). */
     private static function retention(string $group, ?int $days): Result
     {
