@@ -20,6 +20,8 @@ final class FakeDeployer implements Deployer
     /** the configuration prepare() was given */
     public ?AppConfig $preparedConfig = null;
     public ?ConsoleArtifacts $console = null;
+    /** @var (\Closure(Package): void)|null runs in prepare(), while the package file still exists */
+    public ?\Closure $onPrepare = null;
     /** step reported by prune(), as AwsDeployer does when AWS refuses the cleanup */
     public ?string $pruneWarning = null;
     /** thrown by release(), e.g. AWS refusing the traffic shift */
@@ -93,6 +95,9 @@ final class FakeDeployer implements Deployer
         $this->console = $console;
         if (! is_file($package->path)) {
             throw new \LogicException("Package $package->path does not exist during deploy");
+        }
+        if ($this->onPrepare !== null) {
+            ($this->onPrepare)($package);
         }
         return new PreparedDeploy('rev-2', $this->previousRevision, 'bucket', 'key', $this->consoleVersion, $this->previousConsoleVersion, null, null, $this->workerVersions);
     }

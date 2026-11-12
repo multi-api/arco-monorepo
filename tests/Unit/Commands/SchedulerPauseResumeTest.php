@@ -150,4 +150,109 @@ final class SchedulerPauseResumeTest extends TestCase
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
         self::assertSame(['GetCallerIdentity'], $this->mocks->calls);
     }
+    /** A process project (arco.json) with two schedules; the rules as GetResources lists them (report first). */
+    private function processProject(): \Multiapi\Arco\Config\AppConfig
+    {
+        $this->project?->restore();
+        $this->project = new ProjectFixture();
+        file_put_contents($this->project->dir . '/arco.json', '{"name":"shop","region":"us-east-1","runtime":{"kind":"process","language":"go"},"schedules":{"cleanup":{"every":"1h"},"report":{"every":"1d"}}}');
+        $raw = \Multiapi\Arco\Config\App::make('shop')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $raw['schedules'] = ['cleanup' => ['every' => '1h'], 'report' => ['every' => '1d']];
+        return \Multiapi\Arco\Config\ConfigResolver::resolve($raw, 'production');
+    }
+
+    /** @param list<string> $rules @param list<string> $schedules */
+    private static function scheduleRules(array $rules, array $schedules): Result
+    {
+        $list = [];
+        foreach ($rules as $i => $rule) {
+            $list[] = ['ResourceARN' => "arn:aws:events:us-east-1:123456789012:rule/$rule", 'Tags' => [
+                ['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production'], ['Key' => 'arco:schedule', 'Value' => $schedules[$i]],
+            ]];
+        }
+        return new Result(['ResourceTagMappingList' => $list]);
+    }
+
+    public function test_pause_in_a_process_project_disables_every_schedule_rule_and_prints_one_line_each(): void
+    {
+        $config = $this->processProject();
+        $cleanup = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup');
+        $report = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'report');
+        $this->mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            self::scheduleRules([$report, $cleanup], ['report', 'cleanup']),
+            new Result(['State' => 'ENABLED']), new Result(['State' => 'DISABLED']),
+            new Result([]),
+        );
+
+        $tester = $this->run_(new SchedulerPauseCommand($this->awsFactory()));
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['GetCallerIdentity', 'GetResources', 'DescribeRule', 'DescribeRule', 'DisableRule'], $this->mocks->calls);
+        self::assertSame($report, $this->mocks->params[4]['Name']);
+        self::assertNotContains('arco-shop-production-scheduler', array_map(fn (array $p) => $p['Name'] ?? null, $this->mocks->params), 'never the Laravel rule');
+        $display = self::display($tester);
+        self::assertStringContainsString("Schedule cleanup is already paused ($cleanup)", $display);
+        self::assertStringContainsString("Schedule report paused ($report)", $display);
+        self::assertStringContainsString('arco scheduler:resume --env=production', $display);
+    }
+
+    public function test_resume_in_a_process_project_enables_every_schedule_rule(): void
+    {
+        $config = $this->processProject();
+        $cleanup = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'cleanup');
+        $report = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName($config, 'report');
+        $this->mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            self::scheduleRules([$cleanup, $report], ['cleanup', 'report']),
+            new Result(['State' => 'DISABLED']), new Result(['State' => 'DISABLED']),
+            new Result([]), new Result([]),
+        );
+
+        $tester = $this->run_(new SchedulerResumeCommand($this->awsFactory()));
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['GetCallerIdentity', 'GetResources', 'DescribeRule', 'DescribeRule', 'EnableRule', 'EnableRule'], $this->mocks->calls);
+        self::assertStringContainsString("Schedule cleanup resumed ($cleanup)", self::display($tester));
+        self::assertStringContainsString("Schedule report resumed ($report)", self::display($tester));
+    }
+
+    public function test_pause_in_a_process_project_without_schedule_rules_fails(): void
+    {
+        $this->processProject();
+        $this->mocks->handler->append(new Result(['Account' => '123456789012']), new Result(['ResourceTagMappingList' => []]));
+
+        $tester = $this->run_(new SchedulerPauseCommand($this->awsFactory()));
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertSame(['GetCallerIdentity', 'GetResources'], $this->mocks->calls);
+        self::assertStringContainsString('No schedule rules in AWS for production', self::display($tester));
+    }
+    public function test_pause_in_a_process_project_takes_name_and_region_from_the_config_layer(): void
+    {
+        $this->project?->restore();
+        $this->project = new ProjectFixture();
+        file_put_contents($this->project->dir . '/arco.json', '{"runtime":{"kind":"process","language":"go"},"schedules":{"cleanup":{"every":"1h"}}}');
+        $layer = $this->project->layer(['schema' => 1, 'name' => 'shop', 'region' => 'us-east-1', 'environments' => ['production' => (object) []]]);
+        $raw = \Multiapi\Arco\Config\App::make('shop')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $raw['schedules'] = ['cleanup' => ['every' => '1h']];
+        $cleanup = \Multiapi\Arco\Deploy\ProcessSchedules::ruleName(\Multiapi\Arco\Config\ConfigResolver::resolve($raw, 'production'), 'cleanup');
+        $this->mocks->handler->append(
+            new Result(['Account' => '123456789012']),
+            self::scheduleRules([$cleanup], ['cleanup']),
+            new Result(['State' => 'ENABLED']),
+            new Result([]),
+        );
+
+        $tester = $this->project->tester(new SchedulerPauseCommand($this->awsFactory()));
+        $tester->execute(['--config-layer' => $layer, '--profile' => 'p'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['GetCallerIdentity', 'GetResources', 'DescribeRule', 'DisableRule'], $this->mocks->calls);
+        self::assertSame([['Key' => 'arco:app', 'Values' => ['shop']], ['Key' => 'arco:environment', 'Values' => ['production']], ['Key' => 'arco:schedule']], $this->mocks->params[1]['TagFilters']);
+        self::assertSame($cleanup, $this->mocks->params[3]['Name']);
+        self::assertStringContainsString("Schedule cleanup paused ($cleanup)", self::display($tester));
+    }
 }

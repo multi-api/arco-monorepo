@@ -112,4 +112,36 @@ final class PackageCommandTest extends TestCase
         self::assertFalse($zip->locateName('app/dist/app.zip'), 'the previous package is not inside the new one');
         $zip->close();
     }
+
+    public function test_a_process_project_builds_go_and_writes_the_process_zip(): void
+    {
+        unlink("$this->project/arco.php");
+        file_put_contents("$this->project/arco.json", '{"name":"orders","region":"us-east-1","runtime":{"kind":"process","language":"go"},"include":["dist/**"]}');
+        mkdir("$this->project/cmd/api", 0777, true);
+        file_put_contents("$this->project/cmd/api/main.go", "package main\n");
+        $go = new \Multiapi\Arco\Build\ProcessBuilder(new FakeRunner(onRun: function (array $command): void {
+            file_put_contents($command[4], 'ELF');
+        }), 'go', fn (): bool => true);
+        $command = new PackageCommand(
+            new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager(), null, $go),
+            new PresetRegistry([]),
+        );
+        $app = Application::create();
+        $app->addCommands([$command]);
+        foreach ([1, 2] as $round) {
+            $tester = new CommandTester($app->find('package'));
+            $tester->execute(['--env' => 'production', '--output' => 'dist/app.zip'], ['interactive' => false]);
+            $tester->assertCommandIsSuccessful();
+        }
+
+        $zip = new \ZipArchive();
+        self::assertTrue($zip->open("$this->project/dist/app.zip") === true);
+        foreach (['index.js', 'worker.js', 'arco-runtime.json', 'app/bin/app'] as $entry) {
+            self::assertNotFalse($zip->locateName($entry), "missing $entry");
+        }
+        self::assertFalse($zip->locateName('bin/frankenphp'));
+        self::assertFalse($zip->locateName('app/dist/app.zip'), 'the previous package is not inside the new one, even when include matches it');
+        self::assertSame('go', json_decode((string) $zip->getFromName('arco-package.json'), true)['preset'] ?? null);
+        $zip->close();
+    }
 }

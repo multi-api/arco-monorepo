@@ -47,7 +47,7 @@ final class ConfigItemsTest extends TestCase
             'kind' => 'queue',
             'name' => 'emails',
             'source' => 'arco.php',
-            'options' => ['timeout' => 60, 'memory' => 1024, 'maxInstances' => null, 'batchSize' => 1, 'tries' => 3, 'dlq' => true, 'fifo' => false, 'existing' => null, 'default' => true],
+            'options' => ['timeout' => 60, 'memory' => 1024, 'maxInstances' => null, 'batchSize' => 1, 'tries' => 3, 'dlq' => true, 'fifo' => false, 'existing' => null, 'default' => true, 'route' => null],
         ]], $items);
     }
 

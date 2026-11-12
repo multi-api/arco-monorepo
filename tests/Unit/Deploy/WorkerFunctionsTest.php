@@ -176,4 +176,43 @@ final class WorkerFunctionsTest extends TestCase
         self::assertSame(['SubnetIds' => [], 'SecurityGroupIds' => []], WorkerFunctions::settings($plain, $queue, 'arn:role', [], true)['VpcConfig']);
         self::assertArrayNotHasKey('VpcConfig', WorkerFunctions::settings($plain, $queue, 'arn:role', []));
     }
+
+    /** @param array<string, array<string, mixed>> $queues */
+    private static function processConfig(array $queues): \Multiapi\Arco\Config\AppConfig
+    {
+        $raw = App::make('shop')->region('us-east-1')->environment('production', fn (\Multiapi\Arco\Config\Environment $e) => $e->account('111111111111'))->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $raw['queues'] = $queues;
+        return ConfigResolver::resolve($raw, 'production');
+    }
+
+    public function test_a_process_worker_runs_node_with_the_worker_handler_and_the_queue_route(): void
+    {
+        $config = self::processConfig(['emails' => ['tries' => 4], 'orders' => ['fifo' => true, 'route' => '/jobs/orders']]);
+        $mocks = new AwsMocks();
+        $workers = new WorkerFunctions($mocks->clients()->lambda(), AwsMocks::noSleep(), new \Multiapi\Arco\Deploy\Queues($mocks->clients()->sqs(), $mocks->clients()->lambda()), $mocks->clients()->taggingApi());
+
+        $emails = $workers->request($config, $config->queues[0], 'bucket', 'shop/production/console-h.zip', 'v1', 'arn:role', ['ARCO' => '1'], []);
+        $orders = $workers->request($config, $config->queues[1], 'bucket', 'shop/production/console-h.zip', null, 'arn:role', ['ARCO' => '1'], []);
+
+        self::assertSame('nodejs24.x', $emails->runtime);
+        self::assertSame('worker.handler', $emails->handler);
+        self::assertSame(['ARCO' => '1', 'ARCO_WORKER_QUEUE' => 'emails', 'ARCO_QUEUE_ROUTE' => '/_arco/queues/emails'], $emails->settings['Environment']['Variables']);
+        self::assertSame(['ARCO' => '1', 'ARCO_WORKER_QUEUE' => 'orders', 'ARCO_QUEUE_ROUTE' => '/jobs/orders', 'ARCO_QUEUE_FIFO' => '1'], $orders->settings['Environment']['Variables']);
+        self::assertSame(['S3Bucket' => 'bucket', 'S3Key' => 'shop/production/console-h.zip', 'S3ObjectVersion' => 'v1'], $emails->code);
+        self::assertSame([], $mocks->calls, 'a request is only built');
+    }
+
+    public function test_a_php_worker_keeps_the_provided_runtime_and_its_handler(): void
+    {
+        $config = self::config('ten');
+        $mocks = new AwsMocks();
+        $workers = new WorkerFunctions($mocks->clients()->lambda(), AwsMocks::noSleep(), new \Multiapi\Arco\Deploy\Queues($mocks->clients()->sqs(), $mocks->clients()->lambda()), $mocks->clients()->taggingApi());
+
+        $request = $workers->request($config, $config->queues[0], 'bucket', 'key.zip', null, 'arn:role', ['A' => '1'], []);
+
+        self::assertSame('provided.al2023', $request->runtime);
+        self::assertSame('arco.worker', $request->handler);
+        self::assertSame(['A' => '1', 'ARCO_WORKER_QUEUE' => 'ten', 'ARCO_QUEUE_TRIES' => '3', 'ARCO_QUEUE_MAX_RECEIVES' => '5'], $request->settings['Environment']['Variables']);
+    }
 }

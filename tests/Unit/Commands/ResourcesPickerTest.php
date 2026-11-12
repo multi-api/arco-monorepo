@@ -373,6 +373,25 @@ final class ResourcesPickerTest extends TestCase
         self::assertSame(self::arcoPhp(), $this->arcoPhpNow());
     }
 
+    public function test_a_process_project_gets_the_plain_listing_and_no_picker(): void
+    {
+        $this->account();
+        $this->mocks->handler->append(new Result(['QueueUrls' => []]));
+
+        $this->project = new ProjectFixture();
+        file_put_contents($this->project->dir . '/arco.json', (string) json_encode(['name' => 'shop', 'region' => 'us-east-1', 'runtime' => ['language' => 'go'], 'environments' => ['staging' => new \stdClass()]]));
+        $factory = fn (?string $profile, string $region) => $this->mocks->clients($region);
+        $app = Application::create();
+        $app->addCommands([new ResourcesCommand($factory, null, $this->ui)]);
+        $tester = new CommandTester($app->find('resources'));
+        $tester->execute(['--env' => 'staging', '--profile' => 'p', '--type' => ['queue']], ['interactive' => true]);
+
+        $tester->assertCommandIsSuccessful($tester->getDisplay());
+        self::assertSame([], $this->ui->asked, 'the picker edits arco.php, which a process app does not have');
+        self::assertStringContainsString('Queues (0)', $tester->getDisplay());
+        self::assertFileDoesNotExist($this->project->dir . '/arco.php');
+    }
+
     public function test_prompts_unavailable_prints_the_listing(): void
     {
         $this->account();

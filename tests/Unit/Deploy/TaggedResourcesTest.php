@@ -62,6 +62,8 @@ final class TaggedResourcesTest extends TestCase
                 self::mapping('arn:aws:ssm:us-east-1:111111111111:parameter/shop/production/app-key'),
                 self::mapping('arn:aws:logs:us-east-1:111111111111:log-group:/aws/lambda/web/shop-production'),
                 self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-scheduler'),
+                self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-cleanup-1a2b3c4d-scheduler', extra: ['arco:schedule' => 'cleanup']),
+                self::mapping('arn:aws:events:us-east-1:111111111111:rule/someone-elses-rule'),
                 self::mapping('arn:aws:cloudformation:us-east-1:111111111111:stack/arco-shop-production-resources/0a1b2c'),
             ], 'PaginationToken' => 'next']),
             new Result(['ResourceTagMappingList' => [
@@ -96,6 +98,8 @@ final class TaggedResourcesTest extends TestCase
             'ssm:parameter /shop/production/app-key' => true,
             'logs:log-group /aws/lambda/web/shop-production' => true,
             'events:rule arco-shop-production-scheduler' => false,
+            'events:rule arco-shop-production-cleanup-1a2b3c4d-scheduler' => true, // a PHP app's remove never deletes a schedule rule
+            'events:rule someone-elses-rule' => true,
             'cloudformation:stack arco-shop-production-resources' => false,
             'cloudfront:distribution E1ABC' => false,
             'acm:certificate abc' => false,
@@ -354,7 +358,7 @@ final class TaggedResourcesTest extends TestCase
             $byName[$resource['type'] . ' ' . $resource['name']] = ['source' => $resource['source'], 'options' => $resource['options']];
         }
 
-        $queue = ['source' => 'arco.php', 'options' => ['timeout' => 120, 'memory' => 1024, 'maxInstances' => null, 'batchSize' => 1, 'tries' => 3, 'dlq' => true, 'fifo' => false, 'existing' => null, 'default' => true]];
+        $queue = ['source' => 'arco.php', 'options' => ['timeout' => 120, 'memory' => 1024, 'maxInstances' => null, 'batchSize' => 1, 'tries' => 3, 'dlq' => true, 'fifo' => false, 'existing' => null, 'default' => true, 'route' => null]];
         self::assertSame($queue, $byName['sqs shop-production-emails']);
         self::assertSame($queue, $byName['sqs shop-production-emails-dlq']);
         self::assertSame($queue, $byName['lambda:function shop-production-queue-emails']);
@@ -414,5 +418,36 @@ final class TaggedResourcesTest extends TestCase
         self::assertSame(['source' => 'cloud', 'options' => ['subnets' => ['subnet-1'], 'securityGroups' => ['sg-1'], 'endpoints' => []]], $byName['lambda:network-connector nc-1a2b']);
         self::assertSame(['source' => 'cloud', 'options' => ['domains' => ['b.com'], 'dns' => null, 'certificate' => null]], $byName['cloudfront:function arco-shop-production-host']);
         self::assertSame(['source' => null, 'options' => null], $byName['cloudfront:function someone-elses-function']);
+    }
+
+    public function test_a_process_schedule_rule_invokes_the_console_and_carries_its_schedule_options(): void
+    {
+        $raw = App::make('shop')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $raw['schedules'] = ['cleanup' => ['every' => '1h', 'timeout' => 120]];
+        $config = ConfigResolver::resolve($raw, 'production');
+        $console = 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-console';
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['ResourceTagMappingList' => [
+            self::mapping($console),
+            self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-cleanup-1a2b3c4d-scheduler', extra: ['arco:schedule' => 'cleanup']),
+            self::mapping('arn:aws:events:us-east-1:111111111111:rule/arco-shop-production-gone-5e6f7a8b-scheduler', extra: ['arco:schedule' => 'gone']),
+        ]]), AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404));
+
+        $resources = [];
+        foreach (self::subject($mocks)->list($config) as $resource) {
+            $resources[$resource['type'] . ' ' . $resource['name']] = $resource;
+        }
+
+        $cleanup = $resources['events:rule arco-shop-production-cleanup-1a2b3c4d-scheduler'];
+        self::assertSame([['type' => 'invokes', 'target' => $console]], $cleanup['relations']);
+        self::assertSame('arco.php', $cleanup['source']);
+        self::assertSame(['every' => '1h', 'route' => '/_arco/schedule/cleanup', 'timeout' => 120], $cleanup['options']);
+        $gone = $resources['events:rule arco-shop-production-gone-5e6f7a8b-scheduler'];
+        self::assertSame([['type' => 'invokes', 'target' => $console]], $gone['relations'], 'a stale rule still targets the console until a deploy deletes it');
+        self::assertNull($gone['source']);
+        self::assertNull($gone['options']);
+        self::assertFalse($cleanup['retained'], 'a process app\'s remove deletes its schedule rules');
+        self::assertFalse($gone['retained']);
     }
 }

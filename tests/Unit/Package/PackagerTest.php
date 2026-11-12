@@ -292,4 +292,76 @@ final class PackagerTest extends TestCase
             PackageReader::check($package, $this->config(), new PlainPhpPreset(), 'php8.5.11-fp1.13.0-r1', $canonical),
         );
     }
+
+    public function test_a_process_package_carries_the_node_runtime_and_the_binary_only(): void
+    {
+        file_put_contents("$this->runtimeDir/worker.js", '// worker');
+        $base = TempPaths::path('arco-proc-');
+        mkdir("$base/staging/app/bin", 0777, true);
+        file_put_contents("$base/staging/app/bin/app", 'ELF');
+        chmod("$base/staging/app/bin/app", 0755);
+        $build = new BuildResult("$base/staging", "$base/staging/app", []);
+        $raw = App::make('api')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $config = ConfigResolver::resolve($raw, 'production');
+        $preset = new \Multiapi\Arco\Build\ProcessPreset($config->process ?? throw new \LogicException());
+
+        $package = (new Packager($this->runtimeDir))->package($build, '', $config, $preset);
+
+        $zip = new ZipArchive();
+        self::assertTrue($zip->open($package->path));
+        $names = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $names[] = $zip->getNameIndex($i);
+        }
+        sort($names);
+        self::assertSame(['app/bin/app', 'arco-package.json', 'arco-runtime.json', 'index.js', 'lib/caddyfile.js', 'worker.js'], $names);
+        $attrs = 0;
+        $zip->getExternalAttributesName('app/bin/app', $opsys, $attrs);
+        self::assertSame(0755, ($attrs >> 16) & 0777);
+        self::assertSame(
+            ['kind' => 'process', 'command' => ['bin/app'], 'healthPath' => '/'],
+            json_decode((string) $zip->getFromName('arco-runtime.json'), true),
+        );
+        self::assertSame('go', $package->manifest->preset);
+        self::assertNull($package->manifest->runtimeBuild);
+        $zip->close();
+    }
+
+    public function test_a_process_package_passes_the_deploy_check_through_worker_js(): void
+    {
+        file_put_contents("$this->runtimeDir/worker.js", '// worker');
+        $base = TempPaths::path('arco-proc-');
+        mkdir("$base/staging/app/bin", 0777, true);
+        file_put_contents("$base/staging/app/bin/app", 'ELF');
+        $raw = App::make('api')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $config = ConfigResolver::resolve($raw, 'production');
+        $preset = new \Multiapi\Arco\Build\ProcessPreset($config->process ?? throw new \LogicException());
+        $package = (new Packager($this->runtimeDir))->package(new BuildResult("$base/staging", "$base/staging/app", []), '', $config, $preset);
+
+        self::assertSame([], PackageReader::check(PackageReader::open($package->path), $config, $preset, null), 'no bootstrap: the process functions run worker.js');
+
+        $zip = new ZipArchive();
+        $zip->open($package->path);
+        $zip->deleteName('worker.js');
+        $zip->close();
+        try {
+            PackageReader::check(PackageReader::open($package->path), $config, $preset, null);
+            self::fail('expected package.no_console_runtime');
+        } catch (\Multiapi\Arco\Build\BuildException $e) {
+            self::assertSame('package.no_console_runtime', $e->key);
+        }
+    }
+
+    public function test_php_packages_never_carry_worker_js_or_a_kind(): void
+    {
+        file_put_contents("$this->runtimeDir/worker.js", '// worker');
+        $package = (new Packager($this->runtimeDir))->package($this->build, $this->binary, $this->config(), new PlainPhpPreset());
+
+        $zip = new ZipArchive();
+        self::assertTrue($zip->open($package->path));
+        self::assertFalse($zip->locateName('worker.js'));
+        self::assertStringNotContainsString('"kind"', (string) $zip->getFromName('arco-runtime.json'));
+    }
 }
