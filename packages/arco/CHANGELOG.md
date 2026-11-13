@@ -3,6 +3,14 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## Unreleased
+
+- **Added:** `telemetry(bool = true)` (environment or app level; `telemetry` in a config layer or `arco.json` settings)
+  turns the runtime's anonymous invocation counts off with `telemetry(false)`; `ARCO_TELEMETRY_DISABLE=1` in the shell
+  that runs `arco deploy` does the same. `arco info` shows the setting (`settings.telemetry` in `--json`).
+  `arco-runtime.json` gains `arcoVersion` (always) and `telemetry: false` (only when off), so every package hash
+  changes once on the first deploy with this version.
+
 ## 0.20.5
 
 - **Added:** `arco info --resources --json` has `scheduler`, appended after `schedules` (before `error`):
