@@ -13,6 +13,7 @@ const DEFAULT_HOST = 'telemetry.arcocloud.app';
 const DEFAULT_PORT = 41700;
 const SEND_INTERVAL_MS = 60000;
 const PROTOCOL = 'arco1';
+const RUNTIMES = new Set(['laravel', 'process']);
 const KINDS = new Set(['web', 'queue', 'console', 'schedule']);
 // Version and region go into the packet as they are: anything unexpected turns telemetry off instead.
 const VERSION = /^[0-9A-Za-z.+-]{1,32}$/;
@@ -52,6 +53,7 @@ function createTelemetry({ env = {}, config = {}, runtime, kind, bootMs, now = D
     && !!config && config.telemetry !== false
     && typeof version === 'string' && VERSION.test(version)
     && typeof region === 'string' && REGION.test(region)
+    && RUNTIMES.has(runtime)
     && KINDS.has(kind);
 
   const { host, port } = destination(env && env.ARCO_TELEMETRY_HOST);
@@ -77,7 +79,7 @@ function createTelemetry({ env = {}, config = {}, runtime, kind, bootMs, now = D
   }
 
   function sendPending() {
-    if (!enabled || address === null) return;
+    if (!enabled || address === null || pending.size === 0) return;
     let s;
     try {
       s = openSocket();
@@ -129,6 +131,14 @@ function createTelemetry({ env = {}, config = {}, runtime, kind, bootMs, now = D
   return {
     get enabled() {
       return enabled;
+    },
+    /** Starts resolving the collector ahead of the first send (no I/O wait, nothing sent). */
+    prepare() {
+      try {
+        if (enabled && address === null && !resolving) resolve();
+      } catch {
+        // Telemetry never fails a boot.
+      }
     },
     /** One invocation of `kindOverride` (default: this function's kind). An increment, no I/O. */
     count(kindOverride) {

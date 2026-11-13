@@ -182,6 +182,61 @@ for (const [name, env, config] of [
   });
 }
 
+test('a runtime that is not laravel or process turns telemetry off', () => {
+  const { telemetry, lines, lookup } = setup({ runtime: 'python' });
+  assert.equal(telemetry.enabled, false);
+  telemetry.prepare();
+  telemetry.count();
+  telemetry.tick();
+  assert.deepEqual(lines(), []);
+  assert.deepEqual(lookup.calls, []);
+});
+
+test('prepare resolves the collector ahead of time and sends nothing', () => {
+  const { telemetry, clock, lines, lookup } = setup();
+  assert.equal(telemetry.prepare(), undefined);
+  assert.deepEqual(lookup.calls, [DEFAULT_HOST]);
+  assert.deepEqual(lines(), []);
+  telemetry.prepare();
+  assert.equal(lookup.calls.length, 1, 'resolves once');
+  clock.now += 5_000;
+  telemetry.count();
+  telemetry.tick();
+  assert.deepEqual(lines(), ['arco1 r=laravel k=web v=0.21.0 g=us-east-1 i=1 c=1 b=2']);
+  assert.equal(lookup.calls.length, 1, 'no second lookup');
+});
+
+test('prepare does not start a second lookup while one is in flight', () => {
+  let answer;
+  const lookup = (host, options, callback) => { lookup.calls.push(host); answer = () => callback(null, '203.0.113.7', 4); };
+  lookup.calls = [];
+  const { telemetry, lines } = setup({ lookup });
+  telemetry.prepare();
+  telemetry.prepare();
+  telemetry.count();
+  telemetry.tick();
+  assert.equal(lookup.calls.length, 1);
+  answer();
+  assert.deepEqual(lines(), ['arco1 r=laravel k=web v=0.21.0 g=us-east-1 i=1 c=1 b=2']);
+});
+
+test('prepare does nothing when telemetry is off or the lookup failed', () => {
+  const off = setup({ env: { ...ENV, ARCO_TELEMETRY_DISABLE: '1' } });
+  off.telemetry.prepare();
+  assert.deepEqual(off.lookup.calls, []);
+
+  const lookup = (host, options, callback) => { lookup.calls.push(host); callback(new Error('ENOTFOUND')); };
+  lookup.calls = [];
+  const failed = setup({ lookup });
+  failed.telemetry.prepare();
+  assert.equal(failed.telemetry.enabled, false);
+  failed.telemetry.prepare();
+  failed.telemetry.count();
+  failed.telemetry.tick();
+  assert.equal(lookup.calls.length, 1);
+  assert.deepEqual(failed.lines(), []);
+});
+
 test('works without a config or env at all', () => {
   const telemetry = createTelemetry({ runtime: 'laravel', kind: 'web', bootMs: 0, socket: fakeSocket(), lookup: fakeLookup() });
   assert.equal(telemetry.enabled, false);
