@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Tests\Unit\ConsoleRuntime;
 
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
 use Multiapi\Arco\Tests\Support\RuntimeApiTrace;
+use Multiapi\Arco\Tests\Support\TelemetryCollector;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Filesystem\Filesystem;
@@ -26,7 +27,7 @@ final class ConsoleLoopTest extends TestCase
         $fs->mirror(__DIR__ . '/../../../packages/arco/runtime/console', "$this->root/runtime/console");
         $fs->copy(__DIR__ . '/../../../packages/arco/runtime/console.php', "$this->root/runtime/console.php");
         $fs->copy(__DIR__ . '/../../../packages/arco/runtime/console-cli.php', "$this->root/runtime/console-cli.php");
-        $fs->dumpFile("$this->root/arco-runtime.json", '{"phpIni":{"memory_limit":"321M"},"console":{"entry":"artisan"}}');
+        $fs->dumpFile("$this->root/arco-runtime.json", '{"arcoVersion":"0.21.0","phpIni":{"memory_limit":"321M"},"console":{"entry":"artisan"}}');
         $fs->dumpFile("$this->root/app/artisan", <<<'PHP'
             <?php
             echo 'args:', json_encode(array_slice($argv, 1)), "\n", 'server-args:', json_encode(array_slice($_SERVER['argv'], 1)), "\n", 'greeting:', getenv('GREETING'), "\n", 'cwd:', getcwd(), "\n", 'ini:', getenv('PHP_INI_SCAN_DIR'), "\n", 'request:', getenv('ARCO_REQUEST_ID'), "\n", 'trace:', getenv('_X_AMZN_TRACE_ID'), "\n";
@@ -52,6 +53,8 @@ final class ConsoleLoopTest extends TestCase
             'LAMBDA_TASK_ROOT' => $this->root,
             'ARCO_TMP' => "$this->root/tmp",
             'AWS_REGION' => 'us-east-1',
+            // Never the real collector; the telemetry tests point it at their own socket.
+            'ARCO_TELEMETRY_HOST' => '127.0.0.1:9',
             // Never inherit real credentials from the developer's shell.
             'AWS_ACCESS_KEY_ID' => false,
             'AWS_SECRET_ACCESS_KEY' => false,
@@ -152,5 +155,49 @@ final class ConsoleLoopTest extends TestCase
         self::assertSame(1, $runtime->getExitCode());
         self::assertSame('Arco.InitError', $this->api->initError()['type'] ?? null);
         self::assertStringContainsString('{"arco":"fatal"', $runtime->getOutput());
+    }
+    /** @return array<string, array{string, string}> */
+    public static function telemetryKinds(): array
+    {
+        return [
+            'the scheduler rule' => ['{"command":"schedule:run"}', 'schedule'],
+            'any other command' => ['{"command":"schedule:list"}', 'console'],
+            'tinker' => ['{"tinker":{"code":"JHggPSAxOw==","context":null}}', 'console'],
+            'an invalid event' => ['not json', 'console'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('telemetryKinds')]
+    public function test_telemetry_counts_each_invocation_after_its_response(string $event, string $kind): void
+    {
+        $collector = new TelemetryCollector();
+        try {
+            $runtime = $this->runtime = $this->runtime(['ARCO_PHP_BINARY' => PHP_BINARY, 'ARCO_TELEMETRY_HOST' => $collector->host]);
+            $runtime->start();
+
+            $this->api->await($this->api->enqueueRaw($event));
+            $this->api->await($this->api->enqueue(['command' => 'about']));
+
+            $packet = $collector->receive();
+            self::assertMatchesRegularExpression("/^arco1 r=laravel k=$kind v=0\\.21\\.0 g=us-east-1 i=1 c=1 b=[0-3]$/", (string) $packet, $runtime->getOutput() . $runtime->getErrorOutput());
+            self::assertNull($collector->receive(0.5), 'the second invocation waits for the minute');
+        } finally {
+            $collector->close();
+        }
+    }
+
+    public function test_arco_telemetry_disable_sends_nothing(): void
+    {
+        $collector = new TelemetryCollector();
+        try {
+            $runtime = $this->runtime = $this->runtime(['ARCO_PHP_BINARY' => PHP_BINARY, 'ARCO_TELEMETRY_HOST' => $collector->host, 'ARCO_TELEMETRY_DISABLE' => '1']);
+            $runtime->start();
+
+            $this->respond($runtime, $this->api->enqueue(['command' => 'about']));
+
+            self::assertNull($collector->receive(1));
+        } finally {
+            $collector->close();
+        }
     }
 }
