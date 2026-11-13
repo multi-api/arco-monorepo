@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Tests\Integration;
 
+use Multiapi\Arco\Arco;
 use Multiapi\Arco\Binary\BinaryProvider;
 use Multiapi\Arco\Binary\RuntimeManifest;
 use Multiapi\Arco\Laravel\LaravelPreset;
@@ -9,6 +10,7 @@ use Multiapi\Arco\Package\ConsolePackager;
 use Multiapi\Arco\Package\PackageReader;
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
 use Multiapi\Arco\Tests\Support\SiblingContainers;
+use Multiapi\Arco\Tests\Support\TelemetryCollector;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -30,6 +32,7 @@ final class WorkerRuntimeTest extends TestCase
     private const QUEUE_URL = 'https://sqs.us-east-1.amazonaws.com/111111111111/arco-example-ci-emails';
     private ?string $container = null;
     private ?RuntimeApiEmulator $api = null;
+    private ?TelemetryCollector $collector = null;
 
     protected function setUp(): void
     {
@@ -46,11 +49,13 @@ final class WorkerRuntimeTest extends TestCase
             (new Process(['docker', 'rm', '-f', $this->container]))->run();
         }
         $this->api?->stop();
+        $this->collector?->close();
     }
 
     public function test_a_batch_reports_the_failed_and_released_messages_and_laravel_boots_once(): void
     {
         $task = $this->task();
+        $this->collector = new TelemetryCollector(SiblingContainers::BIND);
         $this->start($task);
 
         $first = $this->invoke([
@@ -59,9 +64,13 @@ final class WorkerRuntimeTest extends TestCase
             self::record('m-released', 'ExampleReleasesJob'),
         ]);
         self::assertSame([['itemIdentifier' => 'm-throws'], ['itemIdentifier' => 'm-released']], $first['batchItemFailures'], $this->logs());
+        // Telemetry: one queue invocation per batch, not per record, sent as the cold-start packet after the answer.
+        $version = preg_quote(Arco::version(), '/');
+        self::assertMatchesRegularExpression("/^arco1 r=laravel k=queue v=$version g=us-east-1 i=1 c=1 b=[0-3]$/", (string) $this->collector->receive(), $this->logs());
 
         $second = $this->invoke([self::record('m-ok-2', 'ExampleSucceedsJob')]);
         self::assertSame([], $second['batchItemFailures'], $this->logs());
+        self::assertSame([], $this->collector->drain(0.5), 'nothing more is sent within the minute');
 
         $logs = $this->logs();
         self::assertSame(1, substr_count($logs, '"arco":"worker_ready"'), 'the worker is prepared once');
@@ -149,6 +158,7 @@ final class WorkerRuntimeTest extends TestCase
             ...(new LaravelPreset())->defaultVariables(),
             'AWS_LAMBDA_RUNTIME_API' => SiblingContainers::testHost() . ":{$this->api->port}", 'LAMBDA_TASK_ROOT' => '/var/task', 'AWS_REGION' => 'us-east-1',
             'AWS_DEFAULT_REGION' => 'us-east-1', 'AWS_ACCESS_KEY_ID' => 'AKIDTEST', 'AWS_SECRET_ACCESS_KEY' => 'secret', 'AWS_SESSION_TOKEN' => 'token',
+            'ARCO_TELEMETRY_HOST' => $this->collector?->forContainers() ?? '',
             'ARCO' => '1', 'ARCO_WORKER_QUEUE' => 'emails', 'ARCO_QUEUE_TRIES' => '3',
             'ARCO_QUEUES' => json_encode(['emails' => self::QUEUE_URL], JSON_UNESCAPED_SLASHES),
             'QUEUE_CONNECTION' => 'sqs', 'SQS_PREFIX' => 'https://sqs.us-east-1.amazonaws.com/111111111111', 'SQS_QUEUE' => self::QUEUE_URL,
