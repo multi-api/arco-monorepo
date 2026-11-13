@@ -94,8 +94,9 @@ final class ConsoleRuntimeTest extends TestCase
     }
 
     /**
-     * The scheduler rule's input counts as `schedule`; ARCO_TELEMETRY_DISABLE=1 in the function and `"telemetry": false`
-     * in arco-runtime.json (what ->telemetry(false) packages) send nothing.
+     * The scheduler rule's input counts as `schedule`; ARCO_TELEMETRY_DISABLE=1 delivered by the variable bundle
+     * (variables() with bundleVariables()) and `"telemetry": false` in arco-runtime.json (what ->telemetry(false)
+     * packages) send nothing.
      */
     public function test_schedule_runs_are_counted_and_the_switches_send_nothing(): void
     {
@@ -111,13 +112,24 @@ final class ConsoleRuntimeTest extends TestCase
         self::assertSame(1, preg_match(self::packet('schedule', cold: true), (string) $on->receive(), $first), $this->logs());
         self::assertSame('1', $first[1]);
 
+        // The switch read after the bundle loads: the bundle in a local S3, as a deploy with bundleVariables() writes it.
+        $bundle = (string) json_encode(['schema' => 1, 'variables' => ['ARCO_TELEMETRY_DISABLE' => '1']]);
+        file_put_contents("$work/bundle.json", $bundle);
+        $key = 'variables/example/ci/' . hash('sha256', $bundle) . '.json';
+        $this->s3 = new S3Emulator(SiblingContainers::BIND);
+        $this->s3->put('arco-111111111111-us-east-1', $key, "$work/bundle.json");
         $offByEnv = $this->collector();
-        $this->start($task, ['ARCO_TELEMETRY_HOST=' . $offByEnv->forContainers(), 'ARCO_TELEMETRY_DISABLE=1']);
+        $this->start($task, [
+            'ARCO_TELEMETRY_HOST=' . $offByEnv->forContainers(),
+            'ARCO_S3_ENDPOINT=http://' . SiblingContainers::testHost() . ":{$this->s3->port}",
+            "ARCO_VARIABLES=s3://arco-111111111111-us-east-1/$key",
+        ]);
         $this->respond($this->api?->enqueue(['command' => 'about --only=environment']) ?? '');
+        self::assertStringContainsString('"variables":1', $this->logs(), 'the bundle was loaded');
         $offByConfig = $this->collector();
         $this->start($task, ['ARCO_TELEMETRY_HOST=' . $offByConfig->forContainers()], ['telemetry' => false]);
         $this->respond($this->api?->enqueue(['command' => 'about --only=environment']) ?? '');
-        self::assertSame([], $offByEnv->drain(), 'ARCO_TELEMETRY_DISABLE=1 sends nothing');
+        self::assertSame([], $offByEnv->drain(), 'ARCO_TELEMETRY_DISABLE=1 from the bundle sends nothing');
         self::assertSame([], $offByConfig->drain(), '"telemetry": false sends nothing');
     }
 

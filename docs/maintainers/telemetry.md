@@ -51,7 +51,9 @@ collector's minute log line (`accepted`, `rejected`) shows it sooner (`infra/tel
   with `-e AWS_REGION=us-east-1 -e ARCO_TELEMETRY_HOST=telemetry.staging.arcocloud.app:41700`. One request sends the
   cold-start packet; `docker stop` sends the rest.
 - A deployed app: deploy it with a released CLI (a semver version), then add `ARCO_TELEMETRY_HOST` to a function's
-  environment in AWS (`variables()` refuses `ARCO*` names, and the next deploy replaces the variables). Keep the
-  existing variables when you do: `aws lambda update-function-configuration --environment` replaces all of them.
+  environment in AWS. `variables()` accepts `ARCO_TELEMETRY_DISABLE` (users' switch, read after the bundle and
+  secrets load, so it also works bundled or set in the Lambda console) but still refuses `ARCO_TELEMETRY_HOST` and
+  every other `ARCO*` name, and the next deploy replaces variables set by hand. Keep the existing variables when you
+  do: `aws lambda update-function-configuration --environment` replaces all of them.
 
 Use a test version suffix (`-test`) or a staging-only account so test rows are easy to tell apart.

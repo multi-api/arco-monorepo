@@ -9,10 +9,12 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   scheduler and queue functions and sends the count to Arco's collector: one small UDP packet per execution
   environment at most once a minute, with only the runtime, kind, Arco version, AWS region, the count, and on the
   first packet a cold-start flag and a boot-time bucket. Nothing identifies you, your account or your app; the
-  collector does not store IP addresses. Counting costs about 0.1 µs per invocation (up to 0.1 ms per web request
-  end to end in the Lambda simulation), and nothing waits for the network. **To turn it off:** `->telemetry(false)` in `arco.php` (`"telemetry": false` in `arco.json` or a config
-  layer), or `ARCO_TELEMETRY_DISABLE=1` in the shell that runs `arco deploy`, then deploy. `arco info` shows the
-  setting (`settings.telemetry` in `--json`). Everything that is sent: [docs/telemetry.md](docs/telemetry.md).
+  collector does not store IP addresses. Counting costs about 0.1 µs per invocation; Laravel web requests in the
+  Lambda simulation took up to 0.1 ms longer end to end. Nothing waits for the network. **To turn it off:**
+  `->telemetry(false)` in `arco.php` (`"telemetry": false` in `arco.json` or a config layer) or
+  `ARCO_TELEMETRY_DISABLE=1` in the shell that runs `arco deploy`, then deploy; or `ARCO_TELEMETRY_DISABLE=1` in the
+  function's environment, which `variables()` now accepts (the one `ARCO*` name it does), bundled or not. `arco info`
+  shows the setting (`settings.telemetry` in `--json`). Everything that is sent: [docs/telemetry.md](docs/telemetry.md).
   Laravel queue counts need `multiapi/arco-laravel` at this version; an older one sends nothing for queues.
 - **Added:** the first successful `arco deploy` on a machine (also `deploy --package`) prints a one-line notice about
   telemetry and how to turn it off, once, when it is on; it is remembered in `~/.arco/config.php`

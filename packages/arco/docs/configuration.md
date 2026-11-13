@@ -109,7 +109,7 @@ rules and `adopt` are in [Config layer](config-layer.md).
 | `kmsKey(arn)` | unset | Revision `kmsKeyArn` |
 | `profile(string)` | unset | AWS profile for the environment. Without it, the first deploy asks and remembers the answer in `.arco/local.php`, not in `arco.php` (see [Choosing the AWS profile](getting-started.md#choosing-the-aws-profile)) |
 | `account(string)` | written on first deploy | 12-digit account lock; environment level only |
-| `variables(array)` | preset defaults | Revision environment variables. Names starting with `ARCO` are reserved for Arco and refused; Lambda's own (`AWS_REGION`, `AWS_LAMBDA_*`, ...) too |
+| `variables(array)` | preset defaults | Revision environment variables. Names starting with `ARCO` are reserved for Arco and refused (except `ARCO_TELEMETRY_DISABLE`, see [Telemetry](telemetry.md)); Lambda's own (`AWS_REGION`, `AWS_LAMBDA_*`, ...) too |
 | `bundleVariables(bool = true)` | off | Keep the variables in one S3 object instead of the Lambda environment, which AWS caps at 4 KB per function (see [Bundled variables](#bundled-variables)); `bundleVariables(false)` at environment level clears an app-level one |
 | `permissions(array)` | `[]` | Extra IAM statements for the managed execution role (below) |
 | `exclude(array)` / `include(array)` | preset rules | Packaging globs (below) |
@@ -137,7 +137,7 @@ that an **instance**, so `maxInstances()` caps how many instances one Arco envir
 Variable names must be letters, digits and underscores (not starting with a digit); names
 reserved by Lambda are rejected: `_HANDLER`, `_X_AMZN_TRACE_ID`, `AWS_REGION`, `AWS_DEFAULT_REGION`, `AWS_EXECUTION_ENV`, `AWS_ACCESS_KEY`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SECRET_KEY`, `AWS_SESSION_TOKEN`, `LAMBDA_TASK_ROOT`, `LAMBDA_RUNTIME_DIR` and anything starting with `AWS_LAMBDA_` or `AWS_XRAY_`. Every name
 starting with `ARCO` is reserved for Arco and rejected too, so a variable Arco adds later never collides with
-one of yours. Values may be references (`arco-ssm:...`, `arco-secret:...`).
+one of yours. The one exception is `ARCO_TELEMETRY_DISABLE`, a switch you may set (see [Telemetry](telemetry.md)). Values may be references (`arco-ssm:...`, `arco-secret:...`).
 
 ### Variables Arco sets
 
@@ -1752,9 +1752,9 @@ are never packaged, and unlike for PHP apps an `include` cannot bring back the a
 `vendor`, `node_modules`, `.github`, editor and AI-assistant folders, ...; see [Packaging globs](#packaging-globs)).
 
 The zip has the Node runtime (`index.js`, `lib/`, `worker.js`), `app/bin/app`, the included files,
-`arco-runtime.json` (`{"kind": "process", "command": [...], "healthPath": "/", "arcoVersion": "..."}`, plus
-`"accessLog": true` with `accessLog` and `"telemetry": false` with `telemetry(false)`) and the manifest, whose
-`preset` is `go` and `runtime_build` `null`. There is no FrankenPHP and no PHP in it. The unzipped package may be 512 MB. With queues or schedules it may be 250 MB, because their functions are
+`arco-runtime.json` (`{"kind": "process", "command": [...], "healthPath": "/", "arcoVersion": "..."}`,
+plus `"accessLog": true` with `accessLog` and `"telemetry": false` with `telemetry(false)`) and the manifest,
+whose `preset` is `go` and `runtime_build` `null`. There is no FrankenPHP and no PHP in it. The unzipped package may be 512 MB. With queues or schedules it may be 250 MB, because their functions are
 classic Lambda functions running the same zip: above that the deploy stops before any AWS change with
 `deploy.process_package_too_large` (`{size, max}`).
 
