@@ -119,6 +119,7 @@ rules and `adopt` are in [Config layer](config-layer.md).
 | `console(bool = true, ?int timeout, ?int memory)` | off | Deploy the console function (`arco command`, `arco tinker`, `deployCommands()`); `console(false)` deletes an existing one on the next deploy; a scheduler implies it. `timeout:` is in seconds (3 to 900, default 900), `memory:` in MB (128 to 10240, default 2048); giving either also turns the console on |
 | `scheduler(int\|false)` | off | Run Laravel's `schedule:run` every N minutes (1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30 or 60), aligned to the UTC clock; needs the console, which it turns on |
 | `accessLog(bool = true)` | off | One JSON line per HTTP request in the web function's log, written by the runtime for every request, static files and requests Laravel never sees included (see [Access log](#access-log)); `accessLog(false)` at environment level clears an app-level one |
+| `telemetry(bool = true)` | on | Anonymous invocation counts sent by the runtime: kind, Arco version, region and a count, nothing that identifies you or the app (see [Telemetry](telemetry.md)); `telemetry(false)` turns them off, as does `ARCO_TELEMETRY_DISABLE=1` in the shell that runs `arco deploy` |
 | `logRetention(int\|false)` | 30 | Days CloudWatch keeps the web, console and queue worker logs (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288 or 3653); `false` = never expire; not set = 30 days |
 | `protected(bool = true)` | on for `production` | Ask for confirmation before `arco tinker`, `arco command`, `arco remove` and `arco queue:dlq --redrive`; `--yes` answers it, and without a terminal it is required (CI: `arco command "migrate --force" --env=production --no-interaction --yes`). Deploy commands (`deployCommands()`, `arco deploy --migrate`) are not asked. `protected(false)` turns it off |
 | `certificate(arn)` | looked up or requested | ACM certificate ARN in `us-east-1` to use for the domains |
@@ -1630,7 +1631,8 @@ otherwise Arco lists the largest directories.
 git-ignored and never packaged). An `--output` path inside the project is always left out of the
 next package, so a previous zip never ends up inside a new one.
 
-The zip also contains `arco-runtime.json` (the runtime options above) and `arco-package.json`, a
+The zip also contains `arco-runtime.json` (the runtime options above, the `arcoVersion` that built it and, only
+when [telemetry](telemetry.md) is off, `"telemetry": false`) and `arco-package.json`, a
 manifest that identifies the package (app, environment, preset, runtime build, content hash, Arco
 version, creation time) so `arco deploy --package=<zip>` can check it. Variables are not
 packaged; `deploy --package` takes them from the current `arco.php`.
@@ -1750,9 +1752,9 @@ are never packaged, and unlike for PHP apps an `include` cannot bring back the a
 `vendor`, `node_modules`, `.github`, editor and AI-assistant folders, ...; see [Packaging globs](#packaging-globs)).
 
 The zip has the Node runtime (`index.js`, `lib/`, `worker.js`), `app/bin/app`, the included files,
-`arco-runtime.json` (`{"kind": "process", "command": [...], "healthPath": "/"}`, plus `"accessLog": true` with
-`accessLog`) and the manifest, whose `preset` is `go` and `runtime_build` `null`. There is no FrankenPHP and no PHP
-in it. The unzipped package may be 512 MB. With queues or schedules it may be 250 MB, because their functions are
+`arco-runtime.json` (`{"kind": "process", "command": [...], "healthPath": "/", "arcoVersion": "..."}`, plus
+`"accessLog": true` with `accessLog` and `"telemetry": false` with `telemetry(false)`) and the manifest, whose
+`preset` is `go` and `runtime_build` `null`. There is no FrankenPHP and no PHP in it. The unzipped package may be 512 MB. With queues or schedules it may be 250 MB, because their functions are
 classic Lambda functions running the same zip: above that the deploy stops before any AWS change with
 `deploy.process_package_too_large` (`{size, max}`).
 

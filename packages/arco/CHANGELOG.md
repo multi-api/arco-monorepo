@@ -5,15 +5,20 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## Unreleased
 
-- **Added:** the first successful `arco deploy` on a machine (also `deploy --package`) prints a one-line notice about the
-  anonymous invocation counts and how to turn them off, once, when telemetry is on; it is remembered in
-  `~/.arco/config.php` (`telemetry_notice_shown`, other keys kept). With `--json` it goes to stderr, so stdout and its
-  shapes are unchanged.
-- **Added:** `telemetry(bool = true)` (environment or app level; `telemetry` in a config layer or `arco.json` settings)
-  turns the runtime's anonymous invocation counts off with `telemetry(false)`; `ARCO_TELEMETRY_DISABLE=1` in the shell
-  that runs `arco deploy` does the same. `arco info` shows the setting (`settings.telemetry` in `--json`).
-  `arco-runtime.json` gains `arcoVersion` (always) and `telemetry: false` (only when off), so every package hash
-  changes once on the first deploy with this version.
+- **Added: anonymous invocation telemetry, on by default.** The runtime now counts invocations of the web, console,
+  scheduler and queue functions and sends the count to Arco's collector: one small UDP packet per execution
+  environment at most once a minute, with only the runtime, kind, Arco version, AWS region, the count, and on the
+  first packet a cold-start flag and a boot-time bucket. Nothing identifies you, your account or your app; the
+  collector does not store IP addresses. Counting costs about 0.1 µs per invocation (up to 0.1 ms per web request
+  end to end in the Lambda simulation), and nothing waits for the network. **To turn it off:** `->telemetry(false)` in `arco.php` (`"telemetry": false` in `arco.json` or a config
+  layer), or `ARCO_TELEMETRY_DISABLE=1` in the shell that runs `arco deploy`, then deploy. `arco info` shows the
+  setting (`settings.telemetry` in `--json`). Everything that is sent: [docs/telemetry.md](docs/telemetry.md).
+  Laravel queue counts need `multiapi/arco-laravel` at this version; an older one sends nothing for queues.
+- **Added:** the first successful `arco deploy` on a machine (also `deploy --package`) prints a one-line notice about
+  telemetry and how to turn it off, once, when it is on; it is remembered in `~/.arco/config.php`
+  (`telemetry_notice_shown`, other keys kept). With `--json` it goes to stderr, so stdout and its shapes are unchanged.
+- **Changed:** `arco-runtime.json` gains `arcoVersion` (always) and `telemetry: false` (only when off), so every
+  package hash changes once on the first deploy with this version.
 
 ## 0.20.5
 

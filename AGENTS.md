@@ -12,7 +12,7 @@ an app, read [packages/arco/docs/agents.md](packages/arco/docs/agents.md) instea
 | `packages/arco-secrets` | `multiapi/arco-secrets`: `arco-ssm:` / `arco-secret:` references |
 | `examples/laravel` | The app the integration and end-to-end suites deploy |
 | `tests/Unit`, `tests/Integration`, `tests/E2e` | PHPUnit suites; `tests/Support` has the temp-path and emulator helpers |
-| `docs/maintainers` | Releasing, runtime builds, end-to-end runs |
+| `docs/maintainers` | Releasing, runtime builds, end-to-end runs, telemetry |
 | `bin/test-docker` | The only way to run tests |
 
 Each package is split into its own repository when a tag is pushed (`.github/workflows/split.yml`), so links inside

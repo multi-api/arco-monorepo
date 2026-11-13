@@ -13,7 +13,8 @@ Lambda Web Functions with FrankenPHP.
 User documentation lives with the CLI: [README](packages/arco/README.md),
 [getting started](packages/arco/docs/getting-started.md),
 [configuration](packages/arco/docs/configuration.md), [try it locally with Floci](packages/arco/docs/local-floci.md),
-[upgrading](packages/arco/docs/upgrading.md), [changelog](packages/arco/CHANGELOG.md).
+[upgrading](packages/arco/docs/upgrading.md), [telemetry](packages/arco/docs/telemetry.md),
+[changelog](packages/arco/CHANGELOG.md).
 
 ## Development
 
@@ -41,7 +42,8 @@ mounts any host path. Pass PHPUnit arguments after `--`, e.g.
 
 Releases: see [docs/maintainers/releasing.md](docs/maintainers/releasing.md) (pushing a tag
 `vX.Y.Z` splits each package into its repository, `.github/workflows/split.yml`). Runtime binaries: see
-[docs/maintainers/runtime-builds.md](docs/maintainers/runtime-builds.md).
+[docs/maintainers/runtime-builds.md](docs/maintainers/runtime-builds.md). Anonymous invocation telemetry and its
+collector override: see [docs/maintainers/telemetry.md](docs/maintainers/telemetry.md).
 
 ## License
 
