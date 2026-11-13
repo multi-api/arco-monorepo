@@ -28,7 +28,7 @@ async function collector(t) {
 }
 
 // Runs main() with `config`; `variables` is what the stubbed loadEnvironment() adds to process.env, as a bundle would.
-async function run(t, { config, variables = {} }) {
+async function run(t, { config, variables = {}, counterFails = false }) {
   const out = { writes: [], counters: [], proxy: [], logs: [], loaded: false };
   const { host, packets } = await collector(t);
   out.packets = packets;
@@ -58,7 +58,10 @@ async function run(t, { config, variables = {} }) {
     const boot = require(LIB('boot'));
     patch(boot, 'loadEnvironment', async () => { Object.assign(process.env, variables); out.loaded = true; });
     const caddycount = require(LIB('caddycount'));
-    patch(caddycount, 'startCaddyCount', (onLine) => { out.counters.push(onLine); return new EventEmitter(); });
+    patch(caddycount, 'listenCaddyCount', async (onLine) => {
+      out.counters.push(onLine);
+      return counterFails ? null : { server: new EventEmitter(), port: 40123 };
+    });
     const supervisor = require(LIB('supervisor'));
     patch(supervisor, 'startProxy', async (...args) => { out.proxy.push(args); });
     const { main } = require(INDEX);
@@ -101,11 +104,20 @@ test('"telemetry": false in arco-runtime.json turns it off', async (t) => {
 
 test('direct mode: Caddy lines are counted as web invocations and the first one sends a cold packet', async (t) => {
   const out = await run(t, { config: LARAVEL });
-  assert.match(out.writes[0].content, /log arco_count/);
+  assert.match(out.writes[0].content, /log arco_count {\n\t\toutput net 127\.0\.0\.1:40123 {/);
   assert.equal(out.counters.length, 1);
   out.counters[0]();
   await until(() => out.packets.length > 0);
   assert.match(out.packets[0], /^arco1 r=laravel k=web v=0\.21\.0 g=us-east-1 i=1 c=1 b=[0-3]$/);
+});
+
+test('direct mode: a counter that cannot listen leaves the Caddyfile exactly as without telemetry', async (t) => {
+  const failed = await run(t, { config: LARAVEL, counterFails: true });
+  const off = await run(t, { config: { ...LARAVEL, telemetry: false } });
+  assert.equal(failed.counters.length, 1);
+  assert.doesNotMatch(failed.writes[0].content, /arco_count|output discard/);
+  assert.equal(failed.writes[0].content, off.writes[0].content);
+  assert.ok(failed.logs.some(({ phase }) => phase === 'telemetry_counter_failed'));
 });
 
 test('proxy mode counts in startProxy onResponse', async (t) => {
@@ -134,8 +146,10 @@ test('SIGTERM flushes the pending count', async (t) => {
   onResponse();
   onResponse();
   assert.equal(out.packets.length, 1, 'within the minute nothing more is sent');
-  // The telemetry's listener, then spawnProcess's (forwards the signal to the stubbed FrankenPHP).
+  // spawnProcess's listener (forwards the signal to the stubbed FrankenPHP), then the telemetry's: Node's default
+  // SIGTERM exit is never replaced by the telemetry's alone.
   assert.equal(out.sigterm.length, 2);
+  assert.equal(out.sigterm[1].toString(), '() => telemetry.flush()');
   for (const listener of out.sigterm) listener('SIGTERM');
   await until(() => out.packets.length > 1);
   assert.equal(out.packets[1], 'arco1 r=laravel k=web v=0.21.0 g=us-east-1 i=2 c=0');

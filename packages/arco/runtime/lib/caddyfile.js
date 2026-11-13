@@ -11,11 +11,13 @@ const REQUEST_ID_HEADERS = ['X-Request-ID', 'X-Amzn-RequestId', 'X-Amz-Request-I
 
 const iniValue = (value) => JSON.stringify(typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
 
-// Telemetry (lib/caddycount.js counts the lines): a global logger that takes every access log entry. Caddy keeps one
-// default logger for a site without a host name, so a second `log` in the site block would replace accessLog()'s.
-const COUNT_LOGGER = ['\tlog arco_count {', '\t\toutput net 127.0.0.1:2021 {', '\t\t\tsoft_start', '\t\t}', '\t\tformat json', '\t\tinclude http.log.access', '\t}'];
+// Telemetry (countPort: where lib/caddycount.js listens and counts the lines): a global logger that takes every access
+// log entry. Caddy keeps one default logger for a site without a host name, so a second `log` in the site block would
+// replace accessLog()'s.
+const countLogger = (countPort) => ['\tlog arco_count {', `\t\toutput net 127.0.0.1:${countPort} {`, '\t\t\tsoft_start', '\t\t}', '\t\tformat json', '\t\tinclude http.log.access', '\t}'];
 
-function buildCaddyfile(config, { host, port, root, telemetry = false }) {
+function buildCaddyfile(config, { host, port, root, countPort = null }) {
+  const telemetry = Number.isInteger(countPort) && countPort > 0;
   const worker = config.workerScript;
   const workerCount = worker ? config.workers.min : 0;
   const maxThreads = Math.max(config.workers.max, config.threads + workerCount);
@@ -24,7 +26,7 @@ function buildCaddyfile(config, { host, port, root, telemetry = false }) {
   for (const [key, value] of Object.entries({ ...SECURITY_INI, ...(config.phpIni || {}) })) lines.push(`\t\tphp_ini ${key} ${iniValue(value)}`);
   if (worker) lines.push('\t\tworker {', `\t\t\tfile ${root}/${worker}`, `\t\t\tnum ${workerCount}`, '\t\t}');
   lines.push('\t}');
-  if (telemetry) lines.push(...COUNT_LOGGER);
+  if (telemetry) lines.push(...countLogger(countPort));
   lines.push('}', '', `http://:${port} {`, `\tbind ${host}`, `\troot * ${root}/${config.publicDir}`, '\tencode zstd br gzip');
   lines.push('\t@noRequestId {', ...REQUEST_ID_HEADERS.map((name) => `\t\theader !${name}`), '\t}', '\trequest_header @noRequestId X-Request-ID {http.request.uuid}');
   // accessLog(): to stdout, where lib/accesslog.js rewrites each entry before it reaches CloudWatch.

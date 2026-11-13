@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const net = require('node:net');
 const { once } = require('node:events');
-const { startCaddyCount, HOST, PORT } = require('../lib/caddycount');
+const { startCaddyCount, listenCaddyCount, HOST, PORT } = require('../lib/caddycount');
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
 
@@ -15,9 +15,30 @@ async function counter(t) {
   return { port: server.address().port, count: () => count };
 }
 
-test('listens on 127.0.0.1:2021 by default', () => {
+test('listens on 127.0.0.1 on an ephemeral port by default', () => {
   assert.equal(HOST, '127.0.0.1');
-  assert.equal(PORT, 2021);
+  assert.equal(PORT, 0);
+});
+
+test('listenCaddyCount resolves the port once listening, and the counter counts there', async (t) => {
+  let count = 0;
+  const counter = await listenCaddyCount(() => { count += 1; });
+  t.after(() => counter.server.close());
+  assert.ok(Number.isInteger(counter.port) && counter.port > 0);
+  assert.equal(counter.server.address().address, '127.0.0.1');
+  const socket = net.connect(counter.port, '127.0.0.1');
+  await once(socket, 'connect');
+  socket.end('a\nb\n');
+  await once(socket, 'close');
+  await settle();
+  assert.equal(count, 2);
+});
+
+test('listenCaddyCount resolves null when it cannot listen', async (t) => {
+  const taken = net.createServer().listen(0, '127.0.0.1');
+  await once(taken, 'listening');
+  t.after(() => taken.close());
+  assert.equal(await listenCaddyCount(() => {}, { port: taken.address().port }), null);
 });
 
 test('counts one per line, whatever the chunks', async (t) => {

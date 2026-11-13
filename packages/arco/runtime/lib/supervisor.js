@@ -6,7 +6,6 @@ const net = require('node:net');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { MAX_PATH, requestId: requestIdOf, pipeAccessLog } = require('./accesslog');
-const caddycount = require('./caddycount');
 
 const PHP_TMP_SUBDIRS = [
   'storage/app/public', 'storage/framework/cache/data', 'storage/framework/sessions',
@@ -42,9 +41,7 @@ function spawnProcess(command, args, { env, cwd, stdio, onExit } = {}) {
   return child;
 }
 
-// onCount: telemetry, called once per response Caddy logs to arco_count (lib/caddycount.js listens before Caddy starts).
-function spawnFrankenphp(binary, caddyfile, env, cwd, log, { accessLog = false, onCount = null } = {}) {
-  if (typeof onCount === 'function') caddycount.startCaddyCount(onCount, { onError: (error) => log('telemetry_counter_failed', { error: error.message }) });
+function spawnFrankenphp(binary, caddyfile, env, cwd, log, { accessLog = false } = {}) {
   const stdio = accessLog ? ['inherit', 'pipe', 'inherit'] : 'inherit';
   const child = spawnProcess(binary, ['run', '--config', caddyfile, '--adapter', 'caddyfile'], {
     cwd,

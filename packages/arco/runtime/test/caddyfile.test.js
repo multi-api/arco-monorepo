@@ -82,14 +82,14 @@ test('accessLog() sends Caddy access log entries to stdout as JSON', () => {
   assert.match(buildCaddyfile({ ...base, accessLog: true }, target), /\trequest_header @noRequestId X-Request-ID {http.request.uuid}\n\tlog {\n\t\toutput stdout\n\t\tformat json\n\t}\n\tlog_append arco_request_id {http.request.uuid}\n\tphp_server\n}/);
 });
 
-// Telemetry: Caddy writes one JSON line per access log entry to lib/caddycount.js on 127.0.0.1:2021, which counts
+// Telemetry: Caddy writes one JSON line per access log entry to lib/caddycount.js on 127.0.0.1:<countPort>, which counts
 // the lines. Caddy keeps one default logger per site without a host name, so the counter is a global logger that
 // includes every access logger rather than a second `log` in the site block (that one would replace accessLog()'s).
-const COUNT_LOGGER = '\tlog arco_count {\n\t\toutput net 127.0.0.1:2021 {\n\t\t\tsoft_start\n\t\t}\n\t\tformat json\n\t\tinclude http.log.access\n\t}\n';
+const COUNT_LOGGER = '\tlog arco_count {\n\t\toutput net 127.0.0.1:40123 {\n\t\t\tsoft_start\n\t\t}\n\t\tformat json\n\t\tinclude http.log.access\n\t}\n';
 
 test('telemetry adds the arco_count logger and enables access logs to a discarded output', () => {
   const base = { mode: 'direct', publicDir: 'app/public', workerScript: null, threads: 8, workers: { min: 4, max: 64 }, phpIni: {} };
-  const caddyfile = buildCaddyfile(base, { host: '0.0.0.0', port: 3000, root: '/var/task', telemetry: true });
+  const caddyfile = buildCaddyfile(base, { host: '0.0.0.0', port: 3000, root: '/var/task', countPort: 40123 });
   assert.ok(caddyfile.includes(`\t}\n${COUNT_LOGGER}}\n`), caddyfile);
   assert.match(caddyfile, /\trequest_header @noRequestId X-Request-ID {http.request.uuid}\n\tlog {\n\t\toutput discard\n\t}\n\tphp_server\n}/);
   assert.doesNotMatch(caddyfile, /output stdout|log_append/);
@@ -99,15 +99,15 @@ test('telemetry keeps the accessLog() logger as it is', () => {
   const base = { mode: 'direct', publicDir: 'app/public', workerScript: null, threads: 8, workers: { min: 4, max: 64 }, phpIni: {}, accessLog: true };
   const target = { host: '0.0.0.0', port: 3000, root: '/var/task' };
   const without = buildCaddyfile(base, target);
-  const withTelemetry = buildCaddyfile(base, { ...target, telemetry: true });
+  const withTelemetry = buildCaddyfile(base, { ...target, countPort: 40123 });
   assert.equal(withTelemetry, without.replace('\t}\n}\n', `\t}\n${COUNT_LOGGER}}\n`));
   assert.doesNotMatch(withTelemetry, /output discard/);
 });
 
-test('without telemetry there is no arco_count logger', () => {
+test('without a counter port there is no arco_count logger and no site log', () => {
   const base = { mode: 'direct', publicDir: 'app/public', workerScript: null, threads: 8, workers: { min: 4, max: 64 }, phpIni: {} };
-  for (const telemetry of [undefined, false]) {
-    const caddyfile = buildCaddyfile(base, { host: '0.0.0.0', port: 3000, root: '/var/task', telemetry });
+  for (const countPort of [undefined, null, 0, 'x']) {
+    const caddyfile = buildCaddyfile(base, { host: '0.0.0.0', port: 3000, root: '/var/task', countPort });
     assert.doesNotMatch(caddyfile, /arco_count|\blog\b/);
   }
 });
