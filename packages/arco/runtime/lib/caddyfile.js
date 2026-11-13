@@ -11,7 +11,11 @@ const REQUEST_ID_HEADERS = ['X-Request-ID', 'X-Amzn-RequestId', 'X-Amz-Request-I
 
 const iniValue = (value) => JSON.stringify(typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
 
-function buildCaddyfile(config, { host, port, root }) {
+// Telemetry (lib/caddycount.js counts the lines): a global logger that takes every access log entry. Caddy keeps one
+// default logger for a site without a host name, so a second `log` in the site block would replace accessLog()'s.
+const COUNT_LOGGER = ['\tlog arco_count {', '\t\toutput net 127.0.0.1:2021 {', '\t\t\tsoft_start', '\t\t}', '\t\tformat json', '\t\tinclude http.log.access', '\t}'];
+
+function buildCaddyfile(config, { host, port, root, telemetry = false }) {
   const worker = config.workerScript;
   const workerCount = worker ? config.workers.min : 0;
   const maxThreads = Math.max(config.workers.max, config.threads + workerCount);
@@ -19,11 +23,15 @@ function buildCaddyfile(config, { host, port, root }) {
   const lines = ['{', '\tadmin off', '\tauto_https off', '\tfrankenphp {', `\t\tnum_threads ${config.threads}`, `\t\tmax_threads ${maxThreads}`];
   for (const [key, value] of Object.entries({ ...SECURITY_INI, ...(config.phpIni || {}) })) lines.push(`\t\tphp_ini ${key} ${iniValue(value)}`);
   if (worker) lines.push('\t\tworker {', `\t\t\tfile ${root}/${worker}`, `\t\t\tnum ${workerCount}`, '\t\t}');
-  lines.push('\t}', '}', '', `http://:${port} {`, `\tbind ${host}`, `\troot * ${root}/${config.publicDir}`, '\tencode zstd br gzip');
+  lines.push('\t}');
+  if (telemetry) lines.push(...COUNT_LOGGER);
+  lines.push('}', '', `http://:${port} {`, `\tbind ${host}`, `\troot * ${root}/${config.publicDir}`, '\tencode zstd br gzip');
   lines.push('\t@noRequestId {', ...REQUEST_ID_HEADERS.map((name) => `\t\theader !${name}`), '\t}', '\trequest_header @noRequestId X-Request-ID {http.request.uuid}');
   // accessLog(): to stdout, where lib/accesslog.js rewrites each entry before it reaches CloudWatch.
   // The entry shows the headers as they arrived, so it also carries the made-up id (the same uuid all through a request).
   if (config.accessLog) lines.push('\tlog {', '\t\toutput stdout', '\t\tformat json', '\t}', '\tlog_append arco_request_id {http.request.uuid}');
+  // Without accessLog(), telemetry still needs the site's access log entries, which go nowhere but arco_count.
+  else if (telemetry) lines.push('\tlog {', '\t\toutput discard', '\t}');
   if (worker) {
     const script = path.basename(worker);
     lines.push('\tphp_server {', `\t\tindex ${script}`, `\t\ttry_files {path} ${script}`, '\t}');

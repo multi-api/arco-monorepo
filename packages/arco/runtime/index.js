@@ -6,6 +6,7 @@ const { loadEnvironment } = require('./lib/boot');
 const { buildCaddyfile } = require('./lib/caddyfile');
 const supervisor = require('./lib/supervisor');
 const processKind = require('./lib/process');
+const { createTelemetry } = require('./lib/telemetry');
 
 const ROOT = __dirname;
 const TMP = '/tmp/arco';
@@ -20,6 +21,10 @@ async function main({ fs = nodeFs, log = defaultLog } = {}) {
   log('boot', { mode: config.mode, endpoint: `${host}:${port}` });
 
   await loadEnvironment(log);
+  // After loadEnvironment(): ARCO_TELEMETRY_DISABLE may come from the variable bundle or a secret.
+  const telemetry = startTelemetry(config);
+  // One web invocation per finished response; null when telemetry is off, so nothing is wired.
+  const countResponse = telemetry ? () => { telemetry.count(); telemetry.tick(); } : null;
 
   if (config.kind === 'process') {
     // No Laravel storage/ or caddy/ folders: only bin/ for an executable copy.
@@ -29,8 +34,10 @@ async function main({ fs = nodeFs, log = defaultLog } = {}) {
       blockInternal: true,
       requestIds: true,
       accessLog: config.accessLog === true,
+      ...(countResponse ? { onResponse: countResponse } : {}),
     });
     log('proxy_ready');
+    if (telemetry) telemetry.booted(Date.now() - started);
     return;
   }
 
@@ -39,7 +46,7 @@ async function main({ fs = nodeFs, log = defaultLog } = {}) {
   const phpHost = proxy ? '127.0.0.1' : host;
   const phpPort = proxy ? 8000 : port;
   const caddyfile = path.join(TMP, 'Caddyfile');
-  fs.writeFileSync(caddyfile, buildCaddyfile(config, { host: phpHost, port: phpPort, root: ROOT }));
+  fs.writeFileSync(caddyfile, buildCaddyfile(config, { host: phpHost, port: phpPort, root: ROOT, telemetry: countResponse !== null && !proxy }));
 
   supervisor.spawnFrankenphp(
     supervisor.resolveBinary(ROOT, TMP),
@@ -47,14 +54,30 @@ async function main({ fs = nodeFs, log = defaultLog } = {}) {
     { ...process.env, ARCO: '1', HOME: TMP, XDG_CONFIG_HOME: `${TMP}/caddy/config`, XDG_DATA_HOME: `${TMP}/caddy/data` },
     path.join(ROOT, 'app'),
     log,
-    { accessLog: config.accessLog === true },
+    { accessLog: config.accessLog === true, onCount: proxy ? null : countResponse },
   );
   await supervisor.waitForPort(phpHost === '0.0.0.0' ? '127.0.0.1' : phpHost, phpPort);
   log('frankenphp_ready');
+  if (telemetry && !proxy) telemetry.booted(Date.now() - started);
 
   if (proxy) {
-    await supervisor.startProxy(host, port, '127.0.0.1', phpPort);
+    await supervisor.startProxy(host, port, '127.0.0.1', phpPort, countResponse ? { onResponse: countResponse } : {});
     log('proxy_ready');
+    if (telemetry) telemetry.booted(Date.now() - started);
+  }
+}
+
+// The anonymous invocation count (lib/telemetry.js), or null when it is off. The collector is resolved now, before the
+// first request; SIGTERM sends what is pending (registered before the children's handlers, so it runs first).
+function startTelemetry(config) {
+  try {
+    const telemetry = createTelemetry({ env: process.env, config, runtime: config.kind === 'process' ? 'process' : 'laravel', kind: 'web' });
+    if (!telemetry.enabled) return null;
+    telemetry.prepare();
+    process.on('SIGTERM', () => telemetry.flush());
+    return telemetry;
+  } catch {
+    return null;
   }
 }
 

@@ -345,3 +345,19 @@ test('the default socket and lookup send a real datagram', async () => {
   assert.equal(await received, 'arco1 r=process k=web v=0.21.0 g=us-east-1 i=1 c=1 b=1');
   server.close();
 });
+
+test('booted() sets the boot bucket when the boot ends after the telemetry was made', () => {
+  const { telemetry, lines } = setup({ bootMs: 0 });
+  telemetry.booted(2500);
+  telemetry.count();
+  telemetry.tick();
+  assert.deepEqual(lines(), ['arco1 r=laravel k=web v=0.21.0 g=us-east-1 i=1 c=1 b=2']);
+});
+
+test('booted() ignores what is not a duration and never throws', () => {
+  const { telemetry, lines } = setup({ bootMs: 1200 });
+  telemetry.booted('soon');
+  telemetry.count();
+  telemetry.tick();
+  assert.deepEqual(lines(), ['arco1 r=laravel k=web v=0.21.0 g=us-east-1 i=1 c=1 b=2']);
+});

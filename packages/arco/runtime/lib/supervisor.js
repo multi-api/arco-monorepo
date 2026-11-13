@@ -6,6 +6,7 @@ const net = require('node:net');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { MAX_PATH, requestId: requestIdOf, pipeAccessLog } = require('./accesslog');
+const caddycount = require('./caddycount');
 
 const PHP_TMP_SUBDIRS = [
   'storage/app/public', 'storage/framework/cache/data', 'storage/framework/sessions',
@@ -41,7 +42,9 @@ function spawnProcess(command, args, { env, cwd, stdio, onExit } = {}) {
   return child;
 }
 
-function spawnFrankenphp(binary, caddyfile, env, cwd, log, { accessLog = false } = {}) {
+// onCount: telemetry, called once per response Caddy logs to arco_count (lib/caddycount.js listens before Caddy starts).
+function spawnFrankenphp(binary, caddyfile, env, cwd, log, { accessLog = false, onCount = null } = {}) {
+  if (typeof onCount === 'function') caddycount.startCaddyCount(onCount, { onError: (error) => log('telemetry_counter_failed', { error: error.message }) });
   const stdio = accessLog ? ['inherit', 'pipe', 'inherit'] : 'inherit';
   const child = spawnProcess(binary, ['run', '--config', caddyfile, '--adapter', 'caddyfile'], {
     cwd,
@@ -129,12 +132,23 @@ const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-connection', 'tra
 
 // options is for the process kind (PHP passes none): blockInternal answers 404 for /_arco/ paths, requestIds adds an
 // X-Request-ID when the request carries no id, accessLog writes one {"arco":"request",...} line per response to `output`.
+// onResponse (telemetry, PHP proxy mode too) is called once per response that finished.
 function startProxy(host, port, upstreamHost, upstreamPort, options = {}) {
-  const { blockInternal = false, requestIds = false, accessLog = false, output = process.stdout } = options;
+  const { blockInternal = false, requestIds = false, accessLog = false, output = process.stdout, onResponse = null } = options;
   const agent = new http.Agent({ keepAlive: true, maxSockets: 256 });
   const server = http.createServer((req, res) => {
     const startedAt = process.hrtime.bigint();
     const state = { requestId: null };
+    if (typeof onResponse === 'function') {
+      res.once('close', () => {
+        if (!res.writableFinished) return;
+        try {
+          onResponse();
+        } catch {
+          // Telemetry never fails a request.
+        }
+      });
+    }
     if (accessLog) {
       res.once('close', () => {
         // A client that went away before the answer finished is not a response: nothing to log.

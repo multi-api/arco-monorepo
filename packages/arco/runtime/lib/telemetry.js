@@ -57,7 +57,7 @@ function createTelemetry({ env = {}, config = {}, runtime, kind, bootMs, now = D
     && KINDS.has(kind);
 
   const { host, port } = destination(env && env.ARCO_TELEMETRY_HOST);
-  const boot = bootBucket(bootMs);
+  let boot = bootBucket(bootMs);
   const pending = new Map();
   let cold = true;
   let lastSent = 0;
@@ -131,6 +131,10 @@ function createTelemetry({ env = {}, config = {}, runtime, kind, bootMs, now = D
   return {
     get enabled() {
       return enabled;
+    },
+    /** The boot duration (ms), when the runtime is ready after the telemetry was made (index.js). */
+    booted(ms) {
+      if (typeof ms === 'number' && Number.isFinite(ms)) boot = bootBucket(ms);
     },
     /** Starts resolving the collector ahead of the first send (no I/O wait, nothing sent). */
     prepare() {
