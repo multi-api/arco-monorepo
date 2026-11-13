@@ -1428,6 +1428,32 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([], $mocks->calls);
     }
 
+    public function test_scheduler_paused_reads_only_the_scheduler_rule(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->scheduler(5)->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['State' => 'DISABLED']),
+            new Result(['State' => 'ENABLED']),
+            AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'ResourceNotFoundException', 400),
+        );
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        self::assertTrue($deployer->schedulerPaused($config));
+        self::assertFalse($deployer->schedulerPaused($config));
+        self::assertNull($deployer->schedulerPaused($config), 'no rule');
+        self::assertSame(['DescribeRule', 'DescribeRule', 'DescribeRule'], $mocks->calls);
+    }
+
+    public function test_scheduler_paused_without_a_scheduler_makes_no_call(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+        $mocks = new AwsMocks();
+
+        self::assertNull((new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->schedulerPaused($config));
+        self::assertSame([], $mocks->calls);
+    }
+
     public function test_sync_scheduler_points_the_rule_at_the_live_alias(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->scheduler(5)->environment('production')->toArray(), 'production');

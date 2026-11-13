@@ -459,6 +459,7 @@ final class InfoCommandTest extends TestCase
             'variables' => self::variables(),
             'config' => self::configItems(),
             'schedules' => [],
+            'scheduler' => null,
         ], json_decode($tester->getDisplay(), true));
         putenv('AWS_PROFILE');
         $project->restore();
@@ -489,7 +490,7 @@ final class InfoCommandTest extends TestCase
         $tester->assertCommandIsSuccessful();
         $json = json_decode($tester->getDisplay(), true);
         self::assertIsArray($json);
-        self::assertSame(['schema', 'app', 'environment', 'group', 'resources', 'variables', 'config', 'schedules'], array_keys($json), 'schedules appended (0.20.3)');
+        self::assertSame(['schema', 'app', 'environment', 'group', 'resources', 'variables', 'config', 'schedules', 'scheduler'], array_keys($json), 'schedules appended (0.20.3), then scheduler (0.20.5)');
         self::assertIsArray($json['variables']);
         self::assertNotSame([], $json['variables'], 'the standard config declares variables');
         foreach ($json['variables'] as $variable) {
@@ -505,7 +506,7 @@ final class InfoCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
         $json = json_decode($tester->getDisplay(), true);
         self::assertIsArray($json);
-        self::assertSame(['schema', 'app', 'environment', 'group', 'resources', 'variables', 'config', 'schedules', 'error'], array_keys($json), 'error stays last');
+        self::assertSame(['schema', 'app', 'environment', 'group', 'resources', 'variables', 'config', 'schedules', 'scheduler', 'error'], array_keys($json), 'error stays last');
         putenv('AWS_PROFILE');
         $project->restore();
     }
@@ -928,6 +929,93 @@ final class InfoCommandTest extends TestCase
         self::assertSame([], json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR)['schedules']);
         self::assertNotContains('schedulePauses', $deployer->calls);
         putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    /** @return array<string, mixed> `info --resources --json` of the standard config with scheduler(5) */
+    private static function resourcesJsonWithScheduler(FakeDeployer $deployer): array
+    {
+        $project = new ProjectFixture(str_replace("->timeout(60)", "->timeout(60)->scheduler(5)", ProjectFixture::standardConfig()));
+        putenv('AWS_PROFILE=p');
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        putenv('AWS_PROFILE');
+        $project->restore();
+        $tester->assertCommandIsSuccessful();
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertIsArray($json);
+        return $json;
+    }
+
+    public function test_resources_json_has_the_scheduler_enabled(): void
+    {
+        $deployer = new FakeDeployer();
+        $deployer->schedulerPaused = false;
+
+        $json = self::resourcesJsonWithScheduler($deployer);
+
+        self::assertSame(['every' => 5, 'paused' => false], $json['scheduler']);
+        self::assertSame('scheduler', array_key_last($json), 'appended last (0.20.5)');
+        self::assertNotContains('describe', $deployer->calls, 'only the scheduler rule, not the whole status');
+    }
+
+    public function test_resources_json_has_the_scheduler_paused(): void
+    {
+        $deployer = new FakeDeployer();
+        $deployer->schedulerPaused = true;
+
+        self::assertSame(['every' => 5, 'paused' => true], self::resourcesJsonWithScheduler($deployer)['scheduler']);
+    }
+
+    public function test_resources_json_has_an_unknown_scheduler_state_when_the_rule_is_missing_or_unreadable(): void
+    {
+        $missing = new FakeDeployer();
+        self::assertSame(['every' => 5, 'paused' => null], self::resourcesJsonWithScheduler($missing)['scheduler'], 'no rule yet');
+
+        $denied = new FakeDeployer();
+        $denied->tagged = self::tagged();
+        $denied->schedulerPausedError = new \Aws\Exception\AwsException('denied', new \Aws\Command('DescribeRule'), ['code' => 'AccessDeniedException', 'message' => 'denied']);
+        $json = self::resourcesJsonWithScheduler($denied);
+        self::assertSame(['every' => 5, 'paused' => null], $json['scheduler']);
+        self::assertSame(self::tagged(), $json['resources'], 'the resources still show');
+        self::assertArrayNotHasKey('error', $json);
+    }
+
+    public function test_resources_json_without_a_profile_has_an_unknown_scheduler_state(): void
+    {
+        $project = new ProjectFixture(str_replace("->timeout(60)", "->timeout(60)->scheduler(5)", ProjectFixture::standardConfig()));
+        putenv('AWS_PROFILE');
+        $deployer = new FakeDeployer();
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(['every' => 5, 'paused' => null], $json['scheduler']);
+        self::assertSame(['scheduler', 'error'], array_slice(array_keys($json), -2));
+        $project->restore();
+    }
+
+    public function test_resources_json_without_a_scheduler_has_scheduler_null_and_reads_no_rule(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer();
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+
+        self::assertNull(json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR)['scheduler']);
+        self::assertNotContains('schedulerPaused', $deployer->calls);
+
+        // A process app has its schedules instead.
+        $process = self::processProject();
+        $tester = $process->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        self::assertNull(json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR)['scheduler']);
+        self::assertNotContains('schedulerPaused', $deployer->calls);
+        putenv('AWS_PROFILE');
+        $process->restore();
         $project->restore();
     }
 
