@@ -13,8 +13,14 @@ const iniValue = (value) => JSON.stringify(typeof value === 'boolean' ? (value ?
 
 // Telemetry (countPort: where lib/caddycount.js listens and counts the lines): a global logger that takes every access
 // log entry. Caddy keeps one default logger for a site without a host name, so a second `log` in the site block would
-// replace accessLog()'s.
-const countLogger = (countPort) => ['\tlog arco_count {', `\t\toutput net 127.0.0.1:${countPort} {`, '\t\t\tsoft_start', '\t\t}', '\t\tformat json', '\t\tinclude http.log.access', '\t}'];
+// replace accessLog()'s. Its entries keep no request data (only level, ts, logger, msg, status, duration, size): if
+// Caddy ever loses the connection it prints them to stderr, and the counter only needs the newline.
+const COUNT_DELETED_FIELDS = ['request', 'resp_headers', 'user_id', 'bytes_read', 'uuid', 'arco_request_id'];
+const countLogger = (countPort) => [
+  '\tlog arco_count {', `\t\toutput net 127.0.0.1:${countPort} {`, '\t\t\tsoft_start', '\t\t}',
+  '\t\tformat filter {', '\t\t\twrap json', '\t\t\tfields {', ...COUNT_DELETED_FIELDS.map((field) => `\t\t\t\t${field} delete`), '\t\t\t}', '\t\t}',
+  '\t\tinclude http.log.access', '\t}',
+];
 
 function buildCaddyfile(config, { host, port, root, countPort = null }) {
   const telemetry = Number.isInteger(countPort) && countPort > 0;

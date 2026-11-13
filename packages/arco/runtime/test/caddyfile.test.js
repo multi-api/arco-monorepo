@@ -85,7 +85,28 @@ test('accessLog() sends Caddy access log entries to stdout as JSON', () => {
 // Telemetry: Caddy writes one JSON line per access log entry to lib/caddycount.js on 127.0.0.1:<countPort>, which counts
 // the lines. Caddy keeps one default logger per site without a host name, so the counter is a global logger that
 // includes every access logger rather than a second `log` in the site block (that one would replace accessLog()'s).
-const COUNT_LOGGER = '\tlog arco_count {\n\t\toutput net 127.0.0.1:40123 {\n\t\t\tsoft_start\n\t\t}\n\t\tformat json\n\t\tinclude http.log.access\n\t}\n';
+// The entries carry no request data (URI, query, headers, IP, ids): Caddy prints them to stderr if the counter's
+// connection is lost.
+const COUNT_LOGGER = [
+  '\tlog arco_count {',
+  '\t\toutput net 127.0.0.1:40123 {',
+  '\t\t\tsoft_start',
+  '\t\t}',
+  '\t\tformat filter {',
+  '\t\t\twrap json',
+  '\t\t\tfields {',
+  '\t\t\t\trequest delete',
+  '\t\t\t\tresp_headers delete',
+  '\t\t\t\tuser_id delete',
+  '\t\t\t\tbytes_read delete',
+  '\t\t\t\tuuid delete',
+  '\t\t\t\tarco_request_id delete',
+  '\t\t\t}',
+  '\t\t}',
+  '\t\tinclude http.log.access',
+  '\t}',
+  '',
+].join('\n');
 
 test('telemetry adds the arco_count logger and enables access logs to a discarded output', () => {
   const base = { mode: 'direct', publicDir: 'app/public', workerScript: null, threads: 8, workers: { min: 4, max: 64 }, phpIni: {} };
