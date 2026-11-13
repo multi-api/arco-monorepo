@@ -30,7 +30,8 @@ final class WorkCommand extends Command
 
     public function handle(): int
     {
-        $started = microtime(true);
+        // Boot: from the PHP process start (worker.php's environment and Laravel's boot included) to the loop.
+        $started = self::processStart();
         $endpoint = Env::get('AWS_LAMBDA_RUNTIME_API');
         if ($endpoint === null || ! $this->laravel instanceof Application) {
             $this->error('arco:work runs inside an Arco queue worker function (AWS_LAMBDA_RUNTIME_API is not set).');
@@ -57,13 +58,15 @@ final class WorkCommand extends Command
                 if (! is_array($event)) {
                     throw new \InvalidArgumentException('The event is not a JSON object.');
                 }
-                $result = $worker->handle($event, $remainingMs, requestId: $requestId, traceId: $traceId, backstop: static function (array $result) use ($api, $requestId): void {
+                $result = $worker->handle($event, $remainingMs, requestId: $requestId, traceId: $traceId, backstop: static function (array $result) use ($api, $requestId, $telemetry): void {
                     // A job kept running past its time limit: answer for the batch before Lambda's deadline
                     // kills it, and leave; the app may be in any state.
                     LambdaWorker::stderr(['arco' => 'worker_deadline', 'reported' => count($result['batchItemFailures'])]);
                     try {
                         $api->respond($requestId, json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
                     } finally {
+                        self::count($telemetry);
+                        $telemetry?->flush();
                         exit(self::DEADLINE_EXIT);
                     }
                 });
@@ -107,6 +110,17 @@ final class WorkCommand extends Command
         } catch (Throwable) {
             return null;
         }
+    }
+
+    /** When this PHP process started: REQUEST_TIME_FLOAT, else Laravel's LARAVEL_START, else now. */
+    private static function processStart(): float
+    {
+        $started = $_SERVER['REQUEST_TIME_FLOAT'] ?? null;
+        if (is_float($started) || is_int($started)) {
+            return (float) $started;
+        }
+        $laravel = defined('LARAVEL_START') ? constant('LARAVEL_START') : null;
+        return is_float($laravel) || is_int($laravel) ? (float) $laravel : microtime(true);
     }
 
     /** One `queue` invocation (an SQS batch, not a record), after its answer: outside the invocation's latency. */

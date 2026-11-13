@@ -10,6 +10,8 @@ use Symfony\Component\Console\Output\ConsoleOutput;
 
 require __DIR__ . '/../../../../vendor/autoload.php';
 
+// A slow boot (ARCO_TEST_BOOT_DELAY_MS), for the telemetry boot bucket.
+usleep(1000 * (int) getenv('ARCO_TEST_BOOT_DELAY_MS'));
 $test = new QueueTestApp(sys_get_temp_dir());
 $app = $test->app;
 $app->booted(function (): void {

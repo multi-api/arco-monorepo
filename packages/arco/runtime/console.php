@@ -65,7 +65,8 @@ try {
     // ARCO_TELEMETRY_DISABLE works from any of them. Boot: from the process start to this point.
     try {
         $bootMs = (microtime(true) - (float) ($_SERVER['REQUEST_TIME_FLOAT'] ?? $started)) * 1000;
-        $telemetry = Telemetry::fromRuntime($childEnv, is_array($config) ? $config : [], ($config['kind'] ?? null) === 'process' ? 'process' : 'laravel', $bootMs);
+        // Only Laravel packages ship this runtime (process apps run worker.js).
+        $telemetry = Telemetry::fromRuntime($childEnv, is_array($config) ? $config : [], 'laravel', $bootMs);
     } catch (\Throwable) {
         // Telemetry never fails a boot.
     }

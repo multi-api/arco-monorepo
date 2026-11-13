@@ -12,6 +12,8 @@ namespace Multiapi\Arco\ConsoleRuntime;
  * ARCO_TELEMETRY_DISABLE=1 or `"telemetry": false` in arco-runtime.json turn it off before anything is counted.
  *
  * Self-contained on purpose: multiapi/arco-laravel's queue loop requires this file from the function package.
+ * Its public API (fromRuntime, enabled, count, tick, flush) is therefore a contract across packages: an app's
+ * arco-laravel and the CLI that built its package are upgraded separately, so it must stay backward compatible.
  */
 final class Telemetry
 {

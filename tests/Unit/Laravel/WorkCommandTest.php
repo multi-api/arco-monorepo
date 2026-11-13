@@ -173,6 +173,43 @@ final class WorkCommandTest extends TestCase
         }
     }
 
+    public function test_the_boot_bucket_counts_from_the_process_start(): void
+    {
+        $collector = new TelemetryCollector();
+        try {
+            // 1.2 s before Laravel boots: bucket 2 (1 to 3 s), which a clock started in handle() would miss.
+            $this->start(env: ['LAMBDA_TASK_ROOT' => $this->taskRoot(true), 'AWS_REGION' => 'us-east-1', 'ARCO_TELEMETRY_HOST' => $collector->host, 'ARCO_TEST_BOOT_DELAY_MS' => '1200']);
+            self::assertNotNull($this->api);
+            self::assertNotNull($this->worker);
+
+            $reply = $this->api->await($this->api->enqueue(['Records' => [QueueTestJob::record('ok')]]));
+
+            self::assertSame('response', $reply['type'], $this->worker->getErrorOutput());
+            self::assertSame('arco1 r=laravel k=queue v=0.21.0 g=us-east-1 i=1 c=1 b=2', $collector->receive());
+        } finally {
+            $collector->close();
+        }
+    }
+
+    public function test_a_deadline_exit_flushes_its_count(): void
+    {
+        $collector = new TelemetryCollector();
+        try {
+            $this->start(6_000, env: ['LAMBDA_TASK_ROOT' => $this->taskRoot(true), 'AWS_REGION' => 'us-east-1', 'ARCO_TELEMETRY_HOST' => $collector->host]);
+            self::assertNotNull($this->api);
+            self::assertNotNull($this->worker);
+
+            $this->api->await($this->api->enqueue(['Records' => [QueueTestJob::record('ok')]]));
+            self::assertNotNull($collector->receive(), 'the cold start');
+            $reply = $this->api->await($this->api->enqueue(['Records' => [QueueTestJob::record('stubborn')]]), 10);
+
+            self::assertSame('response', $reply['type'], $this->worker->getErrorOutput());
+            self::assertSame('arco1 r=laravel k=queue v=0.21.0 g=us-east-1 i=1 c=0', $collector->receive());
+        } finally {
+            $collector->close();
+        }
+    }
+
     /** @return array<string, array{bool, array<string, string>}> */
     public static function silentTelemetry(): array
     {
