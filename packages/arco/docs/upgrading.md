@@ -20,6 +20,8 @@ it upgrades with `composer global require multiapi/arco:^0.20.4`. What changed s
   instance down. An environment keeps its old runtime until you run `arco deploy`. PHP apps were not affected.
 - `arco logs` no longer prints each web function line twice (0.20.2).
 - `arco info --resources --json` gains `schedules`, with `paused` for each one (0.20.3). Keys are only added.
+- `arco info --resources --json` gains `scheduler`, `{"every", "paused"}` for the Laravel scheduler or `null`
+  (0.20.5), after `schedules`. Keys are only added.
 - `config.layer_conflict` and `config.layer_adopt_waiting` gain the param `file` (`arco.php`, or `arco.json` for a
   process app), and their messages name it (0.20.3, 0.20.4). If you match the message text, match the key instead.
 - A config layer schedule accepts `adopt` (0.20.4). To move a schedule from `arco.json` to a layer (Arco Cloud does
