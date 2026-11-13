@@ -18,6 +18,7 @@ use Multiapi\Arco\Deploy\EndpointPlan;
 use Multiapi\Arco\Deploy\Domains\CloudflareDns;
 use Multiapi\Arco\Deploy\Domains\DnsProvider;
 use Multiapi\Arco\Package\Packager;
+use Multiapi\Arco\Tests\Support\ArcoHome;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Binary\ElfInspectorTest;
 use Multiapi\Arco\Tests\Unit\Build\FakeRunner;
@@ -39,6 +40,7 @@ final class DeployCommandTest extends TestCase
             $this->endpointEnv[$name] = getenv($name);
             putenv($name);
         }
+        ArcoHome::isolate();
         $this->cwd = (string) getcwd();
         $this->project = TempPaths::path('arco-cmd-');
         mkdir("$this->project/public", 0777, true);
@@ -74,6 +76,7 @@ final class DeployCommandTest extends TestCase
     protected function tearDown(): void
     {
         chdir($this->cwd);
+        ArcoHome::restore();
         putenv('AWS_CONFIG_FILE');
         putenv('AWS_SHARED_CREDENTIALS_FILE');
         foreach ($this->endpointEnv as $name => $value) {
@@ -536,6 +539,93 @@ final class DeployCommandTest extends TestCase
         self::assertStringContainsString('Arco 0.0.1', $display);
         self::assertStringContainsString('Arco ' . \Multiapi\Arco\Arco::version(), $display);
         self::assertSame(['describe', 'prepare', 'release', 'scheduler:off', 'prune'], $deployer->calls);
+    }
+
+    private const NOTICE = 'Arco counts invocations anonymously to publish usage numbers.';
+
+    private function deployOnce(array $options = []): CommandTester
+    {
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester(new FakeDeployer('rev-1', new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1')));
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'] + $options, ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        return $tester;
+    }
+
+    public function test_the_telemetry_notice_is_shown_once_per_home(): void
+    {
+        $home = ArcoHome::isolate(noticeShown: false);
+
+        $first = $this->deployOnce()->getDisplay();
+        $second = $this->deployOnce()->getDisplay();
+
+        self::assertStringContainsString(self::NOTICE, $first);
+        self::assertStringContainsString('ARCO_TELEMETRY_DISABLE=1 or ->telemetry(false): https://github.com/multi-api/arco-monorepo/blob/main/packages/arco/docs/telemetry.md', preg_replace('/\s+/', ' ', $first));
+        self::assertStringContainsString('Deployed rev-2', $first);
+        self::assertStringNotContainsString(self::NOTICE, $second);
+        self::assertTrue((require "$home/.arco/config.php")['telemetry_notice_shown']);
+    }
+
+    public function test_the_telemetry_notice_keeps_the_language_of_the_global_config(): void
+    {
+        $home = ArcoHome::isolate(noticeShown: false);
+        file_put_contents("$home/.arco/config.php", "<?php return ['lang' => 'es'];");
+
+        $display = $this->deployOnce()->getDisplay();
+
+        self::assertStringContainsString(self::NOTICE, $display);
+        $config = require "$home/.arco/config.php";
+        self::assertSame('es', $config['lang']);
+        self::assertTrue($config['telemetry_notice_shown']);
+    }
+
+    public function test_no_notice_when_telemetry_is_off(): void
+    {
+        $home = ArcoHome::isolate(noticeShown: false);
+        putenv('ARCO_TELEMETRY_DISABLE=1');
+        try {
+            $env = $this->deployOnce()->getDisplay();
+        } finally {
+            putenv('ARCO_TELEMETRY_DISABLE');
+        }
+        file_put_contents("$this->project/arco.php", str_replace("->console()", "->console()\n    ->telemetry(false)", (string) file_get_contents("$this->project/arco.php")));
+        $app = $this->deployOnce()->getDisplay();
+
+        self::assertStringNotContainsString(self::NOTICE, $env);
+        self::assertStringNotContainsString(self::NOTICE, $app);
+        self::assertFileDoesNotExist("$home/.arco/config.php", 'a notice that was not shown is not recorded');
+    }
+
+    public function test_a_home_that_cannot_be_written_still_prints_the_notice_and_deploys(): void
+    {
+        $home = ArcoHome::isolate(noticeShown: false);
+        rmdir("$home/.arco");
+        file_put_contents("$home/.arco", 'a file where the directory should be');
+
+        $display = $this->deployOnce()->getDisplay();
+
+        self::assertStringContainsString(self::NOTICE, $display);
+    }
+
+    public function test_the_notice_is_also_shown_after_deploying_a_package(): void
+    {
+        ArcoHome::isolate(noticeShown: false);
+
+        $display = $this->deployOnce(['--package' => $this->prebuilt()])->getDisplay();
+
+        self::assertStringContainsString(self::NOTICE, $display);
+    }
+
+    public function test_a_failed_deploy_does_not_use_up_the_notice(): void
+    {
+        $home = ArcoHome::isolate(noticeShown: false);
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester(new FakeDeployer('rev-1', new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1')), verifies: false);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        self::assertNotSame(0, $tester->getStatusCode());
+        self::assertStringNotContainsString(self::NOTICE, $tester->getDisplay());
+        self::assertFileDoesNotExist("$home/.arco/config.php");
     }
 
     public function test_summary_shows_the_cold_start_or_says_it_is_not_available_yet(): void

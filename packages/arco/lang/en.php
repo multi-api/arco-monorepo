@@ -464,6 +464,7 @@ return [
     'deploy.verify_iam_no_report' => 'This endpoint uses IAM auth, so Arco cannot probe it over HTTP and relies on the Lambda init report, which was not found in CloudWatch Logs in time. Check the function logs, then call the URL with signed requests.',
     'deploy.rolled_back' => 'Traffic is back on the previous revision {revision}. Recent logs are shown above.',
     'deploy.not_rolled_back' => 'There is no previous revision to roll back to. Recent logs are shown above.',
+    'deploy.telemetry_notice' => 'Arco counts invocations anonymously to publish usage numbers. Nothing identifies you or your app. Turn it off with ARCO_TELEMETRY_DISABLE=1 or ->telemetry(false): https://github.com/multi-api/arco-monorepo/blob/main/packages/arco/docs/telemetry.md',
     'deploy.success' => "Deployed {revision}\n{url}\nCold start: {cold_start}",
     'package.written' => 'Package written to {path} (content hash {hash})',
     'domains.step_certificate' => 'Finding a certificate for {domains}',

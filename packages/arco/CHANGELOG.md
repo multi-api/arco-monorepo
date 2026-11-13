@@ -5,6 +5,10 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## Unreleased
 
+- **Added:** the first successful `arco deploy` on a machine (also `deploy --package`) prints a one-line notice about the
+  anonymous invocation counts and how to turn them off, once, when telemetry is on; it is remembered in
+  `~/.arco/config.php` (`telemetry_notice_shown`, other keys kept). With `--json` it goes to stderr, so stdout and its
+  shapes are unchanged.
 - **Added:** `telemetry(bool = true)` (environment or app level; `telemetry` in a config layer or `arco.json` settings)
   turns the runtime's anonymous invocation counts off with `telemetry(false)`; `ARCO_TELEMETRY_DISABLE=1` in the shell
   that runs `arco deploy` does the same. `arco info` shows the setting (`settings.telemetry` in `--json`).
