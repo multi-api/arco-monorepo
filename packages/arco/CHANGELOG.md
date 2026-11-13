@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.20.5
 
 - **Added:** `arco info --resources --json` has `scheduler`, appended after `schedules` (before `error`):
   `{"every": <minutes>, "paused": true|false|null}` for an app with `scheduler()`, `null` without one (and for process

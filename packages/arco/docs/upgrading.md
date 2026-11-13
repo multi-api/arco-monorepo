@@ -11,10 +11,10 @@ composer require multiapi/arco-laravel:^0.12
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
-## Upgrading to 0.20.4
+## Upgrading to 0.20.5
 
 Nothing is required: `arco.php`, `arco.json` and every `--json` key keep working. A Go app installs Arco globally, so
-it upgrades with `composer global require multiapi/arco:^0.20.4`. What changed since 0.20.0:
+it upgrades with `composer global require multiapi/arco:^0.20.5`. What changed since 0.20.0:
 
 - **Redeploy Go apps** (0.20.2): the web function no longer ends with `Runtime.ExitError` when Lambda spins an
   instance down. An environment keeps its old runtime until you run `arco deploy`. PHP apps were not affected.
