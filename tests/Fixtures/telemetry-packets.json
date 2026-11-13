@@ -1,0 +1,41 @@
+{
+  "description": "Telemetry packets: the fields a runtime counted and the exact line it sends. The Node runtime (packages/arco/runtime/lib/telemetry.js) and the PHP runtime both encode these, and their tests assert against this file. `boot` is the boot bucket (0-3) and appears in the packet only when `cold` is true.",
+  "packets": [
+    {
+      "fields": { "runtime": "laravel", "kind": "web", "version": "0.21.0", "region": "us-east-1", "invocations": 1342, "cold": false, "boot": 0 },
+      "packet": "arco1 r=laravel k=web v=0.21.0 g=us-east-1 i=1342 c=0"
+    },
+    {
+      "fields": { "runtime": "process", "kind": "queue", "version": "0.21.0", "region": "sa-east-1", "invocations": 1, "cold": true, "boot": 2 },
+      "packet": "arco1 r=process k=queue v=0.21.0 g=sa-east-1 i=1 c=1 b=2"
+    },
+    {
+      "fields": { "runtime": "laravel", "kind": "web", "version": "0.21.0", "region": "eu-west-1", "invocations": 1, "cold": true, "boot": 1 },
+      "packet": "arco1 r=laravel k=web v=0.21.0 g=eu-west-1 i=1 c=1 b=1"
+    },
+    {
+      "fields": { "runtime": "laravel", "kind": "queue", "version": "0.21.0", "region": "us-east-1", "invocations": 3, "cold": true, "boot": 0 },
+      "packet": "arco1 r=laravel k=queue v=0.21.0 g=us-east-1 i=3 c=1 b=0"
+    },
+    {
+      "fields": { "runtime": "laravel", "kind": "console", "version": "0.21.0", "region": "ap-southeast-2", "invocations": 1, "cold": true, "boot": 3 },
+      "packet": "arco1 r=laravel k=console v=0.21.0 g=ap-southeast-2 i=1 c=1 b=3"
+    },
+    {
+      "fields": { "runtime": "laravel", "kind": "schedule", "version": "0.21.0", "region": "us-east-2", "invocations": 1, "cold": true, "boot": 2 },
+      "packet": "arco1 r=laravel k=schedule v=0.21.0 g=us-east-2 i=1 c=1 b=2"
+    },
+    {
+      "fields": { "runtime": "process", "kind": "web", "version": "0.21.0", "region": "us-west-2", "invocations": 2, "cold": true, "boot": 0 },
+      "packet": "arco1 r=process k=web v=0.21.0 g=us-west-2 i=2 c=1 b=0"
+    },
+    {
+      "fields": { "runtime": "process", "kind": "schedule", "version": "0.21.0", "region": "eu-central-1", "invocations": 1, "cold": true, "boot": 1 },
+      "packet": "arco1 r=process k=schedule v=0.21.0 g=eu-central-1 i=1 c=1 b=1"
+    },
+    {
+      "fields": { "runtime": "process", "kind": "queue", "version": "1.0.0-beta.2", "region": "sa-east-1", "invocations": 57, "cold": false, "boot": 3 },
+      "packet": "arco1 r=process k=queue v=1.0.0-beta.2 g=sa-east-1 i=57 c=0"
+    }
+  ]
+}
