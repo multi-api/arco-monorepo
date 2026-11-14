@@ -19,7 +19,7 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   Laravel queue counts need `multiapi/arco-laravel` at this version; an older one sends nothing for queues.
 - **Added:** the first successful `arco deploy` on a machine (also `deploy --package`) prints a one-line notice about
   telemetry and how to turn it off, once, when it is on; it is remembered in `~/.arco/config.php`
-  (`telemetry_notice_shown`, other keys kept). With `--json` it goes to stderr, so stdout and its shapes are unchanged.
+  (`telemetry_notice_shown`, other keys kept; a file that does not load as an array is left untouched). With `--json` it goes to stderr, so stdout and its shapes are unchanged.
 - **Changed:** `arco-runtime.json` gains `arcoVersion` (always) and `telemetry: false` (only when off), so every
   package hash changes once on the first deploy with this version.
 

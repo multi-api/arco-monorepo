@@ -33,13 +33,27 @@ final class GlobalConfigTest extends TestCase
         self::assertSame([], glob("$path.*.tmp"), 'no temp file is left behind');
     }
 
-    public function test_a_file_that_is_not_a_config_is_replaced_not_fatal(): void
+    /** @return array<string, array{string}> */
+    public static function unreadableConfigs(): array
+    {
+        return [
+            'not an array' => ['<?php return 42;'],
+            'a parse error' => ["<?php return ['lang' => 'es'"],
+            'a file that throws' => ["<?php throw new \\RuntimeException('x');"],
+        ];
+    }
+
+    /** A file that does not load as an array may still be the user's (a typo away from ['lang' => ...]): kept as it is. */
+    #[\PHPUnit\Framework\Attributes\DataProvider('unreadableConfigs')]
+    public function test_a_file_that_does_not_load_as_a_config_is_left_alone(string $contents): void
     {
         $path = TempPaths::path('arco-gc-', '.php');
-        file_put_contents($path, '<?php return 42;');
+        file_put_contents($path, $contents);
 
-        self::assertTrue(GlobalConfig::markTelemetryNoticeShown($path));
-        self::assertTrue(GlobalConfig::telemetryNoticeShown($path));
+        self::assertFalse(GlobalConfig::markTelemetryNoticeShown($path));
+        self::assertSame($contents, file_get_contents($path));
+        self::assertFalse(GlobalConfig::telemetryNoticeShown($path));
+        self::assertSame([], glob("$path.*.tmp"));
     }
 
     public function test_a_home_that_cannot_be_written_returns_false(): void

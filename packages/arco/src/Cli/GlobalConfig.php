@@ -6,7 +6,8 @@ use Throwable;
 
 /**
  * The per-machine file ~/.arco/config.php: a PHP file returning an array (lang, telemetry_notice_shown).
- * Writing keeps every key it finds and never throws: a home that cannot be written is only reported as false.
+ * Writing keeps every key it finds and never throws: a home that cannot be written is only reported as false, and a
+ * file that exists but does not load as an array is left as it is (it may be the user's, with a typo).
  */
 final class GlobalConfig
 {
@@ -18,18 +19,19 @@ final class GlobalConfig
     /** Whether the one-time telemetry notice was already shown on this machine. */
     public static function telemetryNoticeShown(?string $path = null): bool
     {
-        return (self::read($path ?? self::path())['telemetry_notice_shown'] ?? false) === true;
+        return ((self::read($path ?? self::path()) ?? [])['telemetry_notice_shown'] ?? false) === true;
     }
 
-    /** Records that the notice was shown. False when the file could not be written. */
+    /** Records that the notice was shown. False when the file could not be written or does not load as an array. */
     public static function markTelemetryNoticeShown(?string $path = null): bool
     {
         $path ??= self::path();
-        return self::write($path, ['telemetry_notice_shown' => true] + self::read($path));
+        $config = self::read($path);
+        return $config !== null && self::write($path, ['telemetry_notice_shown' => true] + $config);
     }
 
-    /** @return array<array-key, mixed> */
-    private static function read(string $path): array
+    /** @return array<array-key, mixed>|null [] without a file, null for a file that does not load as an array */
+    private static function read(string $path): ?array
     {
         if (! is_file($path)) {
             return [];
@@ -37,9 +39,9 @@ final class GlobalConfig
         try {
             $config = (static fn () => require $path)();
         } catch (Throwable) {
-            return [];
+            return null;
         }
-        return is_array($config) ? $config : [];
+        return is_array($config) ? $config : null;
     }
 
     /** @param array<array-key, mixed> $config */
