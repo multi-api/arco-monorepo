@@ -182,14 +182,14 @@ e2e_aws() {
 suite=${1:-all}
 [ $# -gt 0 ] && shift
 case "$suite" in
-  unit)    run vendor/bin/phpunit --testsuite unit "$@" ;;
+  unit)    run vendor/bin/paratest --testsuite unit "$@" ;;
   runtime) run node --test 'packages/arco/runtime/test/*.test.js' ;;
   integration) integration "$@" ;;
   e2e) e2e "$@" ;;
   e2e-aws) e2e_aws "$@" ;;
   analyse) run vendor/bin/phpstan analyse -c docker/test/phpstan.neon --memory-limit=4G --no-progress "$@" ;;
   all)
-    run vendor/bin/phpunit --testsuite unit
+    run vendor/bin/paratest --testsuite unit
     run node --test 'packages/arco/runtime/test/*.test.js'
     run vendor/bin/phpstan analyse -c docker/test/phpstan.neon --memory-limit=4G --no-progress
     ;;

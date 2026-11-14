@@ -17,8 +17,11 @@ jobs:
           extensions: zip
           coverage: none
       - run: composer install --no-interaction --no-progress
-      - run: vendor/bin/phpunit --testsuite unit
-      - run: vendor/bin/phpstan analyse --memory-limit=4G
+      # ParaTest runs the unit suite on every core (tests/bootstrap.php gives each worker its own TMPDIR).
+      - run: vendor/bin/paratest --testsuite unit
+      # PHPStan's result does not depend on the PHP version running it: analyse once.
+      - if: matrix.php == '8.4'
+        run: vendor/bin/phpstan analyse --memory-limit=4G
   runtime:
     runs-on: ubuntu-24.04-arm
     steps:
