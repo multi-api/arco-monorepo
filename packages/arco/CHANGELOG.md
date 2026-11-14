@@ -5,6 +5,13 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## Unreleased
 
+- **Fixed: a `+` in the query string no longer answers 403 with `domain()`.** CloudFront's origin access control and
+  the Web Function endpoint sign a literal `+` differently, so any URL like `/search?q=a+b`, or GitHub's OAuth callback
+  when the user cancels (`?error_description=The+user+has+denied...`), got the endpoint's plain "You are not
+  authorized to access this endpoint" page without reaching the app. The viewer-request function (`ForwardHost`,
+  `arco-<app>-<env>-host`) now sends `+` in the query string as `%20`, which means the same (a space) to PHP and
+  every form decoder; `%2B` (a literal plus) and query strings without `+` are passed unchanged. The function code
+  moved to `resources/cloudfront/viewer-request.js`. Redeploy environments with `domain()` to update it.
 - **Added: anonymous invocation telemetry, on by default.** The runtime now counts invocations of the web, console,
   scheduler and queue functions and sends the count to Arco's collector: one small UDP packet per execution
   environment at most once a minute, with only the runtime, kind, Arco version, AWS region, the count, and on the

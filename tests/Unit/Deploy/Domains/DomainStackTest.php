@@ -147,6 +147,19 @@ final class DomainStackTest extends TestCase
         self::assertStringContainsString("request.headers['x-forwarded-host'] = { value: request.headers.host.value }", $code);
         self::assertStringContainsString("delete request.headers['x-forwarded-host'];", $code, 'a client-supplied value never reaches the app');
         self::assertStringContainsString('return request;', $code);
+        self::assertSame(file_get_contents(dirname(__DIR__, 4) . '/packages/arco/' . DomainStack::FUNCTION_SOURCE), $code);
+        self::assertSame(DomainStack::functionCode(), $code);
+    }
+
+    public function test_function_sends_plus_in_the_query_string_as_space(): void
+    {
+        // The origin access control and the Web Function endpoint sign a literal '+' differently: 403 before the app.
+        // Its behaviour is tested in packages/arco/runtime/test/cloudfront-function.test.js.
+        $code = $this->template()['Resources']['ForwardHost']['Properties']['FunctionCode'];
+        self::assertStringContainsString('var query = request.rawQueryString();', $code);
+        self::assertStringContainsString("request.querystring = query.replace(/\\+/g, '%20');", $code);
+        self::assertLessThan(10240, strlen($code), 'CloudFront functions are at most 10 KB');
+        self::assertLessThanOrEqual(128, strlen($this->template()['Resources']['ForwardHost']['Properties']['FunctionConfig']['Comment']));
     }
 
     public function test_template_is_valid_json(): void
