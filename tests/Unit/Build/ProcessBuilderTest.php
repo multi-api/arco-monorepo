@@ -140,6 +140,53 @@ final class ProcessBuilderTest extends TestCase
         }
     }
 
+    public function test_it_copies_arco_cloud_into_the_app_directory(): void
+    {
+        $this->write('main.go', "package main\n");
+        $this->write('.arco-cloud/xray/agent', 'binary');
+        chmod("$this->project/.arco-cloud/xray/agent", 0755);
+        $this->write('.arco-cloud/xray/config.json', '{}');
+
+        $result = $this->builder(new FakeRunner())->build($this->config(), $this->project);
+        try {
+            self::assertFileExists("$result->appDir/.arco-cloud/xray/agent");
+            self::assertFileExists("$result->appDir/.arco-cloud/xray/config.json");
+            self::assertSame('{}', file_get_contents("$result->appDir/.arco-cloud/xray/config.json"));
+            self::assertTrue(is_executable("$result->appDir/.arco-cloud/xray/agent"));
+        } finally {
+            $result->cleanup();
+        }
+    }
+
+    public function test_exclude_cannot_drop_arco_cloud(): void
+    {
+        $this->write('main.go', "package main\n");
+        $this->write('.arco-cloud/xray/config.json', '{}');
+        $raw = App::make('api')->region('us-east-1')->environment('production')->toArray();
+        $raw['process'] = ['language' => 'go'];
+        $raw['exclude'] = ['.*/**'];
+        $config = ConfigResolver::resolve($raw, 'production');
+
+        $result = $this->builder(new FakeRunner())->build($config, $this->project);
+        try {
+            self::assertFileExists("$result->appDir/.arco-cloud/xray/config.json");
+        } finally {
+            $result->cleanup();
+        }
+    }
+
+    public function test_without_arco_cloud_nothing_is_added(): void
+    {
+        $this->write('main.go', "package main\n");
+
+        $result = $this->builder(new FakeRunner())->build($this->config(), $this->project);
+        try {
+            self::assertDirectoryDoesNotExist("$result->appDir/.arco-cloud");
+        } finally {
+            $result->cleanup();
+        }
+    }
+
     public function test_a_missing_go_is_reported_before_building(): void
     {
         $this->write('main.go', "package main\n");
