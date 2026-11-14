@@ -1261,7 +1261,8 @@ After the function is deployed and verified, `deploy`:
 2. **CloudFront** through the CloudFormation stack `arco-<app>-<env>` (in the app region): a
    distribution with your domains, HTTPS only, no caching except the preset's asset paths
    (`/build/*` for Laravel), and a viewer-request function that passes the original host to the
-   app as `X-Forwarded-Host`. The first creation takes several minutes; later deploys only
+   app as `X-Forwarded-Host` and sends a `+` in the query string as `%20` (see
+   [`+` in query strings](#-in-query-strings)). The first creation takes several minutes; later deploys only
    update the stack when something changed.
 3. **DNS**: `A` and `AAAA` alias records to the distribution in Route 53, or a `CNAME` to it in Cloudflare.
 
@@ -1357,6 +1358,16 @@ On an existing environment the deploy adds the access control, then the policy, 
 first and, with `auth('public')`, makes the endpoint public again. `arco info` shows the effective endpoint auth, and
 `arco info --json` has the key `endpoint_auth`. The deploy needs extra permissions (see
 [Permissions for custom domains](getting-started.md#permissions-for-custom-domains)).
+
+### `+` in query strings
+
+CloudFront's origin access control and the Web Function endpoint sign a literal `+` in the query string differently,
+so without this a request like `/search?q=a+b` answered 403 ("You are not authorized to access this endpoint") without
+reaching the app, while `/search?q=a%20b` worked. The `ForwardHost` function now rewrites every `+` in the query string
+to `%20` before the request is signed. In a query string `+` means a space (`application/x-www-form-urlencoded`), so
+`$request->query()`, `$_GET` and every form decoder see the same value; only the raw `QUERY_STRING` differs. A literal
+plus is sent as `%2B` and passes unchanged, as does any query string without `+`. The path is not touched: a `+` there
+is a plus and is signed alike on both sides.
 
 Because an unsigned request gets 403, the post-deploy check probes `/up` with a request signed with the deploy
 credentials (SigV4, service `lambda`), so the deploy profile needs `lambda:InvokeWebFunctionEndpoint` on the endpoint.

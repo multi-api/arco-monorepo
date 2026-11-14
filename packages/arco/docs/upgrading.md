@@ -29,6 +29,9 @@ is in [Telemetry](telemetry.md).
   nothing else changed.
 - The first successful `arco deploy` on a machine prints a one-line notice about telemetry, once (remembered in
   `~/.arco/config.php`; with `--json` it goes to stderr).
+- **Redeploy environments with `domain()`** to get the fixed viewer-request function: until then a URL with `+` in its
+  query string (for example an OAuth provider's error callback) answers 403 before reaching the app. See
+  [`+` in query strings](configuration.md#-in-query-strings).
 
 ## Upgrading to 0.20.5
 
