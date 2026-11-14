@@ -30,7 +30,7 @@ final class GlobalConfig
         return $config !== null && self::write($path, ['telemetry_notice_shown' => true] + $config);
     }
 
-    /** @return array<array-key, mixed>|null [] without a file, null for a file that does not load as an array */
+    /** @return array<array-key, mixed>|null an empty array without a file; null for a file that does not load as an array */
     private static function read(string $path): ?array
     {
         if (! is_file($path)) {
