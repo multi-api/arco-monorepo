@@ -53,8 +53,11 @@ not count them.
   read, no I/O.
 - The first packet goes right after the environment's first invocation (with `c=1` and the boot bucket), then at
   most one packet a minute, when an invocation ends. Lambda freezes environments between invocations, so there is no
-  timer: a quiet environment sends nothing. When the runtime gets SIGTERM it sends what is pending, best effort; an
-  environment shut down without it loses under a minute of counts.
+  timer: a quiet environment sends nothing. The Node runtime (web functions, and process apps' queues and schedules)
+  sends what is pending when it gets SIGTERM, best effort. The console function, the scheduler and Laravel queue
+  workers (PHP) have no SIGTERM handler: they send when an invocation ends, and a Laravel queue worker also when it
+  exits after a job that ran out of time, so when Lambda shuts one of their environments down its last minute of
+  counts or less is lost. So is an environment's that stops without SIGTERM.
 - Every invocation is counted, no sampling. What counts as one:
   - **web**: one finished HTTP response, static files and errors included. In Laravel's default mode Caddy writes one
     line per response to a local counter on `127.0.0.1` (its `arco_count` logger, whose entries carry no request
