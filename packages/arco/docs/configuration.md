@@ -1270,6 +1270,10 @@ later.
 - **CloudFront waits at most 60 s between bytes.** With `domain()`, the origin read timeout is `timeout() + 2`
   seconds, at most 60: a stream that stays silent longer is cut. Send a comment line (`: ping`) or an event more
   often than that.
+- **Browsers buffer `text/plain` they display.** A browser tab holds back the start of a `text/plain` (or untyped)
+  body to sniff its type, so a stream opened directly in the tab shows up in batches although it arrives chunk by
+  chunk. Send `X-Content-Type-Options: nosniff` with it. `fetch()` readers, `EventSource`, curl and other clients are
+  not affected.
 
 ## Custom domains
 
