@@ -53,7 +53,8 @@ function createHandler(deps = {}) {
     const runtimeConfig = readConfig();
     await loadEnvironment(log);
     supervisor.prepareTmp(TMP, ['bin']);
-    return processKind.startProcess(ROOT, runtimeConfig, process.env, log);
+    // Task 3 follows upstream.port; for now the worker keeps posting to processKind.PORT.
+    return (await processKind.startProcess(ROOT, runtimeConfig, process.env, log)).child;
   });
   // Made after start(), so after loadEnvironment(): ARCO_TELEMETRY_DISABLE may come from the bundle or a secret.
   const makeTelemetry = deps.telemetry || ((bootMs) => createTelemetry({

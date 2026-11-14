@@ -30,9 +30,9 @@ async function main({ fs = nodeFs, log = defaultLog } = {}) {
   if (config.kind === 'process') {
     // No Laravel storage/ or caddy/ folders: only bin/ for an executable copy.
     supervisor.prepareTmp(TMP, ['bin']);
-    await processKind.startProcess(ROOT, config, process.env, log);
+    const { upstream } = await processKind.startProcess(ROOT, config, process.env, log);
     flushOnSigterm(telemetry);
-    await supervisor.startProxy(host, port, processKind.HOST, processKind.PORT, {
+    await supervisor.startProxy(host, port, processKind.HOST, upstream, {
       blockInternal: true,
       requestIds: true,
       accessLog: config.accessLog === true,
