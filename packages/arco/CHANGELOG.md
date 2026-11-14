@@ -5,6 +5,11 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## 0.21.0
 
+- **Added: `timeoutReserve` for Arco Cloud extensions on PHP web functions.** An extension's
+  `.arco-cloud/<name>/extension.json` can carry `{"timeoutReserve": <seconds>}` (0 to 10). The runtime sets PHP's
+  `max_execution_time` to `timeout()` minus the largest reserve, never more than half of `timeout()`, so the
+  extension's shutdown work finishes before the function stops. `phpIni(['max_execution_time' => ...])` still wins.
+  Apps without extensions are unchanged. See [Timeout reserve](docs/cloud-extensions.md#timeout-reserve).
 - **Added: front extensions for process apps.** A process app can now ship `.arco-cloud/<name>/extension.json`
   (`{"front": {"command": [...]}}`). The runtime starts that program in front of your app: it listens on port 8000
   and your app moves to 8001 (`PORT=8001`). The front gets `ARCO_FRONT_LISTEN`, `ARCO_FRONT_UPSTREAM` and
