@@ -19,7 +19,7 @@ final class S3Emulator
         // A random port may be taken by another process: retry with a new one when the server dies or never answers.
         $lastError = '';
         for ($attempt = 0; $attempt < 5; $attempt++) {
-            $port = random_int(40000, 49999);
+            $port = TestPorts::random(40000, 49999);
             $server = new Process([PHP_BINARY, '-S', "$bind:$port", __DIR__ . '/s3-emulator.php'], null, ['ARCO_S3_DIR' => $this->dir]);
             $server->start();
             $deadline = microtime(true) + 5;
