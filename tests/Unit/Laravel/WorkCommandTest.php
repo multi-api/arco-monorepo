@@ -191,6 +191,35 @@ final class WorkCommandTest extends TestCase
         }
     }
 
+    /** @return array<string, array{string, string}> */
+    public static function bootStarts(): array
+    {
+        return [
+            // worker.php's start, 3.5 s ago (its bundle and secrets): bucket 3, which this process alone would miss.
+            'worker.php started 3.5 s ago' => [(string) (microtime(true) - 3.5), 'b=3'],
+            'not a number' => ['soon', 'b=[01]'],
+            'in the future' => [(string) (microtime(true) + 3600), 'b=[01]'],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('bootStarts')]
+    public function test_the_boot_bucket_counts_from_worker_php_start_when_it_passes_one(string $startedAt, string $bucket): void
+    {
+        $collector = new TelemetryCollector();
+        try {
+            $this->start(env: ['LAMBDA_TASK_ROOT' => $this->taskRoot(true), 'AWS_REGION' => 'us-east-1', 'ARCO_TELEMETRY_HOST' => $collector->host, 'ARCO_BOOT_STARTED_AT' => $startedAt]);
+            self::assertNotNull($this->api);
+            self::assertNotNull($this->worker);
+
+            $reply = $this->api->await($this->api->enqueue(['Records' => [QueueTestJob::record('ok')]]));
+
+            self::assertSame('response', $reply['type'], $this->worker->getErrorOutput());
+            self::assertMatchesRegularExpression("/^arco1 r=laravel k=queue v=0\\.21\\.0 g=us-east-1 i=1 c=1 $bucket\$/", (string) $collector->receive());
+        } finally {
+            $collector->close();
+        }
+    }
+
     public function test_a_deadline_exit_flushes_its_count(): void
     {
         $collector = new TelemetryCollector();

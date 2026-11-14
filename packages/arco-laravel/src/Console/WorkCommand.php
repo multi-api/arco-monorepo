@@ -30,7 +30,8 @@ final class WorkCommand extends Command
 
     public function handle(): int
     {
-        // Boot: from the PHP process start (worker.php's environment and Laravel's boot included) to the loop.
+        // Boot: from worker.php's start (its variable bundle and secrets, then Laravel's boot) to the loop. pcntl_exec
+        // gives this process a new REQUEST_TIME_FLOAT, so worker.php passes its own start on.
         $started = self::processStart();
         $endpoint = Env::get('AWS_LAMBDA_RUNTIME_API');
         if ($endpoint === null || ! $this->laravel instanceof Application) {
@@ -112,9 +113,16 @@ final class WorkCommand extends Command
         }
     }
 
-    /** When this PHP process started: REQUEST_TIME_FLOAT, else Laravel's LARAVEL_START, else now. */
+    /**
+     * When the worker started: ARCO_BOOT_STARTED_AT (worker.php's start, in seconds, passed on when it execs this
+     * process), else this process's REQUEST_TIME_FLOAT, else Laravel's LARAVEL_START, else now.
+     */
     private static function processStart(): float
     {
+        $worker = Env::get('ARCO_BOOT_STARTED_AT');
+        if (is_string($worker) && is_numeric($worker) && (float) $worker > 0 && (float) $worker <= microtime(true)) {
+            return (float) $worker;
+        }
         $started = $_SERVER['REQUEST_TIME_FLOAT'] ?? null;
         if (is_float($started) || is_int($started)) {
             return (float) $started;

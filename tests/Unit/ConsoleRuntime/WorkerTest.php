@@ -27,7 +27,7 @@ final class WorkerTest extends TestCase
         $fs->dumpFile("$this->root/app/artisan", <<<'PHP'
             <?php
             echo 'args:', json_encode(array_slice($argv, 1)), "\n", 'server-args:', json_encode(array_slice($_SERVER['argv'], 1)), "\n";
-            echo 'queue:', getenv('ARCO_WORKER_QUEUE'), "\n", 'home:', getenv('HOME'), "\n", 'cwd:', getcwd(), "\n", 'ini:', getenv('PHP_INI_SCAN_DIR'), "\n", 'bundled:', getenv('BUNDLED'), "\n";
+            echo 'queue:', getenv('ARCO_WORKER_QUEUE'), "\n", 'home:', getenv('HOME'), "\n", 'cwd:', getcwd(), "\n", 'ini:', getenv('PHP_INI_SCAN_DIR'), "\n", 'bundled:', getenv('BUNDLED'), "\n", 'boot:', getenv('ARCO_BOOT_STARTED_AT'), "\n";
             exit(3);
             PHP);
         $this->api = new RuntimeApiEmulator();
@@ -106,6 +106,20 @@ final class WorkerTest extends TestCase
         $this->assertBecameArtisan($worker);
         self::assertStringContainsString("bundled:from-s3\n", $worker->getOutput());
         self::assertStringContainsString('"variables":1', $worker->getOutput(), 'the real ARCO_WORKER_QUEUE wins over the bundle');
+    }
+
+    public function test_arco_work_gets_worker_php_start_for_its_boot_bucket(): void
+    {
+        $before = microtime(true);
+        // A stale value in the environment (or the bundle) never wins over this start.
+        $worker = $this->worker(['ARCO_BOOT_STARTED_AT' => '1.5']);
+        $after = microtime(true);
+
+        $this->assertBecameArtisan($worker);
+        self::assertSame(1, preg_match('/^boot:([0-9]+\.[0-9]+)$/m', $worker->getOutput(), $match), $worker->getOutput());
+        // REQUEST_TIME_FLOAT is set before the script runs; allow for its microsecond rounding.
+        self::assertGreaterThanOrEqual($before - 0.01, (float) $match[1]);
+        self::assertLessThanOrEqual($after, (float) $match[1]);
     }
 
     public function test_an_unreadable_variable_bundle_is_an_init_error(): void

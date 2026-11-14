@@ -152,7 +152,7 @@ one of yours. The one exception is `ARCO_TELEMETRY_DISABLE`, a switch you may se
 | `ARCO_QUEUE_<NAME>_URL` | web, console and worker functions of a [process app](#process-runtime-go), one per queue | the queue's URL | stable: read it in your app |
 | `PORT`, `HOST` | the process of a [process app](#the-port-contract) | `8000`, `127.0.0.1` | stable: listen on them |
 | `ARCO_TABLES` | web, console and worker functions, with `table()` | JSON map `{"<name>": "<table>"}`, see [Tables](#tables) | stable: read it in your app; its JSON shape may gain keys |
-| `ARCO_WORKER_QUEUE`, `ARCO_QUEUE_ROUTE`, `ARCO_QUEUE_FIFO`, `ARCO_SCHEDULES`, `ARCO_QUEUE_TRIES`, `ARCO_QUEUE_MAX_RECEIVES`, `ARCO_BINARY_BUCKET`, `ARCO_BINARY_KEY`, `ARCO_BINARY_SHA256`, `ARCO_PHP_BINARY`, `ARCO_TMP`, `ARCO_S3_ENDPOINT` | the runtime of the console and worker functions | | internal: may change in any release, do not read them |
+| `ARCO_WORKER_QUEUE`, `ARCO_QUEUE_ROUTE`, `ARCO_QUEUE_FIFO`, `ARCO_SCHEDULES`, `ARCO_QUEUE_TRIES`, `ARCO_QUEUE_MAX_RECEIVES`, `ARCO_BINARY_BUCKET`, `ARCO_BINARY_KEY`, `ARCO_BINARY_SHA256`, `ARCO_PHP_BINARY`, `ARCO_TMP`, `ARCO_S3_ENDPOINT`, `ARCO_BOOT_STARTED_AT` | the runtime of the console and worker functions | | internal: may change in any release, do not read them |
 | `ARCO_REQUEST_ID` | each command the console function runs (with `_X_AMZN_TRACE_ID`, the invocation's trace header) | the Lambda invocation id | internal: `multiapi/arco-laravel` shares it in the log context ([Log context](#log-context)); read `context.requestId` instead |
 | `ARCO_VARIABLES` | web, console and worker functions, with `bundleVariables()` | `s3://<code bucket>/variables/<app>/<env>/<sha256>.json` | internal: may change in any release, do not read it |
 
