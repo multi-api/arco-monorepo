@@ -20,7 +20,7 @@ final class RuntimeApiEmulator
         }
         // A random port can be taken by another process: try a few, and only trust a port our server still listens on.
         for ($attempt = 1; ; $attempt++) {
-            $port = random_int(30000, 39999);
+            $port = TestPorts::random(30000, 39999);
             $server = $this->startServer($bind, $port);
             if ($server !== null) {
                 $this->port = $port;

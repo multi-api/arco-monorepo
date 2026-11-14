@@ -281,7 +281,7 @@ final class LambdaSimulationTest extends TestCase
             array_push($command, '--network', $network);
             $baseUri = "http://$container:8080";
         } else {
-            $port = random_int(20000, 29999);
+            $port = \Multiapi\Arco\Tests\Support\TestPorts::random(20000, 29999);
             array_push($command, '-p', "$port:8080", '--add-host', 'host.docker.internal:host-gateway');
             $baseUri = "http://127.0.0.1:$port";
         }
