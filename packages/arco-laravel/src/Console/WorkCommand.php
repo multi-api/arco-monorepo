@@ -5,6 +5,7 @@ namespace Multiapi\Arco\Laravel\Console;
 use Illuminate\Console\Command;
 use Illuminate\Contracts\Debug\ExceptionHandler;
 use Illuminate\Foundation\Application;
+use Multiapi\Arco\ConsoleRuntime\Telemetry;
 use Multiapi\Arco\Laravel\Env;
 use Multiapi\Arco\Laravel\Log\LogContext;
 use Multiapi\Arco\Laravel\Queue\LambdaWorker;
@@ -29,6 +30,9 @@ final class WorkCommand extends Command
 
     public function handle(): int
     {
+        // Boot: from worker.php's start (its variable bundle and secrets, then Laravel's boot) to the loop. pcntl_exec
+        // gives this process a new REQUEST_TIME_FLOAT, so worker.php passes its own start on.
+        $started = self::processStart();
         $endpoint = Env::get('AWS_LAMBDA_RUNTIME_API');
         if ($endpoint === null || ! $this->laravel instanceof Application) {
             $this->error('arco:work runs inside an Arco queue worker function (AWS_LAMBDA_RUNTIME_API is not set).');
@@ -36,6 +40,7 @@ final class WorkCommand extends Command
         }
         $api = new RuntimeApiClient($endpoint);
         $worker = new LambdaWorker($this->laravel);
+        $telemetry = self::telemetry((microtime(true) - $started) * 1000);
         for (;;) {
             // A failure to reach the Runtime API ends the process; Lambda starts a new one.
             $invocation = $api->next();
@@ -54,28 +59,83 @@ final class WorkCommand extends Command
                 if (! is_array($event)) {
                     throw new \InvalidArgumentException('The event is not a JSON object.');
                 }
-                $result = $worker->handle($event, $remainingMs, requestId: $requestId, traceId: $traceId, backstop: static function (array $result) use ($api, $requestId): void {
+                $result = $worker->handle($event, $remainingMs, requestId: $requestId, traceId: $traceId, backstop: static function (array $result) use ($api, $requestId, $telemetry): void {
                     // A job kept running past its time limit: answer for the batch before Lambda's deadline
                     // kills it, and leave; the app may be in any state.
                     LambdaWorker::stderr(['arco' => 'worker_deadline', 'reported' => count($result['batchItemFailures'])]);
                     try {
                         $api->respond($requestId, json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
                     } finally {
+                        self::count($telemetry);
+                        $telemetry?->flush();
                         exit(self::DEADLINE_EXIT);
                     }
                 });
             } catch (Throwable $e) {
                 $this->report($e);
                 $api->invocationError($requestId, $e::class, $e->getMessage());
+                self::count($telemetry);
                 continue;
             }
             $api->respond($requestId, json_encode($result, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
+            self::count($telemetry);
             if ($worker->timedOut()) {
                 // Like `queue:work` killing a timed-out job: the next invocation boots a clean app.
                 LambdaWorker::stderr(['arco' => 'worker_restart', 'reason' => 'timeout']);
+                $telemetry?->flush();
                 return self::TIMEOUT_EXIT;
             }
         }
+    }
+
+    /**
+     * The anonymous invocation count, from the function package's runtime/console/Telemetry.php (one
+     * implementation, shipped by the Arco CLI that built the package) and its arco-runtime.json. Null when the
+     * package predates it or telemetry is off; never an error.
+     */
+    private static function telemetry(float $bootMs): ?Telemetry
+    {
+        try {
+            $root = Env::get('LAMBDA_TASK_ROOT') ?? '/var/task';
+            $file = "$root/runtime/console/Telemetry.php";
+            if (! is_file($file)) {
+                return null;
+            }
+            // Already loaded (an autoloader that knows the runtime's classes): declaring it twice is fatal.
+            if (! class_exists(Telemetry::class, false)) {
+                require_once $file;
+            }
+            $config = json_decode((string) @file_get_contents("$root/arco-runtime.json"), true);
+            $telemetry = Telemetry::fromRuntime(getenv(), is_array($config) ? $config : [], 'laravel', $bootMs);
+            return $telemetry->enabled() ? $telemetry : null;
+        } catch (Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * When the worker started: ARCO_BOOT_STARTED_AT (worker.php's start, in seconds, passed on when it execs this
+     * process), else this process's REQUEST_TIME_FLOAT, else Laravel's LARAVEL_START, else now.
+     */
+    private static function processStart(): float
+    {
+        $worker = Env::get('ARCO_BOOT_STARTED_AT');
+        if (is_string($worker) && is_numeric($worker) && (float) $worker > 0 && (float) $worker <= microtime(true)) {
+            return (float) $worker;
+        }
+        $started = $_SERVER['REQUEST_TIME_FLOAT'] ?? null;
+        if (is_float($started) || is_int($started)) {
+            return (float) $started;
+        }
+        $laravel = defined('LARAVEL_START') ? constant('LARAVEL_START') : null;
+        return is_float($laravel) || is_int($laravel) ? (float) $laravel : microtime(true);
+    }
+
+    /** One `queue` invocation (an SQS batch, not a record), after its answer: outside the invocation's latency. */
+    private static function count(?Telemetry $telemetry): void
+    {
+        $telemetry?->count('queue');
+        $telemetry?->tick();
     }
 
     private function report(Throwable $e): void

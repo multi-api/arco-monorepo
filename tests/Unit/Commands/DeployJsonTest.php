@@ -17,6 +17,7 @@ use Multiapi\Arco\Deploy\DeployException;
 use Multiapi\Arco\Deploy\DeployPipeline;
 use Multiapi\Arco\Deploy\Domains\CloudflareApi;
 use Multiapi\Arco\Package\Packager;
+use Multiapi\Arco\Tests\Support\ArcoHome;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tests\Unit\Binary\ElfInspectorTest;
 use Multiapi\Arco\Tests\Unit\Build\FakeRunner;
@@ -42,6 +43,7 @@ final class DeployJsonTest extends TestCase
             $this->savedEnv[$name] = getenv($name);
             putenv($name);
         }
+        ArcoHome::isolate();
         $this->cwd = (string) getcwd();
         $this->project = TempPaths::path('arco-json-');
         mkdir("$this->project/public", 0777, true);
@@ -76,6 +78,7 @@ final class DeployJsonTest extends TestCase
     protected function tearDown(): void
     {
         chdir($this->cwd);
+        ArcoHome::restore();
         putenv('AWS_CONFIG_FILE');
         putenv('AWS_SHARED_CREDENTIALS_FILE');
         foreach ($this->savedEnv as $name => $value) {
@@ -194,6 +197,25 @@ final class DeployJsonTest extends TestCase
         // --json never asks: no account-lock question, arco.php unchanged.
         self::assertSame($before, (string) file_get_contents("$this->project/arco.php"));
         self::assertSame('', $tester->getErrorOutput());
+    }
+
+    public function test_the_telemetry_notice_goes_to_stderr_and_stdout_stays_the_json_stream(): void
+    {
+        $home = ArcoHome::isolate(noticeShown: false);
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester($this->existing());
+
+        $lines = $this->deploy($tester);
+
+        self::assertSame('deployed', self::last($lines)['outcome']);
+        self::assertStringNotContainsString('counts invocations', $tester->getDisplay());
+        self::assertStringContainsString('Arco counts invocations anonymously', $tester->getErrorOutput());
+        self::assertTrue((require "$home/.arco/config.php")['telemetry_notice_shown']);
+
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $again = $this->tester($this->existing());
+        $this->deploy($again);
+        self::assertSame('', $again->getErrorOutput());
     }
 
     public function test_the_endpoint_protection_steps_of_a_domain_deploy_are_step_events(): void

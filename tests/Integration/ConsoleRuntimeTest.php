@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Tests\Integration;
 
+use Multiapi\Arco\Arco;
 use Multiapi\Arco\Binary\BinaryProvider;
 use Multiapi\Arco\Binary\RuntimeManifest;
 use Multiapi\Arco\Build\PresetRegistry;
@@ -15,6 +16,7 @@ use Multiapi\Arco\Package\PackageReader;
 use Multiapi\Arco\Tests\Support\RuntimeApiEmulator;
 use Multiapi\Arco\Tests\Support\S3Emulator;
 use Multiapi\Arco\Tests\Support\SiblingContainers;
+use Multiapi\Arco\Tests\Support\TelemetryCollector;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use Multiapi\Arco\Tinker\TinkerReply;
 use PHPUnit\Framework\Attributes\Group;
@@ -31,8 +33,15 @@ final class ConsoleRuntimeTest extends TestCase
     private const IMAGE = 'public.ecr.aws/lambda/provided:al2023';
     /** Every external tool runtime/bootstrap calls. */
     private const BOOTSTRAP_TOOLS = ['curl', 'sha256sum', 'cut', 'mkdir', 'date', 'chmod', 'mv', 'rm', 'wc', 'tr', 'sed'];
+    /** The runtime container and emulator the helpers talk to: the last ones start() started. */
     private ?string $container = null;
     private ?RuntimeApiEmulator $api = null;
+    /** @var list<string> */
+    private array $containers = [];
+    /** @var list<RuntimeApiEmulator> */
+    private array $apis = [];
+    /** @var list<TelemetryCollector> */
+    private array $collectors = [];
     private ?S3Emulator $s3 = null;
     private static ?string $webPackage = null;
 
@@ -47,10 +56,15 @@ final class ConsoleRuntimeTest extends TestCase
 
     protected function tearDown(): void
     {
-        if ($this->container !== null) {
-            (new Process(['docker', 'rm', '-f', $this->container]))->run();
+        foreach ($this->containers as $container) {
+            (new Process(['docker', 'rm', '-f', $container]))->run();
         }
-        $this->api?->stop();
+        foreach ($this->apis as $api) {
+            $api->stop();
+        }
+        foreach ($this->collectors as $collector) {
+            $collector->close();
+        }
         $this->s3?->stop();
     }
 
@@ -67,11 +81,68 @@ final class ConsoleRuntimeTest extends TestCase
         self::assertFileExists("$task/bin/php");
         self::assertSame(0755, fileperms("$task/bin/php") & 0777);
 
-        $this->start($task, []);
+        $collector = $this->collector();
+        $this->start($task, ['ARCO_TELEMETRY_HOST=' . $collector->forContainers()]);
         $this->assertConsoleWorks('bin/php');
+        // Telemetry: the first command sent the cold-start packet after its answer; the rest wait for the next minute.
+        self::assertSame(1, preg_match(self::packet('console', cold: true), (string) $collector->receive(), $first));
+        self::assertSame('1', $first[1]);
+        self::assertSame([], $collector->drain(0.5), 'nothing more is sent within the minute');
 
         self::assertStringNotContainsString('"arco":"binary_ready"', $this->logs(), 'bin/php mode never downloads a binary');
         self::assertNull($this->api?->initError());
+    }
+
+    /**
+     * The scheduler rule's input counts as `schedule`; ARCO_TELEMETRY_DISABLE=1 delivered by the variable bundle
+     * (variables() with bundleVariables()) and `"telemetry": false` in arco-runtime.json (what ->telemetry(false)
+     * packages) send nothing.
+     */
+    public function test_schedule_runs_are_counted_and_the_switches_send_nothing(): void
+    {
+        $build = RuntimeManifest::load()->resolve(null, null);
+        $phpCli = BinaryProvider::default()->phpCli($build);
+        self::assertNotNull($phpCli, "The default build {$build->id} has no PHP CLI.");
+        $work = self::workDir();
+        $task = $this->unzip(ConsolePackager::fromWeb(PackageReader::open(self::webPackage($build->id)), "$work/console", $phpCli), $work);
+
+        $on = $this->collector();
+        $this->start($task, ['ARCO_TELEMETRY_HOST=' . $on->forContainers()]);
+        $this->respond($this->api?->enqueue(['command' => 'schedule:run']) ?? '');
+        self::assertSame(1, preg_match(self::packet('schedule', cold: true), (string) $on->receive(), $first), $this->logs());
+        self::assertSame('1', $first[1]);
+
+        // The switch read after the bundle loads: the bundle in a local S3, as a deploy with bundleVariables() writes it.
+        $bundle = (string) json_encode(['schema' => 1, 'variables' => ['ARCO_TELEMETRY_DISABLE' => '1']]);
+        file_put_contents("$work/bundle.json", $bundle);
+        $key = 'variables/example/ci/' . hash('sha256', $bundle) . '.json';
+        $this->s3 = new S3Emulator(SiblingContainers::BIND);
+        $this->s3->put('arco-111111111111-us-east-1', $key, "$work/bundle.json");
+        $offByEnv = $this->collector();
+        $this->start($task, [
+            'ARCO_TELEMETRY_HOST=' . $offByEnv->forContainers(),
+            'ARCO_S3_ENDPOINT=http://' . SiblingContainers::testHost() . ":{$this->s3->port}",
+            "ARCO_VARIABLES=s3://arco-111111111111-us-east-1/$key",
+        ]);
+        $this->respond($this->api?->enqueue(['command' => 'about --only=environment']) ?? '');
+        self::assertStringContainsString('"variables":1', $this->logs(), 'the bundle was loaded');
+        $offByConfig = $this->collector();
+        $this->start($task, ['ARCO_TELEMETRY_HOST=' . $offByConfig->forContainers()], ['telemetry' => false]);
+        $this->respond($this->api?->enqueue(['command' => 'about --only=environment']) ?? '');
+        self::assertSame([], $offByEnv->drain(), 'ARCO_TELEMETRY_DISABLE=1 from the bundle sends nothing');
+        self::assertSame([], $offByConfig->drain(), '"telemetry": false sends nothing');
+    }
+
+    /** A packet of this run's Arco version from us-east-1; group 1 is the count. */
+    private static function packet(string $kind, bool $cold): string
+    {
+        $version = preg_quote(Arco::version(), '/');
+        return "/^arco1 r=laravel k=$kind v=$version g=us-east-1 i=([1-9][0-9]*) " . ($cold ? 'c=1 b=[0-3]' : 'c=0') . '$/';
+    }
+
+    private function collector(): TelemetryCollector
+    {
+        return $this->collectors[] = new TelemetryCollector(SiblingContainers::BIND);
     }
 
     /** No PHP CLI (a custom binary or a build published before php_cli): FrankenPHP is downloaded from S3. */
@@ -94,6 +165,8 @@ final class ConsoleRuntimeTest extends TestCase
             'ARCO_BINARY_BUCKET=arco-111111111111-us-east-1',
             "ARCO_BINARY_KEY={$download->key}",
             "ARCO_BINARY_SHA256={$download->sha256}",
+            // Not about telemetry: no packet leaves the test network.
+            'ARCO_TELEMETRY_DISABLE=1',
         ]);
         $this->assertConsoleWorks('fallback');
 
@@ -173,14 +246,15 @@ final class ConsoleRuntimeTest extends TestCase
      * (1024 MB /tmp, like EphemeralStorage).
      *
      * @param list<string> $env extra NAME=value variables
+     * @param array<string, mixed> $runtimeConfig keys that replace arco-runtime.json's (mounted over the task's)
      */
-    private function start(string $task, array $env): void
+    private function start(string $task, array $env, array $runtimeConfig = []): void
     {
-        $this->api = new RuntimeApiEmulator(SiblingContainers::BIND);
+        $this->api = $this->apis[] = new RuntimeApiEmulator(SiblingContainers::BIND);
         $example = (string) realpath(self::EXAMPLE);
         $config = ConfigResolver::resolve((new ConfigLoader())->load("$example/arco.php"), 'ci');
         $variables = DeployPipeline::variables($config, PresetRegistry::default()->detect($example));
-        $this->container = 'arco-console-it-' . bin2hex(random_bytes(3));
+        $this->container = $this->containers[] = 'arco-console-it-' . bin2hex(random_bytes(3));
         $command = ['docker', 'run', '-d', '--name', $this->container, '--platform', 'linux/arm64',
             '--read-only', '--tmpfs', '/tmp:size=1024m,exec', '--cpus', '2', '--memory', '2g',
             ...SiblingContainers::runOptions(),
@@ -188,6 +262,12 @@ final class ConsoleRuntimeTest extends TestCase
             '-e', 'AWS_LAMBDA_RUNTIME_API=' . SiblingContainers::testHost() . ":{$this->api->port}",
             '-e', 'LAMBDA_TASK_ROOT=/var/task', '-e', 'AWS_REGION=us-east-1',
             '-e', 'AWS_ACCESS_KEY_ID=AKIDTEST', '-e', 'AWS_SECRET_ACCESS_KEY=secret', '-e', 'AWS_SESSION_TOKEN=token'];
+        if ($runtimeConfig !== []) {
+            $file = dirname($task) . "/arco-runtime-{$this->container}.json";
+            $packaged = json_decode((string) file_get_contents("$task/arco-runtime.json"), true, flags: JSON_THROW_ON_ERROR);
+            file_put_contents($file, json_encode([...$packaged, ...$runtimeConfig], JSON_UNESCAPED_SLASHES));
+            array_push($command, '-v', "$file:/var/task/arco-runtime.json:ro");
+        }
         foreach ($env as $variable) {
             array_push($command, '-e', $variable);
         }

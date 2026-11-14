@@ -3,6 +3,7 @@
 namespace Multiapi\Arco\Tests\Unit\Commands;
 
 use Multiapi\Arco\Cli\Application;
+use Multiapi\Arco\Tests\Support\ArcoHome;
 use Multiapi\Arco\Tests\Support\TempPaths;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -32,6 +33,7 @@ final class ProjectFixture
         $keys = "aws_access_key_id = AKIATEST\naws_secret_access_key = secret\n";
         file_put_contents($this->credentialsFile, "[p]\n$keys\n[acme-prod]\n$keys");
         file_put_contents($this->configFile, '');
+        ArcoHome::isolate();
         putenv('AWS_SHARED_CREDENTIALS_FILE=' . $this->credentialsFile);
         putenv('AWS_CONFIG_FILE=' . $this->configFile);
     }
@@ -84,5 +86,6 @@ final class ProjectFixture
         putenv('AWS_SHARED_CREDENTIALS_FILE');
         putenv('AWS_CONFIG_FILE');
         putenv('ARCO_CONFIG_LAYER');
+        ArcoHome::restore();
     }
 }

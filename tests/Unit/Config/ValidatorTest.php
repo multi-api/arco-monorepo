@@ -472,7 +472,7 @@ final class ValidatorTest extends TestCase
 
     public function test_every_arco_variable_is_reserved_for_arco(): void
     {
-        foreach (['ARCO', 'ARCO_X', 'ARCO_TRUST_PROXIES', 'ARCO_QUEUES', 'ARCOFOO'] as $name) {
+        foreach (['ARCO', 'ARCO_X', 'ARCO_TRUST_PROXIES', 'ARCO_QUEUES', 'ARCOFOO', 'ARCO_TELEMETRY_HOST', 'ARCO_TELEMETRY_DISABLED'] as $name) {
             $app = App::make('shop')->region('us-east-1')->variables([$name => '1'])->environment('production');
             $errors = (new Validator())->validate(ConfigResolver::resolve($app->toArray(), 'production'), sys_get_temp_dir())->errors;
             self::assertSame('validation.reserved_arco_variable', $errors[0]['key'] ?? null, $name);
@@ -480,6 +480,18 @@ final class ValidatorTest extends TestCase
         }
         $app = App::make('shop')->region('us-east-1')->variables(['MY_ARCO' => '1', 'ARC' => '1'])->environment('production');
         self::assertSame([], $this->errorKeys($app));
+    }
+
+    public function test_arco_telemetry_disable_is_the_one_arco_variable_users_may_set(): void
+    {
+        $app = App::make('shop')->region('us-east-1')->variables(['ARCO_TELEMETRY_DISABLE' => '1'])->environment('production');
+        self::assertSame([], $this->errorKeys($app));
+        $bundled = App::make('shop')->region('us-east-1')->bundleVariables()->variables(['ARCO_TELEMETRY_DISABLE' => 'arco-ssm:/shop/telemetry-off'])->environment('production');
+        self::assertSame([], $this->errorKeys($bundled));
+        foreach (['en', 'es'] as $lang) {
+            $message = (new \Multiapi\Arco\Cli\Translator($lang, dirname(__DIR__, 3) . '/packages/arco/lang'))->trans('validation.reserved_arco_variable', ['variable' => 'ARCO_X']);
+            self::assertStringContainsString('ARCO_TELEMETRY_DISABLE', $message, "the message names the exception ($lang)");
+        }
     }
 
     public function test_console_function_name_must_fit_64_characters(): void

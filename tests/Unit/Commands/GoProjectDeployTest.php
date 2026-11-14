@@ -134,7 +134,7 @@ final class GoProjectDeployTest extends TestCase
         self::assertNotEmpty(array_filter($names, fn (string $n) => str_starts_with($n, 'lib/')), 'lib/');
         self::assertSame([], array_values(array_filter($names, fn (string $n) => str_contains($n, 'frankenphp') || str_starts_with($n, 'app/vendor/') || str_starts_with($n, 'vendor/'))));
         self::assertSame(
-            ['kind' => 'process', 'command' => ['bin/app'], 'healthPath' => '/', 'accessLog' => true],
+            ['kind' => 'process', 'command' => ['bin/app'], 'healthPath' => '/', 'accessLog' => true, 'arcoVersion' => \Multiapi\Arco\Arco::version()],
             json_decode((string) $zip->getFromName('arco-runtime.json'), true),
         );
         $zip->close();

@@ -52,6 +52,7 @@ final class InfoCommandTest extends TestCase
         self::assertNull($json['url']);
         self::assertSame(60, $json['settings']['timeout']);
         self::assertArrayHasKey('maxInstances', $json['settings']);
+        self::assertTrue($json['settings']['telemetry'], 'on by default');
         self::assertArrayNotHasKey('maxEnvironments', $json['settings']);
         self::assertSame('php8.5.12-fp1.13.5-r1 (FrankenPHP 1.13.5, PHP 8.5.12)', $json['settings']['runtime.build']);
         self::assertSame(4, $json['settings']['runtime.workers'], 'an integer since 0.9 (it was "4-64")');
@@ -159,6 +160,28 @@ final class InfoCommandTest extends TestCase
         $tester->run(['command' => 'info', '--env' => 'production', '--lang' => 'es'], ['interactive' => false]);
         self::assertMatchesRegularExpression('/scheduler\s+cada 5 min \(en pausa\)\s+environment/', $tester->getDisplay());
         putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_shows_the_telemetry_row(): void
+    {
+        $project = new ProjectFixture(str_replace("->timeout(60)", "->timeout(60)->telemetry(false)", ProjectFixture::standardConfig()));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/\btelemetry\s+no\s+environment/', $tester->getDisplay());
+        $project->restore();
+    }
+
+    public function test_a_literal_disable_variable_shows_telemetry_off(): void
+    {
+        $project = new ProjectFixture(str_replace("'API_TOKEN' => 'plain-token'", "'API_TOKEN' => 'plain-token', 'ARCO_TELEMETRY_DISABLE' => '1'", ProjectFixture::standardConfig()));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/\btelemetry\s+no\s+environment/', $tester->getDisplay());
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        self::assertFalse(json_decode($tester->getDisplay(), true)['settings']['telemetry']);
         $project->restore();
     }
 

@@ -91,6 +91,7 @@ final class PackagerTest extends TestCase
             'workers' => ['min' => 4, 'max' => 64],
             'phpIni' => ['memory_limit' => '512M'],
             'console' => ['entry' => null],
+            'arcoVersion' => \Multiapi\Arco\Arco::version(),
         ], json_decode((string) $zip->getFromName('arco-runtime.json'), true));
         $zip->close();
 
@@ -121,6 +122,44 @@ final class PackagerTest extends TestCase
         );
         self::assertTrue(Packager::runtimeConfig($config, new PlainPhpPreset())['accessLog']);
         self::assertArrayNotHasKey('accessLog', Packager::runtimeConfig($this->config(), new PlainPhpPreset()), 'off: the package keeps its hash');
+    }
+
+    public function test_the_runtime_config_carries_the_arco_version_and_telemetry_only_when_off(): void
+    {
+        $on = $this->config();
+        $off = ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->telemetry(false))->toArray(),
+            'production',
+        );
+
+        foreach ([new PlainPhpPreset(), new \Multiapi\Arco\Laravel\LaravelPreset()] as $preset) {
+            $runtime = Packager::runtimeConfig($on, $preset);
+            self::assertSame(\Multiapi\Arco\Arco::version(), $runtime['arcoVersion']);
+            self::assertArrayNotHasKey('telemetry', $runtime);
+            self::assertFalse(Packager::runtimeConfig($off, $preset)['telemetry']);
+            self::assertSame(\Multiapi\Arco\Arco::version(), Packager::runtimeConfig($off, $preset)['arcoVersion']);
+        }
+
+        foreach ([true, false] as $enabled) {
+            $raw = App::make('api')->region('us-east-1')->telemetry($enabled)->environment('production')->toArray();
+            $raw['process'] = ['language' => 'go'];
+            $config = ConfigResolver::resolve($raw, 'production');
+            $runtime = Packager::runtimeConfig($config, new \Multiapi\Arco\Build\ProcessPreset($config->process ?? throw new \LogicException()));
+            self::assertSame('process', $runtime['kind']);
+            self::assertSame(\Multiapi\Arco\Arco::version(), $runtime['arcoVersion']);
+            self::assertSame($enabled, ! array_key_exists('telemetry', $runtime));
+            self::assertSame($enabled ? null : false, $runtime['telemetry'] ?? null);
+        }
+    }
+
+    public function test_a_literal_disable_variable_packages_telemetry_off(): void
+    {
+        $config = ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->variables(['ARCO_TELEMETRY_DISABLE' => '1']))->toArray(),
+            'production',
+        );
+
+        self::assertFalse(Packager::runtimeConfig($config, new PlainPhpPreset())['telemetry']);
     }
 
     public function test_laravel_commands_go_through_artisan(): void
@@ -320,7 +359,7 @@ final class PackagerTest extends TestCase
         $zip->getExternalAttributesName('app/bin/app', $opsys, $attrs);
         self::assertSame(0755, ($attrs >> 16) & 0777);
         self::assertSame(
-            ['kind' => 'process', 'command' => ['bin/app'], 'healthPath' => '/'],
+            ['kind' => 'process', 'command' => ['bin/app'], 'healthPath' => '/', 'arcoVersion' => \Multiapi\Arco\Arco::version()],
             json_decode((string) $zip->getFromName('arco-runtime.json'), true),
         );
         self::assertSame('go', $package->manifest->preset);
