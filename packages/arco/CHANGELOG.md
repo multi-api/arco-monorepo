@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.20.7
 
 - **Fixed: `timeout()` over 30 seconds now applies to PHP too.** PHP stops web requests on its own at
   `max_execution_time`, 30 s by default and on the wall clock under FrankenPHP, whatever `timeout()` said: with

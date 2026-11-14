@@ -11,7 +11,7 @@ composer require multiapi/arco-laravel:^0.12
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
-## Upgrading to the next release
+## Upgrading to 0.20.7
 
 Nothing is required. **Redeploy** to give PHP the function's `timeout()` as its `max_execution_time` (until now PHP
 stopped every web request at its own 30 s). Two effects: with `timeout()` over 30, long requests, streams and
