@@ -361,3 +361,22 @@ test('booted() ignores what is not a duration and never throws', () => {
   telemetry.tick();
   assert.deepEqual(lines(), ['arco1 r=laravel k=web v=0.21.0 g=us-east-1 i=1 c=1 b=2']);
 });
+
+test('the default clock is monotonic: a wall clock set back does not stop the minute', (t) => {
+  const monotonic = { now: 5_000 };
+  t.mock.method(performance, 'now', () => monotonic.now);
+  const wall = t.mock.method(Date, 'now', () => 2_000_000_000_000);
+  const socket = fakeSocket();
+  const telemetry = createTelemetry({ env: ENV, config: CONFIG, runtime: 'laravel', kind: 'web', bootMs: 0, socket, lookup: fakeLookup() });
+  telemetry.count();
+  telemetry.tick();
+  // The wall clock jumps back an hour; a minute passes on the monotonic one.
+  wall.mock.mockImplementation(() => 2_000_000_000_000 - 3_600_000);
+  monotonic.now += SEND_INTERVAL_MS;
+  telemetry.count();
+  telemetry.tick();
+  assert.deepEqual(socket.sent.map((s) => s.line), [
+    'arco1 r=laravel k=web v=0.21.0 g=us-east-1 i=1 c=1 b=0',
+    'arco1 r=laravel k=web v=0.21.0 g=us-east-1 i=1 c=0',
+  ]);
+});

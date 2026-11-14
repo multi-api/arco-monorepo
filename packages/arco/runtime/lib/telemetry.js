@@ -46,7 +46,8 @@ function defaultSocket() {
   return dgram.createSocket('udp4');
 }
 
-function createTelemetry({ env = {}, config = {}, runtime, kind, bootMs, now = Date.now, socket, lookup = dns.lookup } = {}) {
+// now(): a monotonic clock in ms (the PHP runtime uses hrtime), so a wall clock set back never stops the minute.
+function createTelemetry({ env = {}, config = {}, runtime, kind, bootMs, now = () => performance.now(), socket, lookup = dns.lookup } = {}) {
   const version = config && config.arcoVersion;
   const region = env && env.AWS_REGION;
   let enabled = !!env && env.ARCO_TELEMETRY_DISABLE !== '1'
