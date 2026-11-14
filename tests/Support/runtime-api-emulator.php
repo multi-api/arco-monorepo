@@ -35,12 +35,15 @@ if ($method === 'GET' && $path === '/2018-06-01/runtime/invocation/next') {
 }
 if ($method === 'POST' && preg_match('#^/2018-06-01/runtime/invocation/([^/]+)/(response|error)$#', $path, $m) === 1) {
     $folder = $m[2] === 'response' ? 'responses' : 'errors';
-    file_put_contents("$dir/$folder/{$m[1]}.json", json_encode(['type' => $errorType, 'body' => $body]));
+    // Written then renamed: the test polls with is_file() and must never read a half-written file.
+    file_put_contents("$dir/$folder/{$m[1]}.tmp", json_encode(['type' => $errorType, 'body' => $body]));
+    rename("$dir/$folder/{$m[1]}.tmp", "$dir/$folder/{$m[1]}.json");
     http_response_code(202);
     return;
 }
 if ($method === 'POST' && $path === '/2018-06-01/runtime/init/error') {
-    file_put_contents("$dir/init-error.json", json_encode(['type' => $errorType, 'body' => $body]));
+    file_put_contents("$dir/init-error.tmp", json_encode(['type' => $errorType, 'body' => $body]));
+    rename("$dir/init-error.tmp", "$dir/init-error.json");
     http_response_code(202);
     return;
 }
