@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.20.6
 
 - **Fixed: a `+` in the query string no longer answers 403 with `domain()`.** CloudFront's origin access control and
   the Web Function endpoint sign a literal `+` differently, so any URL like `/search?q=a+b`, or GitHub's OAuth callback

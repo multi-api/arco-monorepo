@@ -11,7 +11,7 @@ composer require multiapi/arco-laravel:^0.12
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
-## Upgrading to the next release
+## Upgrading to 0.20.6
 
 Nothing is required, but the runtime now sends **anonymous invocation counts**, on by default: one small UDP packet
 per Lambda environment at most once a minute, with only the runtime, kind, Arco version, region, a count and, on the
