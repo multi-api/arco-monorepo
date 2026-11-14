@@ -51,17 +51,15 @@ function spawnFront(front, appEnv, log, state) {
       stdio: 'inherit',
       onExit: (code, signal) => {
         if (state.stopping) return;
-        log('extension_failed', { extension: front.name, reason: 'exited', code, signal });
-        state.upstream.port = APP_PORT;
+        state.fail('exited', { code, signal });
       },
     });
     child.on('error', (error) => {
-      log('extension_failed', { extension: front.name, reason: 'error', error: error.message });
-      state.upstream.port = APP_PORT;
+      state.fail('error', { error: error.message });
     });
     return child;
   } catch (error) {
-    log('extension_failed', { extension: front.name, reason: 'spawn', error: error.message });
+    state.fail('spawn', { error: error.message });
     return null;
   }
 }
@@ -73,7 +71,14 @@ async function startProcess(root, config, env, log) {
   const front = extensions.findFront(appDir, log);
   const appPort = front ? APP_PORT : PORT;
   const upstream = { port: front ? FRONT_PORT : PORT };
-  const state = { stopping: false, upstream };
+  const state = { stopping: false, upstream, frontFailed: false };
+  // Logs extension_failed once however many ways the front fails, and serves the app directly from then on.
+  state.fail = (reason, extra = {}) => {
+    upstream.port = APP_PORT;
+    if (state.frontFailed) return;
+    state.frontFailed = true;
+    log('extension_failed', { extension: front.name, reason, ...extra });
+  };
   const appEnv = { ...env, PORT: String(appPort), HOST, ARCO: '1', HOME: TMP };
   const executable = resolveExecutable(appDir, config.command);
   const child = supervisor.spawnProcess(executable, config.command.slice(1), {
@@ -94,7 +99,6 @@ async function startProcess(root, config, env, log) {
   });
   // The front starts with the app and gets its environment (plus the ARCO_FRONT_* variables).
   const frontChild = front ? spawnFront(front, appEnv, log, state) : null;
-  if (front && !frontChild) upstream.port = APP_PORT;
   // supervisor.spawnProcess forwards the signal to each process; one that ignores it is killed after the grace.
   for (const name of ['SIGTERM', 'SIGINT']) {
     process.on(name, () => {
@@ -109,9 +113,7 @@ async function startProcess(root, config, env, log) {
     try {
       await supervisor.waitForPort(HOST, FRONT_PORT, FRONT_TIMEOUT_MS, 'extension');
     } catch (error) {
-      // Only once: an exit or spawn error may have logged already.
-      if (upstream.port === FRONT_PORT) log('extension_failed', { extension: front.name, reason: 'not_listening', error: error.message });
-      upstream.port = APP_PORT;
+      state.fail('not_listening', { error: error.message });
     }
   }
   log('process_ready');

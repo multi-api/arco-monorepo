@@ -233,6 +233,20 @@ test('a front that cannot be spawned leaves the app served directly', async () =
   });
   assert.equal(out.proxy[0][3].port, 8001);
   assert.deepEqual(out.exits, []);
+  assert.equal(out.logs.filter((l) => l.phase === 'extension_failed').length, 1);
+});
+
+test('a front that missed the 2 s wait and later exits logs extension_failed once', async () => {
+  const out = await run({
+    config: CONFIG,
+    front: FRONT,
+    waitFor: async (host, port) => { if (port === 8000) throw new Error('did not listen'); },
+    end: (o) => { o.children[1].emit('error', new Error('x')); o.children[1].emit('exit', 1, null); },
+  });
+  assert.equal(out.logs.filter((l) => l.phase === 'extension_failed').length, 1);
+  assert.equal(out.logs.find((l) => l.phase === 'extension_failed').data.reason, 'not_listening');
+  assert.equal(out.proxy[0][3].port, 8001);
+  assert.deepEqual(out.exits, []);
 });
 
 test('SIGTERM reaches the front as well and the front ending is not a failure', async () => {
