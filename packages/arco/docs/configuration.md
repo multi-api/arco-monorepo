@@ -1832,6 +1832,7 @@ log.Fatal(http.ListenAndServe(addr, mux))
 - `deploy` verifies a new revision with a `GET` of `runtime.healthPath` (default `/`), which must answer `2xx`.
 - Everything the process writes to standard output and standard error reaches CloudWatch (`arco logs`).
 - `/tmp` is the only writable disk, and it belongs to one instance: keep files in [storage](#storage).
+- Arco Cloud can ship a front process next to yours (`.arco-cloud/`): see [Arco Cloud extensions](cloud-extensions.md).
 
 **`/_arco/` is private.** The proxy answers `404 Not Found` to any path that is `/_arco` or starts with `/_arco/`
 (also percent-encoded, even more than once, with `//` or `..`, or in absolute form; a path that does not decode, or

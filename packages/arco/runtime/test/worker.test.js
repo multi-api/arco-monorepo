@@ -317,3 +317,47 @@ test('telemetry: SIGTERM flushes what is pending', async (t) => {
   for (const listener of process.listeners('SIGTERM')) if (!before.includes(listener)) listener('SIGTERM');
   assert.deepEqual(fake.calls.at(-1), ['flush']);
 });
+
+test('queue POST carries x-arco-deadline equal to its budget end', async (t) => {
+  const a = await app((req, res) => res.end('ok'));
+  t.after(a.close);
+  const realNow = Date.now;
+  Date.now = () => 1_700_000_000_000;
+  try {
+    await withEnv(queueEnv, async () => {
+      const handler = createHandler({ port: a.port, start: async () => ({}), log: () => {} });
+      await handler({ Records: [record('m1', 'x')] }, context(60000));
+    });
+  } finally { Date.now = realNow; }
+  assert.equal(a.requests[0].headers['x-arco-deadline'], String(1_700_000_000_000 + 58000));
+});
+
+test('schedule POST carries x-arco-deadline', async (t) => {
+  const a = await app((req, res) => res.end('ok'));
+  t.after(a.close);
+  const realNow = Date.now;
+  Date.now = () => 1_700_000_000_000;
+  try {
+    await withEnv({ ARCO_SCHEDULES: JSON.stringify({ nightly: { route: '/_arco/s', timeout: 10 } }) }, async () => {
+      const handler = createHandler({ port: a.port, start: async () => ({}), log: () => {} });
+      await handler({ arco: 'schedule', name: 'nightly' }, context(60000));
+    });
+  } finally { Date.now = realNow; }
+  assert.equal(a.requests[0].headers['x-arco-deadline'], String(1_700_000_000_000 + 10000));
+});
+
+test('posts to upstream.port, following a switch', async (t) => {
+  const front = await app((req, res) => res.end('ok'));
+  const direct = await app((req, res) => res.end('ok'));
+  t.after(front.close);
+  t.after(direct.close);
+  const upstream = { port: front.port };
+  await withEnv(queueEnv, async () => {
+    const handler = createHandler({ upstream, start: async () => ({}), log: () => {} });
+    await handler({ Records: [record('m1', 'x')] }, context());
+    upstream.port = direct.port;
+    await handler({ Records: [record('m2', 'x')] }, context());
+  });
+  assert.equal(front.requests.length, 1);
+  assert.equal(direct.requests.length, 1);
+});
