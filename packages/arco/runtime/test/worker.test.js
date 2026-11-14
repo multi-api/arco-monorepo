@@ -361,3 +361,31 @@ test('posts to upstream.port, following a switch', async (t) => {
   assert.equal(front.requests.length, 1);
   assert.equal(direct.requests.length, 1);
 });
+
+test('the default start uses the upstream startProcess resolves and follows its switch', async (t) => {
+  const front = await app((req, res) => res.end('ok'));
+  const direct = await app((req, res) => res.end('ok'));
+  t.after(front.close);
+  t.after(direct.close);
+  const supervisor = require(path.join(__dirname, '..', 'lib', 'supervisor.js'));
+  const processKind = require(path.join(__dirname, '..', 'lib', 'process.js'));
+  const saved = { startProcess: processKind.startProcess, prepareTmp: supervisor.prepareTmp };
+  t.after(() => { processKind.startProcess = saved.startProcess; supervisor.prepareTmp = saved.prepareTmp; });
+  // Stands in for startProcess with a front: requests go to the front until it fails, then to the app (8001).
+  const upstream = { port: front.port };
+  let calls = 0;
+  processKind.startProcess = async () => { calls += 1; return { child: {}, upstream }; };
+  supervisor.prepareTmp = () => {};
+  const fakeFs = { readFileSync: () => JSON.stringify({ kind: 'process', command: ['bin/app'] }) };
+  await withEnv(queueEnv, async () => {
+    // No deps.upstream and no deps.start: the default start path wires the upstream.
+    const handler = createHandler({ fs: fakeFs, port: 1, log: () => {}, telemetry: () => null });
+    await handler({ Records: [record('m1', 'x')] }, context());
+    upstream.port = direct.port;
+    await handler({ Records: [record('m2', 'x')] }, context());
+  });
+  assert.equal(calls, 1);
+  assert.equal(front.requests.length, 1);
+  assert.equal(direct.requests.length, 1);
+  assert.equal(direct.requests[0].headers['x-arco-message-id'], 'm2');
+});

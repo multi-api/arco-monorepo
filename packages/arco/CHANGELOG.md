@@ -8,8 +8,10 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 - **Added: front extensions for process apps.** A process app can now ship `.arco-cloud/<name>/extension.json`
   (`{"front": {"command": [...]}}`). The runtime starts that program in front of your app: it listens on port 8000
   and your app moves to 8001 (`PORT=8001`). The front gets `ARCO_FRONT_LISTEN`, `ARCO_FRONT_UPSTREAM` and
-  `ARCO_STARTED_AT`. If it fails to start, exits or is not listening 2 seconds after the app, the runtime logs
-  `extension_failed` once and serves the app directly. Apps without extensions are unchanged. See
+  `ARCO_STARTED_AT`. The app starts first; the front starts once the app listens. If the front fails to start,
+  exits or is not listening within 2 seconds, the runtime stops it, logs `extension_failed` once and serves the app
+  directly. An app that ignores `PORT` and listens on 8000 keeps working: the front is not started
+  (`extension_failed` with reason `app_port`). Apps without extensions are unchanged. See
   [Arco Cloud extensions](docs/cloud-extensions.md).
 - **Changed: `.arco-cloud/` is packaged for process apps** under `app/.arco-cloud/`, whatever `include` and
   `exclude` say.

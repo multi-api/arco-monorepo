@@ -12,7 +12,7 @@ const RUNTIME = path.join(__dirname, '..');
 const INDEX = path.join(RUNTIME, 'index.js');
 const MODULES = [INDEX, path.join(RUNTIME, 'lib', 'supervisor.js'), path.join(RUNTIME, 'lib', 'process.js'), path.join(RUNTIME, 'lib', 'extensions.js')];
 
-async function run({ config, executable = true, front = null, waitFor = null, end = (out) => out.die(7) }) {
+async function run({ config, executable = true, front = null, waitFor = null, refused = [], end = (out) => out.die(7) }) {
   const out = { spawn: [], connect: [], mkdir: [], writes: [], copies: [], chmods: [], logs: [], exits: [], proxy: [] };
   const children = [];
   const patches = [];
@@ -22,14 +22,14 @@ async function run({ config, executable = true, front = null, waitFor = null, en
     child.kills = [];
     child.kill = (signal) => { child.kills.push(signal); };
     children.push(child);
-    out.spawn.push({ command, args, cwd: options.cwd, env: options.env, stdio: options.stdio });
+    out.spawn.push({ command, args, cwd: options.cwd, env: options.env, stdio: options.stdio, connectedBefore: out.connect.map((c) => c.port) });
     return child;
   });
   patch(net, 'connect', (port, host) => {
     out.connect.push({ host, port });
     const socket = new EventEmitter();
     socket.destroy = () => {};
-    setImmediate(() => socket.emit('connect'));
+    setImmediate(() => socket.emit(refused.includes(port) ? 'error' : 'connect', new Error('ECONNREFUSED')));
     return socket;
   });
   patch(fs, 'mkdirSync', (dir, options) => { out.mkdir.push({ dir, options }); });
@@ -186,6 +186,26 @@ test('starts app on 8001 and front on 8000 with ARCO_FRONT_LISTEN, ARCO_FRONT_UP
   assert.deepEqual(out.proxy[0][3], { port: 8000 });
 });
 
+test('with a front, the front is spawned only after the app listens on 8001', async () => {
+  const out = await run({ config: CONFIG, front: FRONT, end: () => {} });
+  assert.deepEqual(out.spawn[0].connectedBefore, [], 'the app is spawned first');
+  assert.deepEqual(out.spawn[1].connectedBefore, [8001], 'the front comes once the app answered on 8001');
+  assert.equal(out.logs.filter((l) => l.phase === 'extension_failed').length, 0);
+});
+
+test('an app that binds 8000 despite PORT=8001 is served on 8000 and the front is not started', async () => {
+  const out = await run({ config: CONFIG, front: FRONT, refused: [8001], end: () => {} });
+  assert.equal(out.spawn.length, 1, 'no front spawned');
+  assert.equal(out.spawn[0].env.PORT, '8001');
+  assert.deepEqual(out.proxy[0][3], { port: 8000 });
+  const failed = out.logs.filter((l) => l.phase === 'extension_failed');
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0].data.reason, 'app_port');
+  assert.equal(failed[0].data.extension, 'a-ext');
+  assert.ok(out.logs.some((l) => l.phase === 'process_ready'));
+  assert.deepEqual(out.exits, []);
+});
+
 test('without a front the app keeps PORT=8000', async () => {
   const out = await run({ config: CONFIG, end: () => {} });
   assert.equal(out.spawn.length, 1);
@@ -205,9 +225,11 @@ test('falls back to 8001 when the front never listens within 2 s', async () => {
     },
     end: () => {},
   });
-  assert.deepEqual(waited, [{ port: 8001, timeout: 10_000 }, { port: 8000, timeout: 2000 }]);
+  assert.deepEqual(waited, [{ port: 8000, timeout: 2000 }]);
   assert.equal(out.logs.filter((l) => l.phase === 'extension_failed').length, 1);
   assert.equal(out.proxy[0][3].port, 8001);
+  assert.deepEqual(out.children[1].kills, ['SIGTERM'], 'the front that missed its wait is stopped');
+  assert.deepEqual(out.children[0].kills, [], 'the app keeps running');
   assert.ok(out.logs.some((l) => l.phase === 'process_ready'));
 });
 

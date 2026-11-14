@@ -12,7 +12,7 @@ const APP_PORT = 8001;
 const HOST = '127.0.0.1';
 const TMP = '/tmp/arco';
 const START_TIMEOUT_MS = 10_000;
-// Extra time the front gets to listen once the app does; after that the app is served directly.
+// Time the front gets to listen once it is started (after the app listens); after that the app is served directly.
 const FRONT_TIMEOUT_MS = 2000;
 const STARTED_AT = Math.round(Date.now() - process.uptime() * 1000);
 // How long a process gets to end after SIGTERM before it is killed. Lambda spins down idle instances only.
@@ -65,7 +65,8 @@ function spawnFront(front, appEnv, log, state) {
 }
 
 // Resolves { child, upstream }: child is the app, upstream.port is where requests go (read it per request: a front
-// that dies switches it to the app).
+// that dies switches it to the app). With a front the app starts first, on APP_PORT; the front starts once the app
+// listens. An app that ignored PORT and took PORT (8000) itself is served there and the front is not started.
 async function startProcess(root, config, env, log) {
   const appDir = path.join(root, 'app');
   const front = extensions.findFront(appDir, log);
@@ -73,8 +74,8 @@ async function startProcess(root, config, env, log) {
   const upstream = { port: front ? FRONT_PORT : PORT };
   const state = { stopping: false, upstream, frontFailed: false };
   // Logs extension_failed once however many ways the front fails, and serves the app directly from then on.
-  state.fail = (reason, extra = {}) => {
-    upstream.port = APP_PORT;
+  state.fail = (reason, extra = {}, appListensOn = APP_PORT) => {
+    upstream.port = appListensOn;
     if (state.frontFailed) return;
     state.frontFailed = true;
     log('extension_failed', { extension: front.name, reason, ...extra });
@@ -97,8 +98,7 @@ async function startProcess(root, config, env, log) {
       process.exit(code ?? 1);
     },
   });
-  // The front starts with the app and gets its environment (plus the ARCO_FRONT_* variables).
-  const frontChild = front ? spawnFront(front, appEnv, log, state) : null;
+  let frontChild = null;
   // supervisor.spawnProcess forwards the signal to each process; one that ignores it is killed after the grace.
   for (const name of ['SIGTERM', 'SIGINT']) {
     process.on(name, () => {
@@ -108,12 +108,26 @@ async function startProcess(root, config, env, log) {
       if (frontChild) setTimeout(() => frontChild.kill('SIGKILL'), STOP_GRACE_MS).unref();
     });
   }
-  await supervisor.waitForPort(HOST, appPort, START_TIMEOUT_MS, 'process');
-  if (frontChild && upstream.port === FRONT_PORT) {
-    try {
-      await supervisor.waitForPort(HOST, FRONT_PORT, FRONT_TIMEOUT_MS, 'extension');
-    } catch (error) {
-      state.fail('not_listening', { error: error.message });
+  if (!front) {
+    await supervisor.waitForPort(HOST, appPort, START_TIMEOUT_MS, 'process');
+    log('process_ready');
+    return { child, upstream };
+  }
+  // An app that hard-codes 8000 instead of reading PORT still has to work: it is polled on both ports.
+  const listening = await supervisor.waitForAnyPort(HOST, [APP_PORT, PORT], START_TIMEOUT_MS, 'process');
+  if (listening === PORT) {
+    state.fail('app_port', { port: PORT }, PORT);
+  } else if (!state.stopping) {
+    // The front gets the app's environment (plus the ARCO_FRONT_* variables).
+    frontChild = spawnFront(front, appEnv, log, state);
+    if (frontChild && upstream.port === FRONT_PORT) {
+      try {
+        await supervisor.waitForPort(HOST, FRONT_PORT, FRONT_TIMEOUT_MS, 'extension');
+      } catch (error) {
+        state.fail('not_listening', { error: error.message });
+        // Its later exit is absorbed by state.frontFailed.
+        frontChild.kill('SIGTERM');
+      }
     }
   }
   log('process_ready');

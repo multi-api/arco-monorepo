@@ -72,6 +72,26 @@ function waitForPort(host, port, timeoutMs = 9000, name = 'FrankenPHP') {
   });
 }
 
+// Polls each of ports in turn until one accepts a connection; resolves the first port that does.
+function waitForAnyPort(host, ports, timeoutMs = 9000, name = 'process') {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    let index = 0;
+    const attempt = () => {
+      const port = ports[index];
+      const socket = net.connect(port, host);
+      socket.once('connect', () => { socket.destroy(); resolve(port); });
+      socket.once('error', () => {
+        socket.destroy();
+        index = (index + 1) % ports.length;
+        if (Date.now() > deadline) reject(new Error(`${name} did not listen on ${host}:${ports.join(' or ')} within ${timeoutMs} ms`));
+        else setTimeout(attempt, index === 0 ? 25 : 0);
+      });
+    };
+    attempt();
+  });
+}
+
 // The path of a request target, without query or fragment: origin-form (`/a?b`) as is, absolute-form
 // (`http://host/a?b`, which Go's net/http routes by its path) by its pathname. Anything else (`*`, authority-form,
 // garbage) has no path: null.
@@ -199,4 +219,4 @@ function startProxy(host, port, upstreamHost, upstream, options = {}) {
   return new Promise((resolve) => server.listen(port, host, () => resolve(server)));
 }
 
-module.exports = { prepareTmp, resolveBinary, spawnProcess, spawnFrankenphp, waitForPort, startProxy, isInternalPath };
+module.exports = { prepareTmp, resolveBinary, spawnProcess, spawnFrankenphp, waitForPort, waitForAnyPort, startProxy, isInternalPath };
