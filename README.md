@@ -35,7 +35,7 @@ Dockerfile changes.
 The unit suite runs in parallel with [ParaTest](https://github.com/paratestphp/paratest), one worker per core
 (about 30 s instead of 90 s). [`tests/bootstrap.php`](tests/bootstrap.php) gives each worker its own `TMPDIR`, so
 a test that compares a temp-directory listing before and after never sees another worker's files. CI does the same
-and runs PHPStan once, on PHP 8.4.
+and runs PHPStan once, on PHP 8.4, in its own job alongside the tests.
 
 `composer test:integration` runs the integration suite in the same image. Those tests start
 Lambda containers, so this container also gets a network and the host's Docker socket, and it
