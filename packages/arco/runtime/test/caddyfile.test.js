@@ -132,3 +132,20 @@ test('without a counter port there is no arco_count logger and no site log', () 
     assert.doesNotMatch(caddyfile, /arco_count|\blog\b/);
   }
 });
+
+test('every field log_append adds is deleted from arco_count entries', () => {
+  const base = { mode: 'direct', publicDir: 'app/public', threads: 8, workers: { min: 4, max: 64 }, phpIni: {} };
+  const target = { host: '0.0.0.0', port: 3000, root: '/var/task', countPort: 40123 };
+  let appended = 0;
+  for (const accessLog of [true, false]) {
+    for (const workerScript of [null, 'app/public/frankenphp-worker.php']) {
+      const caddyfile = buildCaddyfile({ ...base, accessLog, workerScript }, target);
+      const counter = caddyfile.slice(caddyfile.indexOf('\tlog arco_count {'), caddyfile.indexOf('\t\tinclude http.log.access'));
+      for (const [, field] of caddyfile.matchAll(/\blog_append\s+(\S+)/g)) {
+        appended++;
+        assert.ok(counter.includes(`\t\t\t\t${field} delete\n`), `${field} reaches arco_count entries:\n${caddyfile}`);
+      }
+    }
+  }
+  assert.ok(appended > 0, 'the check sees log_append');
+});
