@@ -30,7 +30,7 @@ final class RevisionFactoryTest extends TestCase
             'serviceConfig' => [
                 'executionRoleArn' => 'arn:role',
                 'timeoutSeconds' => 60,
-                'environmentVariables' => ['A' => 'b'],
+                'environmentVariables' => ['A' => 'b', 'ARCO_TIMEOUT' => '60'],
                 'telemetryConfig' => ['loggingConfig' => ['applicationLogLevel' => 'DEBUG', 'systemLogLevel' => 'INFO']],
                 'maxConcurrencyPerEnvironment' => 16,
             ],
@@ -103,7 +103,7 @@ final class RevisionFactoryTest extends TestCase
 
         $revision = RevisionFactory::revision($config, 'bucket', 'k.zip', null, 'arn:role', ['A' => 'b', 'EMPTY' => '']);
 
-        self::assertSame(['A' => 'b'], $revision['serviceConfig']['environmentVariables']);
+        self::assertSame(['A' => 'b', 'ARCO_TIMEOUT' => '30'], $revision['serviceConfig']['environmentVariables']);
     }
 
     public function test_concurrency_is_sent_only_when_set(): void
