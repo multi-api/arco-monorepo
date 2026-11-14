@@ -98,8 +98,10 @@ Any one of these turns it off. The runtime then counts nothing and sends nothing
   `->telemetry(false)` for that deploy, without touching `arco.php`. Handy in CI.
 - `ARCO_TELEMETRY_DISABLE=1` in the function's environment: in `variables()` (the one `ARCO*` name it accepts), in
   bundled variables (also as an `arco-ssm:` or `arco-secret:` reference), or set in the Lambda console. The runtime
-  reads it after the variable bundle and secrets load. A value set only in the Lambda console is replaced by the
-  next deploy.
+  reads it after the variable bundle and secrets load. A literal `'1'` in `variables()` is also read by the CLI, like
+  `->telemetry(false)`: `arco info` shows telemetry off, the package says so and no notice is printed. A reference
+  is only resolved in the function, so the CLI still shows telemetry on and the runtime turns it off. A value set
+  only in the Lambda console is replaced by the next deploy.
 
 `arco info` shows whether it is on (`settings.telemetry` in `--json`). The first `arco deploy` on a machine with
 telemetry on prints a one-line notice about it, once.

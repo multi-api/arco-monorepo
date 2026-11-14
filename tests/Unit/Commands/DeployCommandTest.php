@@ -588,10 +588,14 @@ final class DeployCommandTest extends TestCase
         } finally {
             putenv('ARCO_TELEMETRY_DISABLE');
         }
-        file_put_contents("$this->project/arco.php", str_replace("->console()", "->console()\n    ->telemetry(false)", (string) file_get_contents("$this->project/arco.php")));
+        $original = (string) file_get_contents("$this->project/arco.php");
+        file_put_contents("$this->project/arco.php", str_replace("['APP_ENV' => 'production']", "['APP_ENV' => 'production', 'ARCO_TELEMETRY_DISABLE' => '1']", $original));
+        $variable = $this->deployOnce()->getDisplay();
+        file_put_contents("$this->project/arco.php", str_replace("->console()", "->console()\n    ->telemetry(false)", $original));
         $app = $this->deployOnce()->getDisplay();
 
         self::assertStringNotContainsString(self::NOTICE, $env);
+        self::assertStringNotContainsString(self::NOTICE, $variable);
         self::assertStringNotContainsString(self::NOTICE, $app);
         self::assertFileDoesNotExist("$home/.arco/config.php", 'a notice that was not shown is not recorded');
     }

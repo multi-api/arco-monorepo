@@ -348,6 +348,30 @@ final class ConfigResolverTest extends TestCase
         });
     }
 
+    public function test_a_literal_disable_variable_switches_telemetry_off(): void
+    {
+        $this->withTelemetryEnv(null, function (): void {
+            $raw = App::make('shop')->region('us-east-1')->variables(['ARCO_TELEMETRY_DISABLE' => '1'])
+                ->environment('production')
+                ->environment('staging', fn (Environment $e) => $e->variables(['ARCO_TELEMETRY_DISABLE' => '0']))
+                ->environment('preview', fn (Environment $e) => $e->telemetry(false))
+                ->toArray();
+
+            $production = ConfigResolver::resolve($raw, 'production');
+            self::assertFalse($production->telemetry);
+            self::assertSame('app', $production->sources['telemetry'], 'where the variable is set');
+            self::assertSame('1', $production->variables['ARCO_TELEMETRY_DISABLE'], 'the variable still reaches the function');
+            self::assertTrue(ConfigResolver::resolve($raw, 'staging')->telemetry, 'only "1" disables');
+            self::assertSame('environment', ConfigResolver::resolve($raw, 'preview')->sources['telemetry'], 'the setting already said off');
+
+            // A reference is resolved only in the function: the runtime decides.
+            $reference = App::make('shop')->region('us-east-1')
+                ->environment('production', fn (Environment $e) => $e->variables(['ARCO_TELEMETRY_DISABLE' => 'arco-ssm:/shop/telemetry']))
+                ->toArray();
+            self::assertTrue(ConfigResolver::resolve($reference, 'production')->telemetry);
+        });
+    }
+
     private function withTelemetryEnv(?string $value, callable $run): void
     {
         $original = getenv('ARCO_TELEMETRY_DISABLE');

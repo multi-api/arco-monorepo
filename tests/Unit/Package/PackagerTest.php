@@ -152,6 +152,16 @@ final class PackagerTest extends TestCase
         }
     }
 
+    public function test_a_literal_disable_variable_packages_telemetry_off(): void
+    {
+        $config = ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->variables(['ARCO_TELEMETRY_DISABLE' => '1']))->toArray(),
+            'production',
+        );
+
+        self::assertFalse(Packager::runtimeConfig($config, new PlainPhpPreset())['telemetry']);
+    }
+
     public function test_laravel_commands_go_through_artisan(): void
     {
         self::assertSame(['entry' => 'artisan'], Packager::runtimeConfig($this->config(), new \Multiapi\Arco\Laravel\LaravelPreset())['console']);

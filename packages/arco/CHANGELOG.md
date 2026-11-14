@@ -13,7 +13,8 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   Lambda simulation took up to 0.1 ms longer end to end. Nothing waits for the network. **To turn it off:**
   `->telemetry(false)` in `arco.php` (`"telemetry": false` in `arco.json` or a config layer) or
   `ARCO_TELEMETRY_DISABLE=1` in the shell that runs `arco deploy`, then deploy; or `ARCO_TELEMETRY_DISABLE=1` in the
-  function's environment, which `variables()` now accepts (the one `ARCO*` name it does), bundled or not. `arco info`
+  function's environment, which `variables()` now accepts (the one `ARCO*` name it does), bundled or not; a literal
+  `'1'` there counts as `->telemetry(false)` for the CLI too (a reference is resolved only in the function). `arco info`
   shows the setting (`settings.telemetry` in `--json`). Everything that is sent: [docs/telemetry.md](docs/telemetry.md).
   Laravel queue counts need `multiapi/arco-laravel` at this version; an older one sends nothing for queues.
 - **Added:** the first successful `arco deploy` on a machine (also `deploy --package`) prints a one-line notice about

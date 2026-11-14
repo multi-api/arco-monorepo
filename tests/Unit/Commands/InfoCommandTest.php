@@ -173,6 +173,18 @@ final class InfoCommandTest extends TestCase
         $project->restore();
     }
 
+    public function test_a_literal_disable_variable_shows_telemetry_off(): void
+    {
+        $project = new ProjectFixture(str_replace("'API_TOKEN' => 'plain-token'", "'API_TOKEN' => 'plain-token', 'ARCO_TELEMETRY_DISABLE' => '1'", ProjectFixture::standardConfig()));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => throw new \LogicException('no AWS expected')));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertMatchesRegularExpression('/\btelemetry\s+no\s+environment/', $tester->getDisplay());
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        self::assertFalse(json_decode($tester->getDisplay(), true)['settings']['telemetry']);
+        $project->restore();
+    }
+
     public function test_shows_console_scheduler_and_log_retention_rows(): void
     {
         $config = str_replace("->timeout(60)", "->timeout(60)->console()->scheduler(5)->logRetention(30)", ProjectFixture::standardConfig());
