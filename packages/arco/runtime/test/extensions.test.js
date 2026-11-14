@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { findFront } = require('../lib/extensions');
+const { findFront, findTimeoutReserve } = require('../lib/extensions');
 
 function app(t, extensions = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arco-ext-'));
@@ -49,4 +49,32 @@ test('findFront skips an invalid command and a manifest without a front', (t) =>
   const { dir, log, logs } = app(t, { a: { front: { command: [] } }, b: { other: {} }, c: { front: { command: ['c'] } } });
   assert.equal(findFront(dir, log).name, 'c');
   assert.deepEqual(logs.map((l) => [l.phase, l.data.extension]), [['extension_failed', 'a']]);
+});
+
+test('findTimeoutReserve is 0 without .arco-cloud or without the key', (t) => {
+  const empty = app(t);
+  assert.equal(findTimeoutReserve(empty.dir, empty.log), 0);
+  const front = app(t, { 'a-ext': { front: { command: ['bin/front'] } } });
+  assert.equal(findTimeoutReserve(front.dir, front.log), 0);
+  assert.deepEqual([...empty.logs, ...front.logs], []);
+});
+
+test('findTimeoutReserve returns the largest reserve of every extension', (t) => {
+  const { dir, log, logs } = app(t, { a: { timeoutReserve: 1 }, b: { timeoutReserve: 2, other: true }, c: {} });
+  fs.mkdirSync(path.join(dir, '.arco-cloud', 'no-manifest'));
+  fs.writeFileSync(path.join(dir, '.arco-cloud', 'stray-file'), 'x');
+  assert.equal(findTimeoutReserve(dir, log), 2);
+  assert.deepEqual(logs, []);
+});
+
+test('findTimeoutReserve skips an invalid reserve or manifest and logs it', (t) => {
+  const { dir, log, logs } = app(t, { a: { timeoutReserve: 1.5 }, b: { timeoutReserve: -1 }, c: { timeoutReserve: 11 }, d: { timeoutReserve: '2' }, e: '{', f: { timeoutReserve: 3 } });
+  assert.equal(findTimeoutReserve(dir, log), 3);
+  assert.deepEqual(logs.map((entry) => [entry.phase, entry.data.extension]), [['extension_failed', 'a'], ['extension_failed', 'b'], ['extension_failed', 'c'], ['extension_failed', 'd'], ['extension_failed', 'e']]);
+});
+
+test('a manifest with only timeoutReserve is not a front', (t) => {
+  const { dir, log, logs } = app(t, { xray: { timeoutReserve: 2 } });
+  assert.equal(findFront(dir, log), null);
+  assert.deepEqual(logs, []);
 });

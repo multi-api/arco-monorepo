@@ -1263,7 +1263,9 @@ later.
   than `timeout()`, raise it, or have the client reconnect (`EventSource` does, and sends `Last-Event-ID`).
 - **PHP's `max_execution_time` follows `timeout()`.** PHP limits web requests on its own (30 s by default, on the
   wall clock under FrankenPHP); Arco sets it to `timeout()` so the two agree. `phpIni(['max_execution_time' => ...])`
-  overrides it. A request that reaches it ends with "Maximum execution time exceeded" and its worker restarts.
+  overrides it. A request that reaches it ends with "Maximum execution time exceeded" and its worker restarts. An
+  [Arco Cloud extension](cloud-extensions.md#timeout-reserve) can ask for a few seconds less, so its shutdown work
+  finishes before the function stops: with `timeout(30)` and a reserve of 2, PHP stops at 28 s.
 - **Work after the response shares that limit.** Lambda's timeout no longer applies once the response has ended, but
   `max_execution_time` counts from the start of the request, deferred work included, and the work holds one of the
   function's request slots until it finishes. Use a queue for anything longer.

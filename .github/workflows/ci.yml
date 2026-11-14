@@ -17,7 +17,20 @@ jobs:
           extensions: zip
           coverage: none
       - run: composer install --no-interaction --no-progress
-      - run: vendor/bin/phpunit --testsuite unit
+      # ParaTest runs the unit suite on every core (tests/bootstrap.php gives each worker its own TMPDIR).
+      - run: vendor/bin/paratest --testsuite unit
+  # PHPStan's result does not depend on the PHP running it (the version range comes from composer.json):
+  # analyse once, in its own job so it runs alongside the unit tests.
+  phpstan:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: zip
+          coverage: none
+      - run: composer install --no-interaction --no-progress
       - run: vendor/bin/phpstan analyse --memory-limit=4G
   runtime:
     runs-on: ubuntu-24.04-arm

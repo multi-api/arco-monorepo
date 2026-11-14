@@ -1,8 +1,14 @@
-# Arco Cloud extensions (process apps)
+# Arco Cloud extensions
 
-A [process app](configuration.md#process-runtime-go) can ship **extensions**: programs that Arco Cloud puts inside
-the package and the runtime starts next to your app. The runtime knows one generic kind, a **front**: a process that
-listens where your app would and forwards requests to it. The runtime does not know what a front does.
+An app can ship **extensions**: directories that Arco Cloud puts inside the package. The runtime reads two generic
+keys from them and does not know what an extension does:
+
+- **`front`** ([process apps](configuration.md#process-runtime-go)): a process that listens where your app would and
+  forwards requests to it.
+- **`timeoutReserve`** (PHP web functions): seconds by which PHP's `max_execution_time` stops before the function's
+  `timeout()`. See [Timeout reserve](#timeout-reserve).
+
+PHP apps load their extensions through `multiapi/arco-laravel` (each `.arco-cloud/<name>/bootstrap.php`).
 
 You normally do not write these files: Arco Cloud adds them to your package. This page is the contract between the
 runtime and a front.
@@ -27,7 +33,7 @@ An extension is a directory under `.arco-cloud/` in the project, shipped as `app
 - A zip that lost the executable bit is handled as for the app: the runtime runs a copy from `/tmp/arco/bin`.
 - Only one front runs. The first valid one **by directory name** wins; the others are ignored and the runtime logs
   `{"arco":"extension_ignored","extension":"<name>"}` for each.
-- A directory without `extension.json`, or without a `front`, is not an extension. An invalid `extension.json` logs
+- A directory without `extension.json`, or without a `front`, is not a front. An invalid `extension.json` logs
   `extension_failed` with the error and is skipped.
 - For process apps, `.arco-cloud/` is always packaged, whatever `include` and `exclude` say.
 
@@ -75,3 +81,25 @@ The reasons are `spawn`, `error`, `exited`, `not_listening` and `app_port`.
 
 On shutdown the app and the front both get `SIGTERM` and the same one-second grace as the app
 ([the `PORT` contract](configuration.md#the-port-contract)), then `SIGKILL`.
+
+## Timeout reserve
+
+```json
+{ "timeoutReserve": 2 }
+```
+
+On a PHP web function the runtime sets PHP's `max_execution_time` to `timeout()`
+([Responses](configuration.md#responses)). An extension that has work to finish when PHP stops a request (in a
+shutdown function, for example) can ask for that many seconds less, so the work runs before the platform stops the
+function:
+
+- `timeoutReserve` is an integer from 0 to 10 (seconds). Any other value logs `extension_failed` with the error and
+  counts as no reserve.
+- The runtime reads it from **every** extension under `app/.arco-cloud/` and uses the largest one. A manifest can carry
+  only `timeoutReserve`, without a `front`.
+- The reserve never takes more than half of `timeout()`: with `timeout(30)` and a reserve of 2, `max_execution_time` is
+  28; with `timeout(3)`, 2; with `timeout(1)`, 1.
+- `phpIni(['max_execution_time' => ...])` still wins, reserve or not.
+- With a reserve, the runtime logs `{"arco":"timeout_reserve","seconds":2}` at boot.
+- Process apps and console functions ignore it: PHP's limit applies only to PHP web requests.
+- Arco before 0.21.0 ignores the key.

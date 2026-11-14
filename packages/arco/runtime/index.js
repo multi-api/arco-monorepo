@@ -4,6 +4,7 @@ const nodeFs = require('node:fs');
 const path = require('node:path');
 const { loadEnvironment } = require('./lib/boot');
 const { buildCaddyfile } = require('./lib/caddyfile');
+const { findTimeoutReserve } = require('./lib/extensions');
 const supervisor = require('./lib/supervisor');
 const processKind = require('./lib/process');
 const caddycount = require('./lib/caddycount');
@@ -52,7 +53,10 @@ async function main({ fs = nodeFs, log = defaultLog } = {}) {
   // cannot listen leaves the Caddyfile exactly as without telemetry.
   const counter = countResponse && !proxy ? await caddycount.listenCaddyCount(countResponse) : null;
   if (countResponse && !proxy && counter === null) log('telemetry_counter_failed');
-  fs.writeFileSync(caddyfile, buildCaddyfile(config, { host: phpHost, port: phpPort, root: ROOT, countPort: counter ? counter.port : null, timeout: Number(process.env.ARCO_TIMEOUT) }));
+  const timeout = Number(process.env.ARCO_TIMEOUT);
+  const timeoutReserve = findTimeoutReserve(path.join(ROOT, 'app'), log, fs);
+  if (timeoutReserve > 0) log('timeout_reserve', { seconds: timeoutReserve });
+  fs.writeFileSync(caddyfile, buildCaddyfile(config, { host: phpHost, port: phpPort, root: ROOT, countPort: counter ? counter.port : null, timeout, timeoutReserve }));
 
   supervisor.spawnFrankenphp(
     supervisor.resolveBinary(ROOT, TMP),
