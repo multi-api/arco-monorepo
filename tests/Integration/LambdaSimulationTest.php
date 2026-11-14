@@ -171,6 +171,50 @@ final class LambdaSimulationTest extends TestCase
         self::assertSame([], $offByConfig->drain(), '"telemetry": false sends nothing');
     }
 
+    /**
+     * The default web path: direct mode without accessLog(). Caddy's site logger outputs to discard and the arco_count
+     * logger is the only one that sees an entry, so every response is counted and none reaches the function log.
+     */
+    public function test_direct_mode_without_access_log_counts_every_response_and_logs_none(): void
+    {
+        $collector = $this->collector();
+        [$container, $http, $responses] = $this->start(['ARCO_TELEMETRY_HOST' => $collector->forContainers()], ['accessLog' => false]);
+        $caddyfile = $this->caddyfile($container);
+        self::assertStringContainsString('arco_count', $caddyfile);
+        self::assertStringContainsString('output discard', $caddyfile);
+
+        // Laravel, a static file, a 404 and concurrent slow requests, each with a URI the log must never show.
+        foreach (['/arco-check?secret=it-uri-marker', '/robots.txt?it-uri-marker', '/it-uri-marker-missing', '/up'] as $path) {
+            $http->get($path);
+            $responses++;
+        }
+        $requests = (function () {
+            for ($i = 0; $i < 10; $i++) {
+                yield new Request('GET', "/arco-slow?ms=100&it-uri-marker=$i");
+            }
+        })();
+        (new Pool($http, $requests, ['concurrency' => 10, 'fulfilled' => static function () use (&$responses): void { $responses++; }]))->promise()->wait();
+
+        $first = $collector->receive();
+        self::assertNotNull($first, 'the first response sends a packet: ' . $this->logs($container, stderr: true));
+        self::assertSame(1, preg_match(self::packet('web', cold: true), $first, $match), $first);
+        (new Process(['docker', 'stop', '-t', '10', $container]))->mustRun();
+        $rest = $collector->drain();
+        self::assertCount(1, $rest, 'SIGTERM sends what is pending: ' . implode("\n", $rest));
+        self::assertSame(1, preg_match(self::packet('web', cold: false), $rest[0], $flushed), $rest[0]);
+        self::assertSame($responses, (int) $match[1] + (int) $flushed[1], "$first\n$rest[0]");
+
+        // stdout and stderr: no Caddy access entry (logged, or printed after a lost connection), no access line.
+        $logs = $this->logs($container, stderr: true);
+        self::assertStringContainsString('serving initial configuration', $logs, 'Caddy\'s own log (stderr) is read too');
+        self::assertStringNotContainsString('http.log.access', $logs);
+        self::assertStringNotContainsString('handled request', $logs);
+        self::assertStringNotContainsString('"uri"', $logs);
+        self::assertStringNotContainsString('it-uri-marker', $logs);
+        self::assertStringNotContainsString('"arco":"request"', $logs);
+        self::assertStringNotContainsString('arco_count', $logs);
+    }
+
     /** A packet of this run's Arco version from us-east-1; group 1 is the count. */
     private static function packet(string $kind, bool $cold): string
     {
@@ -273,8 +317,10 @@ final class LambdaSimulationTest extends TestCase
         return (new Process(['docker', 'exec', $container, 'cat', '/tmp/arco/Caddyfile']))->mustRun()->getOutput();
     }
 
-    private function logs(string $container): string
+    /** The container's stdout, and its stderr after it when $stderr. */
+    private function logs(string $container, bool $stderr = false): string
     {
-        return (new Process(['docker', 'logs', $container]))->mustRun()->getOutput();
+        $process = (new Process(['docker', 'logs', $container]))->mustRun();
+        return $process->getOutput() . ($stderr ? $process->getErrorOutput() : '');
     }
 }
