@@ -444,7 +444,8 @@ final class AwsDeployerTest extends TestCase
         self::assertSame($key, $byOperation['PutObject'][0]['Key']);
         self::assertSame($key, $prepared->variablesKey);
         $kept = ['ARCO' => '1', 'ARCO_APP' => 'shop', 'ARCO_VARIABLES' => "s3://arco-111111111111-us-east-1/$key"];
-        self::assertSame($kept, $byOperation['CreateWebFunction'][0]['revisionConfig']['serviceConfig']['environmentVariables']);
+        // The web function also gets ARCO_TIMEOUT (PHP's max_execution_time); the console function does not.
+        self::assertSame([...$kept, 'ARCO_TIMEOUT' => '30'], $byOperation['CreateWebFunction'][0]['revisionConfig']['serviceConfig']['environmentVariables']);
         self::assertSame($kept, $byOperation['CreateFunction'][0]['Environment']['Variables']);
         $policy = json_decode($byOperation['PutRolePolicy'][0]['PolicyDocument'], true);
         $bySid = array_column($policy['Statement'], null, 'Sid');
