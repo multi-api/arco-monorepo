@@ -683,6 +683,37 @@ final class DeployPipelineTest extends TestCase
         self::assertSame(8 - 3 + (int) filesize($php), $deployer->console->package->bytes);
     }
 
+    public function test_a_deploy_run_by_arco_cloud_stores_bin_php_uncompressed_and_a_plain_deploy_deflates_it(): void
+    {
+        $php = TempPaths::path('arco-php-');
+        file_put_contents($php, (string) file_get_contents(ElfInspectorTest::fakeElf(0xB7)) . str_repeat('custom-php-', 1000));
+        $config = ConfigResolver::resolve(App::make('shop')->console()->region('us-east-1')
+            ->runtime(fn (Runtime $r) => $r->binary(frankenphp: ElfInspectorTest::fakeElf(0xB7), php: $php))
+            ->environment('production')
+            ->toArray(), 'production');
+        $method = function () use ($config): int {
+            $deployer = new FakeDeployer('rev-1');
+            $method = null;
+            // Read in prepare(), while the console zip still exists.
+            $deployer->onPrepare = function () use ($deployer, &$method): void {
+                $zip = new \ZipArchive();
+                self::assertTrue($zip->open((string) $deployer->console?->package->path));
+                $stat = $zip->statName('bin/php');
+                $zip->close();
+                self::assertNotFalse($stat);
+                $method = $stat['comp_method'];
+            };
+            $this->cliPipeline()->deployPackage($config, new PlainPhpPreset(), self::webPackage(null), $deployer, new FakeVerifier(true), fn () => null);
+            self::assertIsInt($method);
+            return $method;
+        };
+
+        putenv('ARCO_DEFER_COLD_START=1');
+        self::assertSame(\ZipArchive::CM_STORE, $method(), 'Arco Cloud deploys skip deflating the CLI');
+        putenv('ARCO_DEFER_COLD_START');
+        self::assertSame(\ZipArchive::CM_DEFLATE, $method(), 'plain CLI deploys upload the smaller zip');
+    }
+
     public function test_the_first_php_cli_download_reports_progress_and_the_cached_one_does_not(): void
     {
         $pipeline = $this->cliPipeline();

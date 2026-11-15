@@ -111,11 +111,26 @@ final class ConsolePackagerTest extends TestCase
         self::assertFileExists($web->path, 'the web zip is untouched');
     }
 
-    public function test_the_php_cli_is_stored_uncompressed(): void
+    public function test_the_php_cli_is_deflated_by_default(): void
+    {
+        $content = str_repeat('ELF-the-static-php-cli-compressible-', 500);
+        $console = ConsolePackager::fromWeb($this->web(), $this->dir(), $this->cli($content));
+
+        $zip = new ZipArchive();
+        self::assertTrue($zip->open($console->package->path));
+        self::assertSame(ZipArchive::CM_DEFLATE, $zip->statName('bin/php')['comp_method'], 'plain CLI deploys upload the smaller zip');
+        self::assertLessThan(strlen($content), $zip->statName('bin/php')['comp_size']);
+        self::assertSame($content, $zip->getFromName('bin/php'));
+        $zip->getExternalAttributesName('bin/php', $opsys, $attr);
+        self::assertSame(0755, ($attr >> 16) & 0777);
+        $zip->close();
+    }
+
+    public function test_the_php_cli_is_stored_uncompressed_when_asked(): void
     {
         $content = str_repeat('ELF-the-static-php-cli-compressible-', 500);
         $webPackage = $this->web();
-        $console = ConsolePackager::fromWeb($webPackage, $this->dir(), $this->cli($content));
+        $console = ConsolePackager::fromWeb($webPackage, $this->dir(), $this->cli($content), storePhpCli: true);
 
         $zip = new ZipArchive();
         self::assertTrue($zip->open($console->package->path));

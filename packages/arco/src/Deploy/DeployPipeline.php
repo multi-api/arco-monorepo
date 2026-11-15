@@ -677,7 +677,10 @@ final class DeployPipeline
                 $note = ['reason' => 'php_cli_unavailable', 'url' => (string) ($e->params['url'] ?? ''), 'message' => (string) ($e->params['message'] ?? '')];
             }
         }
-        $console = ConsolePackager::fromWeb($package, $work, $phpCli);
+        // Deploys run by Arco Cloud (ARCO_DEFER_COLD_START=1: the in-region runner, the GitHub Action on fast
+        // uplinks) store the CLI uncompressed, saving ~9 s of deflate for ~60 MB more upload; plain CLI
+        // deploys keep it deflated.
+        $console = ConsolePackager::fromWeb($package, $work, $phpCli, getenv('ARCO_DEFER_COLD_START') === '1');
         if ($phpCli !== null && $console->package->bytes > ConsoleFunction::MAX_UNZIPPED_BYTES) {
             // bin/php alone can push the console over Lambda's limit: without it, the console still
             // deploys and downloads FrankenPHP at cold start.
