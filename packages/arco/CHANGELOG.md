@@ -9,7 +9,10 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   so a binary is about a third smaller (35 MB to 24 MB for a typical app) and its zip about half as large. Stack
   traces keep function names, files and lines. See [Build and package](docs/configuration.md#build-and-package).
 - **Changed: process packages are deflated at level 1.** Writing the zip of a Go app is about four times faster for a
-  zip about 10% larger. The package hash is unchanged (it is taken from the files). PHP packages keep the default level.
+  zip about 10% larger. The package hash is unchanged (it is taken from the files).
+- **Changed: deploys run by Arco Cloud deflate PHP packages at level 1.** With `ARCO_DEFER_COLD_START=1` (set by Arco
+  Cloud's runner and GitHub Action), writing the zip of a Laravel app is about 3x faster for a zip about 15% larger
+  (`bin/frankenphp` stays stored). Plain `arco deploy` keeps the default level, for the smaller upload.
 - **Changed: `arco deploy` sends the console and worker configuration only when it changed.** A function whose
   role, description, memory, storage, timeout, variables, KMS key and VPC already match gets only its code update,
   without `UpdateFunctionConfiguration` and the wait after it. A role Arco has just created is always sent.

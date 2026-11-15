@@ -15,6 +15,7 @@ use Multiapi\Arco\Package\PackageReader;
 use Multiapi\Arco\Package\PackageTooLarge;
 use Multiapi\Arco\Package\Packager;
 use Multiapi\Arco\Tests\Support\TempPaths;
+use Multiapi\Arco\Tests\Support\ZipFlags;
 use PHPUnit\Framework\TestCase;
 use ZipArchive;
 
@@ -61,29 +62,6 @@ final class PackagerTest extends TestCase
         );
     }
 
-    /** General purpose bits 1-2 of a deflated entry: 10 means "fast" (level 1 in libzip). */
-    private const DEFLATE_FAST = 0b100;
-
-    /** The general purpose flags of $name, read from the zip's central directory. */
-    private static function flags(string $zip, string $name): int
-    {
-        $bytes = (string) file_get_contents($zip);
-        $end = strrpos($bytes, "PK\x05\x06");
-        self::assertNotFalse($end);
-        $directory = unpack('ventries/Vsize/Voffset', substr($bytes, $end + 10, 10));
-        self::assertIsArray($directory);
-        $offset = (int) $directory['offset'];
-        for ($i = 0; $i < (int) $directory['entries']; $i++) {
-            $record = unpack('Vsignature/vmade/vneeded/vflags/vmethod/Vtime/Vcrc/Vcompressed/Vsize/vname/vextra/vcomment', substr($bytes, $offset, 34));
-            self::assertIsArray($record);
-            if (substr($bytes, $offset + 46, (int) $record['name']) === $name) {
-                return (int) $record['flags'];
-            }
-            $offset += 46 + (int) $record['name'] + (int) $record['extra'] + (int) $record['comment'];
-        }
-        self::fail("$name is not in the zip");
-    }
-
     public function test_zip_layout_and_runtime_config(): void
     {
         $package = (new Packager($this->runtimeDir))->package($this->build, $this->binary, $this->config(), new PlainPhpPreset());
@@ -101,7 +79,7 @@ final class PackagerTest extends TestCase
         self::assertSame(ZipArchive::OPSYS_UNIX, $opsys);
         self::assertSame(0755, ($attr >> 16) & 0777);
         self::assertSame(ZipArchive::CM_STORE, $zip->statName('bin/frankenphp')['comp_method']);
-        self::assertNotSame(self::DEFLATE_FAST, self::flags($package->path, 'app/vendor/big/blob.bin') & 0b110, 'PHP files keep the default level');
+        self::assertFalse(ZipFlags::fast($package->path, 'app/vendor/big/blob.bin'), 'PHP files keep the default level');
         $zip->getExternalAttributesName('bootstrap', $opsys, $attr);
         self::assertSame(0755, ($attr >> 16) & 0777, 'Lambda runs bootstrap directly');
         $zip->getExternalAttributesName('runtime/console.php', $opsys, $attr);
@@ -121,6 +99,20 @@ final class PackagerTest extends TestCase
 
         self::assertSame(64, strlen($package->hash));
         self::assertGreaterThan(4096, $package->bytes);
+    }
+
+    public function test_a_fast_php_package_deflates_at_level_1_and_still_stores_frankenphp(): void
+    {
+        // Both write the staging directory's package.zip: the default one first, for its hash.
+        $defaultHash = (new Packager($this->runtimeDir))->package($this->build, $this->binary, $this->config(), new PlainPhpPreset())->hash;
+        $package = (new Packager($this->runtimeDir))->package($this->build, $this->binary, $this->config(), new PlainPhpPreset(), fastDeflate: true);
+
+        self::assertTrue(ZipFlags::fast($package->path, 'app/vendor/big/blob.bin'));
+        $zip = new ZipArchive();
+        self::assertTrue($zip->open($package->path));
+        self::assertSame(ZipArchive::CM_STORE, $zip->statName('bin/frankenphp')['comp_method']);
+        $zip->close();
+        self::assertSame($defaultHash, $package->hash, 'the level does not change the package hash');
     }
 
     public function test_workers_and_max_threads_write_the_same_runtime_json_as_the_deprecated_form(): void
@@ -383,7 +375,7 @@ final class PackagerTest extends TestCase
         $zip->getExternalAttributesName('app/bin/app', $opsys, $attrs);
         self::assertSame(0755, ($attrs >> 16) & 0777);
         self::assertSame(ZipArchive::CM_DEFLATE, $zip->statName('app/bin/app')['comp_method']);
-        self::assertSame(self::DEFLATE_FAST, self::flags($package->path, 'app/bin/app') & 0b110, 'the Go binary is deflated at level 1: a third of the time for ~10% more bytes');
+        self::assertTrue(ZipFlags::fast($package->path, 'app/bin/app'), 'the Go binary is deflated at level 1: a quarter of the time for ~10% more bytes');
         self::assertSame(
             ['kind' => 'process', 'command' => ['bin/app'], 'healthPath' => '/', 'arcoVersion' => \Multiapi\Arco\Arco::version()],
             json_decode((string) $zip->getFromName('arco-runtime.json'), true),
