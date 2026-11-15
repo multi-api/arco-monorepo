@@ -69,7 +69,7 @@ arco info --env=production
 arco logs --env=production --since=10m
 ```
 
-- Arco builds `CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath` of the root package, or of the only
+- Arco builds `CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags='-s -w'` of the root package, or of the only
   `cmd/<name>` with `package main`; set `runtime.main` (`"runtime": {"main": "./cmd/api"}`) when there are several.
 - Only the binary is packaged. Files the app reads at run time (templates, migrations) go in `include`.
 - The first deploy checks `/` (set `runtime.healthPath` for another path): it must answer `2xx`.

@@ -94,6 +94,11 @@ final class Packager
                 // The static FrankenPHP binary barely compresses (~5%) but deflating its 160 MB
                 // took most of the packaging time.
                 $zip->setCompressionName($name, ZipArchive::CM_STORE);
+            } elseif ($process) {
+                // Level 1 deflates a Go binary about 4x faster than the default level 6 for ~10% more bytes
+                // (24 MB: 0.3 s, 9.4 MB instead of 1.2 s, 8.5 MB). The package hash is taken from the sources,
+                // so it does not change.
+                $zip->setCompressionName($name, ZipArchive::CM_DEFLATE, 1);
             }
         }
         $reported = -1;

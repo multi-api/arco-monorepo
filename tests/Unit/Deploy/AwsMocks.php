@@ -54,15 +54,24 @@ final class AwsMocks
     {
         return new class extends Sleeper {
             public int $slept = 0;
+            public int $sleptMs = 0;
+            /** @var list<int> every sleepMs() pause, in order */
+            public array $naps = [];
 
             public function sleep(int $seconds): void
             {
                 $this->slept += $seconds;
             }
 
+            public function sleepMs(int $milliseconds): void
+            {
+                $this->sleptMs += $milliseconds;
+                $this->naps[] = $milliseconds;
+            }
+
             public function now(): float
             {
-                return 1_000_000.0 + $this->slept;
+                return 1_000_000.0 + $this->slept + $this->sleptMs / 1000;
             }
         };
     }
