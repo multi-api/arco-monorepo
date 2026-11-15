@@ -111,6 +111,28 @@ final class ConsolePackagerTest extends TestCase
         self::assertFileExists($web->path, 'the web zip is untouched');
     }
 
+    public function test_the_php_cli_is_stored_uncompressed(): void
+    {
+        $content = str_repeat('ELF-the-static-php-cli-compressible-', 500);
+        $webPackage = $this->web();
+        $console = ConsolePackager::fromWeb($webPackage, $this->dir(), $this->cli($content));
+
+        $zip = new ZipArchive();
+        self::assertTrue($zip->open($console->package->path));
+        self::assertSame(ZipArchive::CM_STORE, $zip->statName('bin/php')['comp_method'], 'deflating the 91 MB CLI at close() dominates the deploy');
+        self::assertSame(strlen($content), $zip->statName('bin/php')['comp_size']);
+        $web = new ZipArchive();
+        self::assertTrue($web->open($webPackage->path));
+        foreach (['app/public/index.php', 'runtime/console.php', 'bootstrap'] as $name) {
+            self::assertSame($web->statName($name)['comp_method'], $zip->statName($name)['comp_method'], "$name keeps its compression");
+        }
+        $web->close();
+        self::assertSame($content, $zip->getFromName('bin/php'));
+        $zip->getExternalAttributesName('bin/php', $opsys, $attr);
+        self::assertSame(0755, ($attr >> 16) & 0777);
+        $zip->close();
+    }
+
     public function test_the_console_hash_depends_on_the_php_cli(): void
     {
         $web = $this->web();

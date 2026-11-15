@@ -64,7 +64,10 @@ final class ConsolePackager
         $added = 0;
         if ($phpCli !== null) {
             // addFile() reads the file at close(), which happens below while $phpCli still exists.
+            // Stored, not deflated: close() deflating the 91 MB CLI took ~9 s of a deploy, and Lambda's
+            // limit counts unzipped bytes, so the larger zip costs only upload size.
             if (! @$zip->addFile($phpCli, self::PHP_CLI)
+                || ! $zip->setCompressionName(self::PHP_CLI, ZipArchive::CM_STORE)
                 || ! $zip->setExternalAttributesName(self::PHP_CLI, ZipArchive::OPSYS_UNIX, (0100000 | 0755) << 16)) {
                 $zip->close();
                 throw BuildException::make('package.write_failed', ['path' => $path]);

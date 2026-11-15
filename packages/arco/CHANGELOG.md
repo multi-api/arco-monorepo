@@ -5,6 +5,9 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## Unreleased
 
+- **Changed: the console zip stores the PHP CLI uncompressed.** `bin/php` (about 91 MB) is no longer deflated when
+  `arco deploy` builds the console zip, which makes the deploy about 8-12 s faster. The zip is about 60 MB larger to
+  upload; Lambda's limit counts unzipped bytes, so it is unaffected.
 - **Changed: the console and worker update overlaps the web revision.** With a console or queues, `arco deploy` now
   waits for the new web revision to become active after updating the console and workers, not before, so both run at
   the same time and the deploy is about 18 s shorter. Step events and their order are unchanged, a failed revision
