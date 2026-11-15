@@ -58,6 +58,8 @@ final class WorkerFunctionsTest extends TestCase
             $app = match ($definition) {
                 'big' => $app->queue('big', batchSize: 11),
                 'ten' => $app->queue('ten', batchSize: 10),
+                'loops' => $app->queue('loops', recursiveLoop: 'allow'),
+                'strict' => $app->queue('strict', recursiveLoop: 'terminate'),
                 'orders' => $app->queue('orders', batchSize: 10, fifo: true),
                 'a' => $app->queue('legacy', existing: 'arn:aws:sqs:us-east-1:222222222222:queue-a', dlq: false),
                 'b' => $app->queue('legacy', existing: 'arn:aws:sqs:us-east-1:222222222222:queue-b', dlq: false),
@@ -96,7 +98,9 @@ final class WorkerFunctionsTest extends TestCase
     {
         $index = array_search($operation, $mocks->calls, true);
         self::assertIsInt($index, "$operation was called");
-        return $mocks->params[$index];
+        $params = $mocks->params[$index];
+        unset($params['@context'], $params['@http']);
+        return $params;
     }
 
     public function test_a_standard_queue_above_ten_messages_a_batch_gets_a_one_second_batching_window(): void
@@ -108,6 +112,44 @@ final class WorkerFunctionsTest extends TestCase
         $arn = 'arn:aws:sqs:us-east-1:111111111111:shop-production-big';
         [$mocks] = self::activate(self::config('big'), 'big', [['UUID' => 'u1', 'EventSourceArn' => $arn]], new \Aws\Result([]));
         self::assertSame(1, self::call($mocks, 'UpdateEventSourceMapping')['MaximumBatchingWindowInSeconds']);
+    }
+
+    public function test_a_queue_with_recursive_loop_allow_sets_the_worker_recursion_config_when_it_differs(): void
+    {
+        [$mocks, $steps] = self::activate(
+            self::config('loops'),
+            'loops',
+            [],
+            new \Aws\Result(['UUID' => 'u1']),                                   // CreateEventSourceMapping
+            new \Aws\Result(['RecursiveLoop' => 'Terminate']),                   // GetFunctionRecursionConfig
+            new \Aws\Result(['RecursiveLoop' => 'Allow']),                       // PutFunctionRecursionConfig
+        );
+        self::assertSame(['FunctionName' => 'shop-production-queue-loops'], self::call($mocks, 'GetFunctionRecursionConfig'));
+        self::assertSame(['FunctionName' => 'shop-production-queue-loops', 'RecursiveLoop' => 'Allow'], self::call($mocks, 'PutFunctionRecursionConfig'));
+        self::assertContains(['deploy.worker_recursive_loop', ['queue' => 'loops', 'function' => 'shop-production-queue-loops', 'value' => 'Allow']], $steps);
+
+        // Already Allow: read, not written, no step.
+        [$mocks, $steps] = self::activate(self::config('loops'), 'loops', [], new \Aws\Result(['UUID' => 'u1']), new \Aws\Result(['RecursiveLoop' => 'Allow']));
+        self::assertNotContains('PutFunctionRecursionConfig', $mocks->calls);
+        self::assertSame([], array_filter($steps, fn (array $step) => $step[0] === 'deploy.worker_recursive_loop'));
+    }
+
+    public function test_recursive_loop_terminate_restores_the_aws_default_and_an_unset_option_never_touches_it(): void
+    {
+        [$mocks, $steps] = self::activate(
+            self::config('strict'),
+            'strict',
+            [],
+            new \Aws\Result(['UUID' => 'u1']),
+            new \Aws\Result(['RecursiveLoop' => 'Allow']),
+            new \Aws\Result(['RecursiveLoop' => 'Terminate']),
+        );
+        self::assertSame(['FunctionName' => 'shop-production-queue-strict', 'RecursiveLoop' => 'Terminate'], self::call($mocks, 'PutFunctionRecursionConfig'));
+        self::assertContains(['deploy.worker_recursive_loop', ['queue' => 'strict', 'function' => 'shop-production-queue-strict', 'value' => 'Terminate']], $steps);
+
+        [$mocks] = self::activate(self::config('ten'), 'ten', [], new \Aws\Result(['UUID' => 'u1']));
+        self::assertNotContains('GetFunctionRecursionConfig', $mocks->calls);
+        self::assertNotContains('PutFunctionRecursionConfig', $mocks->calls);
     }
 
     public function test_a_standard_queue_of_up_to_ten_clears_the_window_and_a_fifo_queue_never_sends_it(): void

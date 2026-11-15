@@ -127,6 +127,19 @@ final class ConfigResolverLayerTest extends TestCase
         self::assertSame('cloud', $config->sources['queue:emails']);
     }
 
+    public function test_a_layer_sets_a_queue_recursive_loop_and_arco_php_keeps_it_unset_by_default(): void
+    {
+        $config = ConfigResolver::resolve(
+            self::raw(fn (App $a) => $a->queue('emails')),
+            'production',
+            self::layer(['queues' => ['default' => ['recursiveLoop' => 'allow']]]),
+        );
+
+        self::assertSame(['emails', 'default'], array_map(fn ($q) => $q->name, $config->queues));
+        self::assertNull($config->queues[0]->recursiveLoop);
+        self::assertSame('allow', $config->queues[1]->recursiveLoop);
+    }
+
     public function test_setting_equal_is_fine_different_conflicts_unset_takes_layer(): void
     {
         $equal = ConfigResolver::resolve(self::raw(env: fn (Environment $e) => $e->scheduler(1)), 'production', self::layer(['settings' => ['scheduler' => 1]]));
