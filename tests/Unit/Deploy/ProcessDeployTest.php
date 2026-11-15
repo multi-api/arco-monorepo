@@ -228,7 +228,6 @@ final class ProcessDeployTest extends TestCase
             new Result([]),                                                                      // PutRolePolicy
             AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
             new Result(['revision' => ['revisionId' => 'rev-1'], 'endpoint' => ['domainName' => 'abc.on.aws']]),
-            new Result(['state' => 'Active', 'stateReason' => 'ok']),                           // GetWebFunctionRevision
             AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404),                // the same zip, console prefix
             new Result(['VersionId' => 'cv1']),                                                  // PutObject
             // console, emails, orders: live versions, lookups, CreateFunction, ready, PublishVersion
@@ -237,6 +236,7 @@ final class ProcessDeployTest extends TestCase
             new Result(['State' => 'Pending']), new Result(['State' => 'Pending']), new Result(['State' => 'Pending']),
             self::ready(), self::ready(), self::ready(),
             new Result(['Version' => '1']), new Result(['Version' => '1']), new Result(['Version' => '1']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),                           // GetWebFunctionRevision
         );
         $config = self::config(['emails' => [], 'orders' => ['fifo' => true]]);
         $package = self::processZip();

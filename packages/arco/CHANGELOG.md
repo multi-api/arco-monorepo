@@ -5,6 +5,11 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## Unreleased
 
+- **Changed: the console and worker update overlaps the web revision.** With a console or queues, `arco deploy` now
+  waits for the new web revision to become active after updating the console and workers, not before, so both run at
+  the same time and the deploy is about 18 s shorter. Step events and their order are unchanged, a failed revision
+  still raises `deploy.revision_failed`, and nothing goes live before verification. A deploy whose revision fails may
+  leave the function versions it published; a later deploy prunes them.
 - **Added: `ARCO_DEFER_COLD_START`.** With `ARCO_DEFER_COLD_START=1` in the shell running `arco deploy`, the deploy
   skips its last step, the up to 60 s wait for the cold start in CloudWatch Logs. The `--json` result then has
   `cold_start_ms: null` and a new `cold_start_deferred` field, `{"log_group", "since_ms", "stream_prefixes"}`:
