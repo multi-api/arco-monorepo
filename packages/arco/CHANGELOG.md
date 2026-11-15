@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.23.0
 
 - **Changed: deploys run by Arco Cloud store the PHP CLI uncompressed in the console zip.** With
   `ARCO_DEFER_COLD_START=1` (set by Arco Cloud's runner and GitHub Action), `bin/php` (about 91 MB) is no longer
