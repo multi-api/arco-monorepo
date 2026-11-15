@@ -574,7 +574,13 @@ final class DeployPipeline
             if ($verification->ok && $config->domains !== []) {
                 $result = $deployer->attachDomains($config, $result, $preset instanceof CachesPaths ? $preset->cachedPaths() : [], $onStep, $preset->healthPath());
             }
-            if ($verification->ok) {
+            $coldStartLookup = null;
+            // ARCO_DEFER_COLD_START=1 (Arco Cloud): skip the wait and report where to read the cold start later.
+            // Never for an auth('iam') endpoint verify() already waited on: its init report was its health check.
+            $deferColdStart = getenv('ARCO_DEFER_COLD_START') === '1' && ! ($config->auth === 'iam' && ! RevisionFactory::protectsEndpoint($config));
+            if ($verification->ok && $deferColdStart) {
+                $coldStartLookup = $verifier->coldStartLookup($config, $result, $since);
+            } elseif ($verification->ok) {
                 try {
                     $verification = $verifier->coldStart($config, $result, $since, $verification, $onStep);
                 } catch (Throwable) {
@@ -585,7 +591,7 @@ final class DeployPipeline
             if ($verification->ok) {
                 $deployer->prune($config, $prepared, $onStep);
             }
-            return new DeployOutcome($result, $verification, $rolledBack, $package->bytes, $ran);
+            return new DeployOutcome($result, $verification, $rolledBack, $package->bytes, $ran, $coldStartLookup);
         } finally {
             (new Filesystem())->remove($work);
         }

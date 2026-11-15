@@ -12,6 +12,7 @@ use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Config\Runtime;
 use Multiapi\Arco\Console\CommandResult;
 use Multiapi\Arco\Deploy\ChangeTrackingDeployer;
+use Multiapi\Arco\Deploy\ColdStartLookup;
 use Multiapi\Arco\Deploy\CommandPlan;
 use Multiapi\Arco\Deploy\ConsoleFunction;
 use Multiapi\Arco\Deploy\ConsoleRetriesNotDisabled;
@@ -40,6 +41,11 @@ final class DeployPipelineTest extends TestCase
         mkdir("$this->project/public", 0777, true);
         file_put_contents("$this->project/public/index.php", '<?php echo "ok";');
         file_put_contents("$this->project/composer.json", '{}');
+    }
+
+    protected function tearDown(): void
+    {
+        putenv('ARCO_DEFER_COLD_START');
     }
 
     /** Stands in for `composer install`: writes the files DeployPipeline checks for (queues, storage, tables), minus $this->withoutVendor. */
@@ -335,6 +341,11 @@ final class DeployPipelineTest extends TestCase
             {
                 return $verification;
             }
+
+            public function coldStartLookup(AppConfig $config, DeployResult $result, int $sinceMs): ColdStartLookup
+            {
+                throw new \LogicException('Never reached: verify() throws.');
+            }
         };
 
         try {
@@ -413,6 +424,82 @@ final class DeployPipelineTest extends TestCase
         self::assertSame(['prepare', 'release', 'scheduler:off', 'domains:', 'coldStart', 'prune'], $deployer->calls);
         self::assertSame(950, $outcome->verification->initDurationMs);
         self::assertTrue($outcome->verification->ok);
+    }
+
+    public function test_a_deferred_cold_start_skips_the_lookup_and_reports_where_to_read_it(): void
+    {
+        putenv('ARCO_DEFER_COLD_START=1');
+        $deployer = new FakeDeployer('rev-1');
+        $verifier = new FakeVerifier(true, 950, function () use ($deployer): void { $deployer->calls[] = 'coldStart'; });
+
+        $outcome = $this->pipeline()->deploy($this->config(domains: true), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
+
+        self::assertSame(['prepare', 'release', 'scheduler:off', 'domains:', 'prune'], $deployer->calls);
+        self::assertSame(['coldStartLookup'], $verifier->calls);
+        self::assertTrue($outcome->verification->ok);
+        self::assertNull($outcome->verification->initDurationMs);
+        self::assertSame('/aws/lambda/web/shop-production', $outcome->coldStartLookup?->logGroup);
+        self::assertSame(['shop-production[rev-2]'], $outcome->coldStartLookup->streamPrefixes);
+        self::assertSame($verifier->sinceMs, $outcome->coldStartLookup->sinceMs);
+    }
+
+    public function test_without_the_variable_the_cold_start_is_waited_for_and_no_lookup_is_reported(): void
+    {
+        putenv('ARCO_DEFER_COLD_START=0');
+        $deployer = new FakeDeployer('rev-1');
+        $verifier = new FakeVerifier(true, 950);
+
+        $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
+
+        self::assertSame(['coldStart'], $verifier->calls);
+        self::assertSame(950, $outcome->verification->initDurationMs);
+        self::assertNull($outcome->coldStartLookup);
+    }
+
+    public function test_an_iam_endpoint_still_waits_when_the_cold_start_is_deferred(): void
+    {
+        putenv('ARCO_DEFER_COLD_START=1');
+        $verifier = new FakeVerifier(true, 950, verifyInitMs: 950);
+
+        $outcome = $this->pipeline()->deploy($this->iamConfig(), new PlainPhpPreset(), $this->project, new FakeDeployer('rev-1'), $verifier, fn () => null);
+
+        self::assertSame(950, $outcome->verification->initDurationMs);
+        self::assertSame(['coldStart'], $verifier->calls);
+        self::assertNull($outcome->coldStartLookup);
+    }
+
+    public function test_an_iam_endpoint_whose_init_report_was_not_found_is_not_deferred_either(): void
+    {
+        putenv('ARCO_DEFER_COLD_START=1');
+        $verifier = new FakeVerifier(true, null);
+
+        $outcome = $this->pipeline()->deploy($this->iamConfig(), new PlainPhpPreset(), $this->project, new FakeDeployer('rev-1'), $verifier, fn () => null);
+
+        self::assertNull($outcome->verification->initDurationMs);
+        self::assertSame(['coldStart'], $verifier->calls);
+        self::assertNull($outcome->coldStartLookup);
+    }
+
+    public function test_a_failed_verification_reports_no_deferred_lookup(): void
+    {
+        putenv('ARCO_DEFER_COLD_START=1');
+        $verifier = new FakeVerifier(false);
+
+        $outcome = $this->pipeline()->deploy($this->config(), new PlainPhpPreset(), $this->project, new FakeDeployer('rev-1'), $verifier, fn () => null);
+
+        self::assertSame([], $verifier->calls);
+        self::assertNull($outcome->coldStartLookup);
+    }
+
+    private function iamConfig(): AppConfig
+    {
+        return ConfigResolver::resolve(
+            App::make('shop')->region('us-east-1')->auth('iam')
+                ->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))
+                ->environment('production', fn (Environment $e) => $e)
+                ->toArray(),
+            'production',
+        );
     }
 
     public function test_a_failing_cold_start_lookup_never_fails_a_finished_deploy(): void

@@ -187,9 +187,20 @@ final class JsonStreamTest extends TestCase
         self::assertSame([
             'schema' => 1, 'type' => 'result', 'outcome' => 'deployed', 'app' => 'shop', 'environment' => 'production',
             'revision' => 'rev-2', 'url' => 'https://abc.on.aws', 'domains' => ['shop.example.com'], 'rolled_back' => false,
-            'cold_start_ms' => 812, 'error' => null,
+            'cold_start_ms' => 812, 'cold_start_deferred' => null, 'error' => null,
         ], $lines[2]);
         self::assertTrue($stream->hasResult());
+    }
+
+    public function test_the_result_carries_where_to_read_a_deferred_cold_start(): void
+    {
+        $stream = $this->stream();
+        $deferred = ['log_group' => '/aws/lambda/web/shop-production', 'since_ms' => 1792591380000, 'stream_prefixes' => ['2026/10/21/shop-production[rev-2]']];
+        $stream->result('deployed', 'shop', 'production', 'rev-2', 'https://abc.on.aws', [], false, null, coldStartDeferred: $deferred);
+
+        $lines = $this->lines();
+        self::assertNull($lines[0]['cold_start_ms']);
+        self::assertSame($deferred, $lines[0]['cold_start_deferred']);
     }
 
     public function test_a_failed_result_leaves_the_failing_step_open_and_carries_the_error(): void

@@ -3,6 +3,16 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## Unreleased
+
+- **Added: `ARCO_DEFER_COLD_START`.** With `ARCO_DEFER_COLD_START=1` in the shell running `arco deploy`, the deploy
+  skips its last step, the up to 60 s wait for the cold start in CloudWatch Logs. The `--json` result then has
+  `cold_start_ms: null` and a new `cold_start_deferred` field, `{"log_group", "since_ms", "stream_prefixes"}`:
+  where to read the revision's `platform.initReport` later. The field is `null` otherwise (always on failed,
+  refused and remove results). An `auth('iam')` endpoint without `domain()` still waits, since its init report is
+  its health check. For deploy services billed by the second, such as Arco Cloud's runner. See
+  [Deferring the cold start](docs/getting-started.md#deferring-the-cold-start-arco_defer_cold_start).
+
 ## 0.22.0
 
 - **Added: `recursiveLoop` on queues.** `->queue('default', recursiveLoop: 'allow')` (`"recursiveLoop": "allow"` in a

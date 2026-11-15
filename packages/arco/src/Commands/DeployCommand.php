@@ -290,7 +290,7 @@ final class DeployCommand extends ArcoCommand
             }
             $io->success($success);
             $stream?->result('deployed', $config->app, $config->environment, $outcome->result->revisionId, $outcome->result->url(),
-                $outcome->result->domains, false, $outcome->verification->initDurationMs);
+                $outcome->result->domains, false, $outcome->verification->initDurationMs, coldStartDeferred: $outcome->coldStartLookup?->toArray());
             $this->telemetryNotice($config, $output);
 
             // Behind an endpoint override the account is the emulator's (Floci: 000000000000), not one to lock;
