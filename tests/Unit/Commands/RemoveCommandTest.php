@@ -67,7 +67,7 @@ final class RemoveCommandTest extends TestCase
         self::assertStringNotContainsString('plain-token', $tester->getDisplay());
         self::assertSame([
             'schema' => 1, 'type' => 'result', 'outcome' => 'removed', 'app' => 'shop', 'environment' => 'production',
-            'revision' => null, 'url' => null, 'domains' => [], 'rolled_back' => false, 'cold_start_ms' => null, 'error' => null,
+            'revision' => null, 'url' => null, 'domains' => [], 'rolled_back' => false, 'cold_start_ms' => null, 'cold_start_deferred' => null, 'error' => null,
         ], $lines[count($lines) - 1]);
         self::assertSame('', $tester->getErrorOutput());
         $project->restore();

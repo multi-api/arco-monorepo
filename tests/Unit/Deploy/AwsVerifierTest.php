@@ -199,6 +199,27 @@ final class AwsVerifierTest extends TestCase
         self::assertSame(['2026/10/15/shop-production[rev-2]'], array_values(array_unique(array_column($group->queriesOf('FilterLogEvents'), 'logStreamNamePrefix'))));
     }
 
+    public function test_the_deferred_lookup_names_the_group_and_prefixes_without_reading_logs(): void
+    {
+        $group = new FakeLogGroup(self::T0 + 40);
+
+        $lookup = $this->verifier($group)->coldStartLookup($this->config(), $this->deployResult(), self::T0 * 1000);
+
+        self::assertSame([
+            'log_group' => '/aws/lambda/web/shop-production',
+            'since_ms' => self::T0 * 1000,
+            'stream_prefixes' => ['2026/10/15/shop-production[rev-2]'],
+        ], $lookup->toArray());
+        self::assertSame([], $group->queriesOf('FilterLogEvents'));
+    }
+
+    public function test_the_deferred_lookup_of_a_deploy_across_midnight_has_both_days_prefixes(): void
+    {
+        $lookup = $this->verifier(new FakeLogGroup(self::MIDNIGHT + 5))->coldStartLookup($this->config(), $this->deployResult(), (self::MIDNIGHT - 10) * 1000);
+
+        self::assertSame(['2026/10/16/shop-production[rev-2]', '2026/10/15/shop-production[rev-2]'], $lookup->streamPrefixes);
+    }
+
     public function test_cloudwatch_errors_leave_the_cold_start_unknown(): void
     {
         foreach (['ThrottlingException', 'AccessDeniedException'] as $code) {

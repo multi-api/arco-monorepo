@@ -39,7 +39,7 @@ final class DeployJsonTest extends TestCase
 
     protected function setUp(): void
     {
-        foreach (['AWS_ENDPOINT_URL', 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS', 'CLOUDFLARE_API_TOKEN'] as $name) {
+        foreach (['AWS_ENDPOINT_URL', 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS', 'CLOUDFLARE_API_TOKEN', 'ARCO_DEFER_COLD_START'] as $name) {
             $this->savedEnv[$name] = getenv($name);
             putenv($name);
         }
@@ -145,7 +145,7 @@ final class DeployJsonTest extends TestCase
         }
         $results = array_keys(array_filter($lines, fn (array $l) => $l['type'] === 'result'));
         self::assertSame([count($lines) - 1], $results, 'exactly one result, the last line');
-        self::assertSame(['schema', 'type', 'outcome', 'app', 'environment', 'revision', 'url', 'domains', 'rolled_back', 'cold_start_ms', 'error'], array_keys($lines[count($lines) - 1]));
+        self::assertSame(['schema', 'type', 'outcome', 'app', 'environment', 'revision', 'url', 'domains', 'rolled_back', 'cold_start_ms', 'cold_start_deferred', 'error'], array_keys($lines[count($lines) - 1]));
         return $lines;
     }
 
@@ -177,7 +177,7 @@ final class DeployJsonTest extends TestCase
         self::assertSame(0, $tester->getStatusCode());
         self::assertSame([
             'schema' => 1, 'type' => 'result', 'outcome' => 'deployed', 'app' => 'shop', 'environment' => 'production',
-            'revision' => 'rev-2', 'url' => 'https://abc.on.aws', 'domains' => [], 'rolled_back' => false, 'cold_start_ms' => 800, 'error' => null,
+            'revision' => 'rev-2', 'url' => 'https://abc.on.aws', 'domains' => [], 'rolled_back' => false, 'cold_start_ms' => 800, 'cold_start_deferred' => null, 'error' => null,
         ], self::last($lines));
         $started = self::keys($lines, 'started');
         self::assertSame('build.staging', $started[0]);
@@ -315,6 +315,35 @@ final class DeployJsonTest extends TestCase
         $result = self::last($lines);
         self::assertSame(['refused', 'deploy.not_owned', false], [$result['outcome'], $result['error']['key'], $result['rolled_back']]);
         self::assertStringContainsString('staging', $result['error']['message']);
+    }
+
+    public function test_a_deferred_cold_start_is_reported_as_where_to_read_it(): void
+    {
+        putenv('ARCO_DEFER_COLD_START=1');
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester($this->existing());
+
+        $lines = $this->deploy($tester);
+
+        self::assertSame(0, $tester->getStatusCode());
+        $result = self::last($lines);
+        self::assertSame('deployed', $result['outcome']);
+        self::assertNull($result['cold_start_ms']);
+        self::assertSame(['log_group', 'since_ms', 'stream_prefixes'], array_keys($result['cold_start_deferred']));
+        self::assertSame('/aws/lambda/web/shop-production', $result['cold_start_deferred']['log_group']);
+        self::assertSame(['shop-production[rev-2]'], $result['cold_start_deferred']['stream_prefixes']);
+    }
+
+    public function test_a_failed_verification_never_reports_a_deferred_cold_start(): void
+    {
+        putenv('ARCO_DEFER_COLD_START=1');
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $tester = $this->tester($this->existing(), verifies: false);
+
+        $result = self::last($this->deploy($tester));
+
+        self::assertSame('failed', $result['outcome']);
+        self::assertNull($result['cold_start_deferred']);
     }
 
     public function test_a_failed_verification_is_failed_and_rolled_back(): void

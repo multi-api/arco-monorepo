@@ -10,6 +10,7 @@ use Aws\Lambda\Exception\LambdaException;
 use Aws\LambdaWeb\Exception\LambdaWebException;
 use Aws\ResourceGroups\Exception\ResourceGroupsException;
 use Aws\ResourceGroupsTaggingAPI\Exception\ResourceGroupsTaggingAPIException;
+use Aws\CommandInterface;
 use Aws\Result;
 use Aws\S3\Exception\S3Exception;
 use Aws\Sqs\Exception\SqsException;
@@ -166,7 +167,6 @@ final class AwsDeployerTest extends TestCase
             AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
             AwsMocks::error(LambdaWebException::class, 'CreateWebFunction', 'ValidationException', 400, 'The role defined for the function cannot be assumed by Lambda.'),
             new Result(['revision' => ['revisionId' => 'rev-1'], 'endpoint' => ['domainName' => 'abc.xpt.lambda-web.us-east-1.on.aws']]),
-            new Result(['state' => 'Active', 'stateReason' => 'ok']),                           // GetWebFunctionRevision
             AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404),                // console zip
             new Result(['VersionId' => 'cv1']),                                                  // PutObject (console zip)
             AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404),                // binary
@@ -176,6 +176,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['State' => 'Pending']),                                                  // CreateFunction
             new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']),
             new Result(['Version' => '1']),                                                      // PublishVersion
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),                           // GetWebFunctionRevision
             // release
             new Result(['state' => 'Active', 'domainName' => 'abc.xpt.lambda-web.us-east-1.on.aws', 'revisionWeights' => []]),
             new Result([]),                                                                      // UpdateWebFunctionEndpoint
@@ -208,9 +209,9 @@ final class AwsDeployerTest extends TestCase
 
         self::assertSame([
             'GetCallerIdentity', 'HeadBucket', 'PutPublicAccessBlock', 'PutBucketPolicy', 'PutBucketVersioning', 'PutBucketLifecycleConfiguration', 'HeadObject', 'PutObject', 'GetRole', 'CreateRole', 'PutRolePolicy',
-            'GetWebFunction', 'CreateWebFunction', 'CreateWebFunction', 'GetWebFunctionRevision',
+            'GetWebFunction', 'CreateWebFunction', 'CreateWebFunction',
             'HeadObject', 'PutObject', 'HeadObject', 'PutObject',
-            'GetAlias', 'GetFunctionConfiguration', 'CreateFunction', 'GetFunctionConfiguration', 'PublishVersion',
+            'GetAlias', 'GetFunctionConfiguration', 'CreateFunction', 'GetFunctionConfiguration', 'PublishVersion', 'GetWebFunctionRevision',
             'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
             'UpdateAlias', 'CreateAlias', 'PutFunctionEventInvokeConfig',
             'GetAlias', 'ListVersionsByFunction', 'ListObjectsV2', 'ListObjectsV2', 'GetResources', 'ListObjectsV2',
@@ -219,16 +220,16 @@ final class AwsDeployerTest extends TestCase
         self::assertSame('runtime/1.13.0-r1/frankenphp', $prepared->binaryKey);
         self::assertNotContains('DeleteObjects', $mocks->calls, 'the binary this deploy uses is never pruned, even before the tag listing shows its function');
         $consoleKey = 'shop/production/console-' . str_repeat('c', 64) . '.zip';
-        self::assertSame($consoleKey, $mocks->params[15]['Key']);
-        self::assertSame('runtime/1.13.0-r1/frankenphp', $mocks->params[17]['Key']);
-        self::assertSame(['S3Bucket' => 'arco-111111111111-us-east-1', 'S3Key' => $consoleKey, 'S3ObjectVersion' => 'cv1'], $mocks->params[21]['Code']);
+        self::assertSame($consoleKey, $mocks->params[14]['Key']);
+        self::assertSame('runtime/1.13.0-r1/frankenphp', $mocks->params[16]['Key']);
+        self::assertSame(['S3Bucket' => 'arco-111111111111-us-east-1', 'S3Key' => $consoleKey, 'S3ObjectVersion' => 'cv1'], $mocks->params[20]['Code']);
         self::assertSame([
             'ARCO_BINARY_BUCKET' => 'arco-111111111111-us-east-1',
             'ARCO_BINARY_KEY' => 'runtime/1.13.0-r1/frankenphp',
             'ARCO_BINARY_SHA256' => $console->download?->sha256,
-        ], array_intersect_key($mocks->params[21]['Environment']['Variables'], array_flip(['ARCO_BINARY_BUCKET', 'ARCO_BINARY_KEY', 'ARCO_BINARY_SHA256', 'ARCO_BINARY_VERSION'])));
-        self::assertSame('production', $mocks->params[21]['Environment']['Variables']['APP_ENV']);
-        self::assertSame(['arco:app' => 'shop', 'arco:environment' => 'production'], $mocks->params[21]['Tags']);
+        ], array_intersect_key($mocks->params[20]['Environment']['Variables'], array_flip(['ARCO_BINARY_BUCKET', 'ARCO_BINARY_KEY', 'ARCO_BINARY_SHA256', 'ARCO_BINARY_VERSION'])));
+        self::assertSame('production', $mocks->params[20]['Environment']['Variables']['APP_ENV']);
+        self::assertSame(['arco:app' => 'shop', 'arco:environment' => 'production'], $mocks->params[20]['Tags']);
         $policy = json_decode($mocks->params[10]['PolicyDocument'], true);
         self::assertContains('arn:aws:s3:::arco-111111111111-us-east-1/runtime/*', array_column($policy['Statement'], 'Resource'));
         self::assertSame('1', $prepared->consoleVersion);
@@ -373,7 +374,6 @@ final class AwsDeployerTest extends TestCase
             new Result([]),                                                                      // PutRolePolicy
             AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
             new Result(['revision' => ['revisionId' => 'rev-1'], 'endpoint' => ['domainName' => 'abc.xpt.lambda-web.us-east-1.on.aws']]),
-            new Result(['state' => 'Active', 'stateReason' => 'ok']),                           // GetWebFunctionRevision
             AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404),                // console zip
             new Result(['VersionId' => 'cv1']),                                                  // PutObject (console zip)
             self::lambdaMissing('GetAlias'),
@@ -381,6 +381,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['State' => 'Pending']),                                                  // CreateFunction
             new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']),
             new Result(['Version' => '1']),                                                      // PublishVersion
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),                           // GetWebFunctionRevision
         );
         $zip = (string) TempPaths::file('console');
         file_put_contents($zip, 'console-zip-with-bin-php');
@@ -418,13 +419,13 @@ final class AwsDeployerTest extends TestCase
             new Result([]),                                                                      // PutObject (variables)
             AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404),
             new Result(['revision' => ['revisionId' => 'rev-1'], 'endpoint' => ['domainName' => 'abc.xpt.lambda-web.us-east-1.on.aws']]),
-            new Result(['state' => 'Active', 'stateReason' => 'ok']),                           // GetWebFunctionRevision
             new Result(['VersionId' => 'cv1']),                                                  // HeadObject: console zip already there
             self::lambdaMissing('GetAlias'),
             self::lambdaMissing('GetFunctionConfiguration'),
             new Result(['State' => 'Pending']),                                                  // CreateFunction
             new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']),
             new Result(['Version' => '1']),                                                      // PublishVersion
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),                           // GetWebFunctionRevision
         );
         $zip = (string) TempPaths::file('console');
         file_put_contents($zip, 'console-zip-with-bin-php');
@@ -486,7 +487,6 @@ final class AwsDeployerTest extends TestCase
             new Result(['functionName' => 'shop-production', 'state' => 'Active']),
             new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
             new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
-            new Result(['state' => 'Active', 'stateReason' => 'ok']),
             new Result(['VersionId' => 'cv1']),               // HeadObject (console zip already uploaded)
             new Result(['ContentLength' => 3, 'VersionId' => 'bv1']), // HeadObject (same binary already there)
             new Result([]),                                   // CopyObject (restarts its grace period)
@@ -497,6 +497,7 @@ final class AwsDeployerTest extends TestCase
             new Result([]),                                   // UpdateFunctionConfiguration
             $ready(),
             new Result(['Version' => '7']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
             new Result(['state' => 'Active', 'domainName' => 'abc.on.aws', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
             new Result([]),
             new Result(['state' => 'Active', 'updateStatus' => 'Successful', 'domainName' => 'abc.on.aws', 'revisionWeights' => [['revisionId' => 'rev-2', 'weight' => 100]]]),
@@ -511,13 +512,112 @@ final class AwsDeployerTest extends TestCase
         self::assertSame('6', $result->previousConsoleVersion);
         self::assertSame([
             'GetCallerIdentity', 'HeadBucket', 'PutPublicAccessBlock', 'PutBucketPolicy', 'PutBucketVersioning', 'PutBucketLifecycleConfiguration', 'HeadObject', 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint',
-            'CreateWebFunctionRevision', 'GetWebFunctionRevision', 'HeadObject', 'HeadObject', 'CopyObject',
-            'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion',
+            'CreateWebFunctionRevision', 'HeadObject', 'HeadObject', 'CopyObject',
+            'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion', 'GetWebFunctionRevision',
             'GetWebFunctionEndpoint', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint',
         ], $mocks->calls, 'release neither moves live nor prunes');
         self::assertNotContains('PutObject', $mocks->calls, 'web zip, console zip and binary are uploaded once');
-        self::assertSame('runtime/1.13.0-r1/frankenphp', $mocks->params[15]['Key']);
-        self::assertSame('', $mocks->params[21]['KMSKeyArn'], 'no kmsKey in the config clears a key set by an earlier deploy');
+        self::assertSame('runtime/1.13.0-r1/frankenphp', $mocks->params[14]['Key']);
+        self::assertSame('', $mocks->params[20]['KMSKeyArn'], 'no kmsKey in the config clears a key set by an earlier deploy');
+    }
+
+    /**
+     * The responses of prepare() up to and including the web revision's creation (a redeploy of rev-1 into rev-2), then
+     * answers by operation for the rest: what the functions update asks is the same whatever its order.
+     *
+     * @param array<string, mixed> $revision what GetWebFunctionRevision answers
+     */
+    private function prepareWithConsoleAndQueue(AwsMocks $mocks, array $revision, bool $console = true): AwsDeployer
+    {
+        $answers = [
+            'GetWebFunctionRevision' => new Result($revision),
+            'HeadObject' => new Result(['VersionId' => 'cv1', 'ContentLength' => 3]),
+            'CopyObject' => new Result([]),
+            'GetAlias' => new Result(['FunctionVersion' => '6']),
+            'GetFunctionConfiguration' => new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']),
+            'UpdateFunctionCode' => new Result([]),
+            'UpdateFunctionConfiguration' => new Result([]),
+            'PublishVersion' => new Result(['Version' => '7']),
+        ];
+        $mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result([]),
+            new Result([]), new Result([]), new Result([]), new Result([]),
+            new Result(['VersionId' => 'v1']),                // HeadObject (web zip)
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
+            new Result([]),                                   // PutRolePolicy
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+        );
+        for ($i = 0; $i < 60; $i++) {
+            $mocks->handler->append(fn (CommandInterface $command) => $answers[$command->getName()] ?? new Result([]));
+        }
+        return new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+    }
+
+    private function consoleAndQueueConfig(): AppConfig
+    {
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->console()->queue('emails')->toArray(), 'production');
+    }
+
+    public function test_revision_wait_comes_after_the_functions_update(): void
+    {
+        $mocks = new AwsMocks();
+        $deployer = $this->prepareWithConsoleAndQueue($mocks, ['state' => 'Active', 'stateReason' => 'ok']);
+
+        $deployer->prepare($this->consoleAndQueueConfig(), $this->package(), $this->console(), []);
+
+        $create = array_search('CreateWebFunctionRevision', $mocks->calls, true);
+        $wait = array_search('GetWebFunctionRevision', $mocks->calls, true);
+        self::assertIsInt($create);
+        self::assertIsInt($wait);
+        $updates = array_keys(array_filter($mocks->calls, fn (string $c) => $c === 'UpdateFunctionCode'));
+        self::assertCount(2, $updates, 'the console and the worker');
+        self::assertGreaterThan(max($updates), $wait, 'the revision activates while the functions update; its wait is last');
+        self::assertSame(['shop-production-console', 'shop-production-queue-emails'], array_values(array_unique(array_map(fn (int $i) => $mocks->params[$i]['FunctionName'], $updates))));
+        self::assertSame(1, count(array_keys($mocks->calls, 'GetWebFunctionRevision', true)));
+        self::assertSame('PublishVersion', $mocks->calls[$wait - 1]);
+    }
+
+    public function test_revision_wait_stays_first_without_console_or_queues(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['Account' => '111111111111']),
+            new Result([]), new Result([]), new Result([]), new Result([]), new Result([]),
+            new Result(['VersionId' => 'v1']),
+            new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
+            new Result([]),
+            new Result(['functionName' => 'shop-production', 'state' => 'Active']),
+            new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
+            new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
+        );
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $deployer->prepare($this->config(), $this->package(), null, []);
+
+        self::assertSame('CreateWebFunctionRevision', $mocks->calls[count($mocks->calls) - 2]);
+        self::assertSame('GetWebFunctionRevision', $mocks->calls[count($mocks->calls) - 1]);
+    }
+
+    public function test_a_failed_revision_after_the_functions_update_throws_revision_failed_and_activates_nothing(): void
+    {
+        $mocks = new AwsMocks();
+        $deployer = $this->prepareWithConsoleAndQueue($mocks, ['state' => 'Failed', 'stateReason' => 'boom']);
+
+        try {
+            $deployer->prepare($this->consoleAndQueueConfig(), $this->package(), $this->console(), []);
+            self::fail('A failed revision stops the deploy');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.revision_failed', $e->key);
+        }
+
+        self::assertContains('UpdateFunctionCode', $mocks->calls, 'the functions were updated before the wait');
+        foreach (['UpdateAlias', 'CreateAlias', 'UpdateWebFunctionEndpoint', 'CreateEventSourceMapping', 'UpdateEventSourceMapping'] as $live) {
+            self::assertNotContains($live, $mocks->calls, "$live: nothing goes live");
+        }
     }
 
     public function test_prune_keeps_the_live_version_read_now_the_previous_one_and_the_four_newest(): void
@@ -2633,7 +2733,6 @@ final class AwsDeployerTest extends TestCase
             new Result(['functionName' => 'shop-production', 'state' => 'Active']),
             new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
             new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
-            new Result(['state' => 'Active', 'stateReason' => 'ok']),
             AwsMocks::error(S3Exception::class, 'HeadObject', 'NotFound', 404), new Result(['VersionId' => 'cv1']), // console zip uploaded
             new Result(['ContentLength' => 3, 'VersionId' => 'bv1']), new Result([]), // binary: HeadObject, CopyObject
             self::lambdaMissing('GetAlias'), new Result(['FunctionVersion' => '8']),
@@ -2643,6 +2742,7 @@ final class AwsDeployerTest extends TestCase
             self::ready(), self::ready(),
             new Result([]), self::ready(),
             new Result(['Version' => '1']), new Result(['Version' => '9']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
         );
         $steps = [];
 
@@ -2670,7 +2770,6 @@ final class AwsDeployerTest extends TestCase
             new Result(['functionName' => 'shop-production', 'state' => 'Active']),
             new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
             new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
-            new Result(['state' => 'Active', 'stateReason' => 'ok']),
             new Result(['VersionId' => 'cv1']),               // HeadObject (console zip)
             new Result(['ContentLength' => 3, 'VersionId' => 'bv1']), new Result([]), // binary: HeadObject, CopyObject
             self::lambdaMissing('GetAlias'), new Result(['FunctionVersion' => '8']),     // live versions: emails (new), reports
@@ -2681,6 +2780,7 @@ final class AwsDeployerTest extends TestCase
             self::ready(), self::ready(),                                                // both ready
             new Result([]), self::ready(),                                              // UpdateFunctionConfiguration reports, ready
             new Result(['Version' => '1']), new Result(['Version' => '9']),             // PublishVersion emails, reports
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
         );
         $steps = [];
 
@@ -2690,10 +2790,10 @@ final class AwsDeployerTest extends TestCase
         self::assertNull($prepared->consoleVersion, 'the console is off: only the workers use the console zip');
         self::assertSame([
             'GetCallerIdentity', 'HeadBucket', 'PutPublicAccessBlock', 'PutBucketPolicy', 'PutBucketVersioning', 'PutBucketLifecycleConfiguration', 'HeadObject', 'GetRole', 'PutRolePolicy', 'GetWebFunction', 'GetWebFunctionEndpoint',
-            'CreateWebFunctionRevision', 'GetWebFunctionRevision', 'HeadObject', 'HeadObject', 'CopyObject',
+            'CreateWebFunctionRevision', 'HeadObject', 'HeadObject', 'CopyObject',
             'GetAlias', 'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'GetFunctionConfiguration',
             'CreateFunction', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'GetFunctionConfiguration',
-            'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion', 'PublishVersion',
+            'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion', 'PublishVersion', 'GetWebFunctionRevision',
         ], $mocks->calls);
         $by = self::byOperation($mocks);
         $consoleKey = 'shop/production/console-' . str_repeat('c', 64) . '.zip';
@@ -3980,12 +4080,12 @@ final class AwsDeployerTest extends TestCase
             new Result(['functionName' => 'shop-production', 'state' => 'Active']),
             new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
             new Result(['revisionId' => 'rev-2', 'state' => 'Pending']),
-            new Result(['state' => 'Active', 'stateReason' => 'ok']),
             new Result(['VersionId' => 'cv1']),               // HeadObject (console zip)
             new Result(['ContentLength' => 3, 'VersionId' => 'bv1']),
             new Result([]),                                   // CopyObject
             new Result(['FunctionVersion' => '6']),           // GetAlias
             $ready(), $ready(), new Result([]), $ready(), new Result([]), $ready(), new Result(['Version' => '7']),
+            new Result(['state' => 'Active', 'stateReason' => 'ok']),
         ]);
         $steps = [];
         $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
@@ -3995,10 +4095,10 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([
             ...self::UNTIL_THE_ROLE, 'GetRole', 'PutRolePolicy',
             'GetNetworkConnector', 'GetRole', 'PutRolePolicy',
-            'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision', 'GetWebFunctionRevision',
+            'GetWebFunction', 'GetWebFunctionEndpoint', 'CreateWebFunctionRevision',
             'HeadObject', 'HeadObject', 'CopyObject',
-            'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion',
-        ], $mocks->calls, 'role, connector, revision, then the console');
+            'GetAlias', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'UpdateFunctionCode', 'GetFunctionConfiguration', 'UpdateFunctionConfiguration', 'GetFunctionConfiguration', 'PublishVersion', 'GetWebFunctionRevision',
+        ], $mocks->calls, 'role, connector, revision, then the console while the revision activates, then the wait');
         $revision = array_search('CreateWebFunctionRevision', $mocks->calls, true);
         self::assertSame(self::CONNECTOR_VERSION, $mocks->params[$revision]['serviceConfig']['egressNetworkConnectorArn']);
         $update = array_search('UpdateFunctionConfiguration', $mocks->calls, true);
