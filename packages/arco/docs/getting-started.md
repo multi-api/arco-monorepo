@@ -795,6 +795,10 @@ value of the variable changes nothing, and so does an `auth('iam')` endpoint wit
 is its health check, so the deploy still waits for it and reports `cold_start_ms`. A failed or refused result
 always has `cold_start_deferred: null`.
 
+With the variable set, the human summary reads "Cold start: read later by Arco Cloud", and the console zip stores
+`bin/php` uncompressed (a faster package for about 60 MB more upload, worth it near AWS or on fast uplinks); without
+it, `bin/php` stays deflated.
+
 ### Minimal IAM permissions
 
 A deploy role (like the one of Arco's own end-to-end run, in a dedicated test account) needs:

@@ -36,7 +36,7 @@ final class DeployCommandTest extends TestCase
 
     protected function setUp(): void
     {
-        foreach (['AWS_ENDPOINT_URL', 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS'] as $name) {
+        foreach (['AWS_ENDPOINT_URL', 'AWS_IGNORE_CONFIGURED_ENDPOINT_URLS', 'ARCO_DEFER_COLD_START'] as $name) {
             $this->endpointEnv[$name] = getenv($name);
             putenv($name);
         }
@@ -646,6 +646,21 @@ final class DeployCommandTest extends TestCase
             self::assertStringContainsString($expected, $display);
             self::assertStringNotContainsString('Cold start: - ms', $display);
         }
+    }
+
+    public function test_summary_says_a_deferred_cold_start_is_read_later_by_arco_cloud(): void
+    {
+        putenv('ARCO_DEFER_COLD_START=1');
+        $this->aws->append(new Result(['Account' => '222222222222']));
+        $deployer = new FakeDeployer('rev-1', new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'));
+
+        $tester = $this->tester($deployer, initMs: 800);
+        $tester->execute(['--env' => 'production', '--profile' => 'acme-prod'], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $display = (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('Cold start: read later by Arco Cloud', $display);
+        self::assertStringNotContainsString('not available yet', $display);
     }
 
     public function test_a_package_built_with_another_runtime_build_warns_but_deploys(): void

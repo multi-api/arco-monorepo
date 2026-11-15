@@ -491,10 +491,25 @@ final class DeployPipelineTest extends TestCase
         self::assertNull($outcome->coldStartLookup);
     }
 
-    private function iamConfig(): AppConfig
+    public function test_an_iam_endpoint_behind_a_protecting_domain_defers_the_cold_start(): void
+    {
+        putenv('ARCO_DEFER_COLD_START=1');
+        $deployer = new FakeDeployer('rev-1');
+        $verifier = new FakeVerifier(true, 950);
+
+        $outcome = $this->pipeline()->deploy($this->iamConfig(domains: true), new PlainPhpPreset(), $this->project, $deployer, $verifier, fn () => null);
+
+        self::assertSame(['coldStartLookup'], $verifier->calls, 'the domain is the verification: the init report need not be waited for');
+        self::assertTrue($outcome->verification->ok);
+        self::assertNull($outcome->verification->initDurationMs);
+        self::assertSame('/aws/lambda/web/shop-production', $outcome->coldStartLookup?->logGroup);
+    }
+
+    private function iamConfig(bool $domains = false): AppConfig
     {
         return ConfigResolver::resolve(
             App::make('shop')->region('us-east-1')->auth('iam')
+                ->domain($domains ? ['shop.example.com'] : [])
                 ->runtime(fn (Runtime $r) => $r->binary(ElfInspectorTest::fakeElf(0xB7)))
                 ->environment('production', fn (Environment $e) => $e)
                 ->toArray(),
