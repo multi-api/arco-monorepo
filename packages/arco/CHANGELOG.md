@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.22.0
 
 - **Added: `recursiveLoop` on queues.** `->queue('default', recursiveLoop: 'allow')` (`"recursiveLoop": "allow"` in a
   config layer or `arco.json`) turns off AWS Lambda's recursive loop detection on the queue's worker, so a job that
