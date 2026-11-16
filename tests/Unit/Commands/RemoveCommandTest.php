@@ -137,6 +137,82 @@ final class RemoveCommandTest extends TestCase
         $project->restore();
     }
 
+    /** Only what the tags say remove deletes counts: data it keeps (a bucket) is not something to remove. */
+    public function test_remove_with_nothing_tagged_reports_nothing(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: null);
+        $deployer->tagged = [['type' => 's3', 'name' => 'shop-production-uploads', 'arn' => 'arn:aws:s3:::shop-production-uploads', 'retained' => true, 'relations' => [], 'source' => null, 'options' => null]];
+        $tester = $project->tester($this->command($deployer));
+
+        $lines = $this->removeJson($tester, ['--env' => 'production', '--yes' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(['remove.nothing', 'note'], [$lines[count($lines) - 2]['key'], $lines[count($lines) - 2]['status']]);
+        self::assertSame('removed', $lines[count($lines) - 1]['outcome']);
+        self::assertNotContains('remove', $deployer->calls);
+        $project->restore();
+    }
+
+    /** A remove stopped after the Web Function went: the tags still list the connector, so the next remove goes on. */
+    public function test_remove_after_the_web_function_is_gone_removes_what_is_still_tagged(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: null);
+        $deployer->tagged = [['type' => 'lambda:network-connector', 'name' => 'nc-0abc', 'arn' => 'arn:aws:lambda:us-east-1:111111111111:network-connector:nc-0abc', 'retained' => false, 'relations' => [], 'source' => null, 'options' => null]];
+        $tester = $project->tester($this->command($deployer));
+
+        $lines = $this->removeJson($tester, ['--env' => 'production', '--yes' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertContains('remove', $deployer->calls);
+        self::assertNotContains('remove.nothing', array_column($lines, 'key'));
+        self::assertSame('removed', $lines[count($lines) - 1]['outcome']);
+        $project->restore();
+    }
+
+    public function test_json_leftovers_end_the_remove_failed_with_their_list(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->removeSteps = [['remove.step_function', ['function' => 'shop-production']]];
+        $deployer->removeError = \Multiapi\Arco\Deploy\DeployException::make('remove.leftovers', ['resources' => 'iam:role arco-shop-production']);
+        $tester = $project->tester($this->command($deployer));
+
+        $lines = $this->removeJson($tester, ['--env' => 'production', '--yes' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $result = $lines[count($lines) - 1];
+        self::assertSame(['failed', 'remove.leftovers', ['resources' => 'iam:role arco-shop-production']], [$result['outcome'], $result['error']['key'], $result['error']['params'] ?? null]);
+        self::assertStringContainsString('iam:role arco-shop-production', $result['error']['message']);
+        $project->restore();
+    }
+
+    public function test_remove_no_wait_interfaces_keeps_role_and_reports_note(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        // Only the role is left (a remove without waiting ran before): still something to remove, not "nothing".
+        $deployer = new FakeDeployer(status: null);
+        $deployer->tagged = [['type' => 'iam:role', 'name' => 'arco-shop-production', 'arn' => 'arn:aws:iam::111111111111:role/arco-shop-production', 'retained' => false, 'relations' => [], 'source' => 'default', 'options' => null]];
+        $deployer->removeSteps = [['remove.role_kept_for_interfaces', ['role' => 'arco-shop-production', 'region' => 'us-east-1', 'functions' => 'shop-production-console, shop-production-queue-*']]];
+        $tester = $project->tester($this->command($deployer));
+
+        $lines = $this->removeJson($tester, ['--env' => 'production', '--yes' => true, '--no-wait-interfaces' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertFalse($deployer->removeWaitedInterfaces);
+        $note = array_values(array_filter($lines, fn (array $l) => ($l['key'] ?? null) === 'remove.role_kept_for_interfaces'));
+        self::assertSame('note', $note[0]['status'] ?? null);
+        self::assertSame(['role' => 'arco-shop-production', 'region' => 'us-east-1', 'functions' => 'shop-production-console, shop-production-queue-*'], $note[0]['params']);
+        self::assertSame('removed', $lines[count($lines) - 1]['outcome']);
+
+        $tester = $project->tester($this->command($deployer));
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        self::assertTrue($deployer->removeWaitedInterfaces, 'without the option the remove waits');
+        $project->restore();
+    }
+
     public function test_json_a_missing_cloudflare_token_is_refused(): void
     {
         $config = str_replace("->timeout(60)", "->timeout(60)->domain('arco.acmeapp.io')->dns('cloudflare')", ProjectFixture::standardConfig());
