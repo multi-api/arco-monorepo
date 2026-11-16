@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.24.0
 
 - **Changed: the deploy that leaves the VPC no longer waits for Lambda to delete the network interfaces.** It deletes
   the console and worker versions still in the VPC, tags the execution role `arco:vpc-left` with the time and ends;
@@ -12,7 +12,6 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   delete them, while one is left. This saves up to about 20 minutes of a deploy (billed minutes on a CI runner or
   Arco Cloud). Without `iam:TagRole` the deploy waits as before. New notes `deploy.vpc_interfaces_background`,
   `deploy.vpc_access_kept`, `deploy.vpc_access_unchecked`. See [VPC](docs/configuration.md#changing-and-removing-vpc).
-
 - **Fixed: `arco remove` finishes what an earlier remove started.** "Nothing to remove" is now decided from the
   resources tagged for the environment (apart from the data remove keeps) and the domain resources, not from the Web
   Function alone, so a remove that stopped half way (or kept something) is completed by the next one. With the Web
