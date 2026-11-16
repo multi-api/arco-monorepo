@@ -63,7 +63,7 @@ final class ProcessDeployTest extends TestCase
             new Packager(),
             fn () => throw new \LogicException('process apps have no Laravel schedule'),
             new ProcessBuilder(new FakeRunner(onRun: function (array $command): void {
-                file_put_contents($command[4], 'ELF');
+                file_put_contents($command[array_search('-o', $command, true) + 1], 'ELF');
             }), 'go', fn (): bool => true),
         );
     }

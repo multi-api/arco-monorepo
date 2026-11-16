@@ -91,7 +91,7 @@ final class ProcessBuilderTest extends TestCase
         $this->write('.env', 'SECRET=1');
         $this->write('main_test.go', "package main\n");
         $runner = new FakeRunner(onRun: function (array $command): void {
-            $out = $command[4];
+            $out = $command[array_search('-o', $command, true) + 1];
             is_dir(dirname($out)) || mkdir(dirname($out), 0777, true);
             file_put_contents($out, 'ELF');
         });
@@ -107,7 +107,7 @@ final class ProcessBuilderTest extends TestCase
 
         try {
             self::assertCount(1, $runner->calls, 'go build only: no composer');
-            self::assertSame(['go', 'build', '-trimpath', '-o', "$result->appDir/bin/app", './cmd/api'], $runner->calls[0]['command']);
+            self::assertSame(['go', 'build', '-trimpath', '-ldflags=-s -w', '-o', "$result->appDir/bin/app", './cmd/api'], $runner->calls[0]['command']);
             self::assertSame($this->project, $runner->calls[0]['cwd']);
             self::assertSame(['CGO_ENABLED' => '0', 'GOOS' => 'linux', 'GOARCH' => 'arm64'], $runner->calls[0]['env']);
             self::assertFileExists("$result->appDir/bin/app");

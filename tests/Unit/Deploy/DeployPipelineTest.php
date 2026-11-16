@@ -389,6 +389,37 @@ final class DeployPipelineTest extends TestCase
         self::assertSame(['prepare', 'release', 'rollback:rev-1'], $deployer->calls);
     }
 
+    public function test_a_deploy_run_by_arco_cloud_deflates_the_php_package_at_level_1(): void
+    {
+        $fast = function (): array {
+            [$build, $package] = $this->pipeline()->package($this->config(), new PlainPhpPreset(), $this->project, fn () => null);
+            try {
+                $zip = new \ZipArchive();
+                self::assertTrue($zip->open($package->path));
+                $levels = [];
+                for ($i = 0; $i < $zip->numFiles; $i++) {
+                    $stat = $zip->statIndex($i);
+                    if ($stat !== false && str_starts_with($stat['name'], 'app/') && $stat['comp_method'] === \ZipArchive::CM_DEFLATE) {
+                        $levels[] = \Multiapi\Arco\Tests\Support\ZipFlags::fast($package->path, $stat['name']);
+                    }
+                }
+                $zip->close();
+                self::assertNotSame([], $levels);
+                return array_values(array_unique($levels));
+            } finally {
+                $build->cleanup();
+            }
+        };
+
+        putenv('ARCO_DEFER_COLD_START=1');
+        try {
+            self::assertSame([true], $fast(), 'Arco Cloud deploys deflate every app file at level 1');
+        } finally {
+            putenv('ARCO_DEFER_COLD_START');
+        }
+        self::assertSame([false], $fast(), 'plain CLI deploys keep the default level, for the smaller upload');
+    }
+
     public function test_a_prebuilt_package_is_deployed_without_building(): void
     {
         [$build, $built] = $this->pipeline()->package($this->config(), new PlainPhpPreset(), $this->project, fn () => null);

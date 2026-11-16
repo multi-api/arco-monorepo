@@ -38,6 +38,11 @@ final class FakeLogGroup extends Sleeper
         $this->clock += $seconds;
     }
 
+    public function sleepMs(int $milliseconds): void
+    {
+        $this->clock += $milliseconds / 1000;
+    }
+
     public function now(): float
     {
         return $this->clock;

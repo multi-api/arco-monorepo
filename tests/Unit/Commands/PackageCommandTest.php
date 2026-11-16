@@ -120,7 +120,7 @@ final class PackageCommandTest extends TestCase
         mkdir("$this->project/cmd/api", 0777, true);
         file_put_contents("$this->project/cmd/api/main.go", "package main\n");
         $go = new \Multiapi\Arco\Build\ProcessBuilder(new FakeRunner(onRun: function (array $command): void {
-            file_put_contents($command[4], 'ELF');
+            file_put_contents($command[array_search('-o', $command, true) + 1], 'ELF');
         }), 'go', fn (): bool => true);
         $command = new PackageCommand(
             new DeployPipeline(new Builder(new FakeRunner()), new BinaryProvider(new GuzzleDownloader(), sys_get_temp_dir(), \Multiapi\Arco\Binary\RuntimeManifest::load()), new Packager(), null, $go),

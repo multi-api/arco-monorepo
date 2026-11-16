@@ -80,7 +80,7 @@ final class GoProjectDeployTest extends TestCase
     {
         $this->runner = new FakeRunner(onRun: function (array $command): void {
             if (($command[1] ?? '') === 'build') {
-                file_put_contents($command[4], 'ELF');
+                file_put_contents($command[array_search('-o', $command, true) + 1], 'ELF');
             }
         });
 

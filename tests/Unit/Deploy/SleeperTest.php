@@ -14,8 +14,9 @@ final class SleeperTest extends TestCase
 
         $sleeper->sleep(0);
         $sleeper->sleep(0);
+        $sleeper->sleepMs(0);
 
-        self::assertSame(2, $calls);
+        self::assertSame(3, $calls);
     }
 
     public function test_a_sleeper_without_a_callback_just_sleeps(): void
