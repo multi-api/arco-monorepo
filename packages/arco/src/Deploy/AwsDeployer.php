@@ -30,6 +30,11 @@ final class AwsDeployer implements Deployer
     private const KEEP_PACKAGES = 20;
     /** Console versions kept besides the live one: the newest, so recent rollbacks keep a matching console. */
     private const KEEP_CONSOLE_VERSIONS = 4;
+    /**
+     * How long after leaving the VPC a deploy still looks for the console's and workers' network interfaces before it
+     * drops the ENI statements: Lambda deletes them within about 20 minutes, with the role's permissions.
+     */
+    private const VPC_LEFT_WINDOW_SECONDS = 86_400;
 
     /**
      * @param AwsClients|null $dns clients for the account holding the DNS zones (dns() profile or
@@ -401,14 +406,16 @@ final class AwsDeployer implements Deployer
             // runtime/* stays readable even when this console carries bin/php: the role is shared by every
             // console version, and an older download-based one can still be live (a failed verification,
             // a console skipped for size, arco rollback). Dropping it waits for the storage clean-up.
-            $policy = PolicyBuilder::document($region, $account, $function, SecretResolver::references($variables), $config->permissions, $bucket,
+            // Leaving the VPC keeps the ENI statements: the automatic rollback may bring back a VPC console or worker.
+            // After that, they stay while Lambda may still be deleting the old network interfaces with them.
+            $vpcAccess = RevisionFactory::usesVpc($config) || $outOfVpc;
+            $policy = fn (array $roleTags): array => PolicyBuilder::document($region, $account, $function, SecretResolver::references($variables), $config->permissions, $bucket,
                 array_map(fn (QueueConfig $queue) => $queue->arn($config), $config->queues),
                 array_map(fn (QueueConfig $queue) => $config->workerFunctionName($queue->name), $config->queues),
                 array_map(fn (StorageConfig $storage) => $storage->arn($config), $config->storage),
                 array_map(fn (TableConfig $table) => $table->arn($config), array_values(array_filter([$config->cacheTable, $config->failedJobsTable]))),
                 array_map(fn (GenericTableConfig $table) => $table->arn($config), $config->tables),
-                // Leaving the VPC keeps the ENI statements: the automatic rollback may bring back a VPC console or worker.
-                RevisionFactory::usesVpc($config) || $outOfVpc,
+                $vpcAccess || $this->interfacesMayRemain($config, $roleTags, $step),
                 VariableBundle::prefix($config),
                 $config->kmsKey);
             ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags, $region, $step, $config->permissionsBoundary);
@@ -882,10 +889,40 @@ final class AwsDeployer implements Deployer
     }
 
     /**
+     * Whether the execution role keeps its ENI statements in a deploy out of the VPC: its arco:vpc-left tag says the
+     * environment left less than a day ago and Lambda has not deleted every network interface named after the console
+     * or a worker yet (one DescribeNetworkInterfaces call). An unreadable listing keeps them. No tag, no call.
+     *
+     * @param array<mixed> $roleTags the execution role's tags by key, from the GetRole the role update made
+     * @param callable(string, array<string, string|int>): void $step
+     */
+    private function interfacesMayRemain(AppConfig $config, array $roleTags, callable $step): bool
+    {
+        $left = ExecutionRole::leftVpcAt($roleTags);
+        if ($left === null || $this->sleeper->now() - $left >= self::VPC_LEFT_WINDOW_SECONDS || ! RevisionFactory::servesNetworkConnectors()) {
+            return false;
+        }
+        $role = ExecutionRole::roleName($config);
+        try {
+            $interfaces = (new VpcInterfaces($this->aws->ec2(), $this->aws->lambda(), $this->sleeper))->named($config);
+        } catch (AwsException $e) {
+            $step('deploy.vpc_access_unchecked', ['role' => $role, 'functions' => VpcInterfaces::functions($config), 'error' => self::awsError($e)]);
+            return true;
+        }
+        if ($interfaces === []) {
+            return false;
+        }
+        $step('deploy.vpc_access_kept', ['role' => $role, 'interfaces' => implode(' ', $interfaces)]);
+        return true;
+    }
+
+    /**
      * After a verified deploy out of the VPC: deletes the console and worker versions still in it (never the one a
-     * live alias points to, nor $LATEST, which already left) and waits until Lambda has deleted their network
-     * interfaces, also those of a console or worker this deploy deleted. Those versions are no rollback target any
-     * more: the connector goes in the same prune. A failure or a timeout is a warning.
+     * live alias points to, nor $LATEST, which already left). Those versions are no rollback target any more: the
+     * connector goes in the same prune. Lambda then deletes their network interfaces (also those of a console or
+     * worker this deploy deleted) in the background, with the execution role's ENI statements: the role is tagged
+     * arco:vpc-left, so the next deploys keep them while an interface is left (interfacesMayRemain()). When the tag
+     * cannot be written, this deploy waits for the interfaces instead. A failure or a timeout is a warning.
      *
      * @param list<string> $queues queue names
      * @param callable(string, array<string, string|int>): void $step
@@ -905,7 +942,23 @@ final class AwsDeployer implements Deployer
                     }
                 }
             }
-            $this->waitInterfaces($config, $networks, 'deploy.', $step);
+            if ($networks === []) {
+                return;
+            }
+            if ($config->role !== null) {
+                // Arco never edits the policy of the user's role: its ENI permissions stay as they are.
+                $step('deploy.vpc_interfaces_background', ['functions' => VpcInterfaces::functions($config), 'role' => $config->role]);
+                return;
+            }
+            $role = ExecutionRole::roleName($config);
+            try {
+                (new ExecutionRole($this->aws->iam()))->markLeftVpc($role, (int) $this->sleeper->now());
+            } catch (AwsException $e) {
+                $step('deploy.tags_not_added', ['resource' => $role, 'error' => (string) $e->getAwsErrorCode()]);
+                $this->waitInterfaces($config, $networks, 'deploy.', $step);
+                return;
+            }
+            $step('deploy.vpc_interfaces_background', ['functions' => VpcInterfaces::functions($config), 'role' => $role]);
         } catch (AwsException $e) {
             $step('deploy.vpc_interfaces_failed', ['functions' => VpcInterfaces::functions($config), 'region' => (string) $config->region, 'error' => self::awsError($e)]);
         }
