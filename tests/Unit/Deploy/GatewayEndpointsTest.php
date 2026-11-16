@@ -637,6 +637,20 @@ final class GatewayEndpointsTest extends TestCase
         self::assertSame(['DescribeVpcEndpoints'], $mocks->calls);
     }
 
+    /** A remove that lost the Web Function's record finds the endpoints by the environment's usage tag. */
+    public function test_used_by_finds_the_endpoints_carrying_the_usage_tag(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['VpcEndpoints' => [self::endpoint('vpce-b', ['rtb-a'], self::ARCO + [self::USE => '1'])], 'NextToken' => 'p2']),
+            self::endpoints([self::endpoint('vpce-a', ['rtb-b'], self::ARCO + [self::USE => '1']), self::endpoint('vpce-c', ['rtb-b'], [self::USE => '1'], state: 'deleted')]),
+        );
+
+        self::assertSame(['vpce-a', 'vpce-b'], $this->subject($mocks)->usedBy($this->config()));
+        self::assertSame([['Name' => 'tag-key', 'Values' => [self::USE]]], $mocks->params[0]['Filters']);
+        self::assertSame('p2', $mocks->params[1]['NextToken']);
+    }
+
     public function test_release_untags_and_keeps_shared(): void
     {
         $mocks = new AwsMocks();

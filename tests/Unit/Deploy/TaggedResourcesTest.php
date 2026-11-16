@@ -20,8 +20,10 @@ final class TaggedResourcesTest extends TestCase
         return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
     }
 
+    /** Called after the test queued its answers: the network connector's operator role, read last, does not exist. */
     private static function subject(AwsMocks $mocks): TaggedResources
     {
+        $mocks->handler->append(AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404));
         $clients = $mocks->clients();
         return new TaggedResources($clients->taggingApi(), new OwnershipGuard($clients));
     }
@@ -81,7 +83,7 @@ final class TaggedResourcesTest extends TestCase
 
         $resources = (self::subject($mocks))->list($this->config());
 
-        self::assertSame(['GetResources', 'GetResources', 'GetRole'], $mocks->calls);
+        self::assertSame(['GetResources', 'GetResources', 'GetRole', 'GetRole'], $mocks->calls, 'the execution role, then the operator role');
         self::assertSame('arco-shop-production', $mocks->params[2]['RoleName']);
         self::assertSame([['Key' => 'arco:app', 'Values' => ['shop']], ['Key' => 'arco:environment', 'Values' => ['production']]], $mocks->params[0]['TagFilters']);
         self::assertSame('next', $mocks->params[1]['PaginationToken']);
@@ -303,7 +305,7 @@ final class TaggedResourcesTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(new Result(['ResourceTagMappingList' => []]));
         self::assertSame([], self::subject($mocks)->list($custom));
-        self::assertSame(['GetResources'], $mocks->calls);
+        self::assertSame(['GetResources', 'GetRole'], $mocks->calls, 'only the operator role, which role() does not replace');
     }
 
     public function test_a_refused_listing_propagates(): void
@@ -449,5 +451,20 @@ final class TaggedResourcesTest extends TestCase
         self::assertNull($gone['options']);
         self::assertFalse($cleanup['retained'], 'a process app\'s remove deletes its schedule rules');
         self::assertFalse($gone['retained']);
+    }
+
+    /** The connector's operator role outlives a connector deleted without it: listed (remove deletes it) when it is this environment's. */
+    public function test_lists_the_network_connectors_operator_role(): void
+    {
+        $operator = new Result(['Role' => ['RoleName' => 'arco-shop-production-network', 'Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production-network',
+            'Tags' => [['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']]]]);
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['ResourceTagMappingList' => []]), AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404), $operator);
+        $clients = $mocks->clients();
+
+        $resources = (new TaggedResources($clients->taggingApi(), new OwnershipGuard($clients)))->list($this->config());
+
+        self::assertSame([['iam:role', 'arco-shop-production-network', false]], array_map(fn (array $r) => [$r['type'], $r['name'], $r['retained']], $resources));
+        self::assertSame('arco-shop-production-network', $mocks->params[2]['RoleName']);
     }
 }
