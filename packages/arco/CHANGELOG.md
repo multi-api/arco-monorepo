@@ -3,7 +3,7 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.24.1
 
 - **Fixed: `arco remove` no longer fails on resources it already deleted.** The Resource Groups Tagging API can keep
   listing a deleted resource for many minutes (a network connector stayed listed for more than ten), so every remove,
