@@ -266,8 +266,10 @@ final class FakeDeployer implements Deployer
         $this->calls[] = 'schedulerPaused';
         return $this->schedulerPausedError !== null ? throw $this->schedulerPausedError : $this->schedulerPaused;
     }
-    public function resources(AppConfig $config): array
+    public ?bool $resourcesConfirmed = null;
+    public function resources(AppConfig $config, bool $confirmed = false): array
     {
+        $this->resourcesConfirmed = $confirmed;
         return $this->taggedError !== null ? throw $this->taggedError : $this->tagged;
     }
     public function describe(AppConfig $config): ?AppStatus { $this->calls[] = 'describe'; return $this->describeError !== null ? throw $this->describeError : $this->status; }

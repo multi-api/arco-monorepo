@@ -151,6 +151,7 @@ final class RemoveCommandTest extends TestCase
         self::assertSame(['remove.nothing', 'note'], [$lines[count($lines) - 2]['key'], $lines[count($lines) - 2]['status']]);
         self::assertSame('removed', $lines[count($lines) - 1]['outcome']);
         self::assertNotContains('remove', $deployer->calls);
+        self::assertTrue($deployer->resourcesConfirmed, 'decided from the confirmed listing: a deleted resource the Tagging API still lists is not left');
         $project->restore();
     }
 
