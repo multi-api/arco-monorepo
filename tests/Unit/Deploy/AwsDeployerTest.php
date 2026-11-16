@@ -4672,10 +4672,12 @@ final class AwsDeployerTest extends TestCase
                 if (isset($command['ResourceTypeFilters'])) {
                     return new Result(['ResourceTagMappingList' => []]); // the worker scan: no worker
                 }
+                // $lagging: the Tagging API still lists what was deleted (it can for many minutes).
+                $listed = static fn (string $key): bool => ! isset($gone[$key]) || ($lagging !== null && $lagging());
                 $arns = array_merge(
-                    isset($gone['web']) && ($lagging === null || ! $lagging()) ? [] : [$web],
-                    isset($gone['connector']) ? [] : [self::CONNECTOR_ARN],
-                    isset($gone['group']) ? [] : [self::GROUP_ARN],
+                    $listed('web') ? [$web] : [],
+                    $listed('connector') ? [self::CONNECTOR_ARN] : [],
+                    $listed('group') ? [self::GROUP_ARN] : [],
                 );
                 return new Result(['ResourceTagMappingList' => array_map(fn (string $arn) => ['ResourceARN' => $arn, 'Tags' => self::tagList(self::tags())], $arns)]);
             },
@@ -4710,6 +4712,9 @@ final class AwsDeployerTest extends TestCase
             'DeleteGroup' => function () use (&$gone): Result {
                 $gone['group'] = true;
                 return new Result([]);
+            },
+            'GetGroup' => function () use (&$gone): mixed {
+                return isset($gone['group']) ? AwsMocks::error(ResourceGroupsException::class, 'GetGroup', 'NotFoundException', 404) : new Result(['Group' => ['Name' => 'arco-shop-production']]);
             },
             // The gateway endpoint vpce-1, Arco's, used by this environment only, when $gone['uses-vpce-1'] is set: false
             // while the environment's usage tag is on it, true once it is untagged.
@@ -4801,29 +4806,57 @@ final class AwsDeployerTest extends TestCase
         self::assertFalse(isset($gone['arco-shop-production']));
     }
 
-    /** The tag listing may still show a resource just deleted: the check waits for it to catch up before failing. */
-    public function test_remove_waits_for_the_tag_listing_to_catch_up_and_fails_on_what_stays_listed(): void
+    /**
+     * The Tagging API can list a deleted resource for many minutes (a network connector on 2026-11-16): each listed one
+     * is confirmed with a direct read, so a remove that deleted everything ends removed, without waiting.
+     */
+    public function test_remove_ignores_what_the_tag_listing_still_lists_after_its_deletion(): void
     {
-        $gone = [];
-        $sleeper = AwsMocks::noSleep();
-        $mocks = new AwsMocks();
-        // The deleted function is listed for another 20 seconds.
-        self::answer($mocks, self::rememberingAccount($gone, fn (): bool => $sleeper->slept < 20));
-
-        (new AwsDeployer($mocks->clients(), $sleeper))->remove($this->config());
-
-        self::assertSame(20, $sleeper->slept);
-
-        // Still listed after the wait: a leftover.
         $gone = [];
         $sleeper = AwsMocks::noSleep();
         $mocks = new AwsMocks();
         self::answer($mocks, self::rememberingAccount($gone, fn (): bool => true));
 
-        $error = self::removeError(new AwsDeployer($mocks->clients(), $sleeper), $this->config());
+        (new AwsDeployer($mocks->clients(), $sleeper))->remove($this->config());
 
-        self::assertSame(['remove.leftovers', ['resources' => 'lambda:function shop-production']], [$error->key, $error->params]);
-        self::assertSame(60, $sleeper->slept);
+        self::assertSame(['web' => true, 'connector' => true, 'arco-shop-production-network' => true, 'arco-shop-production' => true, 'group' => true], $gone);
+        self::assertSame(0, $sleeper->slept, 'no waiting for the listing to catch up');
+        self::assertContains('nc-0abc', array_column(self::byOperation($mocks)['GetNetworkConnector'] ?? [], 'Identifier'), 'the listed connector, by the id its ARN carries');
+        self::assertContains('GetGroup', $mocks->calls);
+
+        // A second remove: still listed, all confirmed gone, it ends removed again.
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::rememberingAccount($gone, fn (): bool => true));
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
+        self::assertNotContains('DeleteNetworkConnector', $mocks->calls);
+    }
+
+    /** What is listed and really still there (the group's delete did not take) is a leftover. */
+    public function test_remove_fails_on_a_listed_resource_that_still_exists(): void
+    {
+        $gone = [];
+        $mocks = new AwsMocks();
+        $account = self::rememberingAccount($gone, fn (): bool => true);
+        $account['DeleteGroup'] = new Result([]);
+        self::answer($mocks, $account);
+
+        $error = self::removeError(new AwsDeployer($mocks->clients(), AwsMocks::noSleep()), $this->config());
+
+        self::assertSame(['remove.leftovers', ['resources' => 'resource-groups:group arco-shop-production']], [$error->key, $error->params]);
+    }
+
+    /** A check that is refused keeps the resource a leftover: remove never reports removed on a guess. */
+    public function test_remove_keeps_a_leftover_whose_check_is_denied(): void
+    {
+        $gone = [];
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::rememberingAccount($gone, fn (): bool => true),
+            'GetGroup' => AwsMocks::error(ResourceGroupsException::class, 'GetGroup', 'AccessDeniedException', 403, 'denied')]);
+
+        $error = self::removeError(new AwsDeployer($mocks->clients(), AwsMocks::noSleep()), $this->config());
+
+        self::assertSame(['remove.leftovers', ['resources' => 'resource-groups:group arco-shop-production']], [$error->key, $error->params]);
+        self::assertArrayHasKey('group', $gone, 'it was deleted; only the check could not say so');
     }
 
     /**
