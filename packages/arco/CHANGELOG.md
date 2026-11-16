@@ -3,6 +3,16 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## Unreleased
+
+- **Changed: the deploy that leaves the VPC no longer waits for Lambda to delete the network interfaces.** It deletes
+  the console and worker versions still in the VPC, tags the execution role `arco:vpc-left` with the time and ends;
+  Lambda deletes the interfaces in the background (up to about 20 minutes). For a day after that, a deploy makes one
+  `ec2:DescribeNetworkInterfaces` call and keeps the role's network interface statements, which Lambda needs to
+  delete them, while one is left. This saves up to about 20 minutes of a deploy (billed minutes on a CI runner or
+  Arco Cloud). Without `iam:TagRole` the deploy waits as before. New notes `deploy.vpc_interfaces_background`,
+  `deploy.vpc_access_kept`, `deploy.vpc_access_unchecked`. See [VPC](docs/configuration.md#changing-and-removing-vpc).
+
 ## 0.23.1
 
 - **Changed: Go binaries are built with `-ldflags='-s -w'`.** The symbol table and the DWARF debug data are left out,

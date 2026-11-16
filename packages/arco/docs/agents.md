@@ -548,8 +548,10 @@ For an app that must reach RDS, ElastiCache or another private resource:
    `--json`, `--yes`) fails with `deploy.endpoint_routes_missing`; the message gives the `aws ec2 modify-vpc-endpoint`
    command and the `endpoints: ['s3' => 'vpce-...']` line. Ask the user which one; never pick for them.
 6. To leave the VPC run `vpc:remove` (or remove `vpc()`, or `->vpc(false)` on the environment) and deploy: Arco deletes the connector
-   and its operator role after the deploy is verified, and may wait up to about 20 minutes for Lambda to delete the
-   network interfaces. Arco's gateway endpoints are shared by the environments of the VPC and deleted when the last
+   and its operator role after the deploy is verified. It does not wait for Lambda to delete the network interfaces
+   (note `deploy.vpc_interfaces_background`, up to about 20 minutes in the background); the next deploys keep the
+   execution role's network permissions while one is left (notes `deploy.vpc_access_kept`,
+   `deploy.vpc_access_unchecked`). Without `iam:TagRole` the deploy waits for them instead. Arco's gateway endpoints are shared by the environments of the VPC and deleted when the last
    one leaves; route tables are never removed.
 
 With `role()`, the user must add the network interface permissions (`AWSLambdaVPCAccessExecutionRole`) to that

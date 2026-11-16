@@ -40,6 +40,50 @@ final class ExecutionRoleTest extends TestCase
         self::assertSame(['GetRole', 'PutRolePolicy'], $mocks->calls);
     }
 
+    public function test_a_policy_closure_gets_the_existing_roles_tags(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['Role' => ['Arn' => 'arn:x', 'Tags' => [['Key' => 'arco:vpc-left', 'Value' => '1700000000']]]]), new Result([]));
+        $seen = null;
+
+        (new ExecutionRole($mocks->clients()->iam()))->ensure('r', function (array $tags) use (&$seen): array {
+            $seen = $tags;
+            return ['Version' => '2012-10-17', 'Statement' => []];
+        }, []);
+
+        self::assertSame(['arco:vpc-left' => '1700000000'], $seen);
+        self::assertSame(1_700_000_000, ExecutionRole::leftVpcAt($seen));
+        self::assertNull(ExecutionRole::leftVpcAt(['arco:vpc-left' => 'soon']));
+        self::assertSame(['GetRole', 'PutRolePolicy'], $mocks->calls);
+    }
+
+    public function test_a_new_role_gives_a_policy_closure_no_tags(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404), new Result(['Role' => ['Arn' => 'arn:x']]), new Result([]));
+        $seen = null;
+
+        (new ExecutionRole($mocks->clients()->iam()))->ensure('r', function (array $tags) use (&$seen): array {
+            $seen = $tags;
+            return ['Version' => '2012-10-17', 'Statement' => []];
+        }, []);
+
+        self::assertSame([], $seen);
+    }
+
+    public function test_marks_when_the_environment_left_the_vpc(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result([]), AwsMocks::error(IamException::class, 'TagRole', 'AccessDenied', 403));
+        $role = new ExecutionRole($mocks->clients()->iam());
+
+        $role->markLeftVpc('r', 1_700_000_000);
+
+        self::assertSame([['Key' => 'arco:vpc-left', 'Value' => '1700000000']], $mocks->params[0]['Tags']);
+        $this->expectException(IamException::class);
+        $role->markLeftVpc('r', 1_700_000_000);
+    }
+
     public function test_role_name_is_truncated_to_64(): void
     {
         $config = ConfigResolver::resolve(App::make(str_repeat('a', 40))->region('us-east-1')->environment(str_repeat('b', 23))->toArray(), str_repeat('b', 23));
