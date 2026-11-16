@@ -151,7 +151,7 @@ Flags shared by many commands:
 | `deploy` | Build, upload, run deploy commands, deploy, verify (rollback on failure), then workers, scheduler, domains | `--env`, `--profile`, `-y/--yes` (create a new environment), `--json`, `--package=<zip>` (deploy a prebuilt zip), `--migrate` (add `migrate --force` to this deploy's deploy commands; Laravel only), `--no-deploy-commands` (not with `--migrate`), `--dns-profile=<p>`, `--cloudflare-token=<t>`, `--permissions-boundary=<arn>`, `--config-layer=<path>`, `--force` (dangerous, see ground rules), `--force-dns` (dangerous) |
 | `package` | Build the zip only (`.arco/build/arco-<app>-<env>.zip`) | `--env`, `-o/--output=<path>`, `--config-layer=<path>` |
 | `info` | Resolved settings with their source, URL, live revision; validation | `--env`, `--profile`, `--json`, `--resources` (every AWS resource tagged for the environment, each with `source` and `options`, plus `variables`, `config`, `schedules` and `scheduler` (`{every, paused}` or `null`); `tag:GetResources`), `--permissions-boundary=<arn>`, `--config-layer=<path>` |
-| `remove` | Delete the web function, endpoint, console, workers, execution role, scheduler rule, network connector and the domain stack, DNS aliases and an Arco-requested certificate. Keeps queues, buckets, tables, SSM parameters, log groups and the code bucket | `--env`, `--profile`, `-y/--yes`, `--json`, `--dns-profile`, `--cloudflare-token`, `--config-layer=<path>`, `--force` (deprecated spelling of `--yes`) |
+| `remove` | Delete the web function, endpoint, console, workers, execution role, scheduler rule, network connector and the domain stack, DNS aliases and an Arco-requested certificate. Keeps queues, buckets, tables, SSM parameters, log groups and the code bucket. Fails with `remove.leftovers` when anything else is left; run again to finish | `--env`, `--profile`, `-y/--yes`, `--json`, `--no-wait-interfaces` (keep the execution role instead of waiting for VPC network interfaces), `--dns-profile`, `--cloudflare-token`, `--config-layer=<path>`, `--force` (deprecated spelling of `--yes`) |
 | `logs` | Web, console and worker logs merged | `--env`, `--profile`, `-f/--follow`, `--since=10m` (`30s`, `10m`, `2h`, `1d` or a date; bare numbers are rejected), `--until` (not with `--follow`), `--level=debug\|info\|warning\|error`, `--request=<id>`, `--filter=<text>`, `--source=all\|web\|console\|queues`, `--console`, `--queue=<name>`, `--platform`, `--config-layer=<path>`, `--json` |
 | `profile` | Show or change the remembered profile per environment (`.arco/local.php`) | `--env`, `--set=<profile>`, `--json` (not with `--set`) |
 
@@ -580,7 +580,11 @@ deploy permissions: [Permissions for custom domains](getting-started.md#permissi
 3. Report what was kept from the `remove.resource_kept` notes: SQS queues (with messages), buckets (with files),
    DynamoDB tables (with items), SSM parameters, log groups and the shared code bucket. Delete those only if the user
    asks, outside Arco.
-4. Remove the `environment('<env>')` block from `arco.php` if the environment is gone for good.
+4. If the result is `failed` with `remove.leftovers`, the warnings before it say why (`error.params.resources` lists
+   what is left): fix the cause and run the same command again; it deletes what is left. `--no-wait-interfaces` keeps
+   the execution role of a VPC environment instead of waiting up to 20 minutes for its network interfaces (note
+   `remove.role_kept_for_interfaces`); run `remove` again later to delete it.
+5. Remove the `environment('<env>')` block from `arco.php` if the environment is gone for good.
 
 ### Debug a failed deploy
 
@@ -785,7 +789,8 @@ failed, usually for a missing permission the message names.
 | `scheduler.no_rule`, `scheduler.apply_needs_env`, `scheduler.apply_needs_deploy` | `scheduler:set` and deploy first; `--apply` needs `--env` |
 | `editor.lint_failed`, `editor.verify_failed` | The edit was refused and `arco.php` restored: make the change by hand with the line printed |
 | `config.process_unsupported_command` | The command (`command`) is PHP-only or edits `arco.php`, and this is a Go app: edit `arco.json` by hand. Text only, no `--json` |
-| `remove.nothing` | The environment is not deployed; nothing to do |
+| `remove.nothing` | Nothing `remove` deletes is left for the environment; nothing to do |
+| `remove.leftovers` | `remove` finished but `{resources}` are still in AWS (the warnings before it say why) | Fix the cause, then run `arco remove` again: it finishes the job |
 | `error.unexpected` | An unexpected exception (`message` has it); report it with the command and Arco version (`vendor/bin/arco --version`) |
 
 ## Using this page as a Claude Code skill

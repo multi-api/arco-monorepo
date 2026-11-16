@@ -1639,7 +1639,9 @@ deletes the operator role. When the console or a worker was in the VPC, it waits
 network interfaces before it deletes the execution role (up to about 20 minutes): a role deleted earlier leaves
 them in the VPC for good, where they block deleting its subnets and security groups. If they are still there
 after 30 minutes, or cannot be read, the execution role is kept and the warning prints the commands that finish
-the job. A connector that Arco did not create (its operator role is not Arco's) is left alone.
+the job; the remove then fails with `remove.leftovers` and running it again later deletes the role.
+`arco remove --no-wait-interfaces` does not wait: it keeps the execution role on purpose
+(note `remove.role_kept_for_interfaces`) and ends `removed`. A connector that Arco did not create (its operator role is not Arco's) is left alone.
 `arco info` shows the subnets, security groups, connector id, version and state; `arco info --json` has a `vpc`
 object, or `null`.
 

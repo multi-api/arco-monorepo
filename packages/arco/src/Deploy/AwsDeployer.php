@@ -30,6 +30,8 @@ final class AwsDeployer implements Deployer
     private const KEEP_PACKAGES = 20;
     /** Console versions kept besides the live one: the newest, so recent rollbacks keep a matching console. */
     private const KEEP_CONSOLE_VERSIONS = 4;
+    /** How long a remove waits for the Tagging API to stop listing what it just deleted. */
+    private const LEFTOVERS_WAIT_SECONDS = 60;
     /**
      * How long after leaving the VPC a deploy still looks for the console's and workers' network interfaces before it
      * drops the ENI statements: Lambda deletes them within about 20 minutes, with the role's permissions.
@@ -1156,7 +1158,7 @@ final class AwsDeployer implements Deployer
         ));
     }
 
-    public function remove(AppConfig $config, ?callable $onStep = null): void
+    public function remove(AppConfig $config, ?callable $onStep = null, bool $waitInterfaces = true): void
     {
         $step = $onStep ?? static function (string $key, array $params = []): void {};
         $queues = $this->workerQueues($config, $step);
@@ -1204,10 +1206,70 @@ final class AwsDeployer implements Deployer
         if ($endpoints !== []) {
             $this->gatewayEndpoints($config)->release($config, $endpoints, $step, 'remove.');
         }
-        if ($config->role === null && $networks !== null && $this->interfacesGoneForRemove($config, $networks, $step)) {
-            (new ExecutionRole($this->aws->iam()))->delete(ExecutionRole::roleName($config));
+        $roleKept = false;
+        $roleKeptForInterfaces = false;
+        if ($config->role === null) {
+            $role = ExecutionRole::roleName($config);
+            if ($networks !== [] && ! $waitInterfaces) {
+                // Not waiting (--no-wait-interfaces): Lambda still needs the role to delete the network interfaces of
+                // an environment that ran in a VPC, so it is kept on purpose, a note rather than a leftover.
+                if ($this->roleExists($role)) {
+                    $step('remove.role_kept_for_interfaces', ['role' => $role, 'region' => (string) $config->region, 'functions' => VpcInterfaces::functions($config)]);
+                    $roleKeptForInterfaces = true;
+                }
+            } elseif ($networks !== null && $this->interfacesGoneForRemove($config, $networks, $step)) {
+                (new ExecutionRole($this->aws->iam()))->delete($role);
+            } else {
+                $roleKept = true;
+            }
         }
         $this->removeGroup($config, $step);
+        $this->failOnLeftovers($config, $roleKept, $roleKeptForInterfaces, $step);
+    }
+
+    /**
+     * Last in a remove: what the tags still list for the environment, apart from the data remove keeps, is a leftover,
+     * and so is the execution role kept after a failed wait for the network interfaces. Any leftover fails the remove,
+     * so it never reports `removed` while something of the environment is left; the next remove deletes it. The role
+     * kept on purpose by --no-wait-interfaces (remove.role_kept_for_interfaces) is not a leftover. The Tagging API may
+     * still list a resource just deleted, so the check waits a little for it to catch up (iam:GetRole, which lists the
+     * role, never lags). Without tag:GetResources it warns and only the kept role counts.
+     *
+     * @param callable(string, array<string, string|int>): void $step
+     * @throws DeployException remove.leftovers
+     */
+    private function failOnLeftovers(AppConfig $config, bool $roleKept, bool $roleKeptForInterfaces, callable $step): void
+    {
+        $role = ExecutionRole::roleName($config);
+        $leftover = static fn (array $resource): bool => ! $resource['retained'] && ! ($roleKeptForInterfaces && $resource['type'] === 'iam:role' && $resource['name'] === $role);
+        $deadline = $this->sleeper->now() + self::LEFTOVERS_WAIT_SECONDS;
+        while (true) {
+            try {
+                $left = array_values(array_filter($this->resources($config), $leftover));
+            } catch (\Throwable $e) {
+                $step('remove.leftovers_unchecked', ['error' => self::errorText($e)]);
+                $left = $roleKept && $this->roleExists($role) ? [['type' => 'iam:role', 'name' => $role]] : [];
+                break;
+            }
+            $lagging = array_filter($left, static fn (array $resource): bool => $resource['type'] !== 'iam:role');
+            if ($lagging === [] || $this->sleeper->now() >= $deadline) {
+                break;
+            }
+            $this->sleeper->sleep(10);
+        }
+        if ($left !== []) {
+            throw DeployException::make('remove.leftovers', ['resources' => implode(', ', array_map(static fn (array $resource): string => $resource['type'] . ' ' . $resource['name'], $left))]);
+        }
+    }
+
+    /** Whether the role still exists; unreadable counts as existing. */
+    private function roleExists(string $name): bool
+    {
+        try {
+            return (new OwnershipGuard($this->aws))->role($name) !== null;
+        } catch (AwsException) {
+            return true;
+        }
     }
 
     /**
@@ -1242,7 +1304,10 @@ final class AwsDeployer implements Deployer
             $remove = $this->ownConnector($config, null, 'remove.', $step);
         } else {
             $live = $webExists ? (new WebFunctions($this->aws->lambdaWeb(), $this->sleeper))->liveConnectorArn($config->functionName()) : null;
-            $remove = $live !== null && $this->ownConnector($config, $live, 'remove.', $step);
+            // Otherwise (the Web Function gone after a remove stopped half way, or a connector a deploy failed to
+            // delete) the connector's tags say it is still this environment's.
+            $remove = $live !== null ? $this->ownConnector($config, $live, 'remove.', $step)
+                : $this->connectorTagged($config) && $this->ownConnector($config, null, 'remove.', $step);
         }
         if ($remove) {
             // Its operator role goes with it: refused, before anything is deleted, when another environment owns it.
@@ -1251,6 +1316,17 @@ final class AwsDeployer implements Deployer
             $guard->checkRemoval($config, $role === null ? [] : [$role]);
         }
         return $remove;
+    }
+
+    /** Whether the tags list a network connector of the environment; an unreadable listing lists none. */
+    private function connectorTagged(AppConfig $config): bool
+    {
+        try {
+            $resources = $this->resources($config);
+        } catch (\Throwable) {
+            return false;
+        }
+        return array_filter($resources, static fn (array $resource): bool => $resource['type'] === 'lambda:network-connector') !== [];
     }
 
     /**

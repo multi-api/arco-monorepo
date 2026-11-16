@@ -366,6 +366,14 @@ CloudFront stack, its DNS aliases and a certificate Arco requested. The shared c
 your SSM parameters, the SQS queues (with their messages), the storage buckets (with their files) and the
 DynamoDB tables (cache, failed jobs and `table()`, with their items) are kept; `remove` lists each one it kept.
 
+`remove` finishes what it started: "nothing to remove" means nothing it deletes is still tagged for the
+environment, so running it again after an interrupted or failed remove deletes whatever is left (the network
+connector, the roles, the resource group, ...), even when the function is already gone. At the end it lists the
+tagged resources again and, when anything it deletes is still there, fails with `remove.leftovers` naming them; fix
+the cause the warnings give and run it again. `--no-wait-interfaces` skips the wait for Lambda to delete the VPC
+network interfaces (up to about 20 minutes): the execution role is kept for Lambda on purpose
+(`remove.role_kept_for_interfaces`, not a failure), and a later `remove` deletes it.
+
 ## Operating the app
 
 By default a deploy creates only the web function. Add `->console()` to `arco.php` (or run
@@ -844,7 +852,8 @@ A deploy role (like the one of Arco's own end-to-end run, in a dedicated test ac
   `resource-groups:GetGroupQuery`, `resource-groups:CreateGroup`, `resource-groups:Tag`,
   `resource-groups:GetGroup`, `resource-groups:GetTags`, `resource-groups:UpdateGroupQuery` and, for
   `arco remove`, `resource-groups:DeleteGroup`. Optional: without them the deploy and the remove print a note
-- for `arco info --resources` and the list `arco remove` prints before it asks: `tag:GetResources` (and, for a
+- for `arco info --resources`, the list `arco remove` prints before it asks and its check for leftovers at the end:
+  `tag:GetResources` (without it the check warns `remove.leftovers_unchecked`; and, for a
   process app's schedules, `events:DescribeRule`: without it `paused` is `null`)
 - for the runtime clean-up: `s3:ListBucket` on the code bucket and `s3:GetObject`, `s3:PutObject`,
   `s3:DeleteObject` on `runtime/*`

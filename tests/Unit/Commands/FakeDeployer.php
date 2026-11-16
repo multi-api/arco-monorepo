@@ -76,6 +76,8 @@ final class FakeDeployer implements Deployer
     public array $removeSteps = [];
     /** thrown by remove() after its steps, e.g. AWS refusing a deletion */
     public ?\Throwable $removeError = null;
+    /** remove()'s $waitInterfaces, once called */
+    public ?bool $removeWaitedInterfaces = null;
 
     public function __construct(
         public ?string $previousRevision = null,
@@ -162,9 +164,10 @@ final class FakeDeployer implements Deployer
     }
 
     public function hasDomainResources(AppConfig $config): bool { return $this->domainResources; }
-    public function remove(AppConfig $config, ?callable $onStep = null): void
+    public function remove(AppConfig $config, ?callable $onStep = null, bool $waitInterfaces = true): void
     {
         $this->calls[] = 'remove';
+        $this->removeWaitedInterfaces = $waitInterfaces;
         foreach ($this->removeSteps as [$key, $params]) {
             $onStep !== null && $onStep($key, $params);
         }
