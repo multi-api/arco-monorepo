@@ -944,6 +944,7 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(
             self::webEndpoint('IamAuth', 'rev-1'),
             self::domainStack('UPDATE_COMPLETE'),                                           // the stack is left
+            self::noTenantStack(),                                                           // and no tenant domains with it
             new Result(['policy' => json_encode(['Version' => '2012-10-17', 'Statement' => [$ours, $foreign]]), 'revisionId' => '0a1b2c3d-1111-2222-3333-444455556666']),
             new Result([]),                                                                  // PutResourcePolicy
             new Result([]),                                                                  // UpdateWebFunctionEndpoint
@@ -953,9 +954,9 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->config(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'GetResourcePolicy', 'PutResourcePolicy', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
-        self::assertSame([$foreign], json_decode((string) $mocks->params[3]['policy'], true)['Statement'], 'only Arco\'s statement goes');
-        self::assertSame('ApplicationManaged', $mocks->params[4]['authType']);
+        self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'DescribeStacks', 'GetResourcePolicy', 'PutResourcePolicy', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+        self::assertSame([$foreign], json_decode((string) $mocks->params[4]['policy'], true)['Statement'], 'only Arco\'s statement goes');
+        self::assertSame('ApplicationManaged', $mocks->params[5]['authType']);
         self::assertSame(['deploy.step_traffic', 'deploy.endpoint_unprotected'], $steps);
     }
 
@@ -1018,6 +1019,7 @@ final class AwsDeployerTest extends TestCase
             $mocks->handler->append(
                 self::webEndpoint('IamAuth', 'rev-1'),
                 self::domainStack('UPDATE_COMPLETE'),                                       // the stack is left
+                self::noTenantStack(),
                 new Result(['policy' => json_encode(['Version' => '2012-10-17', 'Statement' => $statements]), 'revisionId' => '0a1b2c3d-1111-2222-3333-444455556666']),
                 new Result([]),                                                              // the write
                 new Result([]),                                                              // UpdateWebFunctionEndpoint
@@ -1027,11 +1029,11 @@ final class AwsDeployerTest extends TestCase
 
             (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->iamConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-            self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'GetResourcePolicy', $write, 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+            self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'DescribeStacks', 'GetResourcePolicy', $write, 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
             if ($write === 'PutResourcePolicy') {
-                self::assertSame([$foreign], json_decode((string) $mocks->params[3]['policy'], true)['Statement'], 'only Arco\'s statement goes');
+                self::assertSame([$foreign], json_decode((string) $mocks->params[4]['policy'], true)['Statement'], 'only Arco\'s statement goes');
             }
-            self::assertSame('IamAuth', $mocks->params[4]['authType']);
+            self::assertSame('IamAuth', $mocks->params[5]['authType']);
             self::assertSame(['deploy.step_traffic', 'deploy.oac_revoked'], $steps);
         }
     }
@@ -1075,6 +1077,7 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(
             self::webEndpoint('IamAuth', 'rev-1'),
             self::domainStack('UPDATE_COMPLETE'),
+            self::noTenantStack(),
             AwsMocks::error(LambdaWebException::class, 'GetResourcePolicy', 'ResourceNotFoundException', 404),
             new Result([]),
             self::webEndpoint('IamAuth', 'rev-2'),
@@ -1083,8 +1086,268 @@ final class AwsDeployerTest extends TestCase
 
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->iamConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'GetResourcePolicy', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
+        self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'DescribeStacks', 'GetResourcePolicy', 'UpdateWebFunctionEndpoint', 'GetWebFunctionEndpoint'], $mocks->calls);
         self::assertSame(['deploy.step_traffic'], $steps, 'nothing was revoked');
+    }
+
+    private const TENANT_STACK = 'arco-shop-production-tenants';
+
+    private static function noTenantStack(): CloudFormationException
+    {
+        return AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id ' . self::TENANT_STACK . ' does not exist');
+    }
+
+    /** @param array<string, string>|null $tags null: shop/production's */
+    private static function tenantStack(string $status = 'UPDATE_COMPLETE', ?array $tags = null): Result
+    {
+        return new Result(['Stacks' => [[
+            'StackName' => self::TENANT_STACK, 'StackStatus' => $status,
+            'Tags' => self::tagList($tags ?? self::tags()),
+            'Outputs' => [
+                ['OutputKey' => 'DistributionId', 'OutputValue' => 'ETENANT'], ['OutputKey' => 'ConnectionGroupId', 'OutputValue' => 'cg_1'],
+                ['OutputKey' => 'RoutingEndpoint', 'OutputValue' => 'd222.cloudfront.net'], ['OutputKey' => 'Target', 'OutputValue' => 'routing.acmeapp.io'],
+            ],
+        ]]]);
+    }
+
+    /** domain() with a certificate, tenantDomains() and (unless $dns says otherwise) records made by hand. */
+    private function tenantConfig(string|false|null $dns = false): AppConfig
+    {
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->console(false)->environment('production', function (Environment $e) use ($dns): void {
+            $e->domain('arco.acmeapp.io')->certificate(self::CERTIFICATE)->tenantDomains('routing.acmeapp.io');
+            if ($dns !== null) {
+                $e->dns($dns);
+            }
+        })->toArray(), 'production');
+    }
+
+    /** @return list<Result> the domain() part of attachDomains on an environment already locked to its distribution */
+    private static function attachedDomain(): array
+    {
+        $standard = CloudFrontAccess::statement(self::WEB_ARN . '/endpoint/default', 'arn:aws:cloudfront::111111111111:distribution/E123');
+        return [
+            self::domainStack('UPDATE_COMPLETE'),
+            new Result(['Certificate' => ['CertificateArn' => self::CERTIFICATE, 'DomainName' => 'arco.acmeapp.io', 'SubjectAlternativeNames' => ['arco.acmeapp.io'], 'Status' => 'ISSUED', 'Type' => 'AMAZON_ISSUED', 'KeyAlgorithm' => 'RSA-2048']]),
+            self::domainStack('UPDATE_COMPLETE'), new Result([]), self::domainStack('UPDATE_COMPLETE'),
+            self::webEndpoint('IamAuth', 'rev-2'),
+            new Result(['policy' => json_encode(['Version' => '2012-10-17', 'Statement' => [$standard]]), 'revisionId' => '0a1b2c3d-1111-2222-3333-444455556666']),
+        ];
+    }
+
+    private const ATTACHED_DOMAIN_CALLS = ['DescribeStacks', 'DescribeCertificate', 'DescribeStacks', 'UpdateStack', 'DescribeStacks', 'GetWebFunctionEndpoint', 'GetResourcePolicy'];
+
+    /** @param list<array<string, mixed>> $answers */
+    private static function dnsAnswer(string $name, int $type, array $answers = [], int $status = 0): \GuzzleHttp\Psr7\Response
+    {
+        return new \GuzzleHttp\Psr7\Response(200, [], json_encode(['Status' => $status, 'TC' => false, 'Question' => [['name' => "$name.", 'type' => $type]]] + ($answers === [] ? [] : ['Answer' => $answers]), JSON_THROW_ON_ERROR));
+    }
+
+    /** @return list<\GuzzleHttp\Psr7\Response> public DNS: the zone of the target, and the target without records */
+    private static function freeTarget(): array
+    {
+        return [
+            self::dnsAnswer('routing.acmeapp.io', 6, status: 3),
+            self::dnsAnswer('acmeapp.io', 6, [['name' => 'acmeapp.io.', 'type' => 6, 'TTL' => 3600, 'data' => 'ns.acmeapp.io. hostmaster.acmeapp.io. 1 3600 600 86400 300']]),
+            self::dnsAnswer('routing.acmeapp.io', 5, status: 3), self::dnsAnswer('routing.acmeapp.io', 1, status: 3), self::dnsAnswer('routing.acmeapp.io', 28, status: 3),
+        ];
+    }
+
+    private static function targetCname(): \GuzzleHttp\Psr7\Response
+    {
+        return self::dnsAnswer('routing.acmeapp.io', 5, [['name' => 'routing.acmeapp.io.', 'type' => 5, 'TTL' => 300, 'data' => 'd222.cloudfront.net.']]);
+    }
+
+    public function test_tenant_domains_attach_after_the_domain_and_only_add_their_own_statement(): void
+    {
+        $standard = CloudFrontAccess::statement(self::WEB_ARN . '/endpoint/default', 'arn:aws:cloudfront::111111111111:distribution/E123');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::attachedDomain(),
+            // tenant domains: no stack yet, created, then its distribution may invoke the endpoint
+            self::noTenantStack(), self::noTenantStack(), self::noTenantStack(), new Result([]), self::tenantStack('CREATE_COMPLETE'),
+            self::webEndpoint('IamAuth', 'rev-2'),
+            new Result(['policy' => json_encode(['Version' => '2012-10-17', 'Statement' => [$standard]]), 'revisionId' => '0a1b2c3d-1111-2222-3333-444455556666']),
+            new Result([]),                                                                  // PutResourcePolicy
+        ]);
+        $site = new \GuzzleHttp\Handler\MockHandler([...self::freeTarget(), self::targetCname()]);
+        $steps = [];
+        $step = function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; };
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), http: new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($site)]));
+
+        $result = $deployer->attachDomains($this->tenantConfig(), new DeployResult('abc.lambda-web.us-east-1.on.aws', 'rev-2', 'rev-1', 'b', 'k'), ['/build/*'], $step);
+
+        self::assertSame(['arco.acmeapp.io'], $result->domains);
+        self::assertSame([...self::ATTACHED_DOMAIN_CALLS,
+            'DescribeStacks', 'DescribeStacks', 'DescribeStacks', 'CreateStack', 'DescribeStacks',
+            'GetWebFunctionEndpoint', 'GetResourcePolicy', 'PutResourcePolicy'], $mocks->calls, 'the endpoint is never switched or checked for tenants');
+        self::assertCount(0, $mocks->handler);
+        self::assertCount(0, $site, 'the zone, the free target and the record after the stack were all read from public DNS');
+        $create = $mocks->params[10];
+        self::assertSame(self::TENANT_STACK, $create['StackName']);
+        self::assertSame(self::tagList(self::tags()), array_slice($create['Tags'], 0, 2));
+        $template = json_decode((string) $create['TemplateBody'], true);
+        self::assertSame('tenant-only', $template['Resources']['Distribution']['Properties']['DistributionConfig']['ConnectionMode']);
+        self::assertSame('abc.lambda-web.us-east-1.on.aws', $template['Resources']['Distribution']['Properties']['DistributionConfig']['Origins'][0]['DomainName']);
+        self::assertSame('/build/*', $template['Resources']['Distribution']['Properties']['DistributionConfig']['CacheBehaviors'][0]['PathPattern']);
+        $policy = json_decode((string) $mocks->params[14]['policy'], true);
+        self::assertSame([$standard, CloudFrontAccess::tenantStatement(self::WEB_ARN . '/endpoint/default', 'arn:aws:cloudfront::111111111111:distribution/ETENANT')], $policy['Statement'], 'the domain() statement stays');
+        self::assertSame([
+            ['domains.step_tenant_distribution', ['stack' => self::TENANT_STACK]],
+            ['deploy.oac_policy', ['function' => 'shop-production', 'distribution' => 'ETENANT']],
+            ['domains.step_tenant_dns', ['target' => 'routing.acmeapp.io', 'endpoint' => 'd222.cloudfront.net']],
+            ['domains.manual_records', []],
+            ['domains.manual_record', ['type' => 'CNAME', 'name' => 'routing.acmeapp.io', 'value' => 'd222.cloudfront.net']],
+        ], array_slice($steps, -5));
+    }
+
+    public function test_a_manual_tenant_target_stops_the_deploy_until_its_record_is_public_and_then_resumes(): void
+    {
+        $standard = CloudFrontAccess::statement(self::WEB_ARN . '/endpoint/default', 'arn:aws:cloudfront::111111111111:distribution/E123');
+        $tenant = CloudFrontAccess::tenantStatement(self::WEB_ARN . '/endpoint/default', 'arn:aws:cloudfront::111111111111:distribution/ETENANT');
+        $granted = new Result(['policy' => json_encode(['Version' => '2012-10-17', 'Statement' => [$standard, $tenant]]), 'revisionId' => '0a1b2c3d-1111-2222-3333-444455556666']);
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...self::attachedDomain(),
+            self::noTenantStack(), self::noTenantStack(), self::noTenantStack(), new Result([]), self::tenantStack('CREATE_COMPLETE'),
+            self::webEndpoint('IamAuth', 'rev-2'), $granted,
+        ]);
+        $site = new \GuzzleHttp\Handler\MockHandler([...self::freeTarget(), self::dnsAnswer('routing.acmeapp.io', 5, status: 3)]);
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), http: new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($site)]));
+        $result = new DeployResult('abc.lambda-web.us-east-1.on.aws', 'rev-2', 'rev-1', 'b', 'k');
+
+        try {
+            $deployer->attachDomains($this->tenantConfig(), $result, []);
+            self::fail('the record is not public yet');
+        } catch (DeployException $e) {
+            self::assertSame('domains.tenant_manual_cname_missing', $e->key);
+            self::assertSame(['target' => 'routing.acmeapp.io', 'endpoint' => 'd222.cloudfront.net'], $e->params);
+        }
+
+        // The user created the record. The next deploy keeps the stack and the statement, and verifies the record.
+        $mocks->handler->append(...[
+            ...self::attachedDomain(),
+            self::tenantStack('CREATE_COMPLETE'), self::tenantStack('CREATE_COMPLETE'),
+            new Result(['Id' => 'cs']), new Result(['Status' => 'FAILED', 'StatusReason' => "The submitted information didn't contain changes."]), new Result([]),
+            self::webEndpoint('IamAuth', 'rev-2'), $granted,
+        ]);
+        $site->append(
+            self::dnsAnswer('routing.acmeapp.io', 6, status: 3),
+            self::dnsAnswer('acmeapp.io', 6, [['name' => 'acmeapp.io.', 'type' => 6, 'TTL' => 3600, 'data' => 'ns.acmeapp.io. hostmaster.acmeapp.io. 1 3600 600 86400 300']]),
+            self::targetCname(), self::targetCname(),
+        );
+        $before = count($mocks->calls);
+
+        $deployer->attachDomains($this->tenantConfig(), $result, []);
+
+        self::assertSame([...self::ATTACHED_DOMAIN_CALLS, 'DescribeStacks', 'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'DeleteChangeSet', 'GetWebFunctionEndpoint', 'GetResourcePolicy'], array_slice($mocks->calls, $before));
+        self::assertCount(0, $mocks->handler);
+        self::assertCount(0, $site);
+    }
+
+    public function test_behind_an_emulator_tenant_domains_get_their_stack_without_the_cloudfront_protection(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            ...array_slice(self::attachedDomain(), 0, 5),
+            self::noTenantStack(), self::noTenantStack(), self::noTenantStack(), new Result([]), self::tenantStack('CREATE_COMPLETE'),
+        ]);
+        $site = new \GuzzleHttp\Handler\MockHandler([...self::freeTarget(), self::targetCname()]);
+
+        self::behindEmulator(function () use ($mocks, $site): void {
+            $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), http: new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($site)]));
+            $deployer->attachDomains($this->tenantConfig(), new DeployResult('abc.lambda-web.us-east-1.on.aws', 'rev-2', 'rev-1', 'b', 'k'), []);
+        });
+
+        self::assertSame(['DescribeStacks', 'DescribeCertificate', 'DescribeStacks', 'UpdateStack', 'DescribeStacks',
+            'DescribeStacks', 'DescribeStacks', 'DescribeStacks', 'CreateStack', 'DescribeStacks'], $mocks->calls, 'no policy');
+        $template = json_decode((string) $mocks->params[8]['TemplateBody'], true);
+        self::assertArrayNotHasKey('OriginAccess', $template['Resources']);
+    }
+
+    public function test_a_foreign_tenant_stack_is_refused_before_force_tags_anything(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            self::roleTags(self::tags('shop', 'staging')), ...self::webTags(self::tags('shop', 'staging')),
+            self::lambdaMissing('GetFunctionConfiguration'), self::noRule(),
+            self::tenantStack(tags: self::tags('shop', 'staging')),
+        ]);
+
+        try {
+            self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: true), $this->tenantConfig());
+            self::fail('expected domains.stack_not_ours');
+        } catch (DeployException $e) {
+            self::assertSame('domains.stack_not_ours', $e->key);
+            self::assertSame(self::TENANT_STACK, $e->params['stack']);
+        }
+        self::assertSame([], array_values(array_filter($mocks->calls, fn (string $call) => str_starts_with($call, 'Tag'))), 'no tag was added');
+        self::assertCount(0, $mocks->handler);
+    }
+
+    public function test_an_occupied_tenant_target_is_refused_before_anything_is_tagged_or_created(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            self::roleTags(self::tags('shop', 'staging')), ...self::webTags(self::tags('shop', 'staging')),
+            self::lambdaMissing('GetFunctionConfiguration'), self::noRule(),
+            self::noTenantStack(),
+            new Result(['HostedZones' => [['Id' => '/hostedzone/Z1', 'Name' => 'acmeapp.io.', 'Config' => ['PrivateZone' => false]]], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [['Name' => 'routing.acmeapp.io.', 'Type' => 'CNAME', 'TTL' => 300, 'ResourceRecords' => [['Value' => 'd222.cloudfront.net.']]]], 'IsTruncated' => false]),
+        ]);
+
+        try {
+            // Route 53 in the deploy account. The record points where a tenant stack would, but no stack of ours says so.
+            self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: true), $this->tenantConfig(null));
+            self::fail('expected domains.tenant_target_occupied');
+        } catch (DeployException $e) {
+            self::assertSame('domains.tenant_target_occupied', $e->key);
+        }
+        self::assertSame(['DescribeStacks', 'ListHostedZonesByName', 'ListResourceRecordSets'], array_slice($mocks->calls, -3));
+        self::assertSame([], array_values(array_filter($mocks->calls, fn (string $call) => str_starts_with($call, 'Tag') || str_starts_with($call, 'Change'))), 'nothing was tagged or written');
+    }
+
+    public function test_a_tenant_stack_that_cannot_be_read_stops_the_deploy_instead_of_being_assumed_absent(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            self::roleTags(self::tags()), ...self::webTags(self::tags()),
+            self::lambdaMissing('GetFunctionConfiguration'), self::noRule(),
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403, 'not authorized'),
+        ]);
+
+        $this->expectException(CloudFormationException::class);
+        self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep()), $this->tenantConfig());
+    }
+
+    public function test_removing_domain_and_tenant_domains_from_arco_php_is_refused_while_the_tenant_stack_exists(): void
+    {
+        foreach ([$this->config(), $this->iamConfig()] as $config) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(self::webEndpoint('IamAuth', 'rev-1'), self::domainStack('UPDATE_COMPLETE'), self::tenantStack());
+
+            try {
+                (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($config, new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null));
+                self::fail('the tenant distribution still serves through this endpoint');
+            } catch (DeployException $e) {
+                self::assertSame('deploy.tenant_domains_left', $e->key);
+                self::assertSame(['stack' => self::TENANT_STACK], $e->params);
+            }
+            self::assertSame(['GetWebFunctionEndpoint', 'DescribeStacks', 'DescribeStacks'], $mocks->calls, 'no policy change, no traffic move');
+        }
+    }
+
+    public function test_a_tenant_stack_of_another_environment_does_not_hold_this_one_back(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            self::webEndpoint('IamAuth', 'rev-1'), self::domainStack('UPDATE_COMPLETE'), self::tenantStack(tags: self::tags('shop', 'staging')),
+            AwsMocks::error(LambdaWebException::class, 'GetResourcePolicy', 'ResourceNotFoundException', 404),
+            new Result([]), self::webEndpoint('IamAuth', 'rev-2'),
+        );
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->release($this->iamConfig(), new PreparedDeploy('rev-2', 'rev-1', 'b', 'k', null, null));
+
+        self::assertCount(0, $mocks->handler);
     }
 
     public function test_without_domains_nothing_about_domains_is_called(): void
@@ -1227,7 +1490,7 @@ final class AwsDeployerTest extends TestCase
         $dns = new AwsMocks();
         $dns->handler->append(
             new Result(['HostedZones' => [['Id' => '/hostedzone/Z1', 'Name' => 'acmeapp.io.', 'Config' => ['PrivateZone' => false]]], 'IsTruncated' => false]),
-            new Result(['ResourceRecordSets' => [$alias]]),
+            new Result(['ResourceRecordSets' => [$alias], 'IsTruncated' => false]),
             new Result(['ChangeInfo' => ['Id' => '/change/R', 'Status' => 'INSYNC']]),
             new Result(['ChangeInfo' => ['Id' => '/change/R', 'Status' => 'INSYNC']]),
         );

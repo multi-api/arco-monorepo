@@ -114,6 +114,7 @@ rules and `adopt` are in [Config layer](config-layer.md).
 | `permissions(array)` | `[]` | Extra IAM statements for the managed execution role (below) |
 | `exclude(array)` / `include(array)` | preset rules | Packaging globs (below) |
 | `domain(string\|array)` | none | Custom domains served through CloudFront (below); lowercase hostnames, no wildcards, at most 10 |
+| `tenantDomains(string $target)` | none | Declare a routing hostname for tenant domains; needs `domain()`; deployment is not available yet (see [Tenant domain routing](#tenant-domain-routing)) |
 | `dns(string\|false $dns)` | Route 53 in the deploy account | `dns('profile')`: Route 53 in the account of that AWS profile; `dns('cloudflare')`: Cloudflare (see [Cloudflare](#cloudflare)), so a profile named `cloudflare` cannot be used here; `dns(false)`: DNS is elsewhere, Arco prints the records |
 | `deployCommands(array)` | `[]` | Commands run on the console function during every deploy, before traffic moves; an environment's list replaces the app's |
 | `console(bool = true, ?int timeout, ?int memory)` | off | Deploy the console function (`arco command`, `arco tinker`, `deployCommands()`); `console(false)` deletes an existing one on the next deploy; a scheduler implies it. `timeout:` is in seconds (3 to 900, default 900), `memory:` in MB (128 to 10240, default 2048); giving either also turns the console on |
@@ -1339,6 +1340,71 @@ After the function is deployed and verified, `deploy`:
 
 The summary lists `https://<domain>` for every domain next to the endpoint URL.
 
+### Tenant domain routing
+
+`tenantDomains(target: 'routing.example.com')` declares a shared routing hostname, inherited from the app unless an
+environment replaces it. It is not a site served by itself: customer subdomains will point at it with a `CNAME`, and
+it points at the routing endpoint of a CloudFront connection group. Use a lowercase hostname without a wildcard and
+choose a name absent from `domain()`; if it is listed there, remove it before using it as a target. For example,
+MultiERP's not-yet-deployed `tiendas.dev.multierp.cl` and `tiendas.multierp.cl` must first be removed from `domain()`.
+
+**Not deployable yet:** the tenant API and the protection of `arco remove` are not implemented, so `arco deploy`
+still stops before AWS with `deploy.tenant_domains_unavailable`. What follows describes the deploy this version
+already contains behind that stop; none of it has been accepted against real AWS yet.
+
+`tenantDomains()` needs `domain()` in the same environment (`validation.tenant_domain_requires_domain`). The endpoint
+is only locked to CloudFront through a `domain()` whose path Arco can check; tenant domains alone would be served by
+an endpoint anyone can call with a forged host.
+
+After the `domain()` steps, `deploy`:
+
+1. Checks the target, before anything is created (see the table below).
+2. Creates or updates the stack `arco-<app>-<env>-tenants`: a multi-tenant distribution (same origin, `/build/*`
+   caching and viewer-request function as `domain()`, with the viewer address forwarded and the asset cache keyed by
+   host) and a connection group. Distribution tenants are never part of the stack.
+3. Adds a second statement (`ArcoCloudFrontTenant`) to the endpoint's policy so the tenant distribution may invoke
+   it, keeping the `domain()` statement and any statement of yours.
+4. Points the target at the connection group's routing endpoint with a `CNAME`.
+
+| `dns()` | The target's `CNAME` |
+|---|---|
+| default, `dns('profile')` | Created in Route 53 (standard query charges apply; an alias is not possible for this name) |
+| `dns('cloudflare')` | Created **DNS only** (proxy off) with the comment `managed by arco: <app>/<env>` |
+| `dns(false)` | Printed (`<target> CNAME <endpoint>`); you create it, and the deploy only succeeds once public DNS serves exactly that record |
+
+In every mode the target must be a subdomain of its DNS zone, not its apex (`domains.tenant_target_apex`), in a zone
+Arco can find (`domains.tenant_target_zone_missing`), and free: any record already at the name that is not exactly
+this environment's `CNAME` stops the deploy with `domains.tenant_target_occupied`, also with `--force-dns`. A record
+is only taken as this environment's when it points at the routing endpoint of the environment's own stack. Arco never
+overwrites or deletes a record at the target; an existing Cloudflare record with the proxy on stops with
+`domains.tenant_target_proxied` instead of being changed. With `dns(false)` Arco reads public DNS (DNS over HTTPS at
+`cloudflare-dns.com`): if it cannot tell whether the target is free, the deploy stops with
+`domains.tenant_target_unverified`; while your record is missing or different it stops with
+`domains.tenant_manual_cname_missing`, naming the record. Create it and deploy again: the stack and the policy
+statement are kept and the deploy resumes at the check.
+
+A deploy never replaces what tenant domains depend on. It is refused, before any change:
+
+- when the target differs from the one the environment was deployed with (`domains.tenant_target_changed`; moving a
+  live target is outside this version);
+- when the stack is not this environment's (`domains.stack_not_ours`), is being created or deleted, or lacks its
+  outputs (`domains.tenant_stack_unusable`);
+- when the update would replace or remove the distribution or the connection group (`domains.stack_replacement`), or
+  its changes cannot be read completely (`domains.stack_changes_unreadable`). The stack is updated through a
+  CloudFormation change set that is deleted without running in both cases;
+- when `domain()` and `tenantDomains()` were both removed from `arco.php` while the tenant stack exists
+  (`deploy.tenant_domains_left`): releasing the endpoint would leave tenant domains served by a public endpoint.
+
+Removing only `tenantDomains()` leaves the stack, the policy statement and the target record in place.
+
+Customer domains must be subdomains; Anycast static IPs and customer apex domains remain for v2. When using
+Cloudflare, both the target and customer domains must use **DNS only** (proxy off), because the proxy breaks HTTP
+validation of CloudFront-managed certificates.
+
+**Español:** El target puede usar Route 53, Cloudflare o DNS manual, y debe ser un subdominio de su zona, no el
+apex. En Cloudflare, tanto el target como los dominios de clientes deben usar **solo DNS** (proxy desactivado):
+el proxy impide la validación HTTP de los certificados administrados por CloudFront. Anycast queda para v2.
+
 ### Where the DNS records go
 
 | Config | DNS |
@@ -1352,6 +1418,11 @@ For each record Arco picks the longest public hosted zone that is a suffix of th
 takes over a live record: if a domain already has an `A`, `AAAA` or `CNAME` record that does not
 point at this environment's distribution, `deploy` stops before creating anything and names the
 record. `deploy --force-dns` replaces such records.
+
+If Route 53 does not return a change ID, Arco stops with `domains.dns_change_unconfirmed` rather than claiming the
+change propagated. The change may already have been submitted: inspect the zone's records before retrying.
+Cloudflare listings with incomplete pagination or malformed entries stop with `cloudflare.list_incomplete` rather
+than treating a name as available.
 
 At a zone apex (`example.com`), most DNS providers do not allow a `CNAME`; in manual mode use your
 provider's ALIAS/ANAME record type.

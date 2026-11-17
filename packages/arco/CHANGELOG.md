@@ -3,6 +3,33 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## Unreleased
+
+- **Added: tenant domain target declaration.** `tenantDomains(target: 'routing.example.com')` inherits per
+  environment, validates its hostname and conflicts with `domain()`, and needs `domain()` in the same environment.
+  New errors: `validation.tenant_domain_target`, `validation.tenant_domain_conflict`,
+  `validation.tenant_domain_requires_domain`.
+  Deploy still stops before AWS with `deploy.tenant_domains_unavailable` until the tenant API and the protection of
+  `arco remove` exist.
+- **Added (behind that stop): shared tenant infrastructure.** The deploy contains the stack
+  `arco-<app>-<env>-tenants` (multi-tenant distribution and connection group, updated only through a change set that
+  keeps both), a second endpoint policy statement (`ArcoCloudFrontTenant`) and the target's `CNAME` in Route 53,
+  Cloudflare (DNS only) or made by hand and verified in public DNS. New steps: `domains.step_tenant_distribution`,
+  `domains.step_tenant_dns`. New errors: `domains.tenant_target_zone_missing`, `domains.tenant_target_apex`,
+  `domains.tenant_target_occupied`, `domains.tenant_target_unverified`, `domains.tenant_target_proxied`,
+  `domains.tenant_target_change`, `domains.tenant_target_changed`, `domains.tenant_manual_cname_missing`,
+  `domains.tenant_stack_unusable`, `domains.stack_replacement`, `domains.stack_changes_unreadable`,
+  `deploy.tenant_domains_left`. Not accepted against real AWS yet.
+- **Fixed: Route 53 record conflict checks read every page for a hostname.** A malformed record or incomplete or
+  repeated cursor stops the operation with `domains.record_read_incomplete` instead of risking changes based on a
+  partial listing.
+- **Fixed: Route 53 zone selection fails closed on incomplete listings.** A malformed zone or missing or repeated
+  cursor stops the operation with `domains.zones_read_incomplete` rather than choosing a potentially incorrect zone.
+- **Fixed: unconfirmed Route 53 changes no longer report success.** Without a change ID Arco stops with
+  `domains.dns_change_unconfirmed`; the change may have been submitted, so inspect DNS before retrying.
+- **Fixed: incomplete Cloudflare listings no longer look empty.** Missing or inconsistent pagination and malformed
+  zones or records stop DNS changes with `cloudflare.list_incomplete`.
+
 ## 0.24.1
 
 - **Fixed: `arco remove` no longer fails on resources it already deleted.** The Resource Groups Tagging API can keep

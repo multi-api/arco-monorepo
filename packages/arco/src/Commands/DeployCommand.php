@@ -146,6 +146,9 @@ final class DeployCommand extends ArcoCommand
         try {
             $config = $this->loadTarget($input, $io, $stream === null ? null : $stream->warning(...));
             $this->jsonTarget($stream, $config);
+            if ($config->tenantDomainTarget !== null) {
+                throw $this->userError('deploy.tenant_domains_unavailable');
+            }
             $preset = $this->presets->forConfig($config, $this->projectDir());
 
             $migrate = (bool) $input->getOption('migrate');

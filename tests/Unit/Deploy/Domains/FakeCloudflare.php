@@ -108,7 +108,8 @@ final class FakeCloudflare
                     $zones[] = ['id' => $id, 'name' => $name, 'status' => 'active'];
                 }
             }
-            return self::ok($zones);
+            return self::json(200, ['success' => true, 'errors' => [], 'result' => $zones,
+                'result_info' => ['page' => 1, 'per_page' => 5, 'total_pages' => 1, 'count' => count($zones), 'total_count' => count($zones)]]);
         }
         if (preg_match('#^zones/([^/]+)/dns_records(?:/([^/]+))?$#', $path, $m) !== 1) {
             return self::json(404, ['success' => false, 'errors' => [['code' => 7003, 'message' => 'Could not route']], 'result' => null]);

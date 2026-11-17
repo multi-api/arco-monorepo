@@ -16,6 +16,8 @@ use Multiapi\Arco\Deploy\DeployException;
 use Multiapi\Arco\Deploy\Domains\CloudflareApi;
 use Multiapi\Arco\Deploy\Domains\CloudflareDns;
 use Multiapi\Arco\Deploy\Domains\CustomDomains;
+use Multiapi\Arco\Deploy\Domains\DnsRecord;
+use Multiapi\Arco\Deploy\Domains\HostedZone;
 use Multiapi\Arco\Tests\Unit\Deploy\AwsMocks;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -62,6 +64,110 @@ final class CloudflareDnsTest extends TestCase
     private function deploy(bool $force = false): void
     {
         $this->domains($force)->deploy($this->config(), self::ENDPOINT, [], self::TAGS, fn () => null);
+    }
+
+    public function test_tenant_target_cname_is_marked_for_the_environment_and_not_proxied(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->tenantDomains('routing.acmeapp.io')
+            ->dns('cloudflare')->environment('production')->toArray(), 'production');
+        $dns = new CloudflareDns($this->cf->api());
+
+        $dns->apply(new HostedZone(self::ZONE, 'acmeapp.io', false), [], [DnsRecord::cname('routing.acmeapp.io', 'endpoint.cloudfront.net')], $config);
+
+        $records = $this->cf->named('routing.acmeapp.io');
+        self::assertCount(1, $records);
+        self::assertSame('endpoint.cloudfront.net', $records[0]['content']);
+        self::assertSame(self::MARKER, $records[0]['comment']);
+        self::assertFalse($records[0]['proxied']);
+    }
+
+    public function test_tenant_target_does_not_adopt_an_identical_foreign_cname(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->tenantDomains('routing.acmeapp.io')
+            ->dns('cloudflare')->environment('production')->toArray(), 'production');
+        $this->cf->record(self::ZONE, 'routing.acmeapp.io', 'CNAME', 'endpoint.cloudfront.net', 'another owner');
+        $dns = new CloudflareDns($this->cf->api());
+
+        try {
+            $dns->apply(new HostedZone(self::ZONE, 'acmeapp.io', false), [], [DnsRecord::cname('routing.acmeapp.io', 'endpoint.cloudfront.net')], $config);
+            self::fail('An identical foreign target is not owned by this environment.');
+        } catch (DeployException $exception) {
+            self::assertSame('domains.record_conflict', $exception->key);
+            self::assertSame([], $this->cf->writes());
+        }
+    }
+
+    public function test_tenant_target_with_unknown_proxy_status_is_not_treated_as_dns_only(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->tenantDomains('routing.acmeapp.io')
+            ->dns('cloudflare')->environment('production')->toArray(), 'production');
+        $this->cf->record(self::ZONE, 'routing.acmeapp.io', 'CNAME', 'endpoint.cloudfront.net', self::MARKER, ['proxied' => null]);
+        $dns = new CloudflareDns($this->cf->api());
+
+        $dns->apply(new HostedZone(self::ZONE, 'acmeapp.io', false), [], [DnsRecord::cname('routing.acmeapp.io', 'endpoint.cloudfront.net')], $config);
+
+        self::assertFalse($this->cf->named('routing.acmeapp.io')[0]['proxied']);
+        self::assertSame(['PATCH zones/zone-acme/dns_records/rec1'], $this->cf->writes());
+    }
+
+    public function test_missing_record_pagination_does_not_make_a_target_look_available(): void
+    {
+        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => []]));
+        $dns = new CloudflareDns($this->cf->api());
+
+        $this->expectException(DeployException::class);
+        $this->expectExceptionMessage('cloudflare.list_incomplete');
+        $dns->records(new HostedZone(self::ZONE, 'acmeapp.io', false), 'routing.acmeapp.io');
+    }
+
+    public function test_missing_zone_pagination_does_not_select_a_parent_zone(): void
+    {
+        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => []]));
+        $dns = new CloudflareDns($this->cf->api());
+
+        $this->expectException(DeployException::class);
+        $this->expectExceptionMessage('cloudflare.list_incomplete');
+        $dns->zoneFor('routing.acmeapp.io');
+    }
+
+    public function test_malformed_record_does_not_make_a_target_look_available(): void
+    {
+        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => [null], 'result_info' => ['page' => 1, 'total_pages' => 1]]));
+        $dns = new CloudflareDns($this->cf->api());
+
+        $this->expectException(DeployException::class);
+        $this->expectExceptionMessage('cloudflare.list_incomplete');
+        $dns->records(new HostedZone(self::ZONE, 'acmeapp.io', false), 'routing.acmeapp.io');
+    }
+
+    public function test_wrong_page_number_does_not_end_the_record_listing(): void
+    {
+        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => [], 'result_info' => ['page' => 2, 'total_pages' => 2]]));
+        $dns = new CloudflareDns($this->cf->api());
+
+        $this->expectException(DeployException::class);
+        $this->expectExceptionMessage('cloudflare.list_incomplete');
+        $dns->records(new HostedZone(self::ZONE, 'acmeapp.io', false), 'routing.acmeapp.io');
+    }
+
+    public function test_record_without_name_is_not_treated_as_an_available_target(): void
+    {
+        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => [['id' => 'foreign', 'type' => 'A']], 'result_info' => ['page' => 1, 'total_pages' => 1]]));
+        $dns = new CloudflareDns($this->cf->api());
+
+        $this->expectException(DeployException::class);
+        $this->expectExceptionMessage('cloudflare.list_incomplete');
+        $dns->records(new HostedZone(self::ZONE, 'acmeapp.io', false), 'routing.acmeapp.io');
+    }
+
+    public function test_zone_without_id_is_not_treated_as_a_missing_zone(): void
+    {
+        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => [['name' => 'routing.acmeapp.io']], 'result_info' => ['page' => 1, 'total_pages' => 1]]));
+        $dns = new CloudflareDns($this->cf->api());
+
+        $this->expectException(DeployException::class);
+        $this->expectExceptionMessage('cloudflare.list_incomplete');
+        $dns->zoneFor('routing.acmeapp.io');
     }
 
     private static function stackMissing(): CloudFormationException
@@ -476,7 +582,10 @@ final class CloudflareDnsTest extends TestCase
     public function test_zone_lookups_follow_every_page(): void
     {
         // A first page without the zone that says there is a second one.
-        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => [['id' => 'zone-x', 'name' => 'other.io']], 'result_info' => ['page' => 1, 'total_pages' => 2]]));
+        $this->cf->queue(
+            FakeCloudflare::json(200, ['success' => true, 'result' => [['id' => 'zone-x', 'name' => 'other.io']], 'result_info' => ['page' => 1, 'total_pages' => 2]]),
+            FakeCloudflare::json(200, ['success' => true, 'result' => [['id' => self::ZONE, 'name' => 'acmeapp.io']], 'result_info' => ['page' => 2, 'total_pages' => 2]]),
+        );
 
         self::assertSame(self::ZONE, (new CloudflareDns($this->cf->api()))->zoneFor('acmeapp.io')?->id);
         self::assertSame(['GET zones?name=acmeapp.io&status=active&per_page=5', 'GET zones?name=acmeapp.io&status=active&per_page=5&page=2'], $this->cf->log);
@@ -540,7 +649,7 @@ final class CloudflareDnsTest extends TestCase
         })->toArray(), 'production');
 
         $dns->apply($acme, [], [\Multiapi\Arco\Deploy\Domains\DnsRecord::cname('arco.acmeapp.io', self::DIST)], $owner);
-        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => []]), FakeCloudflare::json(400, ['success' => false, 'errors' => [['code' => 1004, 'message' => 'DNS Validation Error']]]));
+        $this->cf->queue(FakeCloudflare::json(200, ['success' => true, 'result' => [], 'result_info' => ['page' => 1, 'total_pages' => 1]]), FakeCloudflare::json(400, ['success' => false, 'errors' => [['code' => 1004, 'message' => 'DNS Validation Error']]]));
         try {
             $dns->apply($shop, [], [\Multiapi\Arco\Deploy\Domains\DnsRecord::cname('shop.example.org', self::DIST)], $owner);
             self::fail('expected a partial failure');

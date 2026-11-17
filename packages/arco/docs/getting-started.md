@@ -996,6 +996,22 @@ DNS aliases, certificate) is skipped.
 The zone check of `init` and `domain:add` calls only the profile you choose and needs
 `route53:ListHostedZonesByName` and `sts:GetCallerIdentity` there.
 
+With `tenantDomains()` (not deployable yet, see [Tenant domain routing](configuration.md#tenant-domain-routing)), the
+deploy profile needs the custom domain permissions above and:
+
+- `cloudformation:CreateChangeSet`, `DescribeChangeSet`, `ExecuteChangeSet`, `DeleteChangeSet` on
+  `arn:aws:cloudformation:*:*:stack/arco-*` (the tenant stack is only updated through a change set)
+- `cloudfront:CreateConnectionGroup`, `GetConnectionGroup`, `UpdateConnectionGroup`, `DeleteConnectionGroup`,
+  `cloudfront:CreateOriginRequestPolicy`, `GetOriginRequestPolicy`, `UpdateOriginRequestPolicy`,
+  `DeleteOriginRequestPolicy`, `cloudfront:CreateCachePolicy`, `GetCachePolicy`, `UpdateCachePolicy`,
+  `DeleteCachePolicy` (CloudFormation calls them with the deploy credentials; `cloudfront:*Distribution*` does not
+  match them)
+- `cloudfront:VerifyDnsConfiguration` (`cloudfront:GetDistributionTenantByDomain` is covered by
+  `cloudfront:*Distribution*`)
+
+The target's `CNAME` uses the same Route 53 permissions or Cloudflare token as custom domains. With `dns(false)` no
+DNS permission is used: Arco reads public DNS over HTTPS.
+
 ### Permissions for VPC
 
 With `vpc()` (0.12), the deploy profile also needs:

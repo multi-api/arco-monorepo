@@ -68,6 +68,22 @@ unless the user explicitly says otherwise for the case at hand.
 - **Go apps** have `arco.json` instead of `arco.php` (both at once is an error) and run a binary that listens on
   `PORT`. Queues and schedules POST to routes of the app under `/_arco/`, which the public endpoint never serves.
   See [Go apps](#go-apps-arcojson).
+- **Tenant domain targets:** `tenantDomains(target: ...)` validates a hostname distinct from `domain()` and needs
+  `domain()` in the same environment (`validation.tenant_domain_requires_domain`). Deployment is not enabled yet and
+  stops before AWS with `deploy.tenant_domains_unavailable`. Once enabled, a deploy refuses before any change:
+  a target at a zone apex, without a zone, occupied or unverifiable (`domains.tenant_target_apex`,
+  `domains.tenant_target_zone_missing`, `domains.tenant_target_occupied`, `domains.tenant_target_unverified`,
+  `domains.tenant_target_proxied`), a changed target (`domains.tenant_target_changed`), a stack it cannot trust
+  (`domains.tenant_stack_unusable`) and an update that would replace the distribution or connection group
+  (`domains.stack_replacement`, `domains.stack_changes_unreadable`). None of these has an override flag; do not
+  retry with `--force` or `--force-dns`. With `dns(false)`, `domains.tenant_manual_cname_missing` names the `CNAME`
+  the user must create; deploy again afterwards. See [Tenant domain routing](configuration.md#tenant-domain-routing).
+- **DNS safety:** `domains.record_read_incomplete` and `domains.zones_read_incomplete` mean Route 53 returned
+  incomplete or malformed records or hosted zones. Arco stops instead of making DNS decisions from partial data.
+  `domains.dns_change_unconfirmed` means a change may have been submitted but its propagation could not be verified;
+  inspect the zone's records before retrying.
+  `cloudflare.list_incomplete` means Cloudflare returned an incomplete or malformed listing; Arco stops rather than
+  assuming a name is available.
 - **`.arco/`** (git-ignored) holds the remembered profile per environment (`.arco/local.php`) and built zips
   (`.arco/build/`).
 
@@ -803,3 +819,4 @@ mkdir -p .claude/skills && cp -R vendor/multiapi/arco/skills/arco .claude/skills
 
 `.claude/` is never packaged into the deploy. Other agents can read `vendor/multiapi/arco/llms.txt`, which links to
 these docs.
+

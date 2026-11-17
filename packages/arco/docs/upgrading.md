@@ -11,6 +11,18 @@ composer require multiapi/arco-laravel:^0.12
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
+## Unreleased: tenant domain target
+
+Existing `domain()` configurations need no change. Before using a future tenant routing target, remove that hostname
+from `domain()`; migrating a live target is not supported. `tenantDomains()` needs a `domain()` in the same
+environment. The declaration is not deployable yet: `arco deploy` stops before AWS until the tenant API and the
+protection of `arco remove` are implemented. See [Tenant domain routing](configuration.md#tenant-domain-routing).
+
+If Route 53 returns no change ID, deploy or remove stops with `domains.dns_change_unconfirmed`. The DNS change may
+already have been submitted; inspect the records before retrying.
+Incomplete Cloudflare listings now stop with `cloudflare.list_incomplete`; retry once the API returns a complete
+listing rather than assuming records are absent.
+
 ## Upgrading to 0.21.0
 
 Nothing is required, and apps without an `.arco-cloud/` directory behave exactly as before. **Redeploy** to get:
