@@ -1157,6 +1157,29 @@ final class AwsDeployerTest extends TestCase
         return self::dnsAnswer('routing.acmeapp.io', 5, [['name' => 'routing.acmeapp.io.', 'type' => 5, 'TTL' => 300, 'data' => 'd222.cloudfront.net.']]);
     }
 
+    /** A runtime directory with the tenant mediator's code: the real one is shipped by the package, these tests do not depend on it. */
+    private static function mediatorRuntime(): string
+    {
+        $dir = TempPaths::path('mediator-runtime-');
+        mkdir($dir . '/lib/tenants', 0777, true);
+        file_put_contents($dir . '/tenant-domains.js', 'exports.handler = async () => ({});');
+        file_put_contents($dir . '/lib/tenants/public_suffix_list.dat', "com\n");
+        return $dir;
+    }
+
+    /** @return list<mixed> a first deploy of the mediator: preflight reads, the account, the role, the function */
+    private static function mediatorAnswers(): array
+    {
+        return [
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404), self::lambdaMissing('GetFunctionConfiguration'),
+            new Result(['Account' => '111111111111']),
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404), new Result(['Role' => ['Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production-tenants']]), new Result([]),
+            self::lambdaMissing('GetFunctionConfiguration'), new Result(['State' => 'Pending']), new Result(['State' => 'Active', 'LastUpdateStatus' => 'Successful']),
+        ];
+    }
+
+    private const MEDIATOR_CALLS = ['GetRole', 'GetFunctionConfiguration', 'GetCallerIdentity', 'GetRole', 'CreateRole', 'PutRolePolicy', 'GetFunctionConfiguration', 'CreateFunction', 'GetFunctionConfiguration'];
+
     public function test_tenant_domains_attach_after_the_domain_and_only_add_their_own_statement(): void
     {
         $standard = CloudFrontAccess::statement(self::WEB_ARN . '/endpoint/default', 'arn:aws:cloudfront::111111111111:distribution/E123');
@@ -1168,18 +1191,19 @@ final class AwsDeployerTest extends TestCase
             self::webEndpoint('IamAuth', 'rev-2'),
             new Result(['policy' => json_encode(['Version' => '2012-10-17', 'Statement' => [$standard]]), 'revisionId' => '0a1b2c3d-1111-2222-3333-444455556666']),
             new Result([]),                                                                  // PutResourcePolicy
+            ...self::mediatorAnswers(),                                                      // last: after the target's DNS is verified
         ]);
         $site = new \GuzzleHttp\Handler\MockHandler([...self::freeTarget(), self::targetCname()]);
         $steps = [];
         $step = function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; };
-        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), http: new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($site)]));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), http: new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($site)]), tenantRuntimeDir: self::mediatorRuntime());
 
         $result = $deployer->attachDomains($this->tenantConfig(), new DeployResult('abc.lambda-web.us-east-1.on.aws', 'rev-2', 'rev-1', 'b', 'k'), ['/build/*'], $step);
 
         self::assertSame(['arco.acmeapp.io'], $result->domains);
         self::assertSame([...self::ATTACHED_DOMAIN_CALLS,
             'DescribeStacks', 'DescribeStacks', 'DescribeStacks', 'CreateStack', 'DescribeStacks',
-            'GetWebFunctionEndpoint', 'GetResourcePolicy', 'PutResourcePolicy'], $mocks->calls, 'the endpoint is never switched or checked for tenants');
+            'GetWebFunctionEndpoint', 'GetResourcePolicy', 'PutResourcePolicy', ...self::MEDIATOR_CALLS], $mocks->calls, 'the endpoint is never switched or checked for tenants; the mediator comes last');
         self::assertCount(0, $mocks->handler);
         self::assertCount(0, $site, 'the zone, the free target and the record after the stack were all read from public DNS');
         $create = $mocks->params[10];
@@ -1197,7 +1221,12 @@ final class AwsDeployerTest extends TestCase
             ['domains.step_tenant_dns', ['target' => 'routing.acmeapp.io', 'endpoint' => 'd222.cloudfront.net']],
             ['domains.manual_records', []],
             ['domains.manual_record', ['type' => 'CNAME', 'name' => 'routing.acmeapp.io', 'value' => 'd222.cloudfront.net']],
-        ], array_slice($steps, -5));
+            ['deploy.step_tenant_mediator', ['function' => 'shop-production-tenants', 'role' => 'arco-shop-production-tenants']],
+        ], array_slice($steps, -6));
+        $function = $mocks->params[count($mocks->params) - 2];
+        self::assertSame('tenant-domains.handler', $function['Handler']);
+        self::assertSame('ETENANT', $function['Environment']['Variables']['ARCO_TENANT_DISTRIBUTION_ID']);
+        self::assertSame('arco.acmeapp.io', $function['Environment']['Variables']['ARCO_TENANT_RESERVED'], 'the environment\'s domain() names');
     }
 
     public function test_a_manual_tenant_target_stops_the_deploy_until_its_record_is_public_and_then_resumes(): void
@@ -1212,7 +1241,7 @@ final class AwsDeployerTest extends TestCase
             self::webEndpoint('IamAuth', 'rev-2'), $granted,
         ]);
         $site = new \GuzzleHttp\Handler\MockHandler([...self::freeTarget(), self::dnsAnswer('routing.acmeapp.io', 5, status: 3)]);
-        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), http: new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($site)]));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), http: new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($site)]), tenantRuntimeDir: self::mediatorRuntime());
         $result = new DeployResult('abc.lambda-web.us-east-1.on.aws', 'rev-2', 'rev-1', 'b', 'k');
 
         try {
@@ -1222,6 +1251,7 @@ final class AwsDeployerTest extends TestCase
             self::assertSame('domains.tenant_manual_cname_missing', $e->key);
             self::assertSame(['target' => 'routing.acmeapp.io', 'endpoint' => 'd222.cloudfront.net'], $e->params);
         }
+        self::assertSame([], array_values(array_intersect($mocks->calls, ['CreateRole', 'CreateFunction', 'PutRolePolicy', 'GetCallerIdentity'])), 'the mediator is not deployed while the routing target cannot be verified');
 
         // The user created the record. The next deploy keeps the stack and the statement, and verifies the record.
         $mocks->handler->append(...[
@@ -1229,6 +1259,7 @@ final class AwsDeployerTest extends TestCase
             self::tenantStack('CREATE_COMPLETE'), self::tenantStack('CREATE_COMPLETE'),
             new Result(['Id' => 'cs']), new Result(['Status' => 'FAILED', 'StatusReason' => "The submitted information didn't contain changes."]), new Result([]),
             self::webEndpoint('IamAuth', 'rev-2'), $granted,
+            ...self::mediatorAnswers(),
         ]);
         $site->append(
             self::dnsAnswer('routing.acmeapp.io', 6, status: 3),
@@ -1239,7 +1270,7 @@ final class AwsDeployerTest extends TestCase
 
         $deployer->attachDomains($this->tenantConfig(), $result, []);
 
-        self::assertSame([...self::ATTACHED_DOMAIN_CALLS, 'DescribeStacks', 'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'DeleteChangeSet', 'GetWebFunctionEndpoint', 'GetResourcePolicy'], array_slice($mocks->calls, $before));
+        self::assertSame([...self::ATTACHED_DOMAIN_CALLS, 'DescribeStacks', 'DescribeStacks', 'CreateChangeSet', 'DescribeChangeSet', 'DeleteChangeSet', 'GetWebFunctionEndpoint', 'GetResourcePolicy', ...self::MEDIATOR_CALLS], array_slice($mocks->calls, $before));
         self::assertCount(0, $mocks->handler);
         self::assertCount(0, $site);
     }
@@ -1250,18 +1281,69 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(...[
             ...array_slice(self::attachedDomain(), 0, 5),
             self::noTenantStack(), self::noTenantStack(), self::noTenantStack(), new Result([]), self::tenantStack('CREATE_COMPLETE'),
+            ...self::mediatorAnswers(),
         ]);
         $site = new \GuzzleHttp\Handler\MockHandler([...self::freeTarget(), self::targetCname()]);
 
         self::behindEmulator(function () use ($mocks, $site): void {
-            $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), http: new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($site)]));
+            $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), http: new \GuzzleHttp\Client(['handler' => \GuzzleHttp\HandlerStack::create($site)]), tenantRuntimeDir: self::mediatorRuntime());
             $deployer->attachDomains($this->tenantConfig(), new DeployResult('abc.lambda-web.us-east-1.on.aws', 'rev-2', 'rev-1', 'b', 'k'), []);
         });
 
         self::assertSame(['DescribeStacks', 'DescribeCertificate', 'DescribeStacks', 'UpdateStack', 'DescribeStacks',
-            'DescribeStacks', 'DescribeStacks', 'DescribeStacks', 'CreateStack', 'DescribeStacks'], $mocks->calls, 'no policy');
+            'DescribeStacks', 'DescribeStacks', 'DescribeStacks', 'CreateStack', 'DescribeStacks', ...self::MEDIATOR_CALLS], $mocks->calls, 'no policy');
         $template = json_decode((string) $mocks->params[8]['TemplateBody'], true);
         self::assertArrayNotHasKey('OriginAccess', $template['Resources']);
+    }
+
+    public function test_a_tenant_mediator_that_is_not_this_environments_is_refused_before_traffic_moves_even_with_force(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(...[
+            self::roleTags(self::tags()), ...self::webTags(self::tags()),
+            self::lambdaMissing('GetFunctionConfiguration'), self::noRule(),
+            self::tenantStack('UPDATE_COMPLETE'),
+            // the target's record is the one this stack's endpoint made: Route 53 in the deploy account
+            new Result(['HostedZones' => [['Id' => '/hostedzone/Z1', 'Name' => 'acmeapp.io.', 'Config' => ['PrivateZone' => false]]], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [['Name' => 'routing.acmeapp.io.', 'Type' => 'CNAME', 'TTL' => 300, 'ResourceRecords' => [['Value' => 'd222.cloudfront.net.']]]], 'IsTruncated' => false]),
+            // the mediator's role belongs to another environment
+            new Result(['Role' => ['Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production-tenants', 'Tags' => self::tagList(self::tags('shop', 'staging'))]]),
+        ]);
+
+        try {
+            self::ownershipSteps(new AwsDeployer($mocks->clients(), AwsMocks::noSleep(), force: true, tenantRuntimeDir: self::mediatorRuntime()), $this->tenantConfig(null));
+            self::fail('expected deploy.tenant_mediator_not_owned');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.tenant_mediator_not_owned', $e->key);
+            self::assertSame(['resource' => 'arco-shop-production-tenants', 'app' => 'shop', 'environment' => 'staging'], $e->params);
+        }
+        self::assertSame('GetRole', $mocks->calls[count($mocks->calls) - 1]);
+        self::assertSame([], array_values(array_filter($mocks->calls, fn (string $call) => str_starts_with($call, 'Tag') || str_starts_with($call, 'Change') || str_starts_with($call, 'Create'))), 'nothing was tagged or created');
+        self::assertCount(0, $mocks->handler);
+    }
+
+    public function test_tenant_domains_let_the_role_invoke_the_mediator_and_nothing_else_does(): void
+    {
+        foreach ([[$this->tenantConfig(), true], [$this->consoleConfig(), false]] as [$config, $granted]) {
+            $mocks = new AwsMocks();
+            $mocks->handler->append(...[
+                ...self::untilTheRole(),
+                new Result(['Role' => ['Arn' => 'arn:role', 'Tags' => [['Key' => 'arco:region', 'Value' => 'us-east-1']]]]),
+                new Result([]),                                                                   // PutRolePolicy
+                AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'AccessDeniedException', 403), // stops here
+            ]);
+            try {
+                (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->prepare($config, $this->package(), $this->console(), []);
+                self::fail('stopped by the web function read');
+            } catch (LambdaWebException) {
+            }
+            $statements = array_column(json_decode($mocks->params[count(self::UNTIL_THE_ROLE) + 1]['PolicyDocument'], true)['Statement'], null, 'Sid');
+            self::assertSame($granted, isset($statements['ArcoTenantDomains']));
+            if ($granted) {
+                self::assertSame('lambda:InvokeFunction', $statements['ArcoTenantDomains']['Action']);
+                self::assertSame('arn:aws:lambda:us-east-1:111111111111:function:shop-production-tenants', $statements['ArcoTenantDomains']['Resource']);
+            }
+        }
     }
 
     public function test_a_foreign_tenant_stack_is_refused_before_force_tags_anything(): void

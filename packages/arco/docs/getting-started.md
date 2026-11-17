@@ -1009,6 +1009,29 @@ deploy profile needs the custom domain permissions above and:
 - `cloudfront:VerifyDnsConfiguration` (`cloudfront:GetDistributionTenantByDomain` is covered by
   `cloudfront:*Distribution*`)
 
+For the mediator function `<app>-<env>-tenants` (see
+[Managing tenant domains from the app](configuration.md#managing-tenant-domains-from-the-app)) it also needs, on
+`arn:aws:lambda:*:*:function:<app>-*-tenants`: `lambda:GetFunctionConcurrency` (a deploy stops if it is refused),
+`lambda:CreateFunction`, `lambda:UpdateFunctionCode`, `lambda:UpdateFunctionConfiguration`,
+`lambda:GetFunctionConfiguration`, `lambda:ListTags` and `lambda:TagResource`. The mediator's role is
+`arco-<app>-<env>-tenants`, so `iam:GetRole`, `iam:CreateRole`, `iam:PutRolePolicy`, `iam:TagRole`,
+`iam:PutRolePermissionsBoundary` (with a permissions boundary) and `iam:PassRole` on `arn:aws:iam::*:role/arco-*` are
+already listed above; a profile scoped to `arco-<app>-*` roles must include `arco-<app>-*-tenants`. The mediator's
+role gets this inline policy, the feature's whole CloudFront surface (`<tenants>` is
+`arn:aws:cloudfront::<account>:distribution-tenant/*`):
+
+| Statement | Actions | Resource and condition |
+|---|---|---|
+| `ArcoTenantLogs` | `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents` | `arn:aws:logs:<region>:<account>:log-group:/aws/lambda/<app>-<env>-tenants:*` |
+| `ArcoTenantCreate` | `cloudfront:CreateDistributionTenant` | `*`, only with the request tags `arco:app` and `arco:environment` of the environment |
+| `ArcoTenantTagOnCreate` | `cloudfront:TagResource` | `<tenants>`, same request tags |
+| `ArcoTenantWrite` | `cloudfront:UpdateDistributionTenant`, `cloudfront:DeleteDistributionTenant` | `<tenants>`, only on tenants carrying the environment's tags |
+| `ArcoTenantRead` | `cloudfront:GetDistributionTenant`, `GetDistributionTenantByDomain`, `GetManagedCertificateDetails` | `<tenants>` |
+| `ArcoTenantList` | `cloudfront:ListDistributionTenants` | `*` |
+
+Reads have no tag condition so the mediator can tell that a domain belongs to someone else. The app's role is not
+the mediator's: it only gets `lambda:InvokeFunction` on the mediator (`ArcoTenantDomains`).
+
 The target's `CNAME` uses the same Route 53 permissions or Cloudflare token as custom domains. With `dns(false)` no
 DNS permission is used: Arco reads public DNS over HTTPS.
 

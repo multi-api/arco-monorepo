@@ -62,6 +62,8 @@ final class AwsDeployer implements Deployer
         /** HTTP client for the check through CloudFront after the endpoint is locked and for the public DNS queries of a manual tenantDomains() target; null for a default one */
         private readonly ?ClientInterface $http = null,
         private readonly ?Closure $endpointDecider = null,
+        /** the directory with tenant-domains.js and lib/tenants/ the tenant mediator ships; null for the package's runtime/ */
+        private readonly ?string $tenantRuntimeDir = null,
     ) {
     }
 
@@ -200,6 +202,8 @@ final class AwsDeployer implements Deployer
             // The tenant stack's ownership and target, and a target that is free, before anything changes. A read
             // that is refused or fails stops the deploy here: tenant domains never go on what could not be checked.
             $this->tenantDomains($config)->preflight($config);
+            // The mediator's function and role, and the code it ships: refused before traffic moves, not after.
+            $this->tenantMediator()->preflight($config);
         }
         if ($config->domains !== []) {
             $name = DomainStack::stackName($config);
@@ -428,7 +432,8 @@ final class AwsDeployer implements Deployer
                 array_map(fn (GenericTableConfig $table) => $table->arn($config), $config->tables),
                 $vpcAccess || $this->interfacesMayRemain($config, $roleTags, $step),
                 VariableBundle::prefix($config),
-                $config->kmsKey);
+                $config->kmsKey,
+                $config->tenantDomainTarget === null ? null : TenantMediator::arn($config, $region, $account));
             ['arn' => $roleArn, 'created' => $roleCreated] = (new ExecutionRole($this->aws->iam()))->ensure(ExecutionRole::roleName($config), $policy, $tags, $region, $step, $config->permissionsBoundary);
         }
 
@@ -1138,7 +1143,11 @@ final class AwsDeployer implements Deployer
             // An emulator endpoint (AWS_ENDPOINT_URL): no origin access control, no policy, the configured auth.
             $step('deploy.endpoint_unprotected_emulator', ['function' => $config->functionName()]);
             $result = $result->withDomains($this->customDomains($config)->deploy($config, $result->domainName, $cachedPaths, self::tags($config), $step));
-            $tenants?->deploy($config, $result->domainName, $cachedPaths, self::tags($config), $step, null, false);
+            if ($tenants !== null) {
+                $infra = $tenants->deploy($config, $result->domainName, $cachedPaths, self::tags($config), $step, null, false);
+                // Last: no tenant can be added before the routing target is verified.
+                $this->tenantMediator()->deploy($config, $infra, self::tags($config), $step);
+            }
             return $result;
         }
         $access = $this->cloudFrontAccess(new WebFunctions($this->aws->lambdaWeb(), $this->sleeper));
@@ -1146,8 +1155,12 @@ final class AwsDeployer implements Deployer
             fn (string $distributionId, string $distributionDomain) => $access->protect($config, $distributionId, $distributionDomain, $healthPath, $step));
         // After domain(): the endpoint is IamAuth by now, so the tenant distribution only gains its own statement.
         // The tenant path itself is not checked here (a multi-tenant distribution serves nothing without a tenant).
-        $tenants?->deploy($config, $result->domainName, $cachedPaths, self::tags($config), $step,
-            fn (string $distributionId) => $access->protectTenant($config, $distributionId, null, $healthPath, $step));
+        if ($tenants !== null) {
+            $infra = $tenants->deploy($config, $result->domainName, $cachedPaths, self::tags($config), $step,
+                fn (string $distributionId) => $access->protectTenant($config, $distributionId, null, $healthPath, $step));
+            // Last: no tenant can be added before the routing target is verified.
+            $this->tenantMediator()->deploy($config, $infra, self::tags($config), $step);
+        }
         return $result->withDomains($domains);
     }
 
@@ -2336,6 +2349,11 @@ final class AwsDeployer implements Deployer
     private function customDomains(AppConfig $config): CustomDomains
     {
         return CustomDomains::create($config, $this->aws, $this->dns, $this->sleeper, $this->forceDns, $this->dnsProvider);
+    }
+
+    private function tenantMediator(): TenantMediator
+    {
+        return new TenantMediator($this->aws, $this->sleeper, $this->tenantRuntimeDir);
     }
 
     private function tenantDomains(AppConfig $config): TenantDomains

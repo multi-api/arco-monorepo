@@ -78,6 +78,18 @@ unless the user explicitly says otherwise for the case at hand.
   (`domains.stack_replacement`, `domains.stack_changes_unreadable`). None of these has an override flag; do not
   retry with `--force` or `--force-dns`. With `dns(false)`, `domains.tenant_manual_cname_missing` names the `CNAME`
   the user must create; deploy again afterwards. See [Tenant domain routing](configuration.md#tenant-domain-routing).
+  The deploy also creates the mediator function `<app>-<env>-tenants` and refuses before any change with
+  `deploy.tenant_mediator_runtime_missing` or `deploy.tenant_mediator_suffix_list_missing` (the Arco installation is
+  incomplete: reinstall it), `deploy.tenant_mediator_not_owned` or
+  `deploy.tenant_mediator_untagged` (the function or its role exists for another environment or without Arco's
+  tags: tell the user to rename the app or environment, never delete it yourself), `deploy.tenant_mediator_tags_unreadable`
+  (the profile lacks the permission the error names) and `deploy.tenant_mediator_draining` (reserved concurrency 0:
+  ask the user before running the `aws lambda delete-function-concurrency` command the error prints).
+  `deploy.tenant_mediator_failed` and `deploy.tenant_mediator_missing` are Lambda errors during the update. None has
+  an override flag. The app gets `ARCO_TENANT_DOMAINS_FUNCTION` (the mediator's name); the Laravel API
+  (`TenantDomains::add`, `status`, `list`, `remove`, `fake()`), its exceptions and the manual `lambda:InvokeFunction`
+  statement `role()` needs are in
+  [Managing tenant domains from the app](configuration.md#managing-tenant-domains-from-the-app).
 - **DNS safety:** `domains.record_read_incomplete` and `domains.zones_read_incomplete` mean Route 53 returned
   incomplete or malformed records or hosted zones. Arco stops instead of making DNS decisions from partial data.
   `domains.dns_change_unconfirmed` means a change may have been submitted but its propagation could not be verified;

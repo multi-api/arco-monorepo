@@ -185,6 +185,12 @@ final readonly class AppConfig
         return $this->functionName() . '-console';
     }
 
+    /** The tenantDomains() mediator: the Lambda function the app invokes to manage customer domains. */
+    public function tenantMediatorFunctionName(): string
+    {
+        return $this->functionName() . '-tenants';
+    }
+
     public function workerFunctionName(string $queue): string
     {
         return self::queueWorkerName($this->app, $this->environment, $queue);

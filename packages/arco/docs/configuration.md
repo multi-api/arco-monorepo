@@ -1348,7 +1348,8 @@ it points at the routing endpoint of a CloudFront connection group. Use a lowerc
 choose a name absent from `domain()`; if it is listed there, remove it before using it as a target. For example,
 MultiERP's not-yet-deployed `tiendas.dev.multierp.cl` and `tiendas.multierp.cl` must first be removed from `domain()`.
 
-**Not deployable yet:** the tenant API and the protection of `arco remove` are not implemented, so `arco deploy`
+**Not deployable yet:** the protection of `arco remove` is not implemented (the tenant API and its mediator function
+exist, see [Managing tenant domains from the app](#managing-tenant-domains-from-the-app)), so `arco deploy`
 still stops before AWS with `deploy.tenant_domains_unavailable`. What follows describes the deploy this version
 already contains behind that stop; none of it has been accepted against real AWS yet.
 
@@ -1395,7 +1396,7 @@ A deploy never replaces what tenant domains depend on. It is refused, before any
 - when `domain()` and `tenantDomains()` were both removed from `arco.php` while the tenant stack exists
   (`deploy.tenant_domains_left`): releasing the endpoint would leave tenant domains served by a public endpoint.
 
-Removing only `tenantDomains()` leaves the stack, the policy statement and the target record in place.
+Removing only `tenantDomains()` leaves the stack, the policy statement, the target record and the mediator in place.
 
 Customer domains must be subdomains; Anycast static IPs and customer apex domains remain for v2. When using
 Cloudflare, both the target and customer domains must use **DNS only** (proxy off), because the proxy breaks HTTP
@@ -1404,6 +1405,128 @@ validation of CloudFront-managed certificates.
 **Español:** El target puede usar Route 53, Cloudflare o DNS manual, y debe ser un subdominio de su zona, no el
 apex. En Cloudflare, tanto el target como los dominios de clientes deben usar **solo DNS** (proxy desactivado):
 el proxy impide la validación HTTP de los certificados administrados por CloudFront. Anycast queda para v2.
+
+#### Managing tenant domains from the app
+
+Still behind the same stop: `arco deploy` with `tenantDomains()` ends with `deploy.tenant_domains_unavailable`, so
+nothing below runs on AWS yet, and none of it has been accepted against real AWS.
+
+**The mediator.** After the tenant infrastructure is routing, the deploy creates the Lambda function
+`<app>-<env>-tenants` (Node.js, 256 MB, 30 s timeout, code sent inline, no version or alias) with its own role
+`arco-<app>-<env>-tenants` (shortened with a hash when longer than 64 characters; it carries `permissionsBoundary()`
+if set). The app never calls CloudFront: it invokes the mediator, which holds the feature's whole CloudFront surface
+and uses it only on distribution tenants tagged `arco:app` and `arco:environment` for this environment. That is why
+the app's role gets one statement, `ArcoTenantDomains`: `lambda:InvokeFunction` on exactly that function, and the
+app gets `ARCO_TENANT_DOMAINS_FUNCTION` (the function name). The mediator uses the AWS SDK bundled in the Lambda
+Node.js runtime; its code does not ship its own copy.
+
+Before changing anything the deploy refuses, and `--force` overrides none of it (a mediator of another environment
+would hand this environment's customer domains to that environment's CloudFront permissions):
+
+| Error | Meaning and what to do |
+|---|---|
+| `deploy.tenant_mediator_runtime_missing` | The mediator code is missing from the Arco installation: reinstall Arco |
+| `deploy.tenant_mediator_suffix_list_missing` | The public suffix list is missing from the installation: reinstall Arco |
+| `deploy.tenant_mediator_not_owned` | The function or role exists with another app's or environment's tags: rename this app or environment |
+| `deploy.tenant_mediator_untagged` | The function or role exists without Arco's tags: rename, or delete it if unused |
+| `deploy.tenant_mediator_tags_unreadable` | The tags could not be read: allow the action the error names, deploy again |
+| `deploy.tenant_mediator_draining` | The function's reserved concurrency is 0 (see below) |
+| `deploy.tenant_mediator_failed`, `deploy.tenant_mediator_missing` | Lambda refused the create or update, or the function vanished mid-deploy |
+
+The deploy step is `deploy.step_tenant_mediator`. Arco never sets or removes the function's reserved concurrency.
+`arco remove` is meant to set it to 0 to drain the function (invocations in flight get the 30 s timeout to end), and
+a deploy that finds 0 stops with `deploy.tenant_mediator_draining` instead of undoing that. `arco remove` does not
+handle tenant resources yet. If the function was drained and you want to keep the environment, restore it with
+`aws lambda delete-function-concurrency --function-name <app>-<env>-tenants` and deploy again.
+
+**The public suffix list.** The mediator ships `runtime/lib/tenants/public_suffix_list.dat` (from publicsuffix.org,
+MPL 2.0), refreshed with Arco releases: a suffix added after the release you run is not known to it. Without the
+file the deploy stops with `deploy.tenant_mediator_suffix_list_missing`.
+
+**The Laravel API.** `multiapi/arco-laravel` binds `Multiapi\Arco\Laravel\Contracts\TenantDomains` (also the facade
+`Multiapi\Arco\Laravel\Facades\TenantDomains`). It only works on Arco (`ARCO=1`) with `tenantDomains()` deployed;
+anywhere else it throws `TenantDomainsUnavailable`.
+
+```php
+use Multiapi\Arco\Laravel\Facades\TenantDomains;
+
+$status = TenantDomains::add('shop.customer.com');   // TenantDomainStatus: domain, state, reason
+$status = TenantDomains::status('shop.customer.com');
+$page = TenantDomains::list(cursor: null, limit: 50); // TenantDomainPage: domains, cursor
+TenantDomains::remove('shop.customer.com');
+```
+
+- `add` answers `pending` for a new domain; adding it again (a retry) answers its current state. `status` throws
+  `TenantDomainNotFound` for a domain the environment does not have.
+- States are `pending`, `active` and `failed`. `pending` covers certificate issuance and a domain being removed
+  (`reason` is `removing`); `failed` carries a reason such as `certificate failed`. `isPending()`, `isActive()` and
+  `isFailed()` read it.
+- `list` takes a `limit` from 1 to 100 (default 50) and returns the page's `cursor`: pass it back to continue, and
+  only a `null` cursor is the end (a page can be empty and still carry one). It is not a snapshot: under concurrent
+  changes a domain can be missed or seen twice.
+- `remove` is idempotent: an unknown domain succeeds. The domain stops being served at once (the tenant is
+  disabled first); if CloudFront does not allow deleting it yet, `remove` throws `TenantDomainRemovalPending`: call
+  it again later.
+
+All exceptions extend `TenantDomainException`, whose `errorCode` is the mediator's code:
+
+| Exception | Mediator code | When |
+|---|---|---|
+| `InvalidTenantDomain` | `invalid_domain`, `apex_not_supported`, `reserved_domain`, `invalid_request` | Not a plain hostname, a root domain or public suffix, the target or a `domain()` of the environment, a bad cursor or limit |
+| `TenantDomainDnsIncorrect` | `dns_incorrect` | The domain does not lead to the target; `$expected` holds it |
+| `TenantDomainTaken` | `domain_taken` | CloudFront has the domain on a tenant that is not this environment's |
+| `TenantDomainQuotaExceeded` | `quota` | CloudFront refused the creation for a limit |
+| `TenantDomainNotFound` | `not_found` | The environment has no such domain |
+| `TenantDomainRemovalPending` | `removal_pending` | Disabled, but not deletable yet |
+| `TenantDomainsUnavailable` | `unavailable` | Not on Arco, `tenantDomains()` not deployed, mediator not usable, or the app's role may not invoke it |
+| `TenantDomainException` | `failed`, `conflict`, `ownership_unverified` | Anything else; `conflict` means the tenant changed during the call, so retry |
+
+In tests, `TenantDomains::fake()` swaps in an in-memory service (it works without `ARCO=1` and never touches AWS) and
+returns it: `assertAdded($domain)`, `assertRemoved($domain)` and `assertNothingAdded()`, plus `activate($domain)` and
+`fail($domain, $reason)` to move a domain's state.
+
+**Rules for customer domains.** A domain must be a lowercase, multi-label hostname (no wildcard, underscore, IP
+address or unicode: send punycode), a **subdomain** of a registrable domain according to the public suffix list
+(both its ICANN and private sections, so `shop.github.io` is refused and a root domain like `customer.com` is
+refused with `apex_not_supported`), and neither the tenant target nor a `domain()` of the environment. Its DNS must
+already point at the target when you call `add`: a `CNAME` to the target, a `CNAME` chain (up to 8 hops) that reaches
+the target or the routing endpoint, or, for a name that has no `CNAME`, addresses all contained in the routing
+endpoint's. Otherwise `add` throws `TenantDomainDnsIncorrect`; a resolver error counts as incorrect. With Cloudflare
+the customer's record must be **DNS only**.
+
+**With `role()`.** Arco does not change a role you provide, so add this statement to it; without it the app gets
+`TenantDomainsUnavailable`, whose message names `lambda:InvokeFunction` and the function:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "lambda:InvokeFunction",
+  "Resource": "arn:aws:lambda:<region>:<account>:function:<app>-<env>-tenants"
+}
+```
+
+The mediator's own role is always created by Arco, as the network operator role is.
+
+**With `vpc()`.** The app calls the Lambda API, so it needs HTTPS egress to it: a NAT or a
+`com.amazonaws.<region>.lambda` interface endpoint. Arco creates neither. The mediator itself is not in the VPC.
+
+**Costs and quotas.** AWS charges per distribution tenant and has per-account quotas (see
+[CloudFront pricing](https://aws.amazon.com/cloudfront/pricing/) and
+[CloudFront quotas](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html));
+reaching one makes `add` throw `TenantDomainQuotaExceeded`. The target's `CNAME` in Route 53 adds query charges.
+
+**Removing `tenantDomains()`** from `arco.php` deletes nothing: the stack, the mediator, its role and the DNS record
+stay and tenants keep being served. The app loses `ARCO_TENANT_DOMAINS_FUNCTION` and its permission, so it can no
+longer manage them. Only `arco remove` is meant to delete them, and it does not do so yet.
+
+**Español:** Con `role()` Arco no modifica el rol: agrega `lambda:InvokeFunction` sobre
+`arn:aws:lambda:<región>:<cuenta>:function:<app>-<env>-tenants`, o la app recibirá `TenantDomainsUnavailable`.
+Con `vpc()` la app necesita salida HTTPS a la API de Lambda (NAT o endpoint `com.amazonaws.<región>.lambda`), que
+Arco no crea. AWS cobra por cada tenant de distribución y tiene cuotas por cuenta (`TenantDomainQuotaExceeded`).
+En Cloudflare, tanto el target como los dominios de clientes deben usar solo DNS. Errores principales:
+`TenantDomainDnsIncorrect` (el DNS no apunta al target), `InvalidTenantDomain` (no es un subdominio válido o es
+reservado), `TenantDomainTaken` y `TenantDomainRemovalPending` (volver a llamar más tarde). El despliegue sigue
+bloqueado con `deploy.tenant_domains_unavailable`.
 
 ### Where the DNS records go
 

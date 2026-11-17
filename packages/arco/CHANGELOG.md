@@ -20,6 +20,21 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `domains.tenant_target_change`, `domains.tenant_target_changed`, `domains.tenant_manual_cname_missing`,
   `domains.tenant_stack_unusable`, `domains.stack_replacement`, `domains.stack_changes_unreadable`,
   `deploy.tenant_domains_left`. Not accepted against real AWS yet.
+- **Added (behind that stop): tenant domains mediator and Laravel API.** The deploy creates the function
+  `<app>-<env>-tenants` (Node.js, 30 s timeout, inline code, reserved concurrency 0 means `arco remove` is draining
+  it) with its own role, whose policy is the feature's whole CloudFront surface (tenants tagged for the environment
+  only); the app's role gets one statement, `ArcoTenantDomains` (`lambda:InvokeFunction` on that function), and the
+  app the variable `ARCO_TENANT_DOMAINS_FUNCTION`. `multiapi/arco-laravel` adds `Contracts\TenantDomains`
+  (`add`, `status`, `list`, `remove`), the `Facades\TenantDomains` facade with `fake()` (`assertAdded`,
+  `assertRemoved`, `assertNothingAdded`) and the exceptions under `TenantDomains\Exceptions`
+  (`InvalidTenantDomain`, `TenantDomainDnsIncorrect`, `TenantDomainTaken`, `TenantDomainQuotaExceeded`,
+  `TenantDomainNotFound`, `TenantDomainRemovalPending`, `TenantDomainsUnavailable`). New step:
+  `deploy.step_tenant_mediator`. New errors: `deploy.tenant_mediator_runtime_missing`,
+  `deploy.tenant_mediator_suffix_list_missing`, `deploy.tenant_mediator_not_owned`,
+  `deploy.tenant_mediator_untagged`, `deploy.tenant_mediator_tags_unreadable`, `deploy.tenant_mediator_draining`,
+  `deploy.tenant_mediator_failed`, `deploy.tenant_mediator_missing`. The mediator ships the public suffix list (publicsuffix.org, MPL 2.0, version 2026-11-17).
+  Not accepted against real AWS.
+- **Changed: `multiapi/arco-laravel` requires `aws/aws-sdk-php`** (`^3.401.1`; it was only suggested).
 - **Fixed: Route 53 record conflict checks read every page for a hostname.** A malformed record or incomplete or
   repeated cursor stops the operation with `domains.record_read_incomplete` instead of risking changes based on a
   partial listing.

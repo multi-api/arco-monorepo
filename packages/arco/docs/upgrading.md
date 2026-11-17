@@ -18,6 +18,12 @@ from `domain()`; migrating a live target is not supported. `tenantDomains()` nee
 environment. The declaration is not deployable yet: `arco deploy` stops before AWS until the tenant API and the
 protection of `arco remove` are implemented. See [Tenant domain routing](configuration.md#tenant-domain-routing).
 
+`multiapi/arco-laravel` now requires `aws/aws-sdk-php` (`^3.401.1`; it was only suggested): `composer update
+multiapi/arco-laravel` installs it if the app did not have it. With `tenantDomains()` and `role()`, add to your role
+`lambda:InvokeFunction` on `arn:aws:lambda:<region>:<account>:function:<app>-<env>-tenants`, or the app gets
+`TenantDomainsUnavailable`; with `vpc()` the app also needs HTTPS egress to the Lambda API. Arco changes neither. See
+[Managing tenant domains from the app](configuration.md#managing-tenant-domains-from-the-app).
+
 If Route 53 returns no change ID, deploy or remove stops with `domains.dns_change_unconfirmed`. The DNS change may
 already have been submitted; inspect the records before retrying.
 Incomplete Cloudflare listings now stop with `cloudflare.list_incomplete`; retry once the API returns a complete

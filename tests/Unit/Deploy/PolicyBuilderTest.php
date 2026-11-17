@@ -186,4 +186,21 @@ final class PolicyBuilderTest extends TestCase
         self::assertCount(1, $without['Statement']);
         self::assertStringNotContainsString('ArcoVpcAccess', json_encode($without, JSON_THROW_ON_ERROR));
     }
+
+    public function test_tenant_domains_let_the_app_invoke_exactly_the_mediator(): void
+    {
+        $arn = 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-tenants';
+        $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', [], tenantMediatorArn: $arn);
+
+        $bySid = array_column($doc['Statement'], null, 'Sid');
+        self::assertSame(['Sid' => 'ArcoTenantDomains', 'Effect' => 'Allow', 'Action' => 'lambda:InvokeFunction', 'Resource' => $arn], $bySid['ArcoTenantDomains']);
+        self::assertCount(2, $doc['Statement'], 'logs and the mediator: nothing else');
+    }
+
+    public function test_without_tenant_domains_there_is_no_invoke_statement(): void
+    {
+        $doc = PolicyBuilder::document('us-east-1', '111111111111', 'shop-production', []);
+
+        self::assertArrayNotHasKey('ArcoTenantDomains', array_column($doc['Statement'], null, 'Sid'));
+    }
 }

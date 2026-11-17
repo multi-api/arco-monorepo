@@ -41,3 +41,30 @@ This repository is a read-only split.
 ## License
 
 MIT
+
+## Tenant domains
+
+With `tenantDomains()` in `arco.php`, the app manages its customers' domains through
+`Multiapi\Arco\Laravel\Contracts\TenantDomains` (inject it) or the `Multiapi\Arco\Laravel\Facades\TenantDomains` facade:
+
+```php
+$status = TenantDomains::add('shop.customer.com');   // pending; a retry returns the current state
+TenantDomains::status('shop.customer.com');          // pending | active | failed, with a reason
+$page = TenantDomains::list(limit: 50);              // $page->domains, $page->cursor (null at the end)
+TenantDomains::remove('shop.customer.com');          // disables at once; may throw TenantDomainRemovalPending
+```
+
+Errors are typed, all extending `TenantDomains\Exceptions\TenantDomainException`: `InvalidTenantDomain`,
+`TenantDomainDnsIncorrect` (`$expected` holds the CNAME target), `TenantDomainTaken`, `TenantDomainQuotaExceeded`,
+`TenantDomainNotFound`, `TenantDomainRemovalPending` and `TenantDomainsUnavailable` (not running on Arco, or
+`tenantDomains()` not deployed). It only works on Arco; in tests use the fake:
+
+```php
+$fake = TenantDomains::fake();
+// ... code under test ...
+$fake->assertAdded('shop.customer.com');
+$fake->assertRemoved('old.customer.com');
+$fake->assertNothingAdded();
+```
+
+See [Tenant domain routing](https://github.com/multi-api/arco/blob/main/docs/configuration.md#tenant-domain-routing).
