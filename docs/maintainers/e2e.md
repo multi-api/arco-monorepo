@@ -59,6 +59,29 @@ A check that cannot pass because Floci lacks or breaks a whole feature is skippe
 
 There are currently none. The two former gaps, S3 rejecting the canned ACL `private` that Laravel's S3 disk sends and CloudFront not reaching a Web Function endpoint origin, were fixed upstream (floci-io/floci#5979, #5980) as of `floci/floci:nightly-10192026`, so `test_storage` and `test_custom_domain_through_cloudfront` are mandatory.
 
+## Tenant domains
+
+`tenantDomains()` has no Floci end-to-end scenario, on purpose. What the emulator (`floci/floci:nightly-11082026`) does with the feature's resources, probed with the AWS SDK against a throwaway Floci started by `bin/test-docker e2e`:
+
+| Call | Result |
+|---|---|
+| CloudFormation `CreateStack` with `AWS::CloudFront::ConnectionGroup` | accepted, `CREATE_COMPLETE`, but as a stub: the resource gets a made-up physical id (`CG-06b0b959`) and `Fn::GetAtt` returns the text `<Logical>.<Attribute>`, for example `ConnectionGroup.Id` and `ConnectionGroup.RoutingEndpoint`, not an id and a routing endpoint |
+| CloudFront `CreateConnectionGroup` | `404 <html><body><h1>Resource not found</h1></body></html>` (`POST /2020-05-31/connection-group`) |
+| CloudFront `ListConnectionGroups` | the same 404 |
+| CloudFront `ListDistributionTenants` (with and without `AssociationFilter`) | the same 404 (`/2020-05-31/distribution-tenants`); `CreateDistributionTenant` and the other tenant calls live under the same unrouted paths |
+| Lambda `CreateFunction` `nodejs24.x` with an inline zip (`InlineZip`) | works; the function is `Active` and `Invoke` runs the handler |
+| Lambda `PutFunctionConcurrency` 0, `GetFunctionConcurrency`, `DeleteFunctionConcurrency` | work; `Invoke` while the concurrency is 0 answers `429 {"__type":"TooManyRequestsException","message":"Rate Exceeded."}`; after the delete the reserved concurrency reads as absent |
+
+So a deploy of an environment with `tenantDomains()` gets through the emulator (the stack and the mediator are created), but the stack's outputs are not a connection group and no tenant call exists: `arco info --json` shows `tenantDomains` with the literal ids and `"tenants": null`, and `arco remove` could not list tenants (`remove.tenant_listing_incomplete`). A scenario that deployed and "passed" would prove only that CloudFormation accepts a stub, so none is added: no check pretends. Floci is not asked for a feature it does not have; when a newer image routes these calls, add the scenario then.
+
+What is covered without real AWS:
+
+- the mediator's JSON contract with the real packaged suffix list and a fake CloudFront and DNS: `packages/arco/runtime/test/tenant-contract.test.js` (`bin/test-docker runtime`; the integration suite runs PHP in Lambda containers and has no place for a Node handler);
+- the packaged zip (`tenant-domains.js`, every `lib/tenants/*.js`, `public_suffix_list.dat`, and a `require('./...')` graph that stays inside it): `tests/Unit/Deploy/TenantMediatorPackageTest.php`;
+- everything else against fakes in the unit suite.
+
+Only real AWS can show, so these scenarios run only through [tenant-domains-acceptance.md](tenant-domains-acceptance.md): the stack with a real connection group and multi-tenant distribution, managed certificate issuance, origin access control and `Host` through the multi-tenant distribution, `CreateDistributionTenant` and its errors (duplicate, domain on another distribution, quota), the tenant delete timing after disable, the answer of `ListDistributionTenants` for an empty distribution, `arco info` and `arco remove` with and without customer domains, and the drain margin of `remove`.
+
 ## Bumping `FLOCI_IMAGE`
 
 The image is pinned in one place, `FLOCI_IMAGE` in `bin/test-docker`. Lambda Web Functions exist only in Floci's `nightly-*` images for now (release 2.3.0 does not have them).

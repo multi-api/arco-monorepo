@@ -79,6 +79,11 @@ unless the user explicitly says otherwise for the case at hand.
   (`domains.stack_replacement`, `domains.stack_changes_unreadable`). None of these has an override flag; do not
   retry with `--force` or `--force-dns`. With `dns(false)`, `domains.tenant_manual_cname_missing` names the `CNAME`
   the user must create; deploy again afterwards. See [Tenant domain routing](configuration.md#tenant-domain-routing).
+  Limits of v1 to tell the user: `tenantDomains()` exists only in `arco.php` (not `arco.json`, so Go and process apps
+  cannot use it) and the only supported client is the `multiapi/arco-laravel` API; the mediator's JSON format is
+  internal, so never invoke the function yourself. One target per environment, customer subdomains only (a root
+  domain is refused: a `CNAME` cannot sit at an apex), Cloudflare records DNS only, no Anycast static IPs (v2),
+  AWS quotas and per-tenant charges apply (links in the configuration reference).
   The deploy also creates the mediator function `<app>-<env>-tenants` and refuses before any change with
   `deploy.tenant_mediator_runtime_missing` or `deploy.tenant_mediator_suffix_list_missing` (the Arco installation is
   incomplete: reinstall it), `deploy.tenant_mediator_not_owned` or

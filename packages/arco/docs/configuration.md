@@ -1357,6 +1357,25 @@ them. The feature has not been accepted against real AWS yet: managed certificat
 tenant, and the shape of CloudFront's answers for an empty tenant list are checked only against fakes. Treat it as
 experimental until that acceptance run; try it on a staging environment first.
 
+**Limits of this version.**
+
+- **Laravel apps only.** `tenantDomains()` exists only in `arco.php`, not in `arco.json`, so Go and other process
+  apps cannot use it yet. The only supported client of the mediator is the `multiapi/arco-laravel` API below; the
+  mediator's request and response format is internal and may change, so do not call the function directly.
+- **One target per environment.** A second routing hostname, or a customer domain served by two targets, is not
+  supported.
+- **Customer subdomains only.** A customer's root (apex) domain such as `customer.com` is refused
+  (`apex_not_supported`): the customer would have to point it at the target with a `CNAME`, and DNS does not allow a
+  `CNAME` at a zone apex. Customers use a subdomain such as `shop.customer.com`.
+- **Cloudflare must be DNS only** (proxy off) for the target and for every customer domain.
+- **No Anycast static IPs.** Neither implemented nor provisioned: customers cannot point an `A` record at fixed
+  addresses. They are left for v2. AWS's published list price for them was USD 0.005 per IP per hour at the time of
+  writing ([CloudFront pay-as-you-go pricing](https://aws.amazon.com/cloudfront/pricing/pay-as-you-go/)); check the
+  page, it is AWS's to change.
+- **Quotas and prices are AWS's.** Per-account quotas on distribution tenants and a charge per tenant apply: see
+  [CloudFront pricing](https://aws.amazon.com/cloudfront/pricing/) and
+  [CloudFront quotas](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html).
+
 `tenantDomains()` needs `domain()` in the same environment (`validation.tenant_domain_requires_domain`). The endpoint
 is only locked to CloudFront through a `domain()` whose path Arco can check; tenant domains alone would be served by
 an endpoint anyone can call with a forged host.
@@ -1402,13 +1421,16 @@ A deploy never replaces what tenant domains depend on. It is refused, before any
 
 Removing only `tenantDomains()` leaves the stack, the policy statement, the target record and the mediator in place.
 
-Customer domains must be subdomains; Anycast static IPs and customer apex domains remain for v2. When using
-Cloudflare, both the target and customer domains must use **DNS only** (proxy off), because the proxy breaks HTTP
-validation of CloudFront-managed certificates.
+With Cloudflare, the proxy breaks HTTP validation of CloudFront-managed certificates, which is why both the target
+and customer domains must be **DNS only** (see the limits above).
 
 **Español:** El target puede usar Route 53, Cloudflare o DNS manual, y debe ser un subdominio de su zona, no el
 apex. En Cloudflare, tanto el target como los dominios de clientes deben usar **solo DNS** (proxy desactivado):
-el proxy impide la validación HTTP de los certificados administrados por CloudFront. Anycast queda para v2.
+el proxy impide la validación HTTP de los certificados administrados por CloudFront. Anycast queda para v2 (no se implementa ni se crea).
+En esta versión `tenantDomains()` solo existe en `arco.php` (no en `arco.json`) y solo se admiten apps Laravel: el único
+cliente soportado es la API de `multiapi/arco-laravel`; el formato de la función mediadora es interno. Hay un
+target por entorno, los dominios de clientes deben ser subdominios (un `CNAME` no puede estar en el apex) y las cuotas
+y precios por tenant son los de AWS.
 
 #### Managing tenant domains from the app
 
@@ -1470,9 +1492,10 @@ TenantDomains::remove('shop.customer.com');
   disabled first); if CloudFront does not allow deleting it yet, `remove` throws `TenantDomainRemovalPending`: call
   it again later.
 
-All exceptions extend `TenantDomainException`, whose `errorCode` is the mediator's code:
+All exceptions extend `TenantDomainException`, whose `errorCode` string is listed below (the mediator's internal code,
+kept for logs and support; handle the exception classes, not the strings):
 
-| Exception | Mediator code | When |
+| Exception | `errorCode` | When |
 |---|---|---|
 | `InvalidTenantDomain` | `invalid_domain`, `apex_not_supported`, `reserved_domain`, `invalid_request` | Not a plain hostname, a root domain or public suffix, the target or a `domain()` of the environment, a bad cursor or limit |
 | `TenantDomainDnsIncorrect` | `dns_incorrect` | The domain does not lead to the target; `$expected` holds it |
@@ -1515,7 +1538,7 @@ The mediator's own role is always created by Arco, as the network operator role 
 **Costs and quotas.** AWS charges per distribution tenant and has per-account quotas (see
 [CloudFront pricing](https://aws.amazon.com/cloudfront/pricing/) and
 [CloudFront quotas](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cloudfront-limits.html));
-reaching one makes `add` throw `TenantDomainQuotaExceeded`. The target's `CNAME` in Route 53 adds query charges.
+reaching one makes `add` throw `TenantDomainQuotaExceeded`. The target's `CNAME` in Route 53 adds query charges. Anycast static IPs are not part of this version (see the limits above).
 
 **Removing `tenantDomains()`** from `arco.php` deletes nothing: the stack, the mediator, its role and the DNS record
 stay and tenants keep being served. The app loses `ARCO_TENANT_DOMAINS_FUNCTION` and its permission, so it can no

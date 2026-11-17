@@ -9,6 +9,11 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   customers' own domains at runtime. Not yet accepted against real AWS (managed certificate issuance, origin access
   control through the multi-tenant distribution with the rewritten `Host`, draining and tenant deletion timing, the
   shape of CloudFront's answers for an empty tenant list): try it on a staging environment first.
+  - *Scope of v1.* `tenantDomains()` exists only in `arco.php` (not in `arco.json`, so Go and process apps cannot use
+    it yet), and the only supported client of the mediator is the `multiapi/arco-laravel` API: the mediator's JSON
+    request and response format is internal and may change. One target per environment; customer subdomains only (a
+    `CNAME` cannot sit at a root domain); Cloudflare records must be DNS only; Anycast static IPs are not implemented
+    (left for v2). AWS per-account quotas and per-tenant pricing apply.
   - *Configuration.* `tenantDomains(target:)` inherits per environment, validates its hostname, conflicts with
     `domain()` and needs `domain()` in the same environment. New errors: `validation.tenant_domain_target`,
     `validation.tenant_domain_conflict`, `validation.tenant_domain_requires_domain`.

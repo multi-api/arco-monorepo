@@ -1626,10 +1626,49 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production does not exist'),
-            new Result(['Stacks' => [['StackName' => 'arco-shop-production-tenants', 'StackStatus' => 'CREATE_COMPLETE']]]),
+            new Result(['Stacks' => [['StackName' => 'arco-shop-production-tenants', 'StackStatus' => 'CREATE_COMPLETE', 'Tags' => self::tagList(self::tags())]]]),
         );
 
         self::assertTrue((new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->hasDomainResources($this->config()));
+    }
+
+    public function test_a_stack_of_another_environment_at_the_tenant_stack_name_is_not_domain_resources(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production does not exist'),
+            new Result(['Stacks' => [['StackName' => 'arco-shop-production-tenants', 'StackStatus' => 'CREATE_COMPLETE', 'Tags' => self::tagList(self::tags('shop', 'production-tenants'))]]]),
+        );
+
+        self::assertFalse((new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->hasDomainResources($this->config()));
+    }
+
+    public function test_tenant_domains_status_ignores_a_stack_of_another_environment(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['Stacks' => [['StackName' => 'arco-shop-production-tenants', 'StackStatus' => 'CREATE_COMPLETE', 'Tags' => self::tagList(self::tags('shop', 'production-tenants')), 'Outputs' => [
+            ['OutputKey' => 'DistributionId', 'OutputValue' => 'E1'], ['OutputKey' => 'ConnectionGroupId', 'OutputValue' => 'cg'],
+            ['OutputKey' => 'RoutingEndpoint', 'OutputValue' => 'd.cloudfront.net'], ['OutputKey' => 'Target', 'OutputValue' => 't.example.com']]]]]));
+
+        self::assertNull((new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->tenantDomainsStatus($this->config()));
+        self::assertSame(['DescribeStacks'], $mocks->calls);
+    }
+
+    public function test_remove_of_an_environment_never_deletes_the_domains_stack_of_environment_x_tenants(): void
+    {
+        $mocks = new AwsMocks();
+        $base = self::removal(null);
+        self::answer($mocks, [...$base,
+            'DescribeStacks' => fn (CommandInterface $command) => $command['StackName'] === 'arco-shop-production-tenants'
+                ? new Result(['Stacks' => [['StackName' => 'arco-shop-production-tenants', 'StackStatus' => 'CREATE_COMPLETE', 'Tags' => self::tagList(self::tags('shop', 'production-tenants')), 'Outputs' => [['OutputKey' => 'DistributionDomain', 'OutputValue' => 'd1.cloudfront.net']]]]])
+                : AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
+        ]);
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
+
+        self::assertNotContains('DeleteStack', $mocks->calls);
+        self::assertNotContains('PutFunctionConcurrency', $mocks->calls);
+        self::assertContains('DeleteWebFunction', $mocks->calls);
     }
 
     public function test_remove_console(): void
@@ -5845,6 +5884,32 @@ final class AwsDeployerTest extends TestCase
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
 
         self::assertNotContains('PutFunctionConcurrency', $mocks->calls);
+        self::assertContains('DeleteWebFunction', $mocks->calls);
+    }
+
+    public function test_remove_of_an_environment_ignores_another_environments_function_at_its_mediator_name(): void
+    {
+        $mocks = new AwsMocks();
+        $base = self::removal(null);
+        $foreign = self::tagList(self::tags('shop', 'production-tenants'));
+        $role = $base['GetRole'];
+        self::answer($mocks, [...$base,
+            'GetFunctionConfiguration' => fn (CommandInterface $command) => str_ends_with($command['FunctionName'], '-tenants')
+                ? new Result(['FunctionName' => $command['FunctionName'], 'FunctionArn' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-tenants', 'Description' => 'Arco tenant domains mediator (Arco 0.25.0)'])
+                : self::lambdaMissing('GetFunctionConfiguration'),
+            'ListTags' => fn (CommandInterface $command) => isset($command['Resource']) && str_ends_with((string) $command['Resource'], '-tenants')
+                ? new Result(['Tags' => self::tags('shop', 'production-tenants')])
+                : new Result(['tags' => self::tags()]),
+            'GetRole' => fn (CommandInterface $command) => str_ends_with($command['RoleName'], '-tenants')
+                ? new Result(['Role' => ['Arn' => 'arn:aws:iam::111111111111:role/' . $command['RoleName'], 'Tags' => $foreign]])
+                : $role($command),
+        ]);
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
+
+        self::assertNotContains('PutFunctionConcurrency', $mocks->calls);
+        self::assertSame(['arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
+        self::assertNotContains('shop-production-tenants', array_column(self::byOperation($mocks)['DeleteFunction'], 'FunctionName'));
         self::assertContains('DeleteWebFunction', $mocks->calls);
     }
 

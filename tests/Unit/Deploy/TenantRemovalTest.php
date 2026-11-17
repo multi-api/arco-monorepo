@@ -335,6 +335,103 @@ final class TenantRemovalTest extends TestCase
         }
     }
 
+    public function test_a_plain_environment_ignores_a_function_and_role_that_another_environment_owns_at_the_mediator_names(): void
+    {
+        foreach ([
+            'another environment' => ['arco:app' => 'shop', 'arco:environment' => 'production-tenants'],
+            'another app' => ['arco:app' => 'other', 'arco:environment' => 'production'],
+            'no tags' => [],
+        ] as $label => $tags) {
+            $this->setUp();
+            $this->plain();
+            $this->account['stack'] = false;
+            $this->dispatch($tags);
+
+            self::assertFalse($this->remove(), $label);
+
+            self::assertSame(['DescribeStacks', 'GetFunctionConfiguration', 'ListTags', 'GetRole'], $this->mocks->calls, $label);
+            $this->assertNothingChanged();
+        }
+    }
+
+    public function test_a_plain_environment_ignores_an_untagged_function_without_the_marker_and_unreadable_tags(): void
+    {
+        $this->plain();
+        $this->account['stack'] = $this->account['role'] = false;
+        $this->overrides['GetFunctionConfiguration'] = fn () => new Result(['FunctionName' => self::FUNCTION, 'FunctionArn' => 'arn:x', 'Description' => 'Someone else\'s function', 'Timeout' => 3]);
+        $this->dispatch(self::OURS);
+        self::assertFalse($this->remove(), 'this environment\'s tags but not the mediator\'s description');
+        $this->assertNothingChanged();
+
+        $this->setUp();
+        $this->plain();
+        $this->account['stack'] = $this->account['role'] = false;
+        $this->overrides['ListTags'] = self::denied(LambdaException::class, 'ListTags', 'AccessDeniedException');
+        $this->dispatch();
+        self::assertFalse($this->remove(), 'unreadable tags');
+        $this->assertNothingChanged();
+    }
+
+    public function test_a_plain_environment_still_handles_a_leftover_mediator_that_is_its_own(): void
+    {
+        $this->plain();
+        $this->account['stack'] = false;
+        $this->dispatch();
+
+        self::assertTrue($this->remove());
+
+        self::assertContains('PutFunctionConcurrency', $this->mocks->calls);
+        self::assertSame([false, false], [$this->account['function'], $this->account['role']]);
+    }
+
+    public function test_with_tenant_domains_in_arco_php_a_foreign_function_still_stops(): void
+    {
+        $this->account['stack'] = false;
+        $this->dispatch(['arco:app' => 'shop', 'arco:environment' => 'production-tenants']);
+
+        $this->failsWith(fn () => $this->remove(), 'remove.not_owned');
+
+        $this->assertNothingChanged();
+    }
+
+    public function test_a_plain_environment_ignores_a_stack_of_another_environment_at_the_tenant_stack_name(): void
+    {
+        $this->plain();
+        $this->account['function'] = $this->account['role'] = false;
+        $this->dispatch(stackTags: ['arco:app' => 'shop', 'arco:environment' => 'production-tenants']);
+
+        self::assertFalse($this->remove());
+
+        self::assertSame(['DescribeStacks', 'GetFunctionConfiguration', 'GetRole'], $this->mocks->calls);
+        $this->assertNothingChanged();
+
+        $this->setUp();
+        $this->plain();
+        $this->dispatch(['arco:app' => 'shop', 'arco:environment' => 'production-tenants'], ['arco:app' => 'shop', 'arco:environment' => 'production-tenants']);
+        self::assertFalse($this->remove(), 'with a foreign function and role too');
+        $this->assertNothingChanged();
+    }
+
+    public function test_a_plain_environment_handles_its_own_leftover_tenant_stack_normally(): void
+    {
+        $this->plain();
+        $this->dispatch();
+
+        self::assertTrue($this->remove());
+
+        self::assertContains('DeleteStack', $this->mocks->calls);
+        self::assertFalse($this->account['stack']);
+    }
+
+    public function test_with_tenant_domains_in_arco_php_a_foreign_stack_still_stops(): void
+    {
+        $this->dispatch(stackTags: ['arco:app' => 'shop', 'arco:environment' => 'production-tenants']);
+
+        $this->failsWith(fn () => $this->remove(), 'domains.stack_not_ours');
+
+        $this->assertNothingChanged();
+    }
+
     public function test_a_non_denial_error_on_the_mediator_reads_always_propagates(): void
     {
         $this->plain();

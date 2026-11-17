@@ -88,6 +88,13 @@ final class TenantRemoval
             }
             $stackDenied = $e;
         }
+        // `arco-<app>-X-tenants` is also the custom domains stack of an environment called X-tenants. Without
+        // tenantDomains(), a stack at that name that is not tagged for this environment is not our tenant stack: it is
+        // ignored and never touched.
+        if ($stack !== null && $config->tenantDomainTarget === null
+            && (($stack['tags'][Ownership::APP] ?? null) !== $config->app || ($stack['tags'][Ownership::ENVIRONMENT] ?? null) !== $config->environment)) {
+            $stack = null;
+        }
         // A profile scoped to the documented minimal permissions cannot read the mediator's function or role, and an
         // environment that never had tenant domains does not need to: with no tenantDomains() in arco.php and no
         // tenant stack, a refused read of either is "does not exist". Any other case stops on a refused read.
@@ -105,6 +112,14 @@ final class TenantRemoval
             $role = $guard->role($roleName);
         } catch (AwsException $e) {
             $denied ??= self::isDenied($e) ? $e : throw $e;
+        }
+        // Another environment may own a function or role at the mediator's names (`<app>-X-tenants` is also the name of
+        // an environment called X-tenants). Without tenantDomains() and without a stack, only a resource carrying this
+        // environment's tags (and, for the function, the mediator's description) is a leftover of ours; the rest is
+        // not a tenant resource of this environment and is never touched.
+        if ($tolerant && $stack === null) {
+            $mediator = $mediator !== null && self::isOurs($config, $mediator, true) ? $mediator : null;
+            $role = $role !== null && self::isOurs($config, $role, false) ? $role : null;
         }
         if ($stack === null && $mediator === null && $role === null) {
             if (! $tolerant && ($stackDenied !== null || $denied !== null)) {
@@ -170,6 +185,14 @@ final class TenantRemoval
             throw $e;
         }
         return true;
+    }
+
+    private static function isOurs(AppConfig $config, NamedResource $resource, bool $marker): bool
+    {
+        return $resource->unreadable === null
+            && ($resource->tags[Ownership::APP] ?? null) === $config->app
+            && ($resource->tags[Ownership::ENVIRONMENT] ?? null) === $config->environment
+            && (! $marker || $resource->arcoMade);
     }
 
     private static function isDenied(AwsException $e): bool

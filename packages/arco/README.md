@@ -55,6 +55,9 @@ vendor/bin/arco deploy --env=production
   point at one you already have (`existing:`), and removed ones stay in AWS with their data.
 - **Custom domains** in one line: certificate, CloudFront and DNS records, with the DNS zone in the
   same AWS account, another account, Cloudflare, or outside AWS.
+- **Tenant domains** (experimental, Laravel apps only): `tenantDomains('routing.example.com')` lets your app add
+  its customers' own subdomains at runtime, with managed certificates
+  ([Tenant domain routing](docs/configuration.md#tenant-domain-routing)).
 - **Go apps.** A Go HTTP server with an `arco.json` deploys the same way (`composer global require
   multiapi/arco`, no Composer project needed), with queues and schedules delivered to routes of the app
   ([Process runtime (Go)](docs/configuration.md#process-runtime-go)).
@@ -117,6 +120,7 @@ The main options:
 | `accessLog()` | off | One JSON line per HTTP request (status, method, path, ms, request id) in the web function's log |
 | `permissions([...])` | — | Extra IAM statements for the function's role |
 | `domain(...)` / `dns(...)` | — | Custom domains and where their DNS zone is |
+| `tenantDomains(target:)` | — | Experimental: the hostname customers point their own domains at; the app adds them at runtime (needs `domain()`; `arco.php` only) |
 | `profile()` / `account()` | — | AWS profile for the environment (without it, the first deploy asks and remembers the answer in `.arco/local.php`), and an account lock so a wrong profile can't deploy (offered after the first deploy) |
 | `auth('public'\|'iam')` | `public` | `iam` requires signed requests |
 | `runtime(fn ...)` | PHP 8.5 | PHP version and FrankenPHP/Octane: `php()`, `frankenphp()`, `build()`, `binary()`, `workers()`, `maxThreads()`, `threads()`, `phpIni()` |
@@ -157,7 +161,7 @@ Every option, the packaging rules and the Laravel preset are in the
 | `arco table:add <name> --env=<env>` / `table:remove` | Add (`--ttl=<attribute>`, `--existing=<table>`) or remove a `table()` in `arco.php` (removed tables stay in AWS with their items) |
 | `arco logs --env=<env>` | Web, console and queue worker logs merged, filtered and colored (`--follow`, `--since`, `--level`, `--request`, `--filter`, `--queue`) |
 | `arco package --env=<env>` | Build the zip only (for CI: build once, deploy later) |
-| `arco info --env=<env>` | Resolved settings with their source, URL, active revision (`--json` too); `--resources` lists every AWS resource tagged for the environment |
+| `arco info --env=<env>` | Resolved settings with their source, URL, active revision (`--json` too); with tenant domains it also shows the distribution, target and customer-domain count; `--resources` lists every AWS resource tagged for the environment |
 | `arco secret:set <name> --env=<env>` | Store a secret in SSM and print the reference to use |
 | `arco set <key> <value> --env=<env>` / `arco unset <key>` | Change `concurrency`, `max-instances`, `rate-limit`, `timeout`, `log-level`, `console-timeout`, `console-memory` in `arco.php` |
 | `arco domain:add <host> --env=<env>` / `domain:remove` | Change an environment's domains in `arco.php` |
@@ -165,7 +169,7 @@ Every option, the packaging rules and the Laravel preset are in the
 | `arco vpc:set --env=<env>` / `vpc:remove` | Set `vpc()` (`--subnet`, `--security-group`, `--endpoint`, each repeatable; the whole list at once) or remove it in `arco.php` |
 | `arco certificate:set <arn> --env=<env>` / `certificate:remove` | Use an existing ACM certificate (`us-east-1`) for the environment's domains, or go back to Arco's own |
 | `arco profile --env=<env>` | Show or change the AWS profile remembered for an environment (`--json` too) |
-| `arco remove --env=<env>` | Delete the function, its endpoint, role, workers and domain resources (queues, buckets, tables and log groups are kept); without a terminal it needs `--yes`; `--json` too; fails naming what is left (`remove.leftovers`), and running it again finishes the job; `--no-wait-interfaces` keeps the execution role instead of waiting for Lambda's VPC network interfaces; with `tenantDomains()` it disables the tenant domains function and counts customer domains first, and deletes them only with `--force` (`--yes` is not enough; otherwise `--force` is a deprecated alias of `--yes`) |
+| `arco remove --env=<env>` | Delete the function, its endpoint, role, workers and domain resources (queues, buckets, tables and log groups are kept); with `tenantDomains()` it stops at customer domains unless you pass `--force` (`--yes` is not enough); without a terminal it needs `--yes`; `--json` too; fails naming what is left (`remove.leftovers`), and running it again finishes the job; `--no-wait-interfaces` keeps the execution role instead of waiting for Lambda's VPC network interfaces; with `tenantDomains()` it disables the tenant domains function and counts customer domains first, and deletes them only with `--force` (`--yes` is not enough; otherwise `--force` is a deprecated alias of `--yes`) |
 
 Messages are in English or Spanish (`--lang=es` or `ARCO_LANG=es`).
 

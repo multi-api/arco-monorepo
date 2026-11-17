@@ -2451,10 +2451,14 @@ final class AwsDeployer implements Deployer
         return $this->tolerateAccessDenied(fn () => $this->domainStack($config) !== null);
     }
 
-    /** Whether the tenant stack is still there (tenantDomains() may have left arco.php); a refused read means "no stack", like stackExists(). */
+    /** Whether this environment's tenant stack is still there (tenantDomains() may have left arco.php); a refused read means "no stack", like stackExists(). */
     private function tenantStackExists(AppConfig $config): bool
     {
-        return $this->tolerateAccessDenied(fn () => (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe(TenantDomainStack::stackName($config)) !== null);
+        return $this->tolerateAccessDenied(function () use ($config): bool {
+            $stack = (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe(TenantDomainStack::stackName($config));
+            // arco-<app>-X-tenants is also the domains stack of an environment called X-tenants: only ours counts.
+            return $stack !== null && self::ownsStack($stack, $config);
+        });
     }
 
     /** @return array{status: string, outputs: array<string, string>, tags: array<string, string>}|null */
