@@ -129,6 +129,27 @@ final class CloudflareDns implements DnsProvider
         throw DeployException::make('domains.tenant_target_occupied', ['target' => $target]);
     }
 
+    /**
+     * Deletes the tenant target's record when it is exactly this environment's: one CNAME with its marker comment
+     * to $endpoint. Anything else at the name is left alone.
+     *
+     * @return 'deleted'|'absent'|'kept' a TenantTarget outcome
+     */
+    public function releaseTenantTarget(HostedZone $zone, string $target, AppConfig $owner, string $endpoint): string
+    {
+        $records = $this->records($zone, $target);
+        if ($records === []) {
+            return TenantTarget::ABSENT;
+        }
+        $record = $records[0];
+        if (count($records) !== 1 || ($record['type'] ?? null) !== 'CNAME' || ! self::owned($record, $owner)
+            || ! Hostname::same(self::string($record['content'] ?? null), $endpoint) || self::string($record['id'] ?? null) === '') {
+            return TenantTarget::KEPT;
+        }
+        $this->apply($zone, [$record], [], $owner);
+        return TenantTarget::DELETED;
+    }
+
     public function publishTenantTarget(HostedZone $zone, string $target, string $endpoint, AppConfig $owner, ?string $ownedEndpoint): void
     {
         if ($owner->tenantDomainTarget === null || ! Hostname::same($owner->tenantDomainTarget, $target)) {

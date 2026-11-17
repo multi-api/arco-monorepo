@@ -79,6 +79,12 @@ final class TenantDomainsTest extends TestCase
                     throw $this->fails['publish'];
                 }
             }
+
+            public function release(string $target, string $endpoint, AppConfig $owner): string
+            {
+                $this->log[] = "release $target $endpoint";
+                return self::DELETED;
+            }
         };
     }
 

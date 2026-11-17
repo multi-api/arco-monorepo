@@ -150,6 +150,21 @@ final class AwsDeployerTest extends TestCase
     }
 
     /**
+     * What a remove reads for tenant domains when the environment never had any: no tenant stack, no mediator
+     * function, no mediator role (the three reads it adds to a plain remove).
+     *
+     * @return list<mixed>
+     */
+    private static function noTenants(): array
+    {
+        return [
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production-tenants does not exist'),
+            self::lambdaMissing('GetFunctionConfiguration'),
+            self::noRole(),
+        ];
+    }
+
+    /**
      * The leftovers check that ends a remove: nothing tagged is listed and the execution and operator roles are gone.
      *
      * @return list<mixed>
@@ -1450,7 +1465,7 @@ final class AwsDeployerTest extends TestCase
             AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400),
             self::lambdaMissing('GetFunctionConfiguration'),
             ...self::webTags(),
-            self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(),
+            self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(), ...self::noTenants(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
             AwsMocks::error(EventBridgeException::class, 'DescribeRule', 'AccessDeniedException', 400), // no events: access, no rule
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // no resources stack
@@ -1465,8 +1480,9 @@ final class AwsDeployerTest extends TestCase
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
 
         self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION, 'GetResources', 'GetRole', 'GetRole', 'GetRole',
+            'DescribeStacks', 'GetFunctionConfiguration', 'GetRole',
             'DescribeStacks', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery', 'GetResources', 'GetRole', 'GetRole'], $mocks->calls);
-        self::assertSame('shop-production-console', $mocks->params[15]['FunctionName']);
+        self::assertSame('shop-production-console', $mocks->params[18]['FunctionName']);
         self::assertSame(['remove.scheduler_unreadable', 'remove.step_console', 'remove.step_function'], $steps, 'an unreadable rule is a warning, and the remove goes on');
         self::assertContains('remove.scheduler_unreadable', \Multiapi\Arco\Cli\StepPrinter::WARNINGS);
     }
@@ -1478,7 +1494,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
-            self::noRule(), ...self::lambdaTags('shop-production-console', null, 'Arco console function (Arco 0.8.1)'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(),
+            self::noRule(), ...self::lambdaTags('shop-production-console', null, 'Arco console function (Arco 0.8.1)'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(), ...self::noTenants(),
             new Result(['Stacks' => [['StackName' => 'arco-shop-production', 'StackStatus' => 'CREATE_COMPLETE', 'Tags' => [['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']], 'Outputs' => [['OutputKey' => 'DistributionDomain', 'OutputValue' => 'd1.cloudfront.net']]]]]),
             new Result(['Stacks' => [['StackName' => 'arco-shop-production', 'StackStatus' => 'CREATE_COMPLETE']]]),
             new Result([]),                                                                     // DeleteStack
@@ -1496,7 +1512,7 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(self::noGroup(), ...self::nothingLeft());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($config, function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION, 'GetResources', 'GetRole', 'GetRole', 'GetRole',
+        self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION, 'GetResources', 'GetRole', 'GetRole', 'GetRole', 'DescribeStacks', 'GetFunctionConfiguration', 'GetRole',
             'DescribeStacks', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListCertificates', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery', 'GetResources', 'GetRole', 'GetRole'], $mocks->calls);
         self::assertSame(['remove.step_distribution', 'remove.step_console', 'remove.step_function'], $steps);
     }
@@ -1556,7 +1572,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
-            self::noRule(), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(),
+            self::noRule(), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(), ...self::noTenants(),
             $stack('CREATE_COMPLETE'),                                                          // stack exists?
             $stack('CREATE_COMPLETE'),                                                          // CustomDomains::remove
             $stack('CREATE_COMPLETE'), new Result([]),                                          // Stacks::delete
@@ -1592,8 +1608,8 @@ final class AwsDeployerTest extends TestCase
         $missing = fn () => AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production does not exist');
         $mocks = new AwsMocks();
         $mocks->handler->append(
-            $missing(),                                                                          // no domains, no stack
-            $missing(),                                                                          // domains, no stack...
+            $missing(), $missing(),                                                              // no domains, no domain stack, no tenant stack
+            $missing(), $missing(),                                                              // domains, no stack...
             new Result(['CertificateSummaryList' => [['CertificateArn' => 'arn:c']]]),           // ...but a managed certificate
             new Result(['Tags' => [['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production'], ['Key' => 'arco:managed', 'Value' => 'true']]]),
             new Result(['Certificate' => ['CertificateArn' => 'arn:c', 'Status' => 'ISSUED']]),
@@ -1602,6 +1618,18 @@ final class AwsDeployerTest extends TestCase
 
         self::assertFalse($deployer->hasDomainResources($this->config()));
         self::assertTrue($deployer->hasDomainResources($withDomains));
+        self::assertSame(['DescribeStacks', 'DescribeStacks', 'DescribeStacks', 'DescribeStacks', 'ListCertificates', 'ListTagsForCertificate', 'DescribeCertificate'], array_slice($mocks->calls, 0, 7));
+    }
+
+    public function test_the_tenant_stack_alone_counts_as_domain_resources(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production does not exist'),
+            new Result(['Stacks' => [['StackName' => 'arco-shop-production-tenants', 'StackStatus' => 'CREATE_COMPLETE']]]),
+        );
+
+        self::assertTrue((new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->hasDomainResources($this->config()));
     }
 
     public function test_remove_console(): void
@@ -1637,7 +1665,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
-            ...self::ruleTags(), ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(),
+            ...self::ruleTags(), ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(), ...self::noTenants(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
             new Result(['Name' => 'arco-shop-production-scheduler']),                          // DescribeRule
             new Result(['FailedEntryCount' => 0]), new Result([]), new Result([]),              // RemoveTargets, DeleteRule, RemovePermission
@@ -1652,10 +1680,10 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(self::noGroup(), ...self::nothingLeft());                                  // GetGroupQuery: no resource group
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config(), function (string $key) use (&$steps): void { $steps[] = $key; });
 
-        self::assertSame(['GetResources', 'DescribeRule', 'ListTagsForResource', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION, 'GetResources', 'GetRole', 'GetRole', 'GetRole',
+        self::assertSame(['GetResources', 'DescribeRule', 'ListTagsForResource', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION, 'GetResources', 'GetRole', 'GetRole', 'GetRole', 'DescribeStacks', 'GetFunctionConfiguration', 'GetRole',
             'DescribeStacks', 'DescribeRule', 'RemoveTargets', 'DeleteRule', 'RemovePermission', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery', 'GetResources', 'GetRole', 'GetRole'], $mocks->calls);
-        self::assertSame('arco-shop-production-scheduler', $mocks->params[15]['Name']);
-        self::assertSame('shop-production-console', $mocks->params[18]['FunctionName']);
+        self::assertSame('arco-shop-production-scheduler', $mocks->params[18]['Name']);
+        self::assertSame('shop-production-console', $mocks->params[23]['FunctionName']);
         self::assertSame(['remove.step_scheduler', 'remove.step_console', 'remove.step_function'], $steps);
     }
 
@@ -1689,6 +1717,7 @@ final class AwsDeployerTest extends TestCase
             self::noRule(), ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(),
             self::scheduleRules([$cleanup => 'cleanup', $gone => 'gone']),                    // GetResources: schedule rules
             new Result(['State' => 'ENABLED']), new Result(['State' => 'DISABLED']),            // DescribeRule ×2
+            ...self::noTenants(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
             self::noRule(),                                                                     // no Laravel rule
             new Result([]), new Result([]), new Result([]),                                     // cleanup: RemoveTargets, DeleteRule, RemovePermission
@@ -1705,11 +1734,11 @@ final class AwsDeployerTest extends TestCase
         (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($config, function (string $key, array $params = []) use (&$steps): void { $steps[] = [$key, $params]; });
 
         self::assertSame(['GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION, 'GetResources', 'GetRole', 'GetRole', 'GetRole',
-            'GetResources', 'DescribeRule', 'DescribeRule', 'DescribeStacks', 'DescribeRule',
+            'GetResources', 'DescribeRule', 'DescribeRule', 'DescribeStacks', 'GetFunctionConfiguration', 'GetRole', 'DescribeStacks', 'DescribeRule',
             'RemoveTargets', 'DeleteRule', 'RemovePermission', 'RemoveTargets', 'DeleteRule', 'RemovePermission',
             'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery', 'GetResources', 'GetRole', 'GetRole'], $mocks->calls);
-        self::assertSame($cleanup, $mocks->params[19]['Name']);
-        self::assertSame($gone, $mocks->params[22]['Name']);
+        self::assertSame($cleanup, $mocks->params[22]['Name']);
+        self::assertSame($gone, $mocks->params[25]['Name']);
         self::assertSame([
             ['remove.step_schedule', ['schedule' => 'cleanup', 'rule' => $cleanup]],
             ['remove.step_schedule', ['schedule' => 'gone', 'rule' => $gone]],
@@ -1726,6 +1755,7 @@ final class AwsDeployerTest extends TestCase
             new Result(['ResourceTagMappingList' => []]),
             self::noRule(), ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(),
             AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'AccessDeniedException', 400, 'denied'),
+            ...self::noTenants(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
             self::noRule(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
@@ -2995,7 +3025,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]),                                       // GetResources: no workers
-            self::noRule(), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(),
+            self::noRule(), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(), ...self::noTenants(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // domains stack
             self::noRule(),
             self::resourcesStack(),
@@ -3021,7 +3051,7 @@ final class AwsDeployerTest extends TestCase
 
         // remove reads the live revision too (does it pin a connector?); nothing else is new.
         self::assertSame([
-            'GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION, 'GetResources', 'GetRole', 'GetRole', 'GetRole',
+            'GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION, 'GetResources', 'GetRole', 'GetRole', 'GetRole', 'DescribeStacks', 'GetFunctionConfiguration', 'GetRole',
             'DescribeStacks', 'DescribeRule',
             'DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'ListObjectsV2', 'DescribeTable',
             'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery', 'GetResources', 'GetRole', 'GetRole',
@@ -3481,7 +3511,7 @@ final class AwsDeployerTest extends TestCase
             // ownership: no rule, the workers (reports never deployed), console, web function, role
             self::noRule(),
             ...self::lambdaTags('shop-production-queue-emails'), self::lambdaMissing('GetFunctionConfiguration'), ...self::lambdaTags('shop-production-queue-gone'),
-            ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(),
+            ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(), ...self::noTenants(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id arco-shop-production does not exist'), // domains stack
             self::noRule(),
             // emails
@@ -3510,7 +3540,7 @@ final class AwsDeployerTest extends TestCase
         self::assertSame([
             'GetResources',
             'DescribeRule', 'GetFunctionConfiguration', 'ListTags', 'GetFunctionConfiguration', 'GetFunctionConfiguration', 'ListTags',
-            'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION, 'GetResources', 'GetRole', 'GetRole', 'GetRole',
+            'GetFunctionConfiguration', 'ListTags', 'GetWebFunction', 'ListTags', 'GetRole', ...self::LIVE_REVISION, 'GetResources', 'GetRole', 'GetRole', 'GetRole', 'DescribeStacks', 'GetFunctionConfiguration', 'GetRole',
             'DescribeStacks', 'DescribeRule',
             'ListEventSourceMappings', 'DeleteEventSourceMapping', 'DeleteFunction',
             'ListEventSourceMappings', 'DeleteFunction',
@@ -3518,7 +3548,7 @@ final class AwsDeployerTest extends TestCase
             'DescribeStacks', 'DescribeStackResources', 'DescribeStacks', 'DeleteStack', 'DescribeStacks', 'GetQueueAttributes',
             'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction', 'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery', 'GetResources', 'GetRole', 'GetRole',
         ], $mocks->calls);
-        self::assertSame('shop-production-console', $mocks->params[33]['FunctionName'], 'the console goes after the workers and the stack');
+        self::assertSame('shop-production-console', $mocks->params[36]['FunctionName'], 'the console goes after the workers and the stack');
         self::assertSame([
             ['remove.step_worker', ['queue' => 'emails', 'function' => 'shop-production-queue-emails']],
             ['remove.step_worker', ['queue' => 'reports', 'function' => 'shop-production-queue-reports']],
@@ -3537,7 +3567,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             AwsMocks::error(ResourceGroupsTaggingAPIException::class, 'GetResources', 'InvalidParameterException', 400, 'Rate exceeded'),
-            self::noRule(), ...self::lambdaTags('shop-production-queue-emails'), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(),
+            self::noRule(), ...self::lambdaTags('shop-production-queue-emails'), self::lambdaMissing('GetFunctionConfiguration'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(), ...self::noTenants(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
             self::noRule(),
             new Result(['EventSourceMappings' => []]), new Result([]),                          // emails: mappings, DeleteFunction
@@ -3848,7 +3878,7 @@ final class AwsDeployerTest extends TestCase
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]), self::noRule(),
             ...self::lambdaTags('shop-production-console', [], 'Arco console function (Arco 0.3.0)'),
-            self::noWeb(), self::noRole(), new Result(['VpcEndpoints' => []]), ...self::nothingTagged(self::noRole()),
+            self::noWeb(), self::noRole(), new Result(['VpcEndpoints' => []]), ...self::nothingTagged(self::noRole()), ...self::noTenants(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // domains stack
             self::noRule(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // resources stack
@@ -4094,7 +4124,7 @@ final class AwsDeployerTest extends TestCase
         $mocks = new AwsMocks();
         $mocks->handler->append(...[
             new Result(['ResourceTagMappingList' => []]), self::noRule(),
-            ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(),
+            ...self::lambdaTags('shop-production-console'), ...self::webTags(), self::roleTags(), ...self::liveRevision(), ...self::nothingTagged(), ...self::noTenants(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // domains stack
             self::noRule(),
             AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403), // resources stack
@@ -4126,7 +4156,7 @@ final class AwsDeployerTest extends TestCase
             $mocks = new AwsMocks();
             $mocks->handler->append(...[
                 new Result(['ResourceTagMappingList' => []]), self::noRule(),
-                self::lambdaMissing('GetFunctionConfiguration'), self::noWeb(), self::noRole(), new Result(['VpcEndpoints' => []]), ...self::nothingTagged(self::noRole()),
+                self::lambdaMissing('GetFunctionConfiguration'), self::noWeb(), self::noRole(), new Result(['VpcEndpoints' => []]), ...self::nothingTagged(self::noRole()), ...self::noTenants(),
                 AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
                 self::noRule(),
                 AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403),
@@ -4846,7 +4876,7 @@ final class AwsDeployerTest extends TestCase
                 AwsMocks::error(LambdaWebException::class, 'GetWebFunction', 'ResourceNotFoundException', 404)],
             'ListTags' => new Result(['tags' => self::tags()]),
             // The execution role exists until deleted; no operator role (a test with a connector answers it).
-            'GetRole' => fn (CommandInterface $command) => isset($deletedRoles[$command['RoleName']]) || str_ends_with($command['RoleName'], '-network')
+            'GetRole' => fn (CommandInterface $command) => isset($deletedRoles[$command['RoleName']]) || str_ends_with($command['RoleName'], '-network') || str_ends_with($command['RoleName'], '-tenants')
                 ? AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404) : self::roleTags(),
             'GetWebFunctionEndpoint' => new Result(['domainName' => 'abc.on.aws', 'state' => 'Active', 'revisionWeights' => [['revisionId' => 'rev-1', 'weight' => 100]]]),
             'GetWebFunctionRevision' => new Result(['state' => 'Active', 'serviceConfig' => $liveConnector === null ? [] : ['egressNetworkConnectorArn' => $liveConnector]]),
@@ -5036,7 +5066,7 @@ final class AwsDeployerTest extends TestCase
                 return new Result([]);
             },
             'GetRole' => function (CommandInterface $command) use (&$gone): mixed {
-                return isset($gone[$command['RoleName']])
+                return isset($gone[$command['RoleName']]) || str_ends_with($command['RoleName'], '-tenants')
                     ? AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404)
                     : ($command['RoleName'] === 'arco-shop-production' ? self::roleTags() : self::operatorRole());
             },
@@ -5663,6 +5693,213 @@ final class AwsDeployerTest extends TestCase
         self::assertSame(['arco-shop-production'], array_column(self::byOperation($mocks)['DeleteRole'], 'RoleName'));
     }
 
+    /**
+     * An environment with tenant domains, for answer(): the tenant stack, the mediator function and its role (all owned),
+     * and $tenants customer domains on the distribution. Remembers in $state what the remove changed.
+     *
+     * @param array<string, mixed> $state
+     * @return array<string, mixed>
+     */
+    private static function withTenants(array &$state, int $tenants): array
+    {
+        $tags = self::tagList(self::tags());
+        $base = self::removal(null);
+        $ids = array_map(fn (int $n) => "dt_$n", $tenants === 0 ? [] : range(1, $tenants));
+        $state += ['tenants' => $ids, 'enabled' => array_fill_keys($ids, true)];
+        return [
+            ...$base,
+            'DescribeStacks' => function (CommandInterface $command) use ($tags, &$state): mixed {
+                if ($command['StackName'] !== 'arco-shop-production-tenants' || isset($state['stackDeleted'])) {
+                    return AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'ValidationError', 400, 'Stack with id ' . $command['StackName'] . ' does not exist');
+                }
+                return new Result(['Stacks' => [['StackName' => 'arco-shop-production-tenants', 'StackStatus' => 'CREATE_COMPLETE', 'Tags' => $tags, 'Outputs' => [
+                    ['OutputKey' => 'DistributionId', 'OutputValue' => 'ETENANT'], ['OutputKey' => 'ConnectionGroupId', 'OutputValue' => 'cg_1'],
+                    ['OutputKey' => 'RoutingEndpoint', 'OutputValue' => 'd222.cloudfront.net'], ['OutputKey' => 'Target', 'OutputValue' => 'routing.example.com']]]]]);
+            },
+            'DeleteStack' => function () use (&$state): Result {
+                $state['stackDeleted'] = true;
+                return new Result([]);
+            },
+            'GetFunctionConfiguration' => function (CommandInterface $command) use (&$state): mixed {
+                return $command['FunctionName'] === 'shop-production-tenants' && ! isset($state['functionDeleted'])
+                ? new Result(['FunctionName' => 'shop-production-tenants', 'FunctionArn' => 'arn:aws:lambda:us-east-1:111111111111:function:shop-production-tenants', 'Description' => 'Arco tenant domains mediator (Arco 0.25.0)', 'Timeout' => 30])
+                : self::lambdaMissing('GetFunctionConfiguration');
+            },
+            'ListTags' => new Result(['tags' => self::tags(), 'Tags' => self::tags()]),
+            'GetRole' => function (CommandInterface $command) use (&$state): mixed {
+                if ($command['RoleName'] === 'arco-shop-production-tenants' && ! isset($state['roleDeleted'])) {
+                    return self::roleTags();
+                }
+                return isset($state['roleDeleted'][$command['RoleName']]) || $command['RoleName'] !== 'arco-shop-production' || isset($state['executionRoleDeleted'])
+                    ? self::noRole() : self::roleTags();
+            },
+            'DeleteRole' => function (CommandInterface $command) use (&$state): Result {
+                $command['RoleName'] === 'arco-shop-production-tenants' ? $state['roleDeleted'] = true : $state['executionRoleDeleted'] = true;
+                return new Result([]);
+            },
+            'DeleteFunction' => function (CommandInterface $command) use (&$state): mixed {
+                if ($command['FunctionName'] === 'shop-production-tenants') {
+                    $state['functionDeleted'] = true;
+                    return new Result([]);
+                }
+                return self::lambdaMissing('DeleteFunction');
+            },
+            'PutFunctionConcurrency' => function () use (&$state): Result {
+                $state['reserved'] = 0;
+                return new Result([]);
+            },
+            'GetFunctionConcurrency' => function () use (&$state): Result {
+                return new Result(['ReservedConcurrentExecutions' => $state['reserved'] ?? 100]);
+            },
+            'ListCertificates' => new Result(['CertificateSummaryList' => []]),
+            'GetResourcePolicy' => AwsMocks::error(LambdaWebException::class, 'GetResourcePolicy', 'ResourceNotFoundException', 404),
+            'ListDistributionTenants' => function () use (&$state): Result {
+                return new Result(['DistributionTenantList' => array_map(fn (string $id) => ['Id' => $id], $state['tenants'])]);
+            },
+            'GetDistributionTenant' => function (CommandInterface $command) use (&$state, $tags): Result {
+                return new Result(['ETag' => 'E1', 'DistributionTenant' => [
+                    'Id' => $command['Identifier'], 'DistributionId' => 'ETENANT', 'ConnectionGroupId' => 'cg_1', 'Domains' => [['Domain' => $command['Identifier'] . '.customer.com']],
+                    'Enabled' => $state['enabled'][$command['Identifier']], 'Status' => 'Deployed', 'Tags' => ['Items' => $tags]]]);
+            },
+            'UpdateDistributionTenant' => function (CommandInterface $command) use (&$state): Result {
+                $state['enabled'][$command['Id']] = false;
+                return new Result([]);
+            },
+            'DeleteDistributionTenant' => function (CommandInterface $command) use (&$state): Result {
+                $state['tenants'] = array_values(array_diff($state['tenants'], [$command['Id']]));
+                return new Result([]);
+            },
+        ];
+    }
+
+    private function removableTenantConfig(): AppConfig
+    {
+        return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->domain('shop.example.com')->tenantDomains('routing.example.com')->dns(false))->toArray(), 'production');
+    }
+
+    public function test_remove_with_tenant_domains_drains_the_mediator_before_anything_else_of_the_environment_is_deleted(): void
+    {
+        $state = [];
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::withTenants($state, 0));
+        $steps = [];
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->removableTenantConfig(), function (string $key, array $params = []) use (&$steps): void { $steps[] = $key; });
+
+        $calls = $mocks->calls;
+        $firstDelete = min(array_filter(array_map(fn (string $c) => str_starts_with($c, 'Delete') ? array_search($c, $calls, true) : false, $calls), fn ($i) => $i !== false));
+        self::assertSame($firstDelete, array_search('DeleteStack', $calls, true), 'the tenant stack is the first deletion');
+        self::assertLessThan($firstDelete, array_search('PutFunctionConcurrency', $calls, true));
+        self::assertLessThan(array_search('DeleteWebFunction', $calls, true), array_search('DeleteFunction', $calls, true));
+        self::assertSame(['remove.step_tenant_drain', 'remove.step_tenant_wait', 'remove.step_tenant_count', 'remove.step_tenant_dns', 'remove.tenant_dns_manual', 'remove.step_tenant_access', 'remove.step_tenant_stack', 'remove.step_tenant_function', 'remove.step_tenant_role'], array_slice($steps, 0, 9));
+        self::assertNotContains('DeleteFunctionConcurrency', $calls);
+        self::assertTrue($state['functionDeleted'] && $state['roleDeleted'] && $state['stackDeleted']);
+    }
+
+    public function test_remove_with_tenants_and_no_force_stops_before_deleting_anything_of_the_environment(): void
+    {
+        $state = [];
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::withTenants($state, 2));
+
+        try {
+            (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->removableTenantConfig());
+            self::fail('Customer domains are never deleted without --force.');
+        } catch (\Multiapi\Arco\Deploy\DeployException $e) {
+            self::assertSame(['remove.tenants_need_force', ['count' => 2, 'function' => 'shop-production-tenants']], [$e->key, $e->params]);
+        }
+
+        self::assertSame([], array_values(array_filter($mocks->calls, fn (string $c) => str_starts_with($c, 'Delete') || $c === 'UpdateDistributionTenant')));
+        self::assertSame(0, $state['reserved']);
+        self::assertSame(['dt_1', 'dt_2'], $state['tenants']);
+    }
+
+    public function test_remove_with_tenants_and_force_deletes_them_then_the_environment(): void
+    {
+        $state = [];
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::withTenants($state, 2));
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->removableTenantConfig(), null, true, true);
+
+        self::assertSame([], $state['tenants']);
+        self::assertSame(['DeleteDistributionTenant', 'DeleteDistributionTenant'], self::only($mocks, 'DeleteDistributionTenant'));
+        self::assertLessThan(array_search('DeleteStack', $mocks->calls, true), array_search('DeleteDistributionTenant', $mocks->calls, true));
+        self::assertContains('DeleteWebFunction', $mocks->calls);
+    }
+
+    public function test_remove_of_a_plain_environment_completes_when_the_profile_cannot_read_the_mediator(): void
+    {
+        $mocks = new AwsMocks();
+        $base = self::removal(null);
+        $role = $base['GetRole'];
+        self::answer($mocks, [...$base,
+            'GetFunctionConfiguration' => fn (CommandInterface $command) => str_ends_with($command['FunctionName'], '-tenants')
+                ? AwsMocks::error(LambdaException::class, 'GetFunctionConfiguration', 'AccessDeniedException', 403, 'denied')
+                : self::lambdaMissing('GetFunctionConfiguration'),
+            'GetRole' => fn (CommandInterface $command) => str_ends_with($command['RoleName'], '-tenants')
+                ? AwsMocks::error(IamException::class, 'GetRole', 'AccessDenied', 403, 'denied')
+                : $role($command),
+        ]);
+
+        (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->config());
+
+        self::assertNotContains('PutFunctionConcurrency', $mocks->calls);
+        self::assertContains('DeleteWebFunction', $mocks->calls);
+    }
+
+    public function test_remove_of_a_plain_environment_gains_exactly_the_three_tenant_reads(): void
+    {
+        $with = new AwsMocks();
+        self::answer($with, self::removal(null));
+        (new AwsDeployer($with->clients(), AwsMocks::noSleep()))->remove($this->config());
+
+        self::assertNotContains('PutFunctionConcurrency', $with->calls, 'no concurrency change without tenant resources');
+        self::assertNotContains('ListDistributionTenants', $with->calls);
+        $named = array_column(array_filter(self::byOperation($with)['GetFunctionConfiguration'], fn (array $p) => $p['FunctionName'] === 'shop-production-tenants'), 'FunctionName');
+        self::assertSame(['shop-production-tenants'], $named);
+        self::assertSame(['arco-shop-production-tenants'], array_values(array_unique(array_filter(array_column(self::byOperation($with)['DescribeStacks'], 'StackName'), fn (string $n) => str_ends_with($n, '-tenants')))));
+        self::assertContains('arco-shop-production-tenants', array_column(self::byOperation($with)['GetRole'], 'RoleName'));
+    }
+
+    public function test_tenant_domains_status_counts_only_the_environments_tenants_and_is_null_without_a_stack(): void
+    {
+        $state = [];
+        $mocks = new AwsMocks();
+        self::answer($mocks, self::withTenants($state, 3));
+        $deployer = new AwsDeployer($mocks->clients(), AwsMocks::noSleep());
+
+        $status = $deployer->tenantDomainsStatus($this->removableTenantConfig());
+
+        self::assertSame(['distribution' => 'ETENANT', 'connectionGroup' => 'cg_1', 'target' => 'routing.example.com', 'endpoint' => 'd222.cloudfront.net', 'tenants' => 3, 'error' => null], $status);
+        self::assertSame(['DescribeStacks', 'ListDistributionTenants', 'GetDistributionTenant', 'GetDistributionTenant', 'GetDistributionTenant'], $mocks->calls);
+
+        $state['stackDeleted'] = true;
+        self::assertNull($deployer->tenantDomainsStatus($this->removableTenantConfig()));
+    }
+
+    public function test_tenant_domains_status_with_an_unreadable_tenant_has_no_count_and_says_why(): void
+    {
+        $state = [];
+        $mocks = new AwsMocks();
+        self::answer($mocks, [...self::withTenants($state, 1), 'GetDistributionTenant' => AwsMocks::error(\Aws\CloudFront\Exception\CloudFrontException::class, 'GetDistributionTenant', 'AccessDenied', 403, 'no')]);
+
+        $status = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->tenantDomainsStatus($this->removableTenantConfig());
+
+        self::assertIsArray($status);
+        self::assertNull($status['tenants']);
+        self::assertInstanceOf(\Multiapi\Arco\Deploy\DeployException::class, $status['error']);
+        self::assertSame('info.tenant_unverified', $status['error']->key);
+    }
+
+    public function test_tenant_domains_status_is_null_when_cloudformation_cannot_be_read(): void
+    {
+        $mocks = new AwsMocks();
+        self::answer($mocks, ['DescribeStacks' => AwsMocks::error(CloudFormationException::class, 'DescribeStacks', 'AccessDenied', 403)]);
+
+        self::assertNull((new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->tenantDomainsStatus($this->removableTenantConfig()));
+    }
+
     public function test_remove_leaves_foreign_connector(): void
     {
         $mocks = new AwsMocks();
@@ -5928,7 +6165,7 @@ final class AwsDeployerTest extends TestCase
         // anything left at the end?); no lambda-core call.
         self::assertSame([
             'GetResources', 'DescribeRule', 'GetFunctionConfiguration', 'GetWebFunction', 'ListTags', 'GetRole',
-            'GetWebFunctionEndpoint', 'GetWebFunctionRevision', 'GetResources', 'GetRole', 'GetRole', 'GetRole',
+            'GetWebFunctionEndpoint', 'GetWebFunctionRevision', 'GetResources', 'GetRole', 'GetRole', 'GetRole', 'DescribeStacks', 'GetFunctionConfiguration', 'GetRole',
             'DescribeStacks', 'DescribeRule', 'DescribeStacks', 'DeleteFunction', 'DeleteWebFunction', 'GetWebFunction',
             'DeleteRolePolicy', 'DeleteRole', 'GetGroupQuery', 'GetResources', 'GetRole', 'GetRole',
         ], $mocks->calls);

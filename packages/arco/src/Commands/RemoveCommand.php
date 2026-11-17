@@ -59,7 +59,7 @@ final class RemoveCommand extends ArcoCommand
         $this->addOption('env', 'e', InputOption::VALUE_REQUIRED, 'Environment to remove')
             ->addOption('profile', 'p', InputOption::VALUE_REQUIRED, 'AWS profile to use')
             ->addOption('yes', 'y', InputOption::VALUE_NONE, 'Answer yes to every confirmation (no typed confirmation)')
-            ->addOption('force', null, InputOption::VALUE_NONE, 'Deprecated: use --yes')
+            ->addOption('force', null, InputOption::VALUE_NONE, 'Required to delete the customer domains (tenants) of tenantDomains(); as an alias of --yes it is deprecated')
             ->addOption('no-wait-interfaces', null, InputOption::VALUE_NONE, 'Do not wait for Lambda to delete the VPC network interfaces: the execution role is kept for it (a note names it)')
             ->addOption('dns-profile', null, InputOption::VALUE_REQUIRED, 'AWS profile whose Route 53 holds the DNS zones of the custom domains')
             ->addOption('json', null, InputOption::VALUE_NONE, 'Print NDJSON step events and a final result line on stdout (never asks: implies --no-interaction)')
@@ -104,12 +104,17 @@ final class RemoveCommand extends ArcoCommand
             $this->onSleep = $steps->tick(...);
         }
         try {
-            if ($input->getOption('force')) {
-                $io->warning($this->t('deprecated.force_remove'));
-                $stream?->warning('deprecated.force_remove');
+            // --force stays an alias of --yes; only on the command line is it also the authorization to delete tenants.
+            $force = (bool) $input->getOption('force');
+            if ($force) {
                 $input->setOption('yes', true);
             }
             $config = $this->loadTarget($input, $io, $stream === null ? null : $stream->warning(...));
+            // An environment with tenantDomains() has a real use for --force: no deprecation there.
+            if ($force && $config->tenantDomainTarget === null) {
+                $io->warning($this->t('deprecated.force_remove'));
+                $stream?->warning('deprecated.force_remove');
+            }
             $this->jsonTarget($stream, $config);
             $cloudflare = null;
             if ($config->dnsCloudflare) {
@@ -153,6 +158,12 @@ final class RemoveCommand extends ArcoCommand
             // What the tags say belongs to the environment, before anything is asked or deleted.
             $this->listResources($resources, $config, $io, $stream);
 
+            // No read before the drain: the count that counts is the one the remove makes after disabling the mediator.
+            if ($config->tenantDomainTarget !== null && ! $force) {
+                $io->writeln($this->t('remove.tenants_note'));
+                $stream?->note('remove.tenants_note');
+            }
+
             // Interactive: the typed confirmation is the protected() confirmation too.
             if (! $input->getOption('yes')) {
                 if (! $input->isInteractive()) {
@@ -181,7 +192,7 @@ final class RemoveCommand extends ArcoCommand
                 }
                 // A leftover AWS cannot be checked (e.g. the scheduler rule) is a WARNINGS key: a warning block, not a bullet.
                 $steps?->__invoke($key, $params);
-            }, ! $input->getOption('no-wait-interfaces'));
+            }, ! $input->getOption('no-wait-interfaces'), $force);
             $steps?->finish();
             $io->success($this->t('remove.done', ['function' => $config->functionName()]));
             $stream?->result('removed', $config->app, $config->environment);

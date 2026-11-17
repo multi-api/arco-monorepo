@@ -38,4 +38,10 @@ final class CloudflareTenantTargetDns implements TenantTarget
         $zone = $this->preflight($target, $ownedEndpoint);
         $this->dns->publishTenantTarget($zone, $target, $endpoint, $this->owner, $ownedEndpoint);
     }
+
+    public function release(string $target, string $endpoint, AppConfig $owner): string
+    {
+        $zone = $this->dns->zoneFor($target);
+        return $zone === null ? self::ABSENT : $this->dns->releaseTenantTarget($zone, $target, $owner, $endpoint);
+    }
 }

@@ -117,18 +117,21 @@ final class DeployCommandTest extends TestCase
         return new CommandTester($app->find('deploy'));
     }
 
-    public function test_tenant_domains_cannot_deploy_before_their_infrastructure_is_available(): void
+    public function test_tenant_domains_proceed_to_the_deployer(): void
     {
         $path = "$this->project/arco.php";
         $config = (string) file_get_contents($path);
         file_put_contents($path, str_replace("->region('us-east-1')", "->region('us-east-1')->domain('shop.example.com')->tenantDomains('routing.example.com')", $config));
-        $tester = $this->tester(new FakeDeployer());
+        $this->aws->append(new Result(['Account' => '111111111111']));
+        $deployer = new FakeDeployer();
+        $tester = $this->tester($deployer);
 
         $tester->execute(['--env' => 'production', '--profile' => 'acme-prod', '--yes' => true], ['interactive' => false]);
 
-        self::assertSame(1, $tester->getStatusCode());
-        self::assertStringContainsString('Tenant domain deployment is not available yet', $tester->getDisplay());
-        self::assertSame([], $this->factoryCalls);
+        self::assertSame(0, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertStringNotContainsString('not available yet', $tester->getDisplay());
+        self::assertContains('prepare', $deployer->calls);
+        self::assertNotSame([], array_filter($deployer->calls, fn (string $call) => str_starts_with($call, 'domains:')), 'the domains (and their tenant infrastructure) are attached');
     }
 
     public function test_tenant_target_conflicting_with_domain_is_rejected_before_aws(): void

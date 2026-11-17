@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Deploy\Domains;
 
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
+use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\DeployException;
 
 /** @internal */
@@ -47,6 +48,12 @@ final class ManualTenantTargetDns implements TenantTarget
             throw DeployException::make('domains.tenant_target_change', ['target' => $target]);
         }
         $this->verify($target, $endpoint);
+    }
+
+    /** Arco cannot read or change the user's zone: the caller prints the record to delete. */
+    public function release(string $target, string $endpoint, AppConfig $owner): string
+    {
+        return self::MANUAL;
     }
 
     /** @return list<mixed> */

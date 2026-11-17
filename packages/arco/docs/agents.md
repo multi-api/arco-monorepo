@@ -69,8 +69,9 @@ unless the user explicitly says otherwise for the case at hand.
   `PORT`. Queues and schedules POST to routes of the app under `/_arco/`, which the public endpoint never serves.
   See [Go apps](#go-apps-arcojson).
 - **Tenant domain targets:** `tenantDomains(target: ...)` validates a hostname distinct from `domain()` and needs
-  `domain()` in the same environment (`validation.tenant_domain_requires_domain`). Deployment is not enabled yet and
-  stops before AWS with `deploy.tenant_domains_unavailable`. Once enabled, a deploy refuses before any change:
+  `domain()` in the same environment (`validation.tenant_domain_requires_domain`). It deploys, but is experimental: it has
+  not been accepted against real AWS yet (certificates, origin signing, draining and tenant deletion timing), so
+  prefer staging and tell the user. A deploy refuses before any change:
   a target at a zone apex, without a zone, occupied or unverifiable (`domains.tenant_target_apex`,
   `domains.tenant_target_zone_missing`, `domains.tenant_target_occupied`, `domains.tenant_target_unverified`,
   `domains.tenant_target_proxied`), a changed target (`domains.tenant_target_changed`), a stack it cannot trust
@@ -90,6 +91,18 @@ unless the user explicitly says otherwise for the case at hand.
   (`TenantDomains::add`, `status`, `list`, `remove`, `fake()`), its exceptions and the manual `lambda:InvokeFunction`
   statement `role()` needs are in
   [Managing tenant domains from the app](configuration.md#managing-tenant-domains-from-the-app).
+  `remove` disables the mediator first, counts the customer domains and stops with `remove.tenants_need_force` when
+  any exist: nothing is deleted. **Never add `--force` on your own to get past `remove.tenants_need_force`:** it
+  deletes the user's customers' domains and takes their sites offline for good. Report the `{count}` to the user and
+  let them decide; only they may say to run `remove --force`. `--yes` does not authorize it. After any stop of that
+  removal the mediator stays disabled (reserved concurrency 0): the message prints the
+  `aws lambda delete-function-concurrency --function-name <app>-<env>-tenants` command that restores it, to run only
+  if the user cancels the removal; running `remove` again resumes. The other `remove.tenant_*` keys (`foreign`,
+  `busy`, `recount`, `delete_timeout`, `unverified`, `listing_incomplete`, `stack_unreadable`, `untagged`,
+  `drain_failed`, `drain_unconfirmed`, `failed`) are listed in
+  [Removing an environment with tenant domains](configuration.md#removing-an-environment-with-tenant-domains).
+  `info --json` has `tenantDomains` (`{distribution, connectionGroup, target, endpoint, tenants}`; `tenants` is the
+  number of customer domains, `null` when it could not be established; the key is absent without a tenant stack).
 - **DNS safety:** `domains.record_read_incomplete` and `domains.zones_read_incomplete` mean Route 53 returned
   incomplete or malformed records or hosted zones. Arco stops instead of making DNS decisions from partial data.
   `domains.dns_change_unconfirmed` means a change may have been submitted but its propagation could not be verified;
@@ -119,7 +132,7 @@ question either takes its default, is answered by a flag, or stops the command:
 | `secret:set` value | read from stdin | pipe the value in |
 | `tinker` shell | not usable | `--execute="<code>"` |
 
-`--yes` answers confirmations only; it never overrides a safety check (that is `--force`). `--json` on `deploy` and
+`--yes` answers confirmations only; it never overrides a safety check (that is `--force`), and it never authorizes deleting customer domains (`remove.tenants_need_force`). `--json` on `deploy` and
 `remove` implies `--no-interaction`, so a missing `--yes` makes the run end with `outcome: refused`.
 
 Pass `--yes` only when the user asked for that exact action on that environment: it is the confirmation the user
@@ -178,8 +191,8 @@ Flags shared by many commands:
 |---|---|---|
 | `deploy` | Build, upload, run deploy commands, deploy, verify (rollback on failure), then workers, scheduler, domains | `--env`, `--profile`, `-y/--yes` (create a new environment), `--json`, `--package=<zip>` (deploy a prebuilt zip), `--migrate` (add `migrate --force` to this deploy's deploy commands; Laravel only), `--no-deploy-commands` (not with `--migrate`), `--dns-profile=<p>`, `--cloudflare-token=<t>`, `--permissions-boundary=<arn>`, `--config-layer=<path>`, `--force` (dangerous, see ground rules), `--force-dns` (dangerous) |
 | `package` | Build the zip only (`.arco/build/arco-<app>-<env>.zip`) | `--env`, `-o/--output=<path>`, `--config-layer=<path>` |
-| `info` | Resolved settings with their source, URL, live revision; validation | `--env`, `--profile`, `--json`, `--resources` (every AWS resource tagged for the environment, each with `source` and `options`, plus `variables`, `config`, `schedules` and `scheduler` (`{every, paused}` or `null`); `tag:GetResources`), `--permissions-boundary=<arn>`, `--config-layer=<path>` |
-| `remove` | Delete the web function, endpoint, console, workers, execution role, scheduler rule, network connector and the domain stack, DNS aliases and an Arco-requested certificate. Keeps queues, buckets, tables, SSM parameters, log groups and the code bucket. Fails with `remove.leftovers` when anything else is left; run again to finish | `--env`, `--profile`, `-y/--yes`, `--json`, `--no-wait-interfaces` (keep the execution role instead of waiting for VPC network interfaces), `--dns-profile`, `--cloudflare-token`, `--config-layer=<path>`, `--force` (deprecated spelling of `--yes`) |
+| `info` | Resolved settings with their source, URL, live revision; validation | `--env`, `--profile`, `--json` (with a tenant stack it adds `tenantDomains`), `--resources` (every AWS resource tagged for the environment, each with `source` and `options`, plus `variables`, `config`, `schedules` and `scheduler` (`{every, paused}` or `null`); `tag:GetResources`), `--permissions-boundary=<arn>`, `--config-layer=<path>` |
+| `remove` | Delete the web function, endpoint, console, workers, execution role, scheduler rule, network connector and the domain stack, DNS aliases and an Arco-requested certificate. With `tenantDomains()` it disables the mediator, counts customer domains and deletes them only with `--force`. Keeps queues, buckets, tables, SSM parameters, log groups and the code bucket. Fails with `remove.leftovers` when anything else is left; run again to finish | `--env`, `--profile`, `-y/--yes`, `--json`, `--no-wait-interfaces` (keep the execution role instead of waiting for VPC network interfaces), `--dns-profile`, `--cloudflare-token`, `--config-layer=<path>`, `--force` (with `tenantDomains()`, the only way to delete customer domains; otherwise a deprecated spelling of `--yes`; never add it on your own) |
 | `logs` | Web, console and worker logs merged | `--env`, `--profile`, `-f/--follow`, `--since=10m` (`30s`, `10m`, `2h`, `1d` or a date; bare numbers are rejected), `--until` (not with `--follow`), `--level=debug\|info\|warning\|error`, `--request=<id>`, `--filter=<text>`, `--source=all\|web\|console\|queues`, `--console`, `--queue=<name>`, `--platform`, `--config-layer=<path>`, `--json` |
 | `profile` | Show or change the remembered profile per environment (`.arco/local.php`) | `--env`, `--set=<profile>`, `--json` (not with `--set`) |
 
@@ -753,6 +766,7 @@ not. The most common ones:
 | `deploy.tags_unreadable`, `ownership.tags_unreadable`, `remove.tags_unreadable` | The profile cannot read tags | Allow the action named (`lambda:ListTags`, `events:ListTagsForResource`, ...) |
 | `deploy.region_changed` | `region()` changed for a deployed environment | Restore the region, or deploy under a new environment name |
 | `stack.not_ours` | A CloudFormation stack with Arco's name not tagged for this environment | Rename or remove that stack, or change the app/environment name |
+| `remove.tenants_need_force` | `remove` found customer domains (tenants) of `tenantDomains()`; nothing was deleted and the mediator stays disabled | Ask the user. Only with their explicit go-ahead, `remove --force`; never on your own |
 | `deploy.network_foreign` | A network connector named `<app>-<env>` with another operator role (refused even with `--force`) | Remove or rename it, or change the app/environment name |
 
 ### Build and package

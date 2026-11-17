@@ -111,6 +111,54 @@ final class CloudflareTenantTargetDnsTest extends TestCase
         }
     }
 
+    public function test_release_deletes_only_the_record_with_our_marker_pointing_to_the_endpoint(): void
+    {
+        $cf = (new FakeCloudflare())->zone('example.com', 'z1');
+        $cf->record('z1', self::TARGET, 'CNAME', self::ENDPOINT, self::MARKER);
+        $dns = new CloudflareTenantTargetDns(new CloudflareDns($cf->api()), self::owner(self::TARGET));
+
+        self::assertSame('deleted', $dns->release(self::TARGET, self::ENDPOINT, self::owner(self::TARGET)));
+
+        self::assertSame([], $cf->named(self::TARGET));
+    }
+
+    public function test_release_deletes_our_record_even_when_it_was_proxied_later(): void
+    {
+        $cf = (new FakeCloudflare())->zone('example.com', 'z1');
+        $cf->record('z1', self::TARGET, 'CNAME', self::ENDPOINT, self::MARKER, ['proxied' => true]);
+        $dns = new CloudflareTenantTargetDns(new CloudflareDns($cf->api()), self::owner(self::TARGET));
+
+        self::assertSame('deleted', $dns->release(self::TARGET, self::ENDPOINT, self::owner(self::TARGET)));
+    }
+
+    public function test_release_leaves_a_record_that_is_not_ours(): void
+    {
+        foreach ([
+            'foreign marker' => ['another owner', self::ENDPOINT, 'CNAME'],
+            'no marker' => [null, self::ENDPOINT, 'CNAME'],
+            'other endpoint' => [self::MARKER, 'other.cloudfront.net', 'CNAME'],
+            'other type' => [self::MARKER, '192.0.2.1', 'A'],
+        ] as $label => [$comment, $content, $type]) {
+            $cf = (new FakeCloudflare())->zone('example.com', 'z1');
+            $cf->record('z1', self::TARGET, $type, $content, $comment);
+            $dns = new CloudflareTenantTargetDns(new CloudflareDns($cf->api()), self::owner(self::TARGET));
+
+            self::assertSame('kept', $dns->release(self::TARGET, self::ENDPOINT, self::owner(self::TARGET)), $label);
+            self::assertCount(1, $cf->named(self::TARGET), $label);
+            self::assertSame([], $cf->writes(), $label);
+        }
+    }
+
+    public function test_release_without_a_record_or_a_zone_is_absent(): void
+    {
+        $cf = (new FakeCloudflare())->zone('example.com', 'z1');
+        $dns = new CloudflareTenantTargetDns(new CloudflareDns($cf->api()), self::owner(self::TARGET));
+        self::assertSame('absent', $dns->release(self::TARGET, self::ENDPOINT, self::owner(self::TARGET)));
+
+        $dns = new CloudflareTenantTargetDns(new CloudflareDns((new FakeCloudflare())->api()), self::owner(self::TARGET));
+        self::assertSame('absent', $dns->release(self::TARGET, self::ENDPOINT, self::owner(self::TARGET)));
+    }
+
     private static function owner(string $target): AppConfig
     {
         return ConfigResolver::resolve(App::make('shop')->region('us-east-1')->tenantDomains($target)

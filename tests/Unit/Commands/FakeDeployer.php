@@ -76,6 +76,10 @@ final class FakeDeployer implements Deployer
     public array $removeSteps = [];
     /** thrown by remove() after its steps, e.g. AWS refusing a deletion */
     public ?\Throwable $removeError = null;
+    /** remove()'s $forceTenants, once called */
+    public ?bool $removeForcedTenants = null;
+    /** @var array{distribution: string, connectionGroup: string, target: string, endpoint: string, tenants: int|null, error: \Throwable|null}|null what tenantDomainsStatus() returns */
+    public ?array $tenantStatus = null;
     /** remove()'s $waitInterfaces, once called */
     public ?bool $removeWaitedInterfaces = null;
 
@@ -164,10 +168,11 @@ final class FakeDeployer implements Deployer
     }
 
     public function hasDomainResources(AppConfig $config): bool { return $this->domainResources; }
-    public function remove(AppConfig $config, ?callable $onStep = null, bool $waitInterfaces = true): void
+    public function remove(AppConfig $config, ?callable $onStep = null, bool $waitInterfaces = true, bool $forceTenants = false): void
     {
         $this->calls[] = 'remove';
         $this->removeWaitedInterfaces = $waitInterfaces;
+        $this->removeForcedTenants = $forceTenants;
         foreach ($this->removeSteps as [$key, $params]) {
             $onStep !== null && $onStep($key, $params);
         }
@@ -175,6 +180,7 @@ final class FakeDeployer implements Deployer
             throw $this->removeError;
         }
     }
+    public function tenantDomainsStatus(AppConfig $config): ?array { $this->calls[] = 'tenantDomainsStatus'; return $this->tenantStatus; }
     public function consoleExists(AppConfig $config): bool { $this->consoleLookups++; return $this->consoleExists; }
     public function removeConsole(AppConfig $config, \Closure $onStep): void { $this->calls[] = 'removeConsole'; if ($this->removeConsoleError !== null) { throw $this->removeConsoleError; } }
     public function removeScheduler(AppConfig $config, \Closure $onStep): void

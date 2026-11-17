@@ -1184,12 +1184,12 @@ final class AwsDeployer implements Deployer
 
     public function hasDomainResources(AppConfig $config): bool
     {
-        return $this->stackExists($config) || ($config->domains !== [] && $this->tolerateAccessDenied(
+        return $this->stackExists($config) || $this->tenantStackExists($config) || ($config->domains !== [] && $this->tolerateAccessDenied(
             fn () => (new Certificates($this->aws->acm(), $this->sleeper))->managed($config) !== [],
         ));
     }
 
-    public function remove(AppConfig $config, ?callable $onStep = null, bool $waitInterfaces = true): void
+    public function remove(AppConfig $config, ?callable $onStep = null, bool $waitInterfaces = true, bool $forceTenants = false): void
     {
         $step = $onStep ?? static function (string $key, array $params = []): void {};
         $queues = $this->workerQueues($config, $step);
@@ -1219,6 +1219,10 @@ final class AwsDeployer implements Deployer
         }
         // A process app's schedule rules, found by tag (so all this environment's), read before anything is deleted.
         $scheduleRules = $config->isProcess() ? $this->scheduleRulesToRemove($config, $step) : [];
+        // Customer domains first: the mediator is disabled and any tenant counted (and deleted, with --force) before
+        // the distribution, the function and everything else of the environment can go. Read-only for an
+        // environment that never had tenant domains.
+        $this->tenantRemoval($config)->remove($config, $forceTenants, $web?->arn, $step);
         if ($config->domains !== [] || $this->stackExists($config)) {
             $this->customDomains($config)->remove($config, $step);
         }
@@ -2351,6 +2355,44 @@ final class AwsDeployer implements Deployer
         return CustomDomains::create($config, $this->aws, $this->dns, $this->sleeper, $this->forceDns, $this->dnsProvider);
     }
 
+    private function tenantRemoval(AppConfig $config): TenantRemoval
+    {
+        $tenants = $this->tenantDomains($config);
+        return new TenantRemoval(
+            $this->aws,
+            $this->sleeper,
+            $tenants->release(...),
+            fn (string $functionArn): bool => $this->cloudFrontAccess(new WebFunctions($this->aws->lambdaWeb(), $this->sleeper))->revokeTenant($functionArn),
+        );
+    }
+
+    public function tenantDomainsStatus(AppConfig $config): ?array
+    {
+        try {
+            $stack = (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe(TenantDomainStack::stackName($config));
+        } catch (AwsException) {
+            // Without CloudFormation access the environment shows no tenant domains, as it shows no distribution.
+            return null;
+        }
+        if ($stack === null || ! self::ownsStack($stack, $config) || in_array($stack['status'], Stacks::EMPTY, true)) {
+            return null;
+        }
+        $outputs = $stack['outputs'];
+        $values = [];
+        foreach (['distribution' => 'DistributionId', 'connectionGroup' => 'ConnectionGroupId', 'target' => 'Target', 'endpoint' => 'RoutingEndpoint'] as $key => $output) {
+            if (($outputs[$output] ?? '') === '') {
+                return null;
+            }
+            $values[$key] = $outputs[$output];
+        }
+        try {
+            $tenants = (new TenantInventory($this->aws->cloudFront(), $values['distribution'], $values['connectionGroup'], $config, 'info.tenant_'))->scan();
+            return $values + ['tenants' => count(array_filter($tenants, static fn (Tenant $tenant): bool => $tenant->owned)), 'error' => null];
+        } catch (\Throwable $e) {
+            return $values + ['tenants' => null, 'error' => $e];
+        }
+    }
+
     private function tenantMediator(): TenantMediator
     {
         return new TenantMediator($this->aws, $this->sleeper, $this->tenantRuntimeDir);
@@ -2407,6 +2449,12 @@ final class AwsDeployer implements Deployer
     private function stackExists(AppConfig $config): bool
     {
         return $this->tolerateAccessDenied(fn () => $this->domainStack($config) !== null);
+    }
+
+    /** Whether the tenant stack is still there (tenantDomains() may have left arco.php); a refused read means "no stack", like stackExists(). */
+    private function tenantStackExists(AppConfig $config): bool
+    {
+        return $this->tolerateAccessDenied(fn () => (new Stacks($this->aws->cloudFormation(), $this->sleeper))->describe(TenantDomainStack::stackName($config)) !== null);
     }
 
     /** @return array{status: string, outputs: array<string, string>, tags: array<string, string>}|null */

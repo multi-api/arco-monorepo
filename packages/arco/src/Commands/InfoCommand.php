@@ -88,7 +88,7 @@ final class InfoCommand extends ArcoCommand
             return $this->showResources($config, $this->profileFlag($input), (bool) $input->getOption('json'), $output, $io);
         }
 
-        [$status, $remoteError] = $this->remoteStatus($config, $this->profileFlag($input));
+        [$status, $remoteError, $tenants] = $this->remoteStatus($config, $this->profileFlag($input));
         $settings = $this->settings($config);
 
         if ($input->getOption('json')) {
@@ -133,7 +133,17 @@ final class InfoCommand extends ArcoCommand
                 // process app ([] for PHP apps), paused from the rule (null when unknown or not deployed).
                 'runtime' => self::jsonRuntime($config),
                 'schedules' => self::jsonSchedules($config, $status?->schedules),
-            ] + ($remoteError !== null ? ['error' => $remoteError] : []), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            ]
+                // Additive, after schedules: only when the environment's tenant stack exists; `tenants` is the number of
+                // customer domains the environment owns, null when it could not be established.
+                + ($tenants !== null ? ['tenantDomains' => [
+                    'distribution' => $tenants['distribution'],
+                    'connectionGroup' => $tenants['connectionGroup'],
+                    'target' => $tenants['target'],
+                    'endpoint' => $tenants['endpoint'],
+                    'tenants' => $tenants['tenants'],
+                ]] : [])
+                + ($remoteError !== null ? ['error' => $remoteError] : []), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             return $remoteError === null ? self::SUCCESS : self::FAILURE;
         }
 
@@ -199,6 +209,15 @@ final class InfoCommand extends ArcoCommand
         if ($remoteError !== null) {
             $io->error($remoteError);
             return self::FAILURE;
+        }
+        if ($tenants !== null) {
+            $io->definitionList(
+                [$this->t('info.tenant_distribution') => $this->t('info.tenant_distribution_value', ['distribution' => $tenants['distribution'], 'group' => $tenants['connectionGroup']])],
+                [$this->t('info.tenant_target') => $this->t('info.tenant_target_value', ['target' => $tenants['target'], 'endpoint' => $tenants['endpoint']])],
+                [$this->t('info.tenant_domains') => $tenants['tenants'] !== null
+                    ? (string) $tenants['tenants']
+                    : $this->t('info.tenant_count_unknown', ['error' => $tenants['error'] === null ? '-' : ($this->describeError($tenants['error']) ?? $tenants['error']->getMessage())])],
+            );
         }
         if ($status === null) {
             $io->note($this->t('info.no_remote'));
@@ -471,7 +490,10 @@ final class InfoCommand extends ArcoCommand
      * Remote status only when a profile resolves without prompting, plus the error to show when
      * the credentials are missing or expired (anything else still reads as "not deployed").
      *
-     * @return array{0: ?AppStatus, 1: ?string}
+     * The tenant domains are looked up only for an environment with domain() or tenantDomains(): any other makes no
+     * extra call. A failed lookup is "no tenant domains", never an error of info.
+     *
+     * @return array{0: ?AppStatus, 1: ?string, 2: array{distribution: string, connectionGroup: string, target: string, endpoint: string, tenants: int|null, error: Throwable|null}|null}
      */
     private function remoteStatus(AppConfig $config, ?string $profileFlag): array
     {
@@ -479,14 +501,24 @@ final class InfoCommand extends ArcoCommand
         $env = getenv();
         $choice = ProfileResolver::resolve($profileFlag, $env, $config, new LocalState($this->projectDir()));
         if ($choice === null) {
-            return [null, null];
+            return [null, null, null];
         }
         try {
-            return [($this->deployerFactory)($this->guardedClients($config, $choice->profile))->describe($config), null];
+            $deployer = ($this->deployerFactory)($this->guardedClients($config, $choice->profile));
+            $status = $deployer->describe($config);
+            $tenants = null;
+            if ($config->tenantDomainTarget !== null || $config->domains !== []) {
+                try {
+                    $tenants = $deployer->tenantDomainsStatus($config);
+                } catch (Throwable) {
+                    // Shown as no tenant domains: the rest of the status still is.
+                }
+            }
+            return [$status, null, $tenants];
         } catch (UserError $e) {
-            return [null, $e->getMessage()];
+            return [null, $e->getMessage(), null];
         } catch (Throwable $e) {
-            return [null, $this->credentialProblem($e, $choice->profile)];
+            return [null, $this->credentialProblem($e, $choice->profile), null];
         }
     }
 

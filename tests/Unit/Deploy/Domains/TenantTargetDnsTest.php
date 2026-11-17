@@ -156,6 +156,58 @@ final class TenantTargetDnsTest extends TestCase
         }
     }
 
+    private static function owner(): \Multiapi\Arco\Config\AppConfig
+    {
+        return \Multiapi\Arco\Config\ConfigResolver::resolve(\Multiapi\Arco\Config\App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+    }
+
+    public function test_release_deletes_exactly_the_cname_to_the_endpoint_with_the_record_set_it_read(): void
+    {
+        $aws = new AwsMocks();
+        $aws->handler->append(
+            self::zones(), self::records([self::cname()]),
+            new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'PENDING']]),
+            new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'INSYNC']]),
+        );
+
+        $outcome = self::target($aws)->release('routing.shop.example.com', 'endpoint.cloudfront.net', self::owner());
+
+        self::assertSame(\Multiapi\Arco\Deploy\Domains\TenantTarget::DELETED, $outcome);
+        self::assertSame(['ListHostedZonesByName', 'ListResourceRecordSets', 'ChangeResourceRecordSets', 'GetChange'], $aws->calls);
+        self::assertSame([['Action' => 'DELETE', 'ResourceRecordSet' => self::cname()]], $aws->params[2]['ChangeBatch']['Changes']);
+    }
+
+    public function test_release_leaves_a_record_that_is_not_exactly_the_cname_to_the_endpoint(): void
+    {
+        $foreign = [
+            'another endpoint' => [self::cname()],
+            'a routing policy' => [self::cname() + ['SetIdentifier' => 'x', 'Weight' => 1]],
+            'a second record' => [self::cname(), ['Name' => 'routing.shop.example.com.', 'Type' => 'TXT', 'TTL' => 300, 'ResourceRecords' => [['Value' => '"x"']]]],
+            'an alias' => [['Name' => 'routing.shop.example.com.', 'Type' => 'A', 'AliasTarget' => ['DNSName' => 'endpoint.cloudfront.net.', 'HostedZoneId' => 'Z', 'EvaluateTargetHealth' => false]]],
+        ];
+        foreach ($foreign as $label => $sets) {
+            $aws = new AwsMocks();
+            $aws->handler->append(self::zones(), self::records($sets));
+
+            $outcome = self::target($aws)->release('routing.shop.example.com', $label === 'another endpoint' ? 'other.cloudfront.net' : 'endpoint.cloudfront.net', self::owner());
+
+            self::assertSame(\Multiapi\Arco\Deploy\Domains\TenantTarget::KEPT, $outcome, $label);
+            self::assertNotContains('ChangeResourceRecordSets', $aws->calls, $label);
+        }
+    }
+
+    public function test_release_without_a_record_or_a_zone_is_absent(): void
+    {
+        $aws = new AwsMocks();
+        $aws->handler->append(self::zones(), self::records([]));
+        self::assertSame('absent', self::target($aws)->release('routing.shop.example.com', 'endpoint.cloudfront.net', self::owner()));
+
+        $aws = new AwsMocks();
+        $aws->handler->append(new Result(['HostedZones' => [], 'IsTruncated' => false]));
+        self::assertSame('absent', self::target($aws)->release('routing.shop.example.com', 'endpoint.cloudfront.net', self::owner()));
+        self::assertSame(['ListHostedZonesByName'], $aws->calls);
+    }
+
     private static function target(AwsMocks $aws): TenantTargetDns
     {
         return new TenantTargetDns(new Route53Dns($aws->clients()->route53(), AwsMocks::noSleep()));

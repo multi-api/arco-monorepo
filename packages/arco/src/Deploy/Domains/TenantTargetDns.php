@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Deploy\Domains;
 
+use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\DeployException;
 
 /** @internal */
@@ -32,6 +33,23 @@ final class TenantTargetDns implements TenantTarget
         if (! $exists) {
             $this->dns->create($zone, DnsRecord::cname($target, $endpoint));
         }
+    }
+
+    public function release(string $target, string $endpoint, AppConfig $owner): string
+    {
+        $zone = $this->dns->zoneFor($target);
+        if ($zone === null) {
+            return self::ABSENT;
+        }
+        $records = $this->dns->records($zone, $target);
+        if ($records === []) {
+            return self::ABSENT;
+        }
+        if (count($records) !== 1 || ! self::matches($records[0], $endpoint)) {
+            return self::KEPT;
+        }
+        $this->dns->apply($zone, [$records[0]], [], $owner);
+        return self::DELETED;
     }
 
     /** @return array{HostedZone, bool} */

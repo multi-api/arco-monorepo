@@ -11,18 +11,39 @@ composer require multiapi/arco-laravel:^0.12
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
-## Unreleased: tenant domain target
+## Unreleased: tenant domains (experimental)
 
-Existing `domain()` configurations need no change. Before using a future tenant routing target, remove that hostname
-from `domain()`; migrating a live target is not supported. `tenantDomains()` needs a `domain()` in the same
-environment. The declaration is not deployable yet: `arco deploy` stops before AWS until the tenant API and the
-protection of `arco remove` are implemented. See [Tenant domain routing](configuration.md#tenant-domain-routing).
+Existing configurations need no change. `tenantDomains(target: 'routing.example.com')` is deployable but has not been
+accepted against real AWS yet: try it on a staging environment first. Before using a hostname as the target, remove
+it from `domain()`; migrating a live target is not supported. `tenantDomains()` needs a `domain()` in the same
+environment. See [Tenant domain routing](configuration.md#tenant-domain-routing).
 
 `multiapi/arco-laravel` now requires `aws/aws-sdk-php` (`^3.401.1`; it was only suggested): `composer update
 multiapi/arco-laravel` installs it if the app did not have it. With `tenantDomains()` and `role()`, add to your role
 `lambda:InvokeFunction` on `arn:aws:lambda:<region>:<account>:function:<app>-<env>-tenants`, or the app gets
 `TenantDomainsUnavailable`; with `vpc()` the app also needs HTTPS egress to the Lambda API. Arco changes neither. See
 [Managing tenant domains from the app](configuration.md#managing-tenant-domains-from-the-app).
+
+`arco remove` on an environment with `tenantDomains()` disables the tenant domains function and counts the customer
+domains; it deletes them only with an explicit `--force` (`--yes` is not enough, and scripts that pass only `--yes`
+stop with `remove.tenants_need_force`, deleting nothing). The function stays disabled after any stop: to keep the
+environment, run `aws lambda delete-function-concurrency --function-name <app>-<env>-tenants`. Elsewhere
+`remove --force` is unchanged (a deprecated alias of `--yes`). See
+[Removing an environment with tenant domains](configuration.md#removing-an-environment-with-tenant-domains).
+
+A deploy profile that names actions (not `cloudfront:*Distribution*`) needs, for remove and info with tenant domains,
+`cloudfront:ListDistributionTenants`, `GetDistributionTenant`, `UpdateDistributionTenant` and
+`DeleteDistributionTenant`, and on `arn:aws:lambda:*:*:function:<app>-*-tenants` `lambda:PutFunctionConcurrency`,
+`GetFunctionConcurrency` and `DeleteFunction`. Every `arco remove`, tenant domains or not, also reads the tenant
+stack (`cloudformation:DescribeStacks`), the function `<app>-<env>-tenants` (`lambda:GetFunctionConfiguration`,
+`lambda:ListTags`) and its role (`iam:GetRole`); for an environment without `tenantDomains()` and without a tenant
+stack, a denied read counts as "no tenant resources", so a profile scoped to the console and worker functions needs
+nothing added. With tenant domains it must allow the two Lambda reads on `*-tenants`, or `remove` stops with AWS's
+access error before changing anything. See
+[Permissions for custom domains](getting-started.md#permissions-for-custom-domains).
+
+`arco info --json` gains `tenantDomains` (`{distribution, connectionGroup, target, endpoint, tenants}`; only with a
+tenant stack; `tenants` is `null` when it cannot be counted). Keys are only added.
 
 If Route 53 returns no change ID, deploy or remove stops with `domains.dns_change_unconfirmed`. The DNS change may
 already have been submitted; inspect the records before retrying.

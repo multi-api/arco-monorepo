@@ -198,4 +198,14 @@ final class ManualTenantTargetDnsTest extends TestCase
             self::assertSame('domains.tenant_target_change', $exception->key);
         }
     }
+
+    public function test_release_never_reads_or_deletes_the_users_dns_and_says_it_is_manual(): void
+    {
+        $dns = new ManualTenantTargetDns(function (): never {
+            throw new \LogicException('no DNS query expected');
+        });
+        $owner = \Multiapi\Arco\Config\ConfigResolver::resolve(\Multiapi\Arco\Config\App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+
+        self::assertSame('manual', $dns->release('routing.example.com', 'endpoint.cloudfront.net', $owner));
+    }
 }

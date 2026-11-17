@@ -5,35 +5,62 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## Unreleased
 
-- **Added: tenant domain target declaration.** `tenantDomains(target: 'routing.example.com')` inherits per
-  environment, validates its hostname and conflicts with `domain()`, and needs `domain()` in the same environment.
-  New errors: `validation.tenant_domain_target`, `validation.tenant_domain_conflict`,
-  `validation.tenant_domain_requires_domain`.
-  Deploy still stops before AWS with `deploy.tenant_domains_unavailable` until the tenant API and the protection of
-  `arco remove` exist.
-- **Added (behind that stop): shared tenant infrastructure.** The deploy contains the stack
-  `arco-<app>-<env>-tenants` (multi-tenant distribution and connection group, updated only through a change set that
-  keeps both), a second endpoint policy statement (`ArcoCloudFrontTenant`) and the target's `CNAME` in Route 53,
-  Cloudflare (DNS only) or made by hand and verified in public DNS. New steps: `domains.step_tenant_distribution`,
-  `domains.step_tenant_dns`. New errors: `domains.tenant_target_zone_missing`, `domains.tenant_target_apex`,
-  `domains.tenant_target_occupied`, `domains.tenant_target_unverified`, `domains.tenant_target_proxied`,
-  `domains.tenant_target_change`, `domains.tenant_target_changed`, `domains.tenant_manual_cname_missing`,
-  `domains.tenant_stack_unusable`, `domains.stack_replacement`, `domains.stack_changes_unreadable`,
-  `deploy.tenant_domains_left`. Not accepted against real AWS yet.
-- **Added (behind that stop): tenant domains mediator and Laravel API.** The deploy creates the function
-  `<app>-<env>-tenants` (Node.js, 30 s timeout, inline code, reserved concurrency 0 means `arco remove` is draining
-  it) with its own role, whose policy is the feature's whole CloudFront surface (tenants tagged for the environment
-  only); the app's role gets one statement, `ArcoTenantDomains` (`lambda:InvokeFunction` on that function), and the
-  app the variable `ARCO_TENANT_DOMAINS_FUNCTION`. `multiapi/arco-laravel` adds `Contracts\TenantDomains`
-  (`add`, `status`, `list`, `remove`), the `Facades\TenantDomains` facade with `fake()` (`assertAdded`,
-  `assertRemoved`, `assertNothingAdded`) and the exceptions under `TenantDomains\Exceptions`
-  (`InvalidTenantDomain`, `TenantDomainDnsIncorrect`, `TenantDomainTaken`, `TenantDomainQuotaExceeded`,
-  `TenantDomainNotFound`, `TenantDomainRemovalPending`, `TenantDomainsUnavailable`). New step:
-  `deploy.step_tenant_mediator`. New errors: `deploy.tenant_mediator_runtime_missing`,
-  `deploy.tenant_mediator_suffix_list_missing`, `deploy.tenant_mediator_not_owned`,
-  `deploy.tenant_mediator_untagged`, `deploy.tenant_mediator_tags_unreadable`, `deploy.tenant_mediator_draining`,
-  `deploy.tenant_mediator_failed`, `deploy.tenant_mediator_missing`. The mediator ships the public suffix list (publicsuffix.org, MPL 2.0, version 2026-11-17).
-  Not accepted against real AWS.
+- **Added (experimental): tenant domains.** `tenantDomains(target: 'routing.example.com')` lets your app add its
+  customers' own domains at runtime. Not yet accepted against real AWS (managed certificate issuance, origin access
+  control through the multi-tenant distribution with the rewritten `Host`, draining and tenant deletion timing, the
+  shape of CloudFront's answers for an empty tenant list): try it on a staging environment first.
+  - *Configuration.* `tenantDomains(target:)` inherits per environment, validates its hostname, conflicts with
+    `domain()` and needs `domain()` in the same environment. New errors: `validation.tenant_domain_target`,
+    `validation.tenant_domain_conflict`, `validation.tenant_domain_requires_domain`.
+  - *Infrastructure.* `arco deploy` creates the stack `arco-<app>-<env>-tenants` (multi-tenant distribution and
+    connection group, updated only through a change set that keeps both), a second endpoint policy statement
+    (`ArcoCloudFrontTenant`) and the target's `CNAME` in Route 53, Cloudflare (DNS only) or made by hand and verified
+    in public DNS. New steps: `domains.step_tenant_distribution`, `domains.step_tenant_dns`. New errors:
+    `domains.tenant_target_zone_missing`, `domains.tenant_target_apex`, `domains.tenant_target_occupied`,
+    `domains.tenant_target_unverified`, `domains.tenant_target_proxied`, `domains.tenant_target_change`,
+    `domains.tenant_target_changed`, `domains.tenant_manual_cname_missing`, `domains.tenant_stack_unusable`,
+    `domains.stack_replacement`, `domains.stack_changes_unreadable`, `stack.replacement`,
+    `stack.changes_unreadable`, `deploy.tenant_domains_left`. `deploy.tenant_domains_unavailable` remains, raised only
+    when the check of a given tenant domain through CloudFront (`CloudFrontAccess::verifyTenant`) cannot confirm it;
+    the deploy no longer raises it for `tenantDomains()` itself.
+  - *Mediator and Laravel API.* The deploy creates the function `<app>-<env>-tenants` (Node.js, 30 s timeout, inline
+    code) with its own role, whose policy is the feature's whole CloudFront surface (tenants tagged for the
+    environment only); the app's role gets one statement, `ArcoTenantDomains` (`lambda:InvokeFunction` on that
+    function), and the app the variable `ARCO_TENANT_DOMAINS_FUNCTION`. Reserved concurrency 0 means `arco remove` is
+    draining it. `multiapi/arco-laravel` adds `Contracts\TenantDomains` (`add`, `status`, `list`, `remove`), the
+    `Facades\TenantDomains` facade with `fake()` (`assertAdded`, `assertRemoved`, `assertNothingAdded`) and the
+    exceptions under `TenantDomains\Exceptions` (`InvalidTenantDomain`, `TenantDomainDnsIncorrect`,
+    `TenantDomainTaken`, `TenantDomainQuotaExceeded`, `TenantDomainNotFound`, `TenantDomainRemovalPending`,
+    `TenantDomainsUnavailable`). New step: `deploy.step_tenant_mediator`. New errors:
+    `deploy.tenant_mediator_runtime_missing`, `deploy.tenant_mediator_suffix_list_missing`,
+    `deploy.tenant_mediator_not_owned`, `deploy.tenant_mediator_untagged`, `deploy.tenant_mediator_tags_unreadable`,
+    `deploy.tenant_mediator_draining`, `deploy.tenant_mediator_failed`, `deploy.tenant_mediator_missing`. The
+    mediator ships the public suffix list (publicsuffix.org, MPL 2.0, version 2026-11-17).
+  - *`arco info`.* Shows the tenant distribution, the target and the number of customer domains; `info --json` gains
+    `tenantDomains` (`{distribution, connectionGroup, target, endpoint, tenants}`, after `schedules`; `tenants` is
+    `null` when the count cannot be established; absent without a tenant stack). New keys: `info.tenant_distribution`,
+    `info.tenant_distribution_value`, `info.tenant_target`, `info.tenant_target_value`, `info.tenant_domains`,
+    `info.tenant_count_unknown`, `info.tenant_listing_incomplete`, `info.tenant_unverified`.
+  - *`arco remove`.* Disables the mediator (reserved concurrency 0, confirmed, then waits the function's timeout plus
+    60 s), counts the environment's customer domains and deletes them only with an explicit `--force`; then the
+    target's DNS record, the policy statement, the stack, the function and the role. A tenant that is not the
+    environment's stops it, and so does any unreadable or unowned resource, before anything is deleted. The mediator
+    stays disabled after any stop; running `remove` again resumes. New steps: `remove.step_tenant_drain`,
+    `remove.step_tenant_wait`, `remove.step_tenant_settle`, `remove.step_tenant_count`, `remove.step_tenant_delete`,
+    `remove.step_tenant_dns`, `remove.step_tenant_access`, `remove.step_tenant_stack`, `remove.step_tenant_function`,
+    `remove.step_tenant_role`. New notes: `remove.tenants_note`, `remove.tenant_dns_kept`, `remove.tenant_dns_manual`,
+    `remove.tenant_stopped`. New errors: `remove.tenants_need_force`, `remove.tenant_stack_unreadable`,
+    `remove.tenant_untagged`, `remove.tenant_drain_failed`, `remove.tenant_drain_unconfirmed`,
+    `remove.tenant_listing_incomplete`, `remove.tenant_unverified`, `remove.tenant_foreign`, `remove.tenant_busy`,
+    `remove.tenant_delete_timeout`, `remove.tenant_recount`, `remove.tenant_failed`.
+- **Changed: `remove --force` has a second meaning.** On an environment with `tenantDomains()` an explicit `--force`
+  is what authorizes deleting customer domains (`--yes` and the typed confirmation do not); there it prints no
+  deprecation warning. Elsewhere it stays a deprecated alias of `--yes` (`deprecated.force_remove`, reworded).
+- **Changed: `arco remove` makes three extra read-only calls on every environment:** CloudFormation `DescribeStacks`
+  of `arco-<app>-<env>-tenants`, Lambda `GetFunctionConfiguration` (and `ListTags` when it exists) of
+  `<app>-<env>-tenants`, and IAM `GetRole` of the mediator's role, to find out there are no tenant resources. For an
+  environment without `tenantDomains()` and without a tenant stack a denied read of any of them counts as "no tenant
+  resources", so profiles scoped to the console and worker functions need no new permission (see [Permissions for custom domains](docs/getting-started.md#permissions-for-custom-domains)).
 - **Changed: `multiapi/arco-laravel` requires `aws/aws-sdk-php`** (`^3.401.1`; it was only suggested).
 - **Fixed: Route 53 record conflict checks read every page for a hostname.** A malformed record or incomplete or
   repeated cursor stops the operation with `domains.record_read_incomplete` instead of risking changes based on a

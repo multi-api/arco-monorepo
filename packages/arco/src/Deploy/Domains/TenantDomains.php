@@ -99,6 +99,16 @@ final class TenantDomains
     }
 
     /**
+     * Deletes the target's DNS record when it is exactly the CNAME to $endpoint (arco remove, once no tenant is left).
+     *
+     * @return 'deleted'|'absent'|'kept'|'manual' a TenantTarget outcome
+     */
+    public function release(string $target, string $endpoint, AppConfig $owner): string
+    {
+        return $this->dns->release($target, $endpoint, $owner);
+    }
+
+    /**
      * What the environment's own stack serves now; null before its first complete deploy. Only a stack
      * with this environment's tags is read, so its routing endpoint is the one record value taken as ours.
      *
@@ -144,6 +154,11 @@ final class TenantDomains
             }
 
             public function publish(string $target, string $endpoint, ?string $ownedEndpoint): void
+            {
+                throw self::error();
+            }
+
+            public function release(string $target, string $endpoint, AppConfig $owner): string
             {
                 throw self::error();
             }

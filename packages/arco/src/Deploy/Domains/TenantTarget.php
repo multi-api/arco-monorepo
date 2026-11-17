@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Deploy\Domains;
 
+use Multiapi\Arco\Config\AppConfig;
 use Multiapi\Arco\Deploy\DeployException;
 
 /**
@@ -14,6 +15,15 @@ use Multiapi\Arco\Deploy\DeployException;
  */
 interface TenantTarget
 {
+    /** The record was exactly the CNAME to the endpoint and is deleted. */
+    public const DELETED = 'deleted';
+    /** No record of the target exists (or its zone is gone). */
+    public const ABSENT = 'absent';
+    /** A record exists that is not exactly the environment's CNAME: left alone. */
+    public const KEPT = 'kept';
+    /** The user's own DNS: Arco cannot delete the record, the caller says which one to delete. */
+    public const MANUAL = 'manual';
+
     /**
      * Read-only: refuses a target without a public zone, at the apex of its zone, or holding records
      * that are not this environment's. Anything that cannot be read is a refusal.
@@ -30,4 +40,12 @@ interface TenantTarget
      * @throws DeployException as check(), plus domains.tenant_target_change, domains.tenant_manual_cname_missing
      */
     public function publish(string $target, string $endpoint, ?string $ownedEndpoint): void;
+
+    /**
+     * Deletes the target's record, only when it is exactly the CNAME to $endpoint (the routing endpoint of this
+     * environment's own verified stack): anything else at the name is someone else's. Read again before the delete.
+     *
+     * @return self::DELETED|self::ABSENT|self::KEPT|self::MANUAL
+     */
+    public function release(string $target, string $endpoint, AppConfig $owner): string;
 }
