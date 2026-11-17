@@ -555,7 +555,7 @@ final class TenantRemovalTest extends TestCase
         self::assertSame(0, $this->mocks->params[$put]['ReservedConcurrentExecutions']);
         self::assertSame(self::FUNCTION, $this->mocks->params[$put]['FunctionName']);
         self::assertSame(45 + TenantRemoval::PROPAGATION_MARGIN, $this->sleeper->slept, 'the function\'s configured timeout (45), not the constant, plus the margin');
-        self::assertSame(['remove.step_tenant_drain', ['function' => self::FUNCTION]], $this->steps[0]);
+        self::assertSame(['remove.step_tenant_drain', ['function' => self::FUNCTION, 'environment' => 'production']], $this->steps[0]);
         self::assertSame(['remove.step_tenant_wait', ['function' => self::FUNCTION, 'seconds' => 105]], $this->steps[1]);
         self::assertNotContains('DeleteFunctionConcurrency', $calls);
     }
@@ -652,7 +652,7 @@ final class TenantRemovalTest extends TestCase
 
         $e = $this->failsWith(fn () => $this->remove(force: false), 'remove.tenants_need_force');
 
-        self::assertSame(['count' => 2, 'function' => self::FUNCTION], $e->params);
+        self::assertSame(['count' => 2, 'function' => self::FUNCTION, 'environment' => 'production'], $e->params, 'the params remove --json carries as error.params');
         $this->assertNothingChangedButTheAttempt();
         self::assertSame(0, $this->account['reserved'], 'left at 0');
         self::assertContains('remove.step_tenant_drain', $this->keys());

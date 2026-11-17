@@ -14,8 +14,9 @@ use Multiapi\Arco\Config\AppConfig;
  * app and environment; the app itself may do nothing but invoke it (PolicyBuilder, ArcoTenantDomains).
  *
  * Its code (tenant-domains.js and lib/tenants/) is sent inline and no version or alias is published: the app
- * invokes the unqualified function. Arco never sets or removes its reserved concurrency; `arco remove` sets it
- * to 0 to drain the function, and a deploy that finds it so stops rather than undo that.
+ * invokes the unqualified function. A deploy never sets or removes its reserved concurrency; `arco remove` sets it
+ * to 0 to drain the function, a deploy that finds it so stops rather than undo that, and only `arco tenants:restore`
+ * (TenantRestore) deletes it again.
  */
 final class TenantMediator
 {
@@ -168,7 +169,7 @@ final class TenantMediator
         self::assertOwned($config, $function);
         $reserved = $this->aws->lambda()->getFunctionConcurrency(['FunctionName' => $name])['ReservedConcurrentExecutions'] ?? null;
         if ($reserved === 0) {
-            throw DeployException::make('deploy.tenant_mediator_draining', ['function' => $name]);
+            throw DeployException::make('deploy.tenant_mediator_draining', ['function' => $name, 'environment' => $config->environment]);
         }
     }
 
@@ -245,7 +246,7 @@ final class TenantMediator
     }
 
     /** Strict: the resource carries this app's and environment's tags, nothing else counts (not its description either). */
-    private static function assertOwned(AppConfig $config, NamedResource $resource): void
+    public static function assertOwned(AppConfig $config, NamedResource $resource): void
     {
         if ($resource->unreadable !== null) {
             throw DeployException::make('deploy.tenant_mediator_tags_unreadable', ['resource' => $resource->name, ...$resource->unreadable]);

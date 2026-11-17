@@ -27,7 +27,7 @@ multiapi/arco-laravel` installs it if the app did not have it. With `tenantDomai
 `arco remove` on an environment with `tenantDomains()` disables the tenant domains function and counts the customer
 domains; it deletes them only with an explicit `--force` (`--yes` is not enough, and scripts that pass only `--yes`
 stop with `remove.tenants_need_force`, deleting nothing). The function stays disabled after any stop: to keep the
-environment, run `aws lambda delete-function-concurrency --function-name <app>-<env>-tenants`. Elsewhere
+environment, run `arco tenants:restore --env=<env>`. Elsewhere
 `remove --force` is unchanged (a deprecated alias of `--yes`). See
 [Removing an environment with tenant domains](configuration.md#removing-an-environment-with-tenant-domains).
 

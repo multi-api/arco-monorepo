@@ -26,6 +26,23 @@ final class LangParityTest extends TestCase
         }
     }
 
+    public function test_messages_that_cancel_a_stopped_tenant_removal_name_tenants_restore_with_the_environment(): void
+    {
+        foreach (['en', 'es'] as $locale) {
+            /** @var array<string, string> $messages */
+            $messages = require Arco::packageRoot() . '/lang/' . $locale . '.php';
+            foreach ($messages as $key => $text) {
+                self::assertStringNotContainsString('delete-function-concurrency', $text, "$locale: $key");
+                if (str_contains($text, 'tenants:restore --env=')) {
+                    self::assertStringContainsString('tenants:restore --env={environment}', $text, "$locale: $key");
+                }
+            }
+            foreach (['deploy.tenant_mediator_draining', 'remove.step_tenant_drain', 'remove.tenant_stopped', 'remove.tenants_need_force', 'remove.tenant_failed'] as $key) {
+                self::assertStringContainsString('arco tenants:restore --env={environment}', $messages[$key], "$locale: $key");
+            }
+        }
+    }
+
     public function test_new_keys_exist_in_both_languages(): void
     {
         foreach (['en', 'es'] as $locale) {

@@ -8,6 +8,8 @@ use Multiapi\Arco\Config\ConfigLayer;
 use Multiapi\Arco\Config\ConfigResolver;
 use Multiapi\Arco\Config\Environment;
 use Multiapi\Arco\Config\LayerConflicts;
+use Multiapi\Arco\Config\Validator;
+use Multiapi\Arco\Tests\Support\TempPaths;
 use PHPUnit\Framework\TestCase;
 
 final class ConfigResolverLayerTest extends TestCase
@@ -159,6 +161,28 @@ final class ConfigResolverLayerTest extends TestCase
         self::assertSame('cloud', $unset->sources['scheduler']);
         self::assertSame('cloud', $unset->sources['account']);
         self::assertSame('default', $unset->sources['timeout']);
+    }
+
+    public function test_the_tenant_domain_target_from_the_layer_is_sourced_cloud_and_validated_with_the_layer_domains(): void
+    {
+        $config = ConfigResolver::resolve(self::raw(), 'production', self::layer(['domains' => ['shop.example.com'], 'settings' => ['tenantDomainTarget' => 'routing.example.com']]));
+
+        self::assertSame('routing.example.com', $config->tenantDomainTarget);
+        self::assertSame('cloud', $config->sources['tenantDomainTarget']);
+        self::assertSame([], (new Validator())->validate($config, TempPaths::path('arco-layer-tenant-'))->errors, 'a domain from the layer counts');
+
+        $without = ConfigResolver::resolve(self::raw(), 'production', self::layer(['settings' => ['tenantDomainTarget' => 'routing.example.com']]));
+        $errors = (new Validator())->validate($without, TempPaths::path('arco-layer-tenant-'))->errors;
+        self::assertContains(['key' => 'validation.tenant_domain_requires_domain', 'params' => ['target' => 'routing.example.com']], $errors);
+    }
+
+    public function test_the_tenant_domain_target_equal_is_fine_and_different_conflicts(): void
+    {
+        $raw = self::raw(null, fn (Environment $e) => $e->tenantDomains('routing.example.com'));
+
+        $config = ConfigResolver::resolve($raw, 'production', self::layer(['settings' => ['tenantDomainTarget' => 'routing.example.com']]));
+        self::assertSame('environment', $config->sources['tenantDomainTarget']);
+        self::assertSame([self::conflict('setting', 'tenantDomainTarget')], self::conflicts($raw, self::layer(['settings' => ['tenantDomainTarget' => 'other.example.com']])));
     }
 
     public function test_layer_is_compared_with_the_environment_value_that_overrides_the_app(): void

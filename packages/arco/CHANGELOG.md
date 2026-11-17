@@ -5,6 +5,35 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## Unreleased
 
+- **Added: `arco tenants:restore --env=<env>`.** Enables the tenant domains function `<app>-<env>-tenants` again after
+  an `arco remove` that stopped (the remove sets its reserved concurrency to 0 and never restores it, and a deploy
+  refuses while it is 0). Read-only checks first (the function exists, carries this environment's `arco:app` /
+  `arco:environment` tags and Arco's description; no override flag), then a reserved concurrency of 0 is deleted and
+  read back; none is "already enabled" and any other limit is left as somebody set it (all three succeed). Options:
+  `--env`, `--profile`, `--config-layer`, `--json` (one document, `"schema": 1`, `outcome` `restored`,
+  `already_enabled`, `limit_kept`, `refused` or `failed`, and `error` `{key, message, params}`). New keys:
+  `tenants.restored`, `tenants.already_enabled`, `tenants.limit_kept`, `tenants.restore_missing`,
+  `tenants.restore_not_mediator`, `tenants.restore_unconfirmed`. It needs `lambda:DeleteFunctionConcurrency` on the
+  mediator function ([permissions](docs/getting-started.md#permissions-for-custom-domains)).
+- **Changed: the messages that said how to cancel a stopped tenant removal** now name `arco tenants:restore
+  --env={environment}` instead of `aws lambda delete-function-concurrency`. Their params gain `environment`
+  (`deploy.tenant_mediator_draining`, `remove.step_tenant_drain`, `remove.tenant_stopped`, `remove.tenants_need_force`,
+  `remove.tenant_failed`, `remove.tenant_drain_failed`, `remove.tenant_drain_unconfirmed`,
+  `remove.tenant_listing_incomplete`, `remove.tenant_unverified`, `remove.tenant_foreign`, `remove.tenant_busy`,
+  `remove.tenant_delete_timeout`, `remove.tenant_recount`); existing params are unchanged.
+- **Added: config layer `settings.tenantDomainTarget`** (string), the value `tenantDomains()` stores. It merges and
+  conflicts as any setting (`config.layer_conflict`, kind `setting`), appears with source `cloud` when it comes from
+  the layer, and goes through the usual validation, a layer's `domains` counting for
+  `validation.tenant_domain_requires_domain`. `arco.json` still refuses it (`config.json_invalid`), and a layer over a
+  process (Go) app gets `validation.process_unsupported` (`tenantDomainTarget`).
+- **Added: `arco info --resources --json` carries tenant domains.** The same `tenantDomains` object as `info --json`
+  (`{distribution, connectionGroup, target, endpoint, tenants}`, only when the tenant stack exists and is this
+  environment's), appended after `scheduler`, and a `config` item of kind `tenantDomains` (`options` `{target}`, with
+  its `source`) listed after the domains when `tenantDomains()` is configured. No existing key or item changes.
+- **Documented as contract:** `error.params` of `domains.tenant_manual_cname_missing` (`target`, `endpoint`),
+  `domains.tenant_target_changed` (`target`, `current`) and `remove.tenants_need_force` (`count`, `function`, and now
+  `environment`); `remove --force` from a non-interactive caller is the explicit authorization to delete customer
+  domains. The configuration reference says which statements a `permissionsBoundary()` must allow for tenant domains.
 - **Added (experimental): tenant domains.** `tenantDomains(target: 'routing.example.com')` lets your app add its
   customers' own domains at runtime. Not yet accepted against real AWS (managed certificate issuance, origin access
   control through the multi-tenant distribution with the rewritten `Host`, draining and tenant deletion timing, the

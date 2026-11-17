@@ -344,7 +344,7 @@ final class TenantMediatorTest extends TestCase
             $this->mediator($mocks)->preflight($this->config());
             self::fail('draining');
         } catch (DeployException $e) {
-            self::assertSame(['function' => 'shop-production-tenants'], $e->params);
+            self::assertSame(['function' => 'shop-production-tenants', 'environment' => 'production'], $e->params);
         }
     }
 

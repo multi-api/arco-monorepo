@@ -1443,6 +1443,26 @@ the app's role gets one statement, `ArcoTenantDomains`: `lambda:InvokeFunction` 
 app gets `ARCO_TENANT_DOMAINS_FUNCTION` (the function name). The mediator uses the AWS SDK bundled in the Lambda
 Node.js runtime; its code does not ship its own copy.
 
+**With a permissions boundary.** `permissionsBoundary()` (or `--permissions-boundary`) is applied to both roles, and a
+boundary only limits: it grants nothing. For tenant domains the boundary policy must allow:
+
+- for the app's execution role `arco-<app>-<env>`, `lambda:InvokeFunction` on
+  `arn:aws:lambda:<region>:<account>:function:<app>-<env>-tenants` (the statement `ArcoTenantDomains` Arco adds to the
+  role). Without it the app's calls fail and the Laravel API throws `TenantDomainsUnavailable`;
+- for the mediator's role `arco-<app>-<env>-tenants`, everything its inline policy grants (`TenantMediator::policy()`),
+  by `Sid`: `ArcoTenantLogs` (`logs:CreateLogGroup`, `CreateLogStream`, `PutLogEvents` on its own log group),
+  `ArcoTenantCreate` (`cloudfront:CreateDistributionTenant`, with the environment's request tags),
+  `ArcoTenantTagOnCreate` (`cloudfront:TagResource` on `distribution-tenant/*`, with the request tags),
+  `ArcoTenantWrite` (`cloudfront:UpdateDistributionTenant` and `DeleteDistributionTenant` on `distribution-tenant/*`,
+  only on tenants carrying the environment's tags), `ArcoTenantRead` (`cloudfront:GetDistributionTenant`,
+  `GetDistributionTenantByDomain`, `GetManagedCertificateDetails` on `distribution-tenant/*`) and `ArcoTenantList`
+  (`cloudfront:ListDistributionTenants`). Without them the mediator's CloudFront calls are denied and every add,
+  status, list or remove of a customer domain fails.
+
+The boundary may allow more than these statements, never less: the effective permissions of each role are the
+intersection of its policy and the boundary. One `permissionsBoundary()` applies to both roles, so a boundary written
+for the app's role alone (the usual case) lacks the mediator's CloudFront statements.
+
 Before changing anything the deploy refuses, and `--force` overrides none of it (a mediator of another environment
 would hand this environment's customer domains to that environment's CloudFront permissions):
 
@@ -1460,8 +1480,8 @@ The deploy step is `deploy.step_tenant_mediator`. Arco never sets or removes the
 by itself on a deploy. `arco remove` sets it to 0 to drain the function and never restores it (see
 [Removing an environment with tenant domains](#removing-an-environment-with-tenant-domains)), and a deploy that finds
 0 stops with `deploy.tenant_mediator_draining` instead of undoing that. If the function was drained and you want to
-keep the environment, restore it with `aws lambda delete-function-concurrency --function-name <app>-<env>-tenants`
-and deploy again.
+keep the environment, restore it with `arco tenants:restore --env=<env>` (see
+[Restoring the mediator](#restoring-the-mediator)) and deploy again.
 
 **The public suffix list.** The mediator ships `runtime/lib/tenants/public_suffix_list.dat` (from publicsuffix.org,
 MPL 2.0), refreshed with Arco releases: a suffix added after the release you run is not known to it. Without the
@@ -1584,13 +1604,8 @@ The rest of the environment is removed as usual afterwards. A step that is alrea
 
 **The mediator stays disabled after any stop.** From step 2 on, reserved concurrency 0 is never restored by Arco, so
 a refused, failed or cancelled remove leaves the app unable to add or remove customer domains. If you cancel the
-removal and keep the environment, restore it with:
-
-```bash
-aws lambda delete-function-concurrency --function-name <app>-<env>-tenants
-```
-
-Every stop prints this command. To go on instead, run `arco remove` again (with `--force` if customer domains
+removal and keep the environment, restore it with `arco tenants:restore --env=<env>` (see below). Every stop prints
+this command. To go on instead, run `arco remove` again (with `--force` if customer domains
 remain): it starts at the ownership checks and resumes where the last run stopped. Until then a deploy of the
 environment stops with `deploy.tenant_mediator_draining`.
 
@@ -1620,6 +1635,45 @@ environment stops with `deploy.tenant_mediator_draining`.
 warning. With `tenantDomains()` it prints no warning and, without customer domains, changes nothing. When
 `tenantDomains()` is set and `--force` is absent, `remove` prints `remove.tenants_note` before it asks, because the
 count is only made after the mediator is disabled.
+
+**`--force` is the authorization, and nothing else is.** `--yes` and the typed confirmation never delete customer
+domains. A non-interactive caller (`--json`, a CI job, an agent) authorizes the deletion only by passing `--force`
+itself: Arco treats the flag on the command line as the explicit decision of whoever runs it and asks nothing more,
+so a tool must pass it only when its user said so. The failure without it carries `error.params` `{count, function,
+environment}` (`count`: the customer domains; `function`: the mediator; `environment`: for `arco tenants:restore`).
+
+##### Restoring the mediator
+
+```bash
+arco tenants:restore --env=<env> [--profile=<profile>] [--json]
+```
+
+Re-enables the mediator after a stopped `arco remove`. Read-only checks come first: the function
+`<app>-<env>-tenants` must exist, carry this app's and environment's `arco:app` and `arco:environment` tags and be
+described as Arco's tenant domains function, or the command stops with nothing changed (`tenants.restore_missing`,
+`tenants.restore_not_mediator`, `deploy.tenant_mediator_not_owned`, `deploy.tenant_mediator_untagged`,
+`deploy.tenant_mediator_tags_unreadable`); there is no `--force`. Then it reads the function's reserved concurrency:
+
+| Reserved concurrency | What the command does | `outcome` |
+|---|---|---|
+| none | Nothing: the mediator is already enabled | `already_enabled` |
+| `0` | Deletes it (`lambda:DeleteFunctionConcurrency`) and reads it back; a value still there is `tenants.restore_unconfirmed` | `restored` |
+| any other number | Nothing: someone set that limit on purpose; it is reported | `limit_kept` |
+
+All three succeed (exit code 0); an error exits 1. It does not need `tenantDomains()` in `arco.php`, only the
+environment (and the layer, with `--config-layer`, as `deploy` takes it). It does not undo the rest of a removal:
+a removal that went on past the mediator (the stack or the function already deleted) leaves nothing to restore
+(`tenants.restore_missing`). With `--json` the command never asks, writes one document on stdout and nothing else:
+
+```json
+{"schema": 1, "outcome": "restored", "app": "shop", "environment": "production", "function": "shop-production-tenants", "reservedConcurrency": null}
+```
+
+`reservedConcurrency` is the limit that was kept (`limit_kept`), else `null`. An error is `{"schema": 1, "outcome":
+"refused" | "failed", "app", "environment", "function", "error": {"key", "message", "params"}}`: `refused` when a
+check stopped it before AWS changed anything (config, credentials, ownership, a missing function, a refused read),
+`failed` for an AWS error or an unconfirmed delete; `app`, `environment` and `function` are `null` when the
+configuration did not load, and `params` is left out when the key has none.
 
 An environment that never had tenant domains pays three extra read-only calls: CloudFormation `DescribeStacks` of
 `arco-<app>-<env>-tenants`, Lambda `GetFunctionConfiguration` of `<app>-<env>-tenants` (and `ListTags` when it

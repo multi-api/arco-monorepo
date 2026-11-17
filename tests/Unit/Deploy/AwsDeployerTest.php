@@ -5845,7 +5845,7 @@ final class AwsDeployerTest extends TestCase
             (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->remove($this->removableTenantConfig());
             self::fail('Customer domains are never deleted without --force.');
         } catch (\Multiapi\Arco\Deploy\DeployException $e) {
-            self::assertSame(['remove.tenants_need_force', ['count' => 2, 'function' => 'shop-production-tenants']], [$e->key, $e->params]);
+            self::assertSame(['remove.tenants_need_force', ['count' => 2, 'function' => 'shop-production-tenants', 'environment' => 'production']], [$e->key, $e->params]);
         }
 
         self::assertSame([], array_values(array_filter($mocks->calls, fn (string $c) => str_starts_with($c, 'Delete') || $c === 'UpdateDistributionTenant')));

@@ -196,6 +196,38 @@ final class InfoCommandTest extends TestCase
         $project->restore();
     }
 
+    public function test_resources_json_has_the_tenant_domains_and_their_config_item(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer();
+        $deployer->tagged = self::tagged();
+        $deployer->tenantStatus = self::tenantStatus(42);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(['schema', 'app', 'environment', 'group', 'resources', 'variables', 'config', 'schedules', 'scheduler', 'tenantDomains'], array_keys($json), 'appended last');
+        self::assertSame(['distribution' => 'ETENANT', 'connectionGroup' => 'cg_1', 'target' => 'routing.example.com', 'endpoint' => 'd222.cloudfront.net', 'tenants' => 42], $json['tenantDomains']);
+        $item = array_values(array_filter($json['config'], fn (array $item) => $item['kind'] === 'tenantDomains'));
+        self::assertSame([['kind' => 'tenantDomains', 'name' => 'tenantDomains', 'source' => 'arco.php', 'options' => ['target' => 'routing.example.com']]], $item);
+
+        $deployer->tenantStatus = self::tenantStatus(null, \Multiapi\Arco\Deploy\DeployException::make('info.tenant_unverified', ['tenant' => 'dt_9', 'error' => 'denied']));
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertNull($json['tenantDomains']['tenants']);
+
+        $deployer->tenantStatus = null;
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertArrayNotHasKey('tenantDomains', $json, 'without a tenant stack');
+        self::assertContains('tenantDomains', array_column($json['config'], 'kind'), 'the config item needs no stack');
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
     public function test_an_unknown_tenant_count_is_null_in_json_and_says_why_in_text(): void
     {
         $project = new ProjectFixture(self::tenantConfig());

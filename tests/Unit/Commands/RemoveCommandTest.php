@@ -360,8 +360,8 @@ final class RemoveCommandTest extends TestCase
     {
         $project = new ProjectFixture(self::tenantConfig());
         $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
-        $deployer->removeSteps = [['remove.step_tenant_drain', ['function' => 'shop-production-tenants']]];
-        $deployer->removeError = \Multiapi\Arco\Deploy\DeployException::make('remove.tenants_need_force', ['count' => 3, 'function' => 'shop-production-tenants']);
+        $deployer->removeSteps = [['remove.step_tenant_drain', ['function' => 'shop-production-tenants', 'environment' => 'production']]];
+        $deployer->removeError = \Multiapi\Arco\Deploy\DeployException::make('remove.tenants_need_force', ['count' => 3, 'function' => 'shop-production-tenants', 'environment' => 'production']);
         $tester = $project->tester($this->command($deployer));
 
         $lines = $this->removeJson($tester, ['--env' => 'production', '--yes' => true]);
@@ -372,6 +372,8 @@ final class RemoveCommandTest extends TestCase
         self::assertSame(['failed', 'remove.tenants_need_force'], [$result['outcome'], $result['error']['key']]);
         self::assertStringContainsString('3 tenants', $result['error']['message']);
         self::assertStringContainsString('--force', $result['error']['message']);
+        self::assertStringContainsString('arco tenants:restore --env=production', $result['error']['message']);
+        self::assertSame(['count' => 3, 'function' => 'shop-production-tenants', 'environment' => 'production'], $result['error']['params'], 'the documented error.params');
         self::assertFalse($deployer->removeForcedTenants);
         $project->restore();
     }

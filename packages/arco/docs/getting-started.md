@@ -368,7 +368,7 @@ DynamoDB tables (cache, failed jobs and `table()`, with their items) are kept; `
 
 With `tenantDomains()`, `remove` first disables the tenant domains function, counts the customer domains and stops
 without deleting anything unless you pass `--force` (`--yes` does not authorize it); the function stays disabled after
-a stop. The full order, the errors and the command that restores it are in
+a stop (`arco tenants:restore --env=<env>` enables it again). The full order, the errors and that command are in
 [Removing an environment with tenant domains](configuration.md#removing-an-environment-with-tenant-domains), and
 `info` shows the distribution, the target and the number of customer domains (`tenantDomains` in `--json`).
 
@@ -1048,6 +1048,10 @@ the mediator's: it only gets `lambda:InvokeFunction` on the mediator (`ArcoTenan
   `lambda:GetFunctionConfiguration` (read back; already listed for the deploy) on
   `arn:aws:lambda:*:*:function:<app>-*-tenants`, plus `lambda:DeleteFunction` there (not listed before; the minimal
   list grants it only on the console and worker functions)
+- `lambda:DeleteFunctionConcurrency` on `arn:aws:lambda:*:*:function:<app>-*-tenants` (not listed before): `arco
+  tenants:restore` deletes the reserved concurrency `remove` set. It also reads the function with
+  `lambda:GetFunctionConfiguration`, `lambda:ListTags` and `lambda:GetFunctionConcurrency` (already above), and needs
+  nothing else
 - `iam:DeleteRolePolicy` and `iam:DeleteRole` on the mediator's role: already in the minimal list on `arco-*`
 - `cloudformation:DescribeStacks` and `DeleteStack` on the tenant stack (covered by `cloudformation:*Stack*` above;
   CloudFormation deletes the distribution, connection group and policies with the profile's credentials, the

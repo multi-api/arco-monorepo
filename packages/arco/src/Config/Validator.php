@@ -295,7 +295,7 @@ final class Validator
 
     /** PHP-only settings a process app sets (any source), as the keys the error names. */
     private const PROCESS_UNSUPPORTED = [
-        'console', 'scheduler', 'consoleTimeout', 'consoleMemory', 'cache', 'failedJobsTable', 'deployCommands',
+        'console', 'scheduler', 'consoleTimeout', 'consoleMemory', 'cache', 'failedJobsTable', 'deployCommands', 'tenantDomainTarget',
         'runtime.php', 'runtime.frankenphp', 'runtime.build', 'runtime.binary', 'runtime.phpBinary',
         'runtime.workers', 'runtime.maxThreads', 'runtime.threads', 'runtime.mode',
     ];

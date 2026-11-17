@@ -51,6 +51,21 @@ final class ConfigItemsTest extends TestCase
         ]], $items);
     }
 
+    public function test_tenant_domains_is_an_item_after_the_domains_with_its_source(): void
+    {
+        $config = self::config(fn (Environment $e) => $e->domain('a.com')->tenantDomains('routing.example.com')->vpc(['subnet-1'], ['sg-1']));
+
+        $items = ConfigItems::list($config);
+
+        self::assertSame(['domain', 'tenantDomains', 'vpc'], array_column($items, 'kind'));
+        self::assertSame(['source' => 'arco.php', 'options' => ['target' => 'routing.example.com']], self::byKey($items)['tenantDomains tenantDomains']);
+
+        $fromLayer = ConfigItems::list(self::config(layer: ['domains' => ['b.com'], 'settings' => ['tenantDomainTarget' => 'routing.example.com']]));
+        self::assertSame(['source' => 'cloud', 'options' => ['target' => 'routing.example.com']], self::byKey($fromLayer)['tenantDomains tenantDomains']);
+
+        self::assertNotContains('tenantDomains', array_column(ConfigItems::list(self::config(fn (Environment $e) => $e->domain('a.com'))), 'kind'));
+    }
+
     public function test_storage_table_cache_console_scheduler_domain_vpc_options(): void
     {
         $config = self::config(fn (Environment $e) => $e

@@ -74,6 +74,8 @@ final class TenantRemoval
     {
         $stackName = TenantDomainStack::stackName($config);
         $function = $config->tenantMediatorFunctionName();
+        // What the messages that say how to cancel a stopped remove (`arco tenants:restore --env=<environment>`) need.
+        $ctx = ['function' => $function, 'environment' => $config->environment];
         $roleName = TenantMediator::roleName($config);
 
         // 1. Detection and ownership, read-only.
@@ -149,12 +151,12 @@ final class TenantRemoval
         try {
             // 2. Drain.
             if ($mediator !== null) {
-                $this->drain($function, $step);
+                $this->drain($ctx, $step);
             }
 
             // 3 and 4. Count, then delete with --force.
             if ($infra !== null) {
-                $this->tenants($config, $infra, $function, $forceTenants, $step);
+                $this->tenants($config, $infra, $ctx, $forceTenants, $step);
             }
 
             // 5. The tenant infrastructure.
@@ -178,9 +180,9 @@ final class TenantRemoval
                 (new ExecutionRole($this->aws->iam()))->delete($roleName);
             }
         } catch (\Throwable $e) {
-            $step('remove.tenant_stopped', ['function' => $function]);
+            $step('remove.tenant_stopped', $ctx);
             if ($e instanceof AwsException) {
-                throw DeployException::make('remove.tenant_failed', ['function' => $function, 'error' => TenantInventory::describe($e)], $e);
+                throw DeployException::make('remove.tenant_failed', [...$ctx, 'error' => TenantInventory::describe($e)], $e);
             }
             throw $e;
         }
@@ -205,23 +207,25 @@ final class TenantRemoval
      * is read, not assumed: a deploy of another Arco version may have changed it.
      *
      * @param callable(string, array<string, string|int>): void $step
+     * @param array{function: string, environment: string} $ctx the mediator and environment the stop messages name
      */
-    private function drain(string $function, callable $step): void
+    private function drain(array $ctx, callable $step): void
     {
+        $function = $ctx['function'];
         $lambda = $this->aws->lambda();
-        $step('remove.step_tenant_drain', ['function' => $function]);
+        $step('remove.step_tenant_drain', $ctx);
         try {
             $lambda->putFunctionConcurrency(['FunctionName' => $function, 'ReservedConcurrentExecutions' => 0]);
             $reserved = Aws::call($lambda, 'GetFunctionConcurrency', ['FunctionName' => $function])['ReservedConcurrentExecutions'] ?? null;
             $timeout = Aws::call($lambda, 'GetFunctionConfiguration', ['FunctionName' => $function])['Timeout'] ?? null;
         } catch (AwsException $e) {
-            throw DeployException::make('remove.tenant_drain_failed', ['function' => $function, 'error' => TenantInventory::describe($e)], $e);
+            throw DeployException::make('remove.tenant_drain_failed', [...$ctx, 'error' => TenantInventory::describe($e)], $e);
         }
         if ($reserved !== 0) {
-            throw DeployException::make('remove.tenant_drain_unconfirmed', ['function' => $function, 'value' => is_int($reserved) ? (string) $reserved : 'none']);
+            throw DeployException::make('remove.tenant_drain_unconfirmed', [...$ctx, 'value' => is_int($reserved) ? (string) $reserved : 'none']);
         }
         if (! is_int($timeout) || $timeout < 1) {
-            throw DeployException::make('remove.tenant_drain_failed', ['function' => $function, 'error' => 'the function timeout cannot be read']);
+            throw DeployException::make('remove.tenant_drain_failed', [...$ctx, 'error' => 'the function timeout cannot be read']);
         }
         $seconds = $timeout + self::PROPAGATION_MARGIN;
         $step('remove.step_tenant_wait', ['function' => $function, 'seconds' => $seconds]);
@@ -233,13 +237,14 @@ final class TenantRemoval
     /**
      * @param array{distribution: string, connectionGroup: string, target: string, endpoint: string} $infra
      * @param callable(string, array<string, string|int>): void $step
+     * @param array{function: string, environment: string} $ctx the mediator and environment the stop messages name
      */
-    private function tenants(AppConfig $config, array $infra, string $function, bool $forceTenants, callable $step): void
+    private function tenants(AppConfig $config, array $infra, array $ctx, bool $forceTenants, callable $step): void
     {
-        $inventory = new TenantInventory($this->aws->cloudFront(), $infra['distribution'], $infra['connectionGroup'], $config, 'remove.tenant_', ['function' => $function]);
-        $tenants = $this->settled($inventory, $function, $step);
+        $inventory = new TenantInventory($this->aws->cloudFront(), $infra['distribution'], $infra['connectionGroup'], $config, 'remove.tenant_', $ctx);
+        $tenants = $this->settled($inventory, $ctx, $step);
         if ($tenants !== [] && ! $forceTenants) {
-            throw DeployException::make('remove.tenants_need_force', ['count' => count($tenants), 'function' => $function]);
+            throw DeployException::make('remove.tenants_need_force', ['count' => count($tenants), ...$ctx]);
         }
         $step('remove.step_tenant_count', ['count' => count($tenants)]);
         if ($tenants === []) {
@@ -248,7 +253,7 @@ final class TenantRemoval
         $deleted = [];
         foreach ($tenants as $tenant) {
             $step('remove.step_tenant_delete', ['tenant' => $tenant->id, 'domains' => $tenant->label()]);
-            $this->delete($inventory, $tenant->id, $function);
+            $this->delete($inventory, $tenant->id, $ctx);
             $deleted[$tenant->id] = true;
         }
         $deadline = $this->sleeper->now() + self::RECOUNT_TIMEOUT;
@@ -260,7 +265,7 @@ final class TenantRemoval
             // Only tenants this remove just deleted may still show for a moment; anything else is new.
             $others = array_filter($left, static fn (Tenant $tenant): bool => ! isset($deleted[$tenant->id]) || ! $tenant->owned);
             if ($others !== [] || $this->sleeper->now() >= $deadline) {
-                throw DeployException::make('remove.tenant_recount', ['count' => count($left), 'function' => $function]);
+                throw DeployException::make('remove.tenant_recount', ['count' => count($left), ...$ctx]);
             }
             $this->sleeper->sleep(self::SETTLE_POLL);
         } while (true);
@@ -270,9 +275,10 @@ final class TenantRemoval
      * A listing in which no operation is in progress and every tenant is the environment's.
      *
      * @param callable(string, array<string, string|int>): void $step
+     * @param array{function: string, environment: string} $ctx the mediator and environment the stop messages name
      * @return list<Tenant>
      */
-    private function settled(TenantInventory $inventory, string $function, callable $step): array
+    private function settled(TenantInventory $inventory, array $ctx, callable $step): array
     {
         $deadline = $this->sleeper->now() + self::SETTLE_TIMEOUT;
         $announced = false;
@@ -280,7 +286,7 @@ final class TenantRemoval
             $tenants = $inventory->scan();
             foreach ($tenants as $tenant) {
                 if (! $tenant->owned) {
-                    throw DeployException::make('remove.tenant_foreign', ['tenant' => $tenant->id, 'domains' => $tenant->label(), 'function' => $function]);
+                    throw DeployException::make('remove.tenant_foreign', ['tenant' => $tenant->id, 'domains' => $tenant->label(), ...$ctx]);
                 }
             }
             $busy = count(array_filter($tenants, static fn (Tenant $tenant): bool => $tenant->busy()));
@@ -288,7 +294,7 @@ final class TenantRemoval
                 return $tenants;
             }
             if ($this->sleeper->now() >= $deadline) {
-                throw DeployException::make('remove.tenant_busy', ['count' => $busy, 'function' => $function]);
+                throw DeployException::make('remove.tenant_busy', ['count' => $busy, ...$ctx]);
             }
             if (! $announced) {
                 $step('remove.step_tenant_settle', ['count' => $busy]);
@@ -301,8 +307,9 @@ final class TenantRemoval
     /**
      * Disables the tenant, then deletes it as soon as CloudFront accepts it. Each attempt reads the tenant again
      * (fresh ETag) and checks it is still the environment's: nothing else is ever changed or deleted.
+     * @param array{function: string, environment: string} $ctx the mediator and environment the stop messages name
      */
-    private function delete(TenantInventory $inventory, string $id, string $function): void
+    private function delete(TenantInventory $inventory, string $id, array $ctx): void
     {
         $cloudFront = $this->aws->cloudFront();
         $deadline = $this->sleeper->now() + self::DELETE_TIMEOUT;
@@ -312,10 +319,10 @@ final class TenantRemoval
                 return;
             }
             if (! $tenant->owned) {
-                throw DeployException::make('remove.tenant_foreign', ['tenant' => $id, 'domains' => $tenant->label(), 'function' => $function]);
+                throw DeployException::make('remove.tenant_foreign', ['tenant' => $id, 'domains' => $tenant->label(), ...$ctx]);
             }
             if ($tenant->etag === null || $tenant->enabled === null) {
-                throw DeployException::make('remove.tenant_unverified', ['tenant' => $id, 'error' => 'CloudFront did not return its ETag or state', 'function' => $function]);
+                throw DeployException::make('remove.tenant_unverified', ['tenant' => $id, 'error' => 'CloudFront did not return its ETag or state', ...$ctx]);
             }
             if ($tenant->enabled) {
                 $this->disable($cloudFront, $inventory, $tenant);
@@ -334,7 +341,7 @@ final class TenantRemoval
                 }
             }
             if ($this->sleeper->now() >= $deadline) {
-                throw DeployException::make('remove.tenant_delete_timeout', ['tenant' => $id, 'function' => $function]);
+                throw DeployException::make('remove.tenant_delete_timeout', ['tenant' => $id, ...$ctx]);
             }
             $this->sleeper->sleep(self::DELETE_POLL);
         } while (true);
