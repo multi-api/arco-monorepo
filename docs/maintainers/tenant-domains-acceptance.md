@@ -95,7 +95,7 @@ Tag ownership (steps 4, 10, 13): on 2026-11-18 real CloudFront returned no `Tags
 | Step | Date | Expected | Observed | Pass? | Notes (request ids, timings, error names) |
 |---|---|---|---|---|---|
 | 1 First deploy | 2026-11-17 (arco-smoke staging, CLI d6eb1e0) | stack, record, mediator, `tenants: 0` | tenant stack `ROLLBACK_COMPLETE`: `ViewerCertificate`: "configured for SNI and the minimum SSL protocol version is specified as SSLv3" | No | The template had no `ViewerCertificate`. Fixed after this run (default certificate, `sni-only`, `TLSv1.2_2021`); rerun pending. The web deploy and `domain()` had already succeeded. |
-| 2 Redeploy unchanged | | no stack update, no tenant touched | | | |
+| 2 Redeploy unchanged | 2026-11-18 (arco-smoke staging, CLI c6666fe) | no stack update, no tenant touched | redeploys over two existing tenants went through the change set without replacement; same distribution, connection group and endpoint; target record recognised and left alone; tenants untouched | Yes | Not a strictly unchanged redeploy: each one carried a template fix. Rerun once with no change. |
 | 3a Target change refused | | `domains.tenant_target_changed` | | | |
 | 3b Replacement refused | | `domains.stack_replacement` | | | |
 | 4 Certificate via CNAME | 2026-11-18 (arco-smoke staging, CLI 72388e2) | `pending` then `active` | `add` failed: `AccessDenied: CloudFront cannot access the specified Amazon ACM certificate for the operation: RequestCertificate` | No | The mediator role had no ACM action. Fixed after this run (`ArcoTenantCertificates`); rerun on 406372f: `add` created the tenant and the certificate was issued within minutes, but `status` answered `not_found` (`GetDistributionTenantByDomain` only finds active domains) and the domain stayed `inactive` with `Customizations` null and no HTTPS. Fixed after that run: lookup by tenant name as fallback, and `status` applies the issued certificate to the tenant (hypothesis, to confirm on the next run). Step 1 passed: stack created, app reaches the mediator. time to active: |
@@ -103,13 +103,14 @@ Tag ownership (steps 4, 10, 13): on 2026-11-18 real CloudFront returned no `Tags
 | 4b Flattened record | | `add` passes only with all addresses in the endpoint's | | | |
 | 4c No record | | `TenantDomainDnsIncorrect` | | | |
 | 5 Requests through the tenant | 2026-11-18 (arco-smoke staging, CLI 22fec4b) | app reached, headers, `+`, per-host cache, direct URL 403 | domain `active` after `status` applied the issued certificate (activation confirmed); request answered `502 The CloudFront function returned an invalid value for origin rewrite` | No | The tenant function called `cf.updateRequestOrigin({hostHeader})`. Fixed after this run: same function and origin request policy as `domain()`, assets keyed by `x-forwarded-host`. Rerun pending. |
+| 5 Requests through the tenant (rerun) | 2026-11-18 (arco-smoke staging, CLI c6666fe) | app reached, headers, `+`, per-host cache, direct URL 403 | `https://cliente1.e2e.arcocloud.app/prueba?q=a+b&x=%2B` answered by the app: `Host` = endpoint, `X-Forwarded-Host` = customer domain, query `q=a%20b&x=%2B` (`a b`, `+`), `CloudFront-Viewer-Address` present; HTTPS with the managed certificate | Partly | Not checked yet: per-host cache of `/build/*`, direct endpoint URL 403 from outside. `request()->ip()` showed 169.254.100.1: compare with the `domain()` host. |
 | 6a Cloudflare DNS only | | record created, proxied refused | | | |
 | 6b Manual DNS resume | | stops, resumes | | | DNS wait: |
 | 7 Unavailable cases | | `TenantDomainsUnavailable` | | | |
-| 8 add / duplicate / list paging | | as documented | | | |
+| 8 add / duplicate / list paging | 2026-11-18 (arco-smoke staging, CLI c6666fe) | as documented | `add` → `pending`; `status` → `pending`/`activating` then `active` within about 5 minutes; `list` returned both domains `active`, `cursor: null` | Partly | Duplicate add and paging with a cursor not exercised yet. Activation needs the issued certificate applied with `UpdateDistributionTenant` (confirmed). |
 | 8 Domain on another distribution | | `TenantDomainTaken` | | | error name: |
 | 8 Quota | | `TenantDomainQuotaExceeded` | | | error name / not reached: |
-| 8 remove (pending / idempotent) | | disable then delete | | | disable-to-delete time: |
+| 8 remove (pending / idempotent) | 2026-11-18 (arco-smoke staging, CLI c6666fe) | disable then delete | `remove` of an active domain answered `removed: true` on the first call; `list` then showed only the other domain | Yes | disable-to-delete time: immediate (no `ResourceNotDisabled` / `PreconditionFailed` seen). Idempotent second remove not exercised. |
 | 9 Empty list answer | | `DistributionTenantList` present (empty) | | | exact JSON: |
 | 10 remove without `--force` | | stops, nothing deleted | | | |
 | 11 Restore | | works again | | | |
