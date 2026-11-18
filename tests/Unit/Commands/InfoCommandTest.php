@@ -163,6 +163,147 @@ final class InfoCommandTest extends TestCase
         $project->restore();
     }
 
+    private static function tenantConfig(): string
+    {
+        return str_replace("->timeout(60)", "->timeout(60)->domain('shop.example.com')->tenantDomains('routing.example.com')", ProjectFixture::standardConfig());
+    }
+
+    /** @return array{distribution: string, connectionGroup: string, target: string, endpoint: string, tenants: int|null, error: \Throwable|null} */
+    private static function tenantStatus(?int $tenants, ?\Throwable $error = null): array
+    {
+        return ['distribution' => 'ETENANT', 'connectionGroup' => 'cg_1', 'target' => 'routing.example.com', 'endpoint' => 'd222.cloudfront.net', 'tenants' => $tenants, 'error' => $error];
+    }
+
+    public function test_shows_the_tenant_domains_with_their_count(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer(status: new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'));
+        $deployer->tenantStatus = self::tenantStatus(42);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('Tenant distribution ETENANT (connection group cg_1)', $display);
+        self::assertStringContainsString('Tenant target routing.example.com (CNAME d222.cloudfront.net)', $display);
+        self::assertStringContainsString('Customer domains 42', $display);
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(['distribution' => 'ETENANT', 'connectionGroup' => 'cg_1', 'target' => 'routing.example.com', 'endpoint' => 'd222.cloudfront.net', 'tenants' => 42], $json['tenantDomains']);
+        self::assertSame('tenantDomains', array_key_last($json), 'appended after the existing keys');
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_resources_json_has_the_tenant_domains_and_their_config_item(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer();
+        $deployer->tagged = self::tagged();
+        $deployer->tenantStatus = self::tenantStatus(42);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(['schema', 'app', 'environment', 'group', 'resources', 'variables', 'config', 'schedules', 'scheduler', 'tenantDomains'], array_keys($json), 'appended last');
+        self::assertSame(['distribution' => 'ETENANT', 'connectionGroup' => 'cg_1', 'target' => 'routing.example.com', 'endpoint' => 'd222.cloudfront.net', 'tenants' => 42], $json['tenantDomains']);
+        $item = array_values(array_filter($json['config'], fn (array $item) => $item['kind'] === 'tenantDomains'));
+        self::assertSame([['kind' => 'tenantDomains', 'name' => 'tenantDomains', 'source' => 'arco.php', 'options' => ['target' => 'routing.example.com']]], $item);
+
+        $deployer->tenantStatus = self::tenantStatus(null, \Multiapi\Arco\Deploy\DeployException::make('info.tenant_unverified', ['tenant' => 'dt_9', 'error' => 'denied']));
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertNull($json['tenantDomains']['tenants']);
+
+        $deployer->tenantStatus = null;
+        $tester->execute(['--env' => 'production', '--resources' => true, '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertArrayNotHasKey('tenantDomains', $json, 'without a tenant stack');
+        self::assertContains('tenantDomains', array_column($json['config'], 'kind'), 'the config item needs no stack');
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_an_unknown_tenant_count_is_null_in_json_and_says_why_in_text(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer(status: new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'));
+        $deployer->tenantStatus = self::tenantStatus(null, \Multiapi\Arco\Deploy\DeployException::make('info.tenant_unverified', ['tenant' => 'dt_9', 'error' => 'GetDistributionTenant: AccessDenied: no']));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('unknown (tenant dt_9 could not be checked: GetDistributionTenant: AccessDenied: no)', preg_replace('/\s+/', ' ', $tester->getDisplay()));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $tester->assertCommandIsSuccessful();
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        self::assertArrayHasKey('tenants', $json['tenantDomains']);
+        self::assertNull($json['tenantDomains']['tenants']);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_without_a_tenant_stack_there_is_no_tenant_domains_key_and_info_keeps_its_keys(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer(status: new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'));
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+        $json = json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR);
+        unset($json['schema']);
+        self::assertSame(
+            ['function', 'url', 'revision', 'domains', 'distribution', 'console', 'queues', 'storage', 'cache', 'failedJobsTable', 'deployCommands', 'settings', 'dns', 'tables', 'permissions_boundary', 'endpoint_auth', 'vpc', 'runtime', 'schedules'],
+            array_keys($json),
+        );
+        $tester->execute(['--env' => 'production'], ['interactive' => false]);
+        self::assertStringNotContainsString('Customer domains', $tester->getDisplay());
+        self::assertContains('tenantDomainsStatus', $deployer->calls);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_an_environment_without_domain_or_tenant_domains_looks_for_no_tenant_stack(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer(status: new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'));
+        $deployer->tenantStatus = self::tenantStatus(1);
+        $tester = $project->tester(new InfoCommand(deployerFactory: fn () => $deployer));
+
+        $tester->execute(['--env' => 'production', '--json' => true], ['interactive' => false]);
+
+        self::assertNotContains('tenantDomainsStatus', $deployer->calls);
+        self::assertArrayNotHasKey('tenantDomains', json_decode($tester->getDisplay(), true, flags: JSON_THROW_ON_ERROR));
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
+    public function test_the_tenant_domains_read_as_spanish(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        putenv('AWS_PROFILE=p');
+        $deployer = new FakeDeployer(status: new \Multiapi\Arco\Deploy\AppStatus('shop-production', 'Active', 'abc.on.aws', 'rev-1'));
+        $deployer->tenantStatus = self::tenantStatus(null, new \RuntimeException('boom'));
+        $app = \Multiapi\Arco\Cli\Application::create();
+        $app->addCommands([new InfoCommand(deployerFactory: fn () => $deployer)]);
+        $app->setAutoExit(false);
+        $tester = new \Symfony\Component\Console\Tester\ApplicationTester($app);
+        $tester->run(['command' => 'info', '--env' => 'production', '--lang' => 'es'], ['interactive' => false]);
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringContainsString('Distribución de tenants ETENANT (grupo de conexión cg_1)', $display);
+        self::assertStringContainsString('Dominios de clientes desconocido (boom)', $display);
+        putenv('AWS_PROFILE');
+        $project->restore();
+    }
+
     public function test_shows_the_telemetry_row(): void
     {
         $project = new ProjectFixture(str_replace("->timeout(60)", "->timeout(60)->telemetry(false)", ProjectFixture::standardConfig()));

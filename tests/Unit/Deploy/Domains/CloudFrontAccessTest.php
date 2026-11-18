@@ -2,6 +2,7 @@
 
 namespace Multiapi\Arco\Tests\Unit\Deploy\Domains;
 
+use Aws\CloudFront\Exception\CloudFrontException;
 use Aws\LambdaWeb\Exception\LambdaWebException;
 use Aws\Result;
 use GuzzleHttp\Client;
@@ -62,6 +63,22 @@ final class CloudFrontAccessTest extends TestCase
     private function protect(): void
     {
         $this->access()->protect(self::config(), 'E123', 'd111.cloudfront.net', '/up', function (string $key, array $params): void { $this->steps[] = [$key, $params]; });
+    }
+
+    private function protectTenant(?string $domain = null): void
+    {
+        $this->access()->protectTenant(self::config(), 'E123', $domain, '/up', function (string $key, array $params): void { $this->steps[] = [$key, $params]; });
+    }
+
+    private static function tenant(string $distribution = 'E123', bool $enabled = true, string $status = 'active'): Result
+    {
+        return new Result(['DistributionTenant' => ['Id' => 'DTENANT', 'DistributionId' => $distribution, 'Enabled' => $enabled,
+            'Domains' => [['Domain' => 'customer.example.com', 'Status' => $status]]]]);
+    }
+
+    private static function tenantDns(string $status = 'valid-configuration', string $domain = 'customer.example.com'): Result
+    {
+        return new Result(['DnsConfigurationList' => [['Domain' => $domain, 'Status' => $status]]]);
     }
 
     private static function endpoint(string $authType, string $updateStatus = 'Successful'): Result
@@ -489,5 +506,225 @@ final class CloudFrontAccessTest extends TestCase
         $this->protect();
 
         self::assertSame('arn:aws-cn:cloudfront::333333333333:distribution/E123', $this->putStatements(2)[0]['Condition']['StringEquals']['aws:SourceArn']);
+    }
+
+    public function test_tenant_grant_preserves_standard_and_foreign_statements_on_an_iam_endpoint_without_a_tenant_domain(): void
+    {
+        $standard = CloudFrontAccess::statement(self::ENDPOINT_ARN, self::DISTRIBUTION_ARN);
+        $this->aws->handler->append(self::endpoint('IamAuth'), self::policy([$standard, self::foreign()]), new Result([]));
+
+        $this->protectTenant();
+
+        $tenant = CloudFrontAccess::tenantStatement(self::ENDPOINT_ARN, self::DISTRIBUTION_ARN);
+        self::assertSame('ArcoCloudFrontTenant', $tenant['Sid']);
+        self::assertSame(['Sid' => 'ArcoCloudFrontTenant'] + $standard, $tenant);
+        self::assertSame([$standard, self::foreign(), $tenant], $this->putStatements(2));
+        self::assertSame(['GetWebFunctionEndpoint', 'GetResourcePolicy', 'PutResourcePolicy'], $this->aws->calls);
+    }
+
+    public function test_tenant_grant_is_idempotent_and_replaces_only_its_own_stale_statement(): void
+    {
+        $standard = CloudFrontAccess::statement(self::ENDPOINT_ARN, self::DISTRIBUTION_ARN);
+        $tenant = CloudFrontAccess::tenantStatement(self::ENDPOINT_ARN, self::DISTRIBUTION_ARN);
+        $old = CloudFrontAccess::tenantStatement(self::ENDPOINT_ARN, 'arn:aws:cloudfront::111111111111:distribution/EOLD');
+        $this->aws->handler->append(self::endpoint('IamAuth'), self::policy([$standard, $tenant, self::foreign()]),
+            self::endpoint('IamAuth'), self::policy([$old, $standard, self::foreign()]), new Result([]));
+
+        $this->protectTenant();
+        $this->protectTenant();
+
+        self::assertSame([$standard, self::foreign(), $tenant], $this->putStatements(4));
+    }
+
+    public function test_revoke_each_grant_preserves_the_other_and_foreign_statements(): void
+    {
+        $standard = CloudFrontAccess::statement(self::ENDPOINT_ARN, self::DISTRIBUTION_ARN);
+        $tenant = CloudFrontAccess::tenantStatement(self::ENDPOINT_ARN, self::DISTRIBUTION_ARN);
+        $this->aws->handler->append(self::policy([$standard, $tenant, self::foreign()]), new Result([]),
+            self::policy([$standard, $tenant, self::foreign()]), new Result([]));
+        $access = $this->access();
+
+        self::assertTrue($access->revoke(self::FUNCTION_ARN));
+        self::assertTrue($access->revokeTenant(self::FUNCTION_ARN));
+        self::assertSame([$tenant, self::foreign()], $this->putStatements(1));
+        self::assertSame([$standard, self::foreign()], $this->putStatements(3));
+    }
+
+    public function test_public_tenant_endpoint_cannot_switch_without_an_actual_tenant_domain(): void
+    {
+        $this->aws->handler->append(self::endpoint('ApplicationManaged'));
+        try {
+            $this->protectTenant();
+            self::fail('a public endpoint requires a tenant to check');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.tenant_domains_unavailable', $e->key);
+        }
+        self::assertSame(['GetWebFunctionEndpoint'], $this->aws->calls);
+        self::assertContains('deploy.endpoint_still_public', array_column($this->steps, 0));
+    }
+
+    /** @return iterable<string, array{0: Result}> */
+    public static function invalidTenants(): iterable
+    {
+        yield 'different distribution' => [self::tenant('EOTHER')];
+        yield 'disabled' => [self::tenant(enabled: false)];
+        yield 'inactive domain' => [self::tenant(status: 'inactive')];
+        yield 'different domain' => [new Result(['DistributionTenant' => ['DistributionId' => 'E123', 'Enabled' => true,
+            'Domains' => [['Domain' => 'other.example.com', 'Status' => 'active']]]])];
+        yield 'missing tenant id' => [new Result(['DistributionTenant' => ['DistributionId' => 'E123', 'Enabled' => true,
+            'Domains' => [['Domain' => 'customer.example.com', 'Status' => 'active']]]])];
+        yield 'empty tenant id' => [new Result(['DistributionTenant' => ['Id' => '', 'DistributionId' => 'E123', 'Enabled' => true,
+            'Domains' => [['Domain' => 'customer.example.com', 'Status' => 'active']]]])];
+        yield 'invalid tenant id' => [new Result(['DistributionTenant' => ['Id' => 42, 'DistributionId' => 'E123', 'Enabled' => true,
+            'Domains' => [['Domain' => 'customer.example.com', 'Status' => 'active']]]])];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('invalidTenants')]
+    public function test_public_tenant_endpoint_rejects_an_unusable_tenant_before_changes(Result $tenant): void
+    {
+        $this->aws->handler->append(self::endpoint('ApplicationManaged'), $tenant);
+        try {
+            $this->protectTenant('customer.example.com');
+            self::fail('tenant is not usable');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.tenant_domains_unavailable', $e->key);
+        }
+        self::assertSame(['GetWebFunctionEndpoint', 'GetDistributionTenantByDomain'], $this->aws->calls);
+    }
+
+    public function test_public_tenant_endpoint_switches_and_checks_the_real_tenant(): void
+    {
+        $this->aws->handler->append(self::endpoint('ApplicationManaged'), self::tenant(), self::tenantDns(), self::noPolicy(), new Result([]),
+            new Result(['Distribution' => ['Id' => 'E123', 'Status' => 'Deployed']]),
+            self::endpoint('ApplicationManaged'), new Result([]), self::endpoint('IamAuth'));
+        $this->http->append(new Response(200));
+
+        $this->protectTenant('customer.example.com');
+
+        self::assertSame('customer.example.com', $this->aws->params[1]['Domain']);
+        self::assertSame(['Identifier' => 'DTENANT', 'Domain' => 'customer.example.com'], array_intersect_key($this->aws->params[2], ['Identifier' => 1, 'Domain' => 1]));
+        self::assertSame('IamAuth', $this->aws->params[7]['authType']);
+        self::assertSame('https://customer.example.com/up', (string) $this->http->getLastRequest()?->getUri());
+        self::assertSame('ArcoCloudFrontTenant', $this->putStatements(4)[0]['Sid']);
+    }
+
+    public function test_a_failed_tenant_check_never_makes_the_endpoint_public_again(): void
+    {
+        $this->aws->handler->append(self::endpoint('ApplicationManaged'), self::tenant(), self::tenantDns(), self::noPolicy(), new Result([]),
+            new Result(['Distribution' => ['Id' => 'E123', 'Status' => 'Deployed']]),
+            self::endpoint('ApplicationManaged'), new Result([]), self::endpoint('IamAuth'));
+        $this->http->append(...array_fill(0, 13, new Response(403)));
+
+        try {
+            $this->protectTenant('customer.example.com');
+            self::fail('unverified endpoint must fail the deploy');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.timeout', $e->key);
+        }
+        self::assertSame(['IamAuth'], array_values(array_filter(array_column($this->aws->params, 'authType'))));
+        self::assertNotContains('deploy.endpoint_still_public', array_column($this->steps, 0));
+    }
+
+    public function test_a_tenant_policy_conflict_is_read_again_without_losing_standard_or_foreign_grants(): void
+    {
+        $standard = CloudFrontAccess::statement(self::ENDPOINT_ARN, self::DISTRIBUTION_ARN);
+        $this->aws->handler->append(self::endpoint('IamAuth'), self::policy([$standard]),
+            AwsMocks::error(LambdaWebException::class, 'PutResourcePolicy', 'ConflictException', 409),
+            self::policy([$standard, self::foreign()]), new Result([]));
+
+        $this->protectTenant();
+
+        self::assertSame([$standard, self::foreign(), CloudFrontAccess::tenantStatement(self::ENDPOINT_ARN, self::DISTRIBUTION_ARN)], $this->putStatements(4));
+        self::assertSame(3.0, $this->sleeper->now() - 1_000_000.0);
+    }
+
+    public function test_revoking_the_last_tenant_grant_deletes_only_that_policy(): void
+    {
+        $this->aws->handler->append(self::policy([CloudFrontAccess::tenantStatement(self::ENDPOINT_ARN, self::DISTRIBUTION_ARN)]), new Result([]), self::noPolicy());
+        $access = $this->access();
+
+        self::assertTrue($access->revokeTenant(self::FUNCTION_ARN));
+        self::assertFalse($access->revokeTenant(self::FUNCTION_ARN));
+        self::assertSame(['GetResourcePolicy', 'DeleteResourcePolicy', 'GetResourcePolicy'], $this->aws->calls);
+    }
+
+    /** @return iterable<string, array{0: string}> */
+    public static function invalidTenantDomains(): iterable
+    {
+        yield 'empty' => [''];
+        yield 'URL' => ['https://customer.example.com'];
+        yield 'port' => ['customer.example.com:443'];
+        yield 'wildcard' => ['*.example.com'];
+        yield 'routing endpoint with path' => ['customer.example.com/other'];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('invalidTenantDomains')]
+    public function test_public_tenant_endpoint_rejects_an_invalid_hostname_before_calling_cloudfront(string $domain): void
+    {
+        $this->aws->handler->append(self::endpoint('ApplicationManaged'));
+        try {
+            $this->protectTenant($domain);
+            self::fail('invalid domain must not be used');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.tenant_domains_unavailable', $e->key);
+        }
+        self::assertSame(['GetWebFunctionEndpoint'], $this->aws->calls);
+    }
+
+    public function test_a_tenant_check_error_after_switching_does_not_restore_public_access(): void
+    {
+        $this->aws->handler->append(self::endpoint('ApplicationManaged'), self::tenant(), self::tenantDns(), self::noPolicy(), new Result([]),
+            new Result(['Distribution' => ['Id' => 'E123', 'Status' => 'Deployed']]), self::endpoint('ApplicationManaged'), new Result([]),
+            AwsMocks::error(LambdaWebException::class, 'GetWebFunctionEndpoint', 'ValidationException', 400));
+
+        try {
+            $this->protectTenant('customer.example.com');
+            self::fail('the endpoint error must stop the deploy');
+        } catch (LambdaWebException $e) {
+            self::assertSame('ValidationException', $e->getAwsErrorCode());
+        }
+        self::assertSame(['IamAuth'], array_values(array_filter(array_column($this->aws->params, 'authType'))));
+        self::assertNotContains('deploy.endpoint_still_public', array_column($this->steps, 0));
+    }
+
+    /** @return iterable<string, array{0: Result}> */
+    public static function invalidTenantDns(): iterable
+    {
+        yield 'invalid' => [self::tenantDns('invalid-configuration')];
+        yield 'unknown' => [self::tenantDns('unknown-configuration')];
+        yield 'wrong domain' => [self::tenantDns(domain: 'other.example.com')];
+        yield 'missing' => [new Result([])];
+        yield 'conflicting statuses' => [new Result(['DnsConfigurationList' => [
+            ['Domain' => 'customer.example.com', 'Status' => 'valid-configuration'],
+            ['Domain' => 'customer.example.com', 'Status' => 'invalid-configuration'],
+        ]])];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('invalidTenantDns')]
+    public function test_public_tenant_endpoint_rejects_dns_that_does_not_point_to_the_tenant(Result $dns): void
+    {
+        $this->aws->handler->append(self::endpoint('ApplicationManaged'), self::tenant(), $dns);
+        try {
+            $this->protectTenant('customer.example.com');
+            self::fail('unverified DNS must not be used');
+        } catch (DeployException $e) {
+            self::assertSame('deploy.tenant_domains_unavailable', $e->key);
+        }
+        self::assertSame(['GetWebFunctionEndpoint', 'GetDistributionTenantByDomain', 'VerifyDnsConfiguration'], $this->aws->calls);
+    }
+
+    public function test_a_dns_verification_error_stops_before_policy_or_endpoint_changes(): void
+    {
+        $this->aws->handler->append(self::endpoint('ApplicationManaged'), self::tenant(),
+            AwsMocks::error(CloudFrontException::class, 'VerifyDnsConfiguration', 'AccessDenied', 403));
+
+        try {
+            $this->protectTenant('customer.example.com');
+            self::fail('DNS verification failure must stop the deploy');
+        } catch (CloudFrontException $e) {
+            self::assertSame('AccessDenied', $e->getAwsErrorCode());
+        }
+        self::assertSame(['GetWebFunctionEndpoint', 'GetDistributionTenantByDomain', 'VerifyDnsConfiguration'], $this->aws->calls);
+        self::assertContains('deploy.endpoint_still_public', array_column($this->steps, 0));
     }
 }

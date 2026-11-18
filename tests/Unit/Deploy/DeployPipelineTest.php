@@ -1685,4 +1685,16 @@ final class DeployPipelineTest extends TestCase
 
         self::assertSame(['prepare', 'release', 'scheduler:off', 'workers:', 'prune'], $deployer->calls);
     }
+
+    public function test_tenant_domains_give_the_functions_the_mediators_name_and_nothing_otherwise(): void
+    {
+        $with = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn (Environment $e) => $e->domain('www.acmeapp.io')->tenantDomains('routing.acmeapp.io'))->toArray(), 'production');
+        $without = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production')->toArray(), 'production');
+
+        self::assertSame(['ARCO_TENANT_DOMAINS_FUNCTION' => 'shop-production-tenants'], DeployPipeline::tenantVariables($with));
+        self::assertSame('shop-production-tenants', DeployPipeline::injectedVariables($with)['ARCO_TENANT_DOMAINS_FUNCTION']);
+        self::assertSame('shop-production-tenants', DeployPipeline::variables($with, new PlainPhpPreset())['ARCO_TENANT_DOMAINS_FUNCTION']);
+        self::assertArrayNotHasKey('ARCO_TENANT_DOMAINS_FUNCTION', DeployPipeline::injectedVariables($without));
+        self::assertArrayNotHasKey('ARCO_TENANT_DOMAINS_FUNCTION', DeployPipeline::variables($without, new PlainPhpPreset()));
+    }
 }

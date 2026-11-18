@@ -17,6 +17,9 @@ use Multiapi\Arco\Laravel\Log\LogContext;
 use Multiapi\Arco\Laravel\Queue\ArcoSqsConnector;
 use Multiapi\Arco\Laravel\Queue\ArcoSqsQueue;
 use Multiapi\Arco\Laravel\Queue\LambdaWorker;
+use Multiapi\Arco\Laravel\Contracts\TenantDomains;
+use Multiapi\Arco\Laravel\TenantDomains\Exceptions\TenantDomainsUnavailable;
+use Multiapi\Arco\Laravel\TenantDomains\LambdaTenantDomains;
 
 final class ArcoServiceProvider extends ServiceProvider
 {
@@ -36,6 +39,16 @@ final class ArcoServiceProvider extends ServiceProvider
 
     public function register(): void
     {
+        // Bound everywhere so the interface always resolves; outside Arco the service throws TenantDomainsUnavailable on use.
+        $this->app->singleton(TenantDomains::class, static fn (): TenantDomains => new LambdaTenantDomains(
+            static fn (): \Aws\Lambda\LambdaClient => new \Aws\Lambda\LambdaClient([
+                'version' => 'latest',
+                'region' => self::region() ?? throw new TenantDomainsUnavailable(
+                    'Tenant domains need an AWS region: neither AWS_REGION nor AWS_DEFAULT_REGION is set.',
+                ),
+            ]),
+            Env::get(LambdaTenantDomains::FUNCTION_ENV),
+        ));
         // Lambda Web Functions sits behind AWS's HTTPS front end, which sets X-Forwarded-* headers.
         if (($_SERVER['ARCO'] ?? getenv('ARCO')) !== '1') {
             return;

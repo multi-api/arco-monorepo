@@ -123,10 +123,10 @@ final class CustomDomainsTest extends TestCase
         );
         $this->dnsAws->handler->append(
             self::zones(),
-            new Result(['ResourceRecordSets' => [['Name' => 'arco.acmeapp.io.', 'Type' => 'TXT', 'TTL' => 300, 'ResourceRecords' => [['Value' => '"x"']]]]]),
-            new Result(['ResourceRecordSets' => [['Name' => 'b.acmeapp.io.', 'Type' => 'A', 'TTL' => 300, 'ResourceRecords' => [['Value' => '1.2.3.4']]]]]),
-            new Result(['ResourceRecordSets' => []]),           // fresh guard read before the write
-            new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [['Name' => 'arco.acmeapp.io.', 'Type' => 'TXT', 'TTL' => 300, 'ResourceRecords' => [['Value' => '"x"']]]], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [['Name' => 'b.acmeapp.io.', 'Type' => 'A', 'TTL' => 300, 'ResourceRecords' => [['Value' => '1.2.3.4']]]], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),           // fresh guard read before the write
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
             new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'PENDING']]),
             new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'PENDING']]),
             new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'INSYNC']]),
@@ -171,11 +171,11 @@ final class CustomDomainsTest extends TestCase
         $aliases = fn (string $name): Result => new Result(['ResourceRecordSets' => [
             ['Name' => "$name.", 'Type' => 'A', 'AliasTarget' => ['HostedZoneId' => 'Z2FDTNDATAQYW2', 'DNSName' => self::DIST . '.', 'EvaluateTargetHealth' => false]],
             ['Name' => "$name.", 'Type' => 'AAAA', 'AliasTarget' => ['HostedZoneId' => 'Z2FDTNDATAQYW2', 'DNSName' => self::DIST . '.', 'EvaluateTargetHealth' => false]],
-        ]]);
+        ], 'IsTruncated' => false]);
         $this->dnsAws->handler->append(
             self::zones(),
-            new Result(['ResourceRecordSets' => []]),
-            new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
             $aliases('arco.acmeapp.io'),               // fresh guard read before the write
             $aliases('api-arco.acmeapp.io'),
         );
@@ -191,8 +191,8 @@ final class CustomDomainsTest extends TestCase
         self::queue($this->aws, self::stackMissing(), self::wildcard(), self::stackMissing(), new Result([]), self::stack('CREATE_COMPLETE'));
         $this->dnsAws->handler->append(
             self::zones(),
-            new Result(['ResourceRecordSets' => []]), new Result(['ResourceRecordSets' => []]),
-            new Result(['ResourceRecordSets' => []]), new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]), new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]), new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
             new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'PENDING']]),
             new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'INSYNC']]),
         );
@@ -213,8 +213,8 @@ final class CustomDomainsTest extends TestCase
         self::queue($this->aws, self::stackMissing());
         $this->dnsAws->handler->append(
             self::zones(),
-            new Result(['ResourceRecordSets' => [['Name' => 'arco.acmeapp.io.', 'Type' => 'CNAME', 'TTL' => 300, 'ResourceRecords' => [['Value' => 'old.example.com']]]]]),
-            new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [['Name' => 'arco.acmeapp.io.', 'Type' => 'CNAME', 'TTL' => 300, 'ResourceRecords' => [['Value' => 'old.example.com']]]], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
         );
 
         try {
@@ -233,11 +233,11 @@ final class CustomDomainsTest extends TestCase
         self::queue($this->aws, self::stackMissing(), self::wildcard(), self::stackMissing(), new Result([]), self::stack('CREATE_COMPLETE'));
         $this->dnsAws->handler->append(
             self::zones(),
-            new Result(['ResourceRecordSets' => []]),
-            new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
             // Someone pointed the name elsewhere while CloudFront was being created.
-            new Result(['ResourceRecordSets' => [['Name' => 'arco.acmeapp.io.', 'Type' => 'A', 'TTL' => 60, 'ResourceRecords' => [['Value' => '9.9.9.9']]]]]),
-            new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [['Name' => 'arco.acmeapp.io.', 'Type' => 'A', 'TTL' => 60, 'ResourceRecords' => [['Value' => '9.9.9.9']]]], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
         );
 
         try {
@@ -257,10 +257,10 @@ final class CustomDomainsTest extends TestCase
         self::queue($this->aws, AwsMocks::error(CloudFormationException::class, 'UpdateStack', 'ValidationError', 400, 'No updates are to be performed.'));
         $this->dnsAws->handler->append(
             self::zones(),
-            new Result(['ResourceRecordSets' => [$cname]]),
-            new Result(['ResourceRecordSets' => []]),
-            new Result(['ResourceRecordSets' => [$cname]]),
-            new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [$cname], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [$cname], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
             new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'INSYNC']]),
             new Result(['ChangeInfo' => ['Id' => '/change/C1', 'Status' => 'INSYNC']]),
         );
@@ -294,12 +294,12 @@ final class CustomDomainsTest extends TestCase
         );
         $this->dnsAws->handler->append(
             self::zones(),
-            new Result(['ResourceRecordSets' => []]),
-            new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
             new Result(['ChangeInfo' => ['Id' => '/change/V', 'Status' => 'PENDING']]),
             new Result(['ChangeInfo' => ['Id' => '/change/V', 'Status' => 'INSYNC']]),
-            new Result(['ResourceRecordSets' => []]),
-            new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
             new Result(['ChangeInfo' => ['Id' => '/change/A', 'Status' => 'INSYNC']]),
             new Result(['ChangeInfo' => ['Id' => '/change/A', 'Status' => 'INSYNC']]),
         );
@@ -355,14 +355,14 @@ final class CustomDomainsTest extends TestCase
         self::queue($this->aws, 
             self::stackMissing(),
             self::zones(),
-            new Result(['ResourceRecordSets' => []]),
-            new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
             new Result(['CertificateSummaryList' => [['CertificateArn' => 'arn:c', 'DomainName' => 'arco.acmeapp.io', 'HasAdditionalSubjectAlternativeNames' => true, 'Status' => 'ISSUED', 'Type' => 'AMAZON_ISSUED', 'KeyAlgorithm' => 'RSA-2048']]]),
             new Result(['Certificate' => ['CertificateArn' => 'arn:c', 'DomainName' => 'arco.acmeapp.io', 'SubjectAlternativeNames' => ['arco.acmeapp.io', 'api-arco.acmeapp.io', 'shop.example.com'], 'Status' => 'ISSUED', 'Type' => 'AMAZON_ISSUED', 'KeyAlgorithm' => 'RSA-2048']]),
             new Result(['Tags' => [['Key' => 'arco:app', 'Value' => 'shop']]]),
             self::stackMissing(), new Result([]), self::stack('CREATE_COMPLETE'),
-            new Result(['ResourceRecordSets' => []]),
-            new Result(['ResourceRecordSets' => []]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [], 'IsTruncated' => false]),
             new Result(['ChangeInfo' => ['Id' => '/change/A', 'Status' => 'INSYNC']]),
             new Result(['ChangeInfo' => ['Id' => '/change/A', 'Status' => 'INSYNC']]),
         );
@@ -561,8 +561,8 @@ final class CustomDomainsTest extends TestCase
         );
         $this->dnsAws->handler->append(
             self::zones(),
-            new Result(['ResourceRecordSets' => [$alias('A', self::DIST), $alias('AAAA', self::DIST), ['Name' => 'arco.acmeapp.io.', 'Type' => 'TXT', 'TTL' => 300, 'ResourceRecords' => [['Value' => '"x"']]]]]),
-            new Result(['ResourceRecordSets' => [['Name' => 'api-arco.acmeapp.io.', 'Type' => 'A', 'AliasTarget' => ['HostedZoneId' => 'Z2FDTNDATAQYW2', 'DNSName' => 'd999.cloudfront.net.', 'EvaluateTargetHealth' => false]]]]),
+            new Result(['ResourceRecordSets' => [$alias('A', self::DIST), $alias('AAAA', self::DIST), ['Name' => 'arco.acmeapp.io.', 'Type' => 'TXT', 'TTL' => 300, 'ResourceRecords' => [['Value' => '"x"']]]], 'IsTruncated' => false]),
+            new Result(['ResourceRecordSets' => [['Name' => 'api-arco.acmeapp.io.', 'Type' => 'A', 'AliasTarget' => ['HostedZoneId' => 'Z2FDTNDATAQYW2', 'DNSName' => 'd999.cloudfront.net.', 'EvaluateTargetHealth' => false]]], 'IsTruncated' => false]),
             new Result(['ChangeInfo' => ['Id' => '/change/R', 'Status' => 'INSYNC']]),
             new Result(['ChangeInfo' => ['Id' => '/change/R', 'Status' => 'INSYNC']]),
         );

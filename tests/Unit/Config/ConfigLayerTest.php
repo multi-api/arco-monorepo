@@ -176,6 +176,15 @@ final class ConfigLayerTest extends TestCase
         self::assertTrue($layer->entry['settings']['bundleVariables']);
     }
 
+    public function test_the_tenant_domain_target_is_a_layer_setting_of_type_string(): void
+    {
+        $layer = ConfigLayer::load($this->write($this->layer(['settings' => ['tenantDomainTarget' => 'routing.example.com']])));
+
+        self::assertSame('routing.example.com', $layer->entry['settings']['tenantDomainTarget']);
+        $this->invalid($this->layer(['settings' => ['tenantDomainTarget' => 5]]), '/environments/production/settings/tenantDomainTarget');
+        $this->invalid($this->layer(['settings' => ['tenantDomainTarget' => false]]), '/environments/production/settings/tenantDomainTarget');
+    }
+
     public function test_vpc_endpoints_may_be_a_map(): void
     {
         $layer = ConfigLayer::load($this->write($this->layer(['settings' => ['vpc' => [

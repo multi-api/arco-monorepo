@@ -132,7 +132,8 @@ final class RemoveCommandTest extends TestCase
         $lines = $this->removeJson($tester, ['--env' => 'production', '--force' => true]);
 
         $tester->assertCommandIsSuccessful();
-        self::assertSame([['deprecated.force_remove', 'warning'], ['validation.plaintext_secret', 'warning'], ['remove.nothing', 'note']], array_map(fn (array $l) => [$l['key'], $l['status']], array_slice($lines, 0, -1)));
+        // The deprecation follows the config's own warnings: whether --force has a real use depends on the config.
+        self::assertSame([['validation.plaintext_secret', 'warning'], ['deprecated.force_remove', 'warning'], ['remove.nothing', 'note']], array_map(fn (array $l) => [$l['key'], $l['status']], array_slice($lines, 0, -1)));
         self::assertSame('removed', $lines[3]['outcome']);
         $project->restore();
     }
@@ -299,7 +300,148 @@ final class RemoveCommandTest extends TestCase
 
         $tester->assertCommandIsSuccessful();
         self::assertContains('remove', $deployer->calls);
-        self::assertSame(1, substr_count(preg_replace('/\s+/', ' ', $tester->getDisplay()), 'remove --force is deprecated'));
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertSame(1, substr_count($display, 'remove --force as an alias of --yes is deprecated'));
+        self::assertStringContainsString('--force stays required to delete the customer domains', $display);
+        self::assertTrue($deployer->removeForcedTenants);
+        $project->restore();
+    }
+
+    private static function tenantConfig(): string
+    {
+        return str_replace("->timeout(60)", "->timeout(60)->domain('shop.example.com')->tenantDomains('routing.example.com')", ProjectFixture::standardConfig());
+    }
+
+    public function test_yes_never_authorizes_deleting_tenants(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertFalse($deployer->removeForcedTenants);
+        self::assertStringContainsString('deletes them only with --force', preg_replace('/\s+/', ' ', $tester->getDisplay()));
+        $project->restore();
+    }
+
+    public function test_the_typed_confirmation_never_authorizes_deleting_tenants(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $tester = $project->tester($this->command($deployer));
+        $tester->setInputs(['production']);
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p']);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertFalse($deployer->removeForcedTenants);
+        $project->restore();
+    }
+
+    public function test_force_with_tenant_domains_authorizes_them_without_the_alias_deprecation(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--force' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertTrue($deployer->removeForcedTenants);
+        $display = preg_replace('/\s+/', ' ', $tester->getDisplay());
+        self::assertStringNotContainsString('deprecated', $display);
+        self::assertStringNotContainsString('deletes them only with --force', $display, 'the note is for a remove without --force');
+        $project->restore();
+    }
+
+    public function test_json_tenants_without_force_fail_with_the_error_key_and_the_usual_exit_code(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->removeSteps = [['remove.step_tenant_drain', ['function' => 'shop-production-tenants', 'environment' => 'production']]];
+        $deployer->removeError = \Multiapi\Arco\Deploy\DeployException::make('remove.tenants_need_force', ['count' => 3, 'function' => 'shop-production-tenants', 'environment' => 'production']);
+        $tester = $project->tester($this->command($deployer));
+
+        $lines = $this->removeJson($tester, ['--env' => 'production', '--yes' => true]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $result = $lines[count($lines) - 1];
+        // The mediator was disabled before the count: something changed, so this is "failed", not "refused".
+        self::assertSame(['failed', 'remove.tenants_need_force'], [$result['outcome'], $result['error']['key']]);
+        self::assertStringContainsString('tenants on its distribution: 3', $result['error']['message']);
+        self::assertStringContainsString('--force', $result['error']['message']);
+        self::assertStringContainsString('arco tenants:restore --env=production', $result['error']['message']);
+        self::assertSame(['count' => 3, 'function' => 'shop-production-tenants', 'environment' => 'production'], $result['error']['params'], 'the documented error.params');
+        self::assertFalse($deployer->removeForcedTenants);
+        $project->restore();
+    }
+
+    public function test_json_force_reaches_the_deployer_and_never_prompts(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $tester = $project->tester($this->command($deployer));
+
+        $lines = $this->removeJson($tester, ['--env' => 'production', '--force' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertTrue($deployer->removeForcedTenants);
+        self::assertSame('removed', $lines[count($lines) - 1]['outcome']);
+        self::assertNotContains('deprecated.force_remove', array_column($lines, 'key'));
+        $project->restore();
+    }
+
+    /** @return list<array{type: string, name: string, arn: string, retained: bool}> */
+    private static function tenantResources(): array
+    {
+        $r = fn (string $type, string $name, bool $retained = false) => ['type' => $type, 'name' => $name, 'arn' => "arn:$name", 'retained' => $retained, 'relations' => [], 'source' => null, 'options' => null];
+        return [$r('cloudfront:distribution-tenant', 'dt_1'), $r('cloudformation:stack', 'arco-shop-production-tenants'), $r('s3', 'shop-uploads', true)];
+    }
+
+    public function test_the_listing_says_customer_domains_are_deleted_only_with_force(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->tagged = self::tenantResources();
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
+
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('cloudfront:distribution-tenant dt_1 (deleted only with --force)', $display);
+        self::assertStringContainsString('cloudformation:stack arco-shop-production-tenants (deleted)', $display);
+        self::assertStringContainsString('s3 shop-uploads (kept)', $display);
+        $project->restore();
+    }
+
+    public function test_with_force_the_listing_says_customer_domains_are_deleted(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->tagged = self::tenantResources();
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--force' => true], ['interactive' => false]);
+
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('cloudfront:distribution-tenant dt_1 (deleted)', $display);
+        self::assertStringNotContainsString('only with --force', $display);
+        $project->restore();
+    }
+
+    public function test_an_environment_without_tenant_domains_shows_no_tenant_note(): void
+    {
+        $project = new ProjectFixture(ProjectFixture::standardConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertStringNotContainsString('tenantDomains()', $tester->getDisplay());
+        self::assertFalse($deployer->removeForcedTenants);
         $project->restore();
     }
 

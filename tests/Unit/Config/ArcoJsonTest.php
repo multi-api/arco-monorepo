@@ -31,6 +31,12 @@ final class ArcoJsonTest extends TestCase
         }
     }
 
+    public function test_tenant_domains_cannot_be_set_from_arco_json(): void
+    {
+        // tenantDomains() exists only in arco.php in this version: process (Go) apps cannot use it.
+        $this->invalid(['name' => 'orders', 'region' => 'us-east-1', 'runtime' => ['language' => 'go'], 'settings' => ['tenantDomainTarget' => 'routing.example.com'], 'environments' => ['production' => []]], '/settings/tenantDomainTarget');
+    }
+
     public function test_the_spec_example_resolves_for_production(): void
     {
         $raw = ArcoJson::load($this->write([

@@ -272,6 +272,55 @@ final class TaggedResourcesTest extends TestCase
         self::assertSame(['shop-production'], array_column($resources, 'name'));
     }
 
+    public function test_tenant_resources_are_listed_as_deleted_and_the_mediator_role_appears_with_tenant_domains(): void
+    {
+        $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->environment('production', fn ($e) => $e->domain('shop.example.com')->tenantDomains('routing.example.com'))->toArray(), 'production');
+        $mocks = new AwsMocks();
+        $mocks->handler->append(
+            new Result(['ResourceTagMappingList' => [
+                self::mapping('arn:aws:cloudformation:us-east-1:111111111111:stack/arco-shop-production-tenants/0a1b2c'),
+                self::mapping('arn:aws:lambda:us-east-1:111111111111:function:shop-production-tenants'),
+                self::mapping('arn:aws:cloudfront::111111111111:connection-group/cg_1'),
+                self::mapping('arn:aws:cloudfront::111111111111:distribution-tenant/dt_1'),
+                self::mapping('arn:aws:cloudfront::111111111111:function/arco-shop-production-tenant-host'),
+                self::mapping('arn:aws:cloudfront::111111111111:distribution/ETENANT'),
+            ]]),
+            // GetRole: the execution role, the operator role, the mediator's role (read by name, in this order)
+            self::role(['arco:app' => 'shop', 'arco:environment' => 'production']),
+            AwsMocks::error(IamException::class, 'GetRole', 'NoSuchEntity', 404),
+            new Result(['Role' => ['RoleName' => 'arco-shop-production-tenants', 'Arn' => 'arn:aws:iam::111111111111:role/arco-shop-production-tenants', 'Tags' => [['Key' => 'arco:app', 'Value' => 'shop'], ['Key' => 'arco:environment', 'Value' => 'production']]]]),
+        );
+        $clients = $mocks->clients();
+
+        $resources = (new TaggedResources($clients->taggingApi(), new OwnershipGuard($clients)))->list($config);
+
+        $byName = [];
+        foreach ($resources as $resource) {
+            $byName[$resource['type'] . ' ' . $resource['name']] = $resource['retained'];
+        }
+        self::assertSame([
+            'cloudformation:stack arco-shop-production-tenants' => false,
+            'cloudfront:connection-group cg_1' => false,
+            'cloudfront:distribution ETENANT' => false,
+            'cloudfront:distribution-tenant dt_1' => false,
+            'cloudfront:function arco-shop-production-tenant-host' => false,
+            'iam:role arco-shop-production' => false,
+            'iam:role arco-shop-production-tenants' => false,
+            'lambda:function shop-production-tenants' => false,
+        ], $byName);
+        self::assertSame(['arco-shop-production-tenants'], [$mocks->params[3]['RoleName']]);
+    }
+
+    public function test_an_environment_without_tenant_domains_reads_no_mediator_role(): void
+    {
+        $mocks = new AwsMocks();
+        $mocks->handler->append(new Result(['ResourceTagMappingList' => []]), self::role(['arco:app' => 'shop', 'arco:environment' => 'production']));
+
+        self::subject($mocks)->list($this->config());
+
+        self::assertSame(['GetResources', 'GetRole', 'GetRole'], $mocks->calls);
+    }
+
     public function test_lists_the_execution_role_read_by_name_with_its_real_arn(): void
     {
         $mocks = new AwsMocks();

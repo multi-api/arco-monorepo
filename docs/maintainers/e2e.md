@@ -59,6 +59,53 @@ A check that cannot pass because Floci lacks or breaks a whole feature is skippe
 
 There are currently none. The two former gaps, S3 rejecting the canned ACL `private` that Laravel's S3 disk sends and CloudFront not reaching a Web Function endpoint origin, were fixed upstream (floci-io/floci#5979, #5980) as of `floci/floci:nightly-10192026`, so `test_storage` and `test_custom_domain_through_cloudfront` are mandatory.
 
+## Tenant domains
+
+`tenantDomains()` has no Floci end-to-end scenario, on purpose. What the emulator (`floci/floci:nightly-11082026`) does with the feature's resources, probed with the AWS SDK against a throwaway Floci started by `bin/test-docker e2e`:
+
+| Call | Result |
+|---|---|
+| CloudFormation `CreateStack` with `AWS::CloudFront::ConnectionGroup` | accepted, `CREATE_COMPLETE`, but as a stub: the resource gets a made-up physical id (`CG-06b0b959`) and `Fn::GetAtt` returns the text `<Logical>.<Attribute>`, for example `ConnectionGroup.Id` and `ConnectionGroup.RoutingEndpoint`, not an id and a routing endpoint |
+| CloudFront `CreateConnectionGroup` | `404 <html><body><h1>Resource not found</h1></body></html>` (`POST /2020-05-31/connection-group`) |
+| CloudFront `ListConnectionGroups` | the same 404 |
+| CloudFront `ListDistributionTenants` (with and without `AssociationFilter`) | the same 404 (`/2020-05-31/distribution-tenants`); `CreateDistributionTenant` and the other tenant calls live under the same unrouted paths |
+| Lambda `CreateFunction` `nodejs24.x` with an inline zip (`InlineZip`) | works; the function is `Active` and `Invoke` runs the handler |
+| Lambda `PutFunctionConcurrency` 0, `GetFunctionConcurrency`, `DeleteFunctionConcurrency` | work; `Invoke` while the concurrency is 0 answers `429 {"__type":"TooManyRequestsException","message":"Rate Exceeded."}`; after the delete the reserved concurrency reads as absent |
+
+So a deploy of an environment with `tenantDomains()` gets through the emulator (the stack and the mediator are created), but the stack's outputs are not a connection group and no tenant call exists: `arco info --json` shows `tenantDomains` with the literal ids and `"tenants": null`, and `arco remove` could not list tenants (`remove.tenant_listing_incomplete`). A scenario that deployed and "passed" would prove only that CloudFormation accepts a stub, so none is added: no check pretends. Floci is not asked for a feature it does not have; when a newer image routes these calls, add the scenario then.
+
+What is covered without real AWS:
+
+- the mediator's JSON contract with the real packaged suffix list and a fake CloudFront and DNS: `packages/arco/runtime/test/tenant-contract.test.js` (`bin/test-docker runtime`; the integration suite runs PHP in Lambda containers and has no place for a Node handler);
+- the packaged zip (`tenant-domains.js`, every `lib/tenants/*.js`, `public_suffix_list.dat`, and a `require('./...')` graph that stays inside it): `tests/Unit/Deploy/TenantMediatorPackageTest.php`;
+- everything else against fakes in the unit suite.
+
+Only real AWS can show, so these scenarios run only through [tenant-domains-acceptance.md](tenant-domains-acceptance.md): the stack with a real connection group and multi-tenant distribution, managed certificate issuance, origin access control and `Host` through the multi-tenant distribution, `CreateDistributionTenant` and its errors (duplicate, domain on another distribution, quota), the tenant delete timing after disable, the answer of `ListDistributionTenants` for an empty distribution, `arco info` and `arco remove` with and without customer domains, and the drain margin of `remove`.
+
+### What the emulator and the fakes hid
+
+The first real-AWS run (2026-11-17/18, [tenant-domains-acceptance.md](tenant-domains-acceptance.md#findings-of-the-first-run)) found five bugs that the unit tests (fake AWS clients) and Floci could not show. Each is fixed and pinned by a test:
+
+| Bug (what real AWS did) | Fix | Test that pins it |
+|---|---|---|
+| The tenant distribution had no `ViewerCertificate`: CloudFormation failed with "configured for SNI and the minimum SSL protocol version is specified as SSLv3", leaving the stack in `ROLLBACK_COMPLETE` | 72388e2: default certificate, `sni-only`, `TLSv1.2_2021` | `tests/Unit/Deploy/Domains/TenantDomainStackTest.php`, `test_template_builds_a_shared_distribution_and_connection_group_without_tenants` |
+| The mediator role had no ACM permission: `CreateDistributionTenant` was denied ("CloudFront cannot access the specified Amazon ACM certificate for the operation: RequestCertificate") | 406372f: statement `ArcoTenantCertificates` | `tests/Unit/Deploy/TenantMediatorTest.php`, `test_the_policy_is_exactly_the_mediators` |
+| `GetDistributionTenantByDomain` finds only active domains, and CloudFront never activates a domain by itself: `status` answered `not_found` and the domain stayed `inactive` | 2796959: lookup by the deterministic tenant name as a fallback; `status` and a repeated `add` apply the issued certificate | `packages/arco/runtime/test/tenant-domains.test.js`: "after add, status finds the tenant by name while its domain is still inactive", "issued certificate and inactive domain: status applies it once and answers pending/activating", "a failed update does not fail the operation, reports the error name and is retried by the next status", "list never updates, and foreign or unverifiable tenants are never activated" |
+| Tenant reads (`GetDistributionTenant`, the by-domain lookup, the listing) return no tags, so every tenant looked unverifiable to the mediator and foreign to `arco remove` and `arco info` | 22fec4b: ownership is read with `ListTagsForResource` on the tenant's own ARN (never a built one), failing closed; role gains `cloudfront:ListTagsForResource` | `runtime/test/tenant-domains.test.js` ("the fake models reality: tenant reads carry no tags", "status of an owned tenant whose tags come from tags() works...", "tags() throwing is ownership_unverified..."); `tests/Unit/Deploy/TenantRemovalTest.php` (`test_ownership_is_read_with_list_tags_for_resource_on_the_tenants_arn_since_cloudfront_returns_no_tags`, `test_tags_that_cannot_be_read_delete_nothing_even_with_force`); the fakes in `runtime/test/tenants-fakes.js` and `tests/Unit/Deploy/AwsDeployerTest.php` now answer without tags |
+| The tenant viewer-request function called `cf.updateRequestOrigin({hostHeader})`, which CloudFront refused: the app answered 502 "The CloudFront function returned an invalid value for origin rewrite" | c6666fe: the same function and managed origin request policy as `domain()`; assets keyed by `x-forwarded-host` | `TenantDomainStackTest.php`, `test_requests_reach_the_origin_as_with_domain_and_assets_are_cached_per_customer_host` |
+
+What the emulator cannot show, and no fake can either: the defaults CloudFront applies to a distribution without a `ViewerCertificate`, which function results CloudFront accepts for an origin, what a tenant read returns (the API reference promised tags, the service sent none), which ACM actions CloudFront uses on the caller's behalf, when a domain becomes active and what finds it meanwhile. Floci answers none of the tenant calls (table above), so the only check for these is a real run. A fake that mirrors an API reference mirrors its mistakes: when a real run shows a difference, change the fake to answer like the real service and add the test first.
+
+## Trying an unreleased CLI in an app
+
+`arco deploy` builds the app from the staged `composer.json` and `composer.lock`, not from the shell's environment alone: to deploy an app with Arco code that is not released, the three packages (`multiapi/arco`, `multiapi/arco-laravel`, `multiapi/arco-secrets`) must be in the composer files the build reads. The test app `arco-smoke` does this with two scripts (`scripts/use-local-arco.sh` and `scripts/arco-local.sh`, with a README section), which are the worked example:
+
+- `scripts/use-local-arco.sh <path to the monorepo checkout>` writes `composer.local.json` and `composer.local.lock` (git-ignored; the real `composer.json` and `composer.lock` are untouched). They declare three `path` repositories to `packages/arco`, `packages/arco-laravel` and `packages/arco-secrets` with `symlink: false` (copies, so the build never follows a link out of the project) under the fixed version `0.99.0` (`ARCO_LOCAL_VERSION` changes it), then `composer update "multiapi/*"` installs them from the lock copied from the committed one. Every run removes `vendor/multiapi` and `vendor/bin/arco` first, because a copy under a fixed version would otherwise be kept; run it again after every change in the checkout. It prints the checkout's commit and whether it has uncommitted changes.
+- `COMPOSER=composer.local.json` must be set in every shell that runs composer, tests or `arco`. `scripts/arco-local.sh <arco args>` sets it and runs `vendor/bin/arco`, so no shell can forget: a deploy without it ships the released packages (for tenant domains the app's routes then fail with a missing `TenantDomains` facade class).
+- Back to the released packages: `unset COMPOSER; rm composer.local.json composer.local.lock; composer install`.
+
+Keep the copies out of the app's git history, and do not use a version above the released one in a real app: `0.99.0` exists only locally.
+
 ## Bumping `FLOCI_IMAGE`
 
 The image is pinned in one place, `FLOCI_IMAGE` in `bin/test-docker`. Lambda Web Functions exist only in Floci's `nightly-*` images for now (release 2.3.0 does not have them).

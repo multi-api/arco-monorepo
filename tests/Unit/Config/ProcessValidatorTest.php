@@ -51,6 +51,7 @@ final class ProcessValidatorTest extends TestCase
         yield 'consoleMemory' => [['settings' => ['consoleMemory' => 512]], 'consoleMemory'];
         yield 'cache' => [['settings' => ['cache' => ['table' => 'x']]], 'cache'];
         yield 'failedJobsTable' => [['settings' => ['failedJobsTable' => ['table' => 'x']]], 'failedJobsTable'];
+        yield 'tenantDomainTarget (a config layer on a process app)' => [['settings' => ['tenantDomainTarget' => 'routing.example.com']], 'tenantDomainTarget'];
         yield 'deployCommands' => [['deployCommands' => ['migrate']], 'deployCommands'];
         yield 'environment console' => [['environments' => ['production' => ['settings' => ['console' => true]]]], 'console'];
         yield 'runtime php' => [['runtime' => ['php' => '8.4']], 'runtime.php'];

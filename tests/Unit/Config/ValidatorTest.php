@@ -472,7 +472,7 @@ final class ValidatorTest extends TestCase
 
     public function test_every_arco_variable_is_reserved_for_arco(): void
     {
-        foreach (['ARCO', 'ARCO_X', 'ARCO_TRUST_PROXIES', 'ARCO_QUEUES', 'ARCOFOO', 'ARCO_TELEMETRY_HOST', 'ARCO_TELEMETRY_DISABLED'] as $name) {
+        foreach (['ARCO', 'ARCO_X', 'ARCO_TRUST_PROXIES', 'ARCO_QUEUES', 'ARCOFOO', 'ARCO_TELEMETRY_HOST', 'ARCO_TELEMETRY_DISABLED', 'ARCO_TENANT_DOMAINS_FUNCTION', 'ARCO_TENANT_RESERVED'] as $name) {
             $app = App::make('shop')->region('us-east-1')->variables([$name => '1'])->environment('production');
             $errors = (new Validator())->validate(ConfigResolver::resolve($app->toArray(), 'production'), sys_get_temp_dir())->errors;
             self::assertSame('validation.reserved_arco_variable', $errors[0]['key'] ?? null, $name);
