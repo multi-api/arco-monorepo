@@ -277,7 +277,7 @@ final class InfoCommand extends ArcoCommand
         } else {
             $io->table(
                 [$this->t('info.resource_type'), $this->t('info.resource_name'), $this->t('info.resource_on_remove')],
-                array_map(fn (array $resource) => [$resource['type'], $resource['name'], $this->t($resource['retained'] ? 'info.resource_kept' : 'info.resource_deleted')], $resources),
+                array_map(fn (array $resource) => [$resource['type'], $resource['name'], $this->t($resource['retained'] ? 'info.resource_kept' : ($resource['type'] === 'cloudfront:distribution-tenant' ? 'info.resource_deleted_with_force' : 'info.resource_deleted'))], $resources),
             );
         }
         $io->writeln($this->t('info.resources_group', ['group' => $group]));

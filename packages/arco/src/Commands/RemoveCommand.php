@@ -156,7 +156,7 @@ final class RemoveCommand extends ArcoCommand
             }
 
             // What the tags say belongs to the environment, before anything is asked or deleted.
-            $this->listResources($resources, $config, $io, $stream);
+            $this->listResources($resources, $config, $io, $stream, $force);
 
             // No read before the drain: the count that counts is the one the remove makes after disabling the mediator.
             if ($config->tenantDomainTarget !== null && ! $force) {
@@ -231,7 +231,7 @@ final class RemoveCommand extends ArcoCommand
     /**
      * @param list<array{type: string, name: string, arn: string, retained: bool, relations: list<array{type: string, target: string}>, source: ?string, options: ?array<string, mixed>}>|Throwable $resources
      */
-    private function listResources(array|Throwable $resources, AppConfig $config, SymfonyStyle $io, ?JsonStream $stream): void
+    private function listResources(array|Throwable $resources, AppConfig $config, SymfonyStyle $io, ?JsonStream $stream, bool $force): void
     {
         if ($resources instanceof Throwable) {
             // Only a list: without tag:GetResources the remove still goes on.
@@ -245,7 +245,9 @@ final class RemoveCommand extends ArcoCommand
         $io->writeln($this->t('remove.resources', $params));
         $stream?->note('remove.resources', $params);
         foreach ($resources as $resource) {
-            $key = $resource['retained'] ? 'remove.resource_kept' : 'remove.resource_deleted';
+            // Customer domains (tenants) go only with an explicit --force: never "deleted" without it.
+            $key = $resource['retained'] ? 'remove.resource_kept'
+                : ($resource['type'] === 'cloudfront:distribution-tenant' && ! $force ? 'remove.resource_deleted_with_force' : 'remove.resource_deleted');
             $io->writeln('  • ' . $this->t($key, ['type' => $resource['type'], 'name' => $resource['name']]));
             $stream?->note($key, ['type' => $resource['type'], 'name' => $resource['name']]);
         }

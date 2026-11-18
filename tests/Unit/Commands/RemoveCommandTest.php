@@ -370,7 +370,7 @@ final class RemoveCommandTest extends TestCase
         $result = $lines[count($lines) - 1];
         // The mediator was disabled before the count: something changed, so this is "failed", not "refused".
         self::assertSame(['failed', 'remove.tenants_need_force'], [$result['outcome'], $result['error']['key']]);
-        self::assertStringContainsString('3 tenants', $result['error']['message']);
+        self::assertStringContainsString('tenants on its distribution: 3', $result['error']['message']);
         self::assertStringContainsString('--force', $result['error']['message']);
         self::assertStringContainsString('arco tenants:restore --env=production', $result['error']['message']);
         self::assertSame(['count' => 3, 'function' => 'shop-production-tenants', 'environment' => 'production'], $result['error']['params'], 'the documented error.params');
@@ -390,6 +390,44 @@ final class RemoveCommandTest extends TestCase
         self::assertTrue($deployer->removeForcedTenants);
         self::assertSame('removed', $lines[count($lines) - 1]['outcome']);
         self::assertNotContains('deprecated.force_remove', array_column($lines, 'key'));
+        $project->restore();
+    }
+
+    /** @return list<array{type: string, name: string, arn: string, retained: bool}> */
+    private static function tenantResources(): array
+    {
+        $r = fn (string $type, string $name, bool $retained = false) => ['type' => $type, 'name' => $name, 'arn' => "arn:$name", 'retained' => $retained, 'relations' => [], 'source' => null, 'options' => null];
+        return [$r('cloudfront:distribution-tenant', 'dt_1'), $r('cloudformation:stack', 'arco-shop-production-tenants'), $r('s3', 'shop-uploads', true)];
+    }
+
+    public function test_the_listing_says_customer_domains_are_deleted_only_with_force(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->tagged = self::tenantResources();
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
+
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('cloudfront:distribution-tenant dt_1 (deleted only with --force)', $display);
+        self::assertStringContainsString('cloudformation:stack arco-shop-production-tenants (deleted)', $display);
+        self::assertStringContainsString('s3 shop-uploads (kept)', $display);
+        $project->restore();
+    }
+
+    public function test_with_force_the_listing_says_customer_domains_are_deleted(): void
+    {
+        $project = new ProjectFixture(self::tenantConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $deployer->tagged = self::tenantResources();
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--force' => true], ['interactive' => false]);
+
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('cloudfront:distribution-tenant dt_1 (deleted)', $display);
+        self::assertStringNotContainsString('only with --force', $display);
         $project->restore();
     }
 

@@ -12,6 +12,12 @@ final class TenantDomainStack
         return substr('arco-' . $config->functionName(), 0, 115) . '-tenants';
     }
 
+    /** The viewer-request CloudFront function of the stack (named like the stack's other resources). */
+    public static function functionName(AppConfig $config): string
+    {
+        return self::name($config, 'host');
+    }
+
     private static function name(AppConfig $config, string $suffix): string
     {
         $name = 'arco-' . $config->functionName() . '-tenant-' . $suffix;
@@ -95,7 +101,7 @@ final class TenantDomainStack
                 'ForwardHost' => [
                     'Type' => 'AWS::CloudFront::Function',
                     'Properties' => [
-                        'Name' => self::name($config, 'host'),
+                        'Name' => self::functionName($config),
                         'AutoPublish' => true,
                         'FunctionCode' => $code,
                         'FunctionConfig' => ['Comment' => 'Arco tenant host and query forwarding', 'Runtime' => 'cloudfront-js-2.0'],
