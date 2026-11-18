@@ -99,7 +99,7 @@ final class TenantInventory
         if (Aws::string($tenant['Id'] ?? null) !== $id) {
             throw $this->unverified($id, 'the answer is for another tenant');
         }
-        $tags = Aws::tagMap(Aws::map($tenant['Tags'] ?? null)['Items'] ?? null);
+        $tags = $this->tags($id, $tenant);
         $enabled = $tenant['Enabled'] ?? null;
         $domains = [];
         foreach (is_array($tenant['Domains'] ?? null) ? $tenant['Domains'] : [] as $domain) {
@@ -121,6 +121,37 @@ final class TenantInventory
             Aws::string($result['ETag'] ?? null),
             $owned,
         );
+    }
+
+    /**
+     * The tenant's tags. Real CloudFront answers GetDistributionTenant without them: they come from
+     * ListTagsForResource on the ARN the answer carries (never built or guessed). An inline `Tags.Items` list is
+     * still used when present. A tag list that cannot be read is an error, never "no tags".
+     *
+     * @param array<string, mixed> $tenant
+     * @return array<string, string>
+     * @throws DeployException unverified
+     */
+    private function tags(string $id, array $tenant): array
+    {
+        $items = Aws::map($tenant['Tags'] ?? null)['Items'] ?? null;
+        if (is_array($items) && array_is_list($items)) {
+            return Aws::tagMap($items);
+        }
+        $arn = Aws::string($tenant['Arn'] ?? null);
+        if ($arn === null || ! str_starts_with($arn, 'arn:') || ! str_ends_with($arn, 'distribution-tenant/' . $id)) {
+            throw $this->unverified($id, 'its ARN is missing or is not the tenant\'s, so its tags cannot be read');
+        }
+        try {
+            $answer = Aws::call($this->cloudFront, 'ListTagsForResource', ['Resource' => $arn]);
+        } catch (AwsException $e) {
+            throw $this->unverified($id, self::describe($e));
+        }
+        $list = Aws::map($answer['Tags'] ?? null)['Items'] ?? null;
+        if (! is_array($list) || ! array_is_list($list)) {
+            throw $this->unverified($id, 'ListTagsForResource returned no tag list');
+        }
+        return Aws::tagMap($list);
     }
 
     /**

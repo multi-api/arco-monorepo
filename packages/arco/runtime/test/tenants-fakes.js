@@ -24,6 +24,7 @@ function awsError(name, message = name) {
 function tenantFor(domain, overrides = {}) {
   return {
     Id: `dt_${domain}`,
+    Arn: `arn:aws:cloudfront::111111111111:distribution-tenant/dt_${domain}`,
     Name: domain,
     DistributionId: 'DIST1',
     ConnectionGroupId: 'CG1',
@@ -65,23 +66,26 @@ function fakeCloudFront({ tenants = [], pageSize = 100 } = {}) {
   // Real CloudFront: GetDistributionTenantByDomain only finds ACTIVE domains.
   const byDomain = (domain) => [...store.values()].find((t) => (t.Domains ?? []).some((d) => d.Domain === domain && d.Status === 'active'));
   const byIdOrName = (key) => store.get(key) ?? [...store.values()].find((t) => t.Name === key);
+  // Real CloudFront: the tenant reads carry NO tags; they are served only through tags(arn).
+  const view = ({ Tags, ...rest }) => structuredClone(rest);
   const etagOf = (id) => (state.omitEtag.has(id) ? undefined : state.etags.get(id));
 
   const adapter = {
     async getTenantByDomain(domain) {
       record('getTenantByDomain', domain);
       const tenant = byDomain(domain);
-      return tenant ? { tenant: structuredClone(tenant), etag: etagOf(tenant.Id) } : null;
+      return tenant ? { tenant: view(tenant), etag: etagOf(tenant.Id) } : null;
     },
     async getTenant(id) {
       record('getTenant', id);
       const tenant = byIdOrName(id);
-      return tenant ? { tenant: structuredClone(tenant), etag: etagOf(tenant.Id) } : null;
+      return tenant ? { tenant: view(tenant), etag: etagOf(tenant.Id) } : null;
     },
     async createTenant(input) {
       record('createTenant', input);
       const tenant = {
         Id: `dt_${input.Name}`,
+        Arn: `arn:aws:cloudfront::111111111111:distribution-tenant/dt_${input.Name}`,
         Name: input.Name,
         DistributionId: input.DistributionId,
         ConnectionGroupId: input.ConnectionGroupId,
@@ -116,6 +120,14 @@ function fakeCloudFront({ tenants = [], pageSize = 100 } = {}) {
       const items = all.slice(start, start + pageSize).map(({ Tags, ...summary }) => summary);
       const end = start + pageSize;
       return { items, nextMarker: end < all.length ? String(end) : undefined };
+    },
+    // A tenant stored with `Tags: undefined` models tags that cannot be read: the call fails.
+    async tags(arn) {
+      record('tags', arn);
+      const tenant = [...store.values()].find((t) => t.Arn === arn);
+      if (!tenant) throw awsError('EntityNotFound');
+      if (!tenant.Tags) throw awsError('AccessDenied');
+      return Array.isArray(tenant.Tags.Items) ? structuredClone(tenant.Tags.Items) : [];
     },
     async certificate(id) {
       record('certificate', id);

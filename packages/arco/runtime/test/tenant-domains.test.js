@@ -213,8 +213,9 @@ test('tenants of another distribution or connection group are foreign and never 
 test('a tenant whose tags cannot be read is ownership_unverified, never adopted', async () => {
   const variants = [
     { Tags: undefined },
-    { Tags: {} },
-    { Tags: { Items: 'x' } },
+    { Arn: 'arn:aws:cloudfront::111111111111:distribution-tenant/dt_other' },
+    { Arn: undefined },
+    { Arn: '' },
     { Tags: { Items: [{ Key: 'arco:app', Value: 5 }, { Key: 'arco:environment', Value: 'production' }] } },
     { ConnectionGroupId: undefined },
     { DistributionId: undefined },
@@ -234,6 +235,8 @@ test('a tenant with readable tags that lack ours is foreign: taken, not found, u
     { Tags: { Items: [{ Key: 'arco:app', Value: 'shop' }] } },
     { Tags: { Items: [{ Key: 'arco:environment', Value: 'production' }] } },
     { Tags: { Items: [{ Key: 'team', Value: 'x' }] } },
+    { Tags: {} },
+    { Tags: { Items: 'x' } },
   ];
   for (const overrides of variants) {
     const t = setup({ tenants: [tenantFor('hand.customer.com', overrides), tenantFor('mine.customer.com')] });
@@ -464,7 +467,7 @@ test('list fails as a whole when ownership of any summary cannot be verified', a
   const variants = [
     (t) => { t.state.fail.getTenant = { error: awsError('AccessDenied'), always: true }; },
     (t) => { t.put(tenantFor('c.customer.com', { Id: 'dt_untagged', Tags: undefined })); },
-    (t) => { t.put(tenantFor('c.customer.com', { Id: 'dt_notags', Tags: {} })); },
+    (t) => { t.put(tenantFor('c.customer.com', { Arn: 'arn:aws:cloudfront::111111111111:distribution-tenant/dt_elsewhere' })); },
     (t) => { t.state.summaries = [{ Name: 'no-id' }]; },
   ];
   for (const mutate of variants) {
@@ -762,4 +765,53 @@ test('active domains and failed certificates keep their states', async () => {
   const failed = setup({ tenants: [tenantFor('a.customer.com')] });
   failed.state.certs['dt_a.customer.com'] = { CertificateStatus: 'failed', CertificateArn: ARN };
   assert.equal(ok(await failed.handler({ operation: 'status', domain: 'a.customer.com' })).state, 'failed');
+});
+
+// ---- tags come from ListTagsForResource (the tenant reads carry none on real CloudFront) --------
+
+const tagCalls = (t) => t.state.calls.filter((c) => c.method === 'tags').map((c) => c.args[0]);
+
+test('the fake models reality: tenant reads carry no tags', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com')] });
+  assert.equal('Tags' in (await t.adapter.getTenant('dt_a.customer.com')).tenant, false);
+  assert.equal('Tags' in (await t.adapter.getTenantByDomain('nothing.customer.com') ?? { tenant: {} }).tenant, false);
+});
+
+test('status of an owned tenant whose tags come from tags() works and proceeds to activation', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com')] });
+  t.state.certs['dt_a.customer.com'] = { CertificateStatus: 'issued', CertificateArn: 'arn:acm:x' };
+  assert.equal(ok(await t.handler({ operation: 'status', domain: 'a.customer.com' })).reason, 'activating');
+  assert.deepEqual(tagCalls(t), ['arn:aws:cloudfront::111111111111:distribution-tenant/dt_a.customer.com']);
+  assert.equal(t.state.calls.filter((c) => c.method === 'updateTenant').length, 1);
+});
+
+test('tags() throwing is ownership_unverified, nothing is written, and the error name is logged', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com')] });
+  t.state.fail.tags = { error: awsError('AccessDenied', 'secret'), always: true };
+  err(await t.handler({ operation: 'status', domain: 'a.customer.com' }), 'ownership_unverified');
+  assert.equal(JSON.parse(t.logs[0]).detail, 'tags unreadable: AccessDenied');
+  err(await t.handler({ operation: 'remove', domain: 'a.customer.com' }), 'ownership_unverified');
+  err(await add(t, 'a.customer.com'), 'ownership_unverified');
+  assert.deepEqual(t.writes(), []);
+});
+
+test('an ARN that does not match the tenant id is never used to read tags', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com', { Arn: 'arn:aws:cloudfront::111111111111:distribution-tenant/dt_other' })] });
+  err(await t.handler({ operation: 'status', domain: 'a.customer.com' }), 'ownership_unverified');
+  assert.deepEqual(tagCalls(t), []);
+});
+
+test('inline tags are kept and tags() is not called', async () => {
+  const t = setup();
+  t.adapter.getTenantByDomain = async () => ({ tenant: tenantFor('a.customer.com'), etag: 'E1' });
+  assert.equal(ok(await t.handler({ operation: 'status', domain: 'a.customer.com' })).state, 'pending');
+  assert.deepEqual(tagCalls(t), []);
+});
+
+test('list reads tags once per candidate tenant and skips those of other groups without reading', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com'), tenantFor('b.customer.com', { Tags: ownTags('other', 'x') }),
+    tenantFor('c.customer.com', { ConnectionGroupId: 'CG2' }), tenantFor('d.customer.com')] });
+  assert.deepEqual(ok(await t.handler({ operation: 'list' })).domains.map((d) => d.domain), ['a.customer.com', 'd.customer.com']);
+  assert.equal(tagCalls(t).length, 3);
+  assert.ok(!tagCalls(t).some((a) => a.endsWith('dt_c.customer.com')));
 });

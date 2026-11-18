@@ -52,6 +52,8 @@ final class TenantRemovalTest extends TestCase
     /** @var array<string, \Closure> operation overrides: closure(CommandInterface): mixed */
     private array $overrides = [];
     private int $settleReads = 2;
+    /** real CloudFront answers GetDistributionTenant without Tags; true models the API reference's inline shape */
+    private bool $inlineTags = false;
 
     private function config(): AppConfig
     {
@@ -73,12 +75,19 @@ final class TenantRemovalTest extends TestCase
         $this->overrides = [];
         $this->settleReads = 2;
         $this->override = null;
+        $this->inlineTags = false;
     }
 
     /** @param array<string, string> $tags */
     private function tenant(string $id, array $tags = self::OURS, bool $enabled = true, string $status = 'Deployed', string $group = 'cg_1', string $distribution = 'ETENANT'): void
     {
         $this->tenants[$id] = ['etag' => 1, 'enabled' => $enabled, 'inprogress' => $status === 'Deployed' ? 0 : 99, 'tags' => $tags, 'group' => $group, 'distribution' => $distribution, 'domains' => ["$id.customer.com"]];
+    }
+
+    /** @param array<string, string> $tags @return list<array{Key: string, Value: string}> */
+    private function tagItems(array $tags): array
+    {
+        return array_map(fn (string $k, string $v) => ['Key' => $k, 'Value' => $v], array_keys($tags), array_values($tags));
     }
 
     /** @return array<string, mixed> */
@@ -89,8 +98,8 @@ final class TenantRemovalTest extends TestCase
             'Id' => $id, 'Name' => $id, 'DistributionId' => $t['distribution'], 'ConnectionGroupId' => $t['group'],
             'Domains' => array_map(fn (string $d) => ['Domain' => $d, 'Status' => 'active'], $t['domains']),
             'Enabled' => $t['enabled'], 'Status' => $t['inprogress'] > 0 ? 'InProgress' : 'Deployed',
-            'Tags' => ['Items' => array_map(fn (string $k, string $v) => ['Key' => $k, 'Value' => $v], array_keys($t['tags']), array_values($t['tags']))],
-        ];
+            'Arn' => 'arn:aws:cloudfront::111111111111:distribution-tenant/' . $id,
+        ] + ($this->inlineTags ? ['Tags' => ['Items' => $this->tagItems($t['tags'])]] : []);
     }
 
     private static function error(string $class, string $operation, string $code, int $status = 400): \Throwable
@@ -148,6 +157,13 @@ final class TenantRemovalTest extends TestCase
                 $body = $this->tenantBody($id);
                 $this->tenants[$id]['inprogress'] = max(0, $this->tenants[$id]['inprogress'] - 1);
                 return new Result(['DistributionTenant' => $body, 'ETag' => 'E' . $this->tenants[$id]['etag']]);
+            },
+            'ListTagsForResource' => function (CommandInterface $command): Result {
+                $id = substr((string) strrchr((string) $command['Resource'], '/'), 1);
+                if (! isset($this->tenants[$id])) {
+                    throw self::error(CloudFrontException::class, 'ListTagsForResource', 'EntityNotFound', 404);
+                }
+                return new Result(['Tags' => ['Items' => $this->tagItems($this->tenants[$id]['tags'])]]);
             },
             'UpdateDistributionTenant' => function (CommandInterface $command): Result {
                 $this->writes[] = ['op' => 'update'] + $command->toArray();
@@ -746,6 +762,97 @@ final class TenantRemovalTest extends TestCase
         self::assertSame('dt_1', $e->params['tenant']);
         self::assertStringContainsString('AccessDenied', (string) $e->params['error']);
         $this->assertNothingChangedButTheAttempt();
+    }
+
+    public function test_ownership_is_read_with_list_tags_for_resource_on_the_tenants_arn_since_cloudfront_returns_no_tags(): void
+    {
+        $this->tenant('dt_1', enabled: false);
+        $this->dispatch();
+
+        self::assertTrue($this->remove(force: true));
+
+        $tagReads = array_keys(array_filter($this->mocks->calls, fn (string $c) => $c === 'ListTagsForResource'));
+        self::assertNotSame([], $tagReads);
+        self::assertSame('arn:aws:cloudfront::111111111111:distribution-tenant/dt_1', $this->mocks->params[$tagReads[0]]['Resource']);
+        self::assertSame([], $this->tenants);
+    }
+
+    public function test_the_inline_tag_shape_is_still_supported(): void
+    {
+        $this->inlineTags = true;
+        $this->tenant('dt_1', enabled: false);
+        $this->dispatch();
+
+        self::assertTrue($this->remove(force: true));
+
+        self::assertNotContains('ListTagsForResource', $this->mocks->calls);
+    }
+
+    public function test_an_empty_tag_list_is_a_foreign_tenant(): void
+    {
+        $this->tenant('dt_1', []);
+        $this->dispatch();
+
+        $this->failsWith(fn () => $this->remove(force: true), 'remove.tenant_foreign');
+
+        $this->assertNothingChangedButTheAttempt();
+    }
+
+    public function test_tags_that_cannot_be_read_delete_nothing_even_with_force(): void
+    {
+        $this->tenant('dt_1');
+        $this->overrides['ListTagsForResource'] = fn () => self::error(CloudFrontException::class, 'ListTagsForResource', 'AccessDenied', 403);
+        $this->dispatch();
+
+        $e = $this->failsWith(fn () => $this->remove(force: true), 'remove.tenant_unverified');
+
+        self::assertStringContainsString('ListTagsForResource: AccessDenied', (string) $e->params['error']);
+        self::assertSame([], $this->writes);
+    }
+
+    public function test_an_answer_without_a_tag_list_is_unverified(): void
+    {
+        $this->tenant('dt_1');
+        $this->overrides['ListTagsForResource'] = fn () => new Result([]);
+        $this->dispatch();
+
+        $this->failsWith(fn () => $this->remove(force: true), 'remove.tenant_unverified');
+
+        self::assertSame([], $this->writes);
+    }
+
+    public function test_an_arn_that_is_missing_or_not_the_tenants_is_never_guessed_and_nothing_is_read_with_it(): void
+    {
+        foreach ([null, 'arn:aws:cloudfront::111111111111:distribution-tenant/dt_other', 'arn:aws:cloudfront::111111111111:distribution/dt_1'] as $arn) {
+            $this->setUp();
+            $this->tenant('dt_1');
+            $this->overrides['GetDistributionTenant'] = function (CommandInterface $c) use ($arn): Result {
+                $body = $this->tenantBody((string) $c['Identifier']);
+                unset($body['Arn']);
+                return new Result(['DistributionTenant' => $body + ($arn === null ? [] : ['Arn' => $arn]), 'ETag' => 'E1']);
+            };
+            $this->dispatch();
+
+            $this->failsWith(fn () => $this->remove(force: true), 'remove.tenant_unverified');
+
+            self::assertNotContains('ListTagsForResource', $this->mocks->calls);
+            self::assertSame([], $this->writes);
+        }
+    }
+
+    public function test_the_tags_are_read_fresh_before_every_write(): void
+    {
+        $this->tenant('dt_1');
+        $this->dispatch();
+
+        $this->remove(force: true);
+
+        // Each CloudFront write is directly preceded by a tag read of that tenant.
+        foreach ($this->mocks->calls as $i => $call) {
+            if (in_array($call, ['UpdateDistributionTenant', 'DeleteDistributionTenant'], true)) {
+                self::assertSame('ListTagsForResource', $this->mocks->calls[$i - 1], "$call follows a tag read");
+            }
+        }
     }
 
     public function test_a_tenant_without_an_etag_or_state_is_never_changed(): void

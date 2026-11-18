@@ -90,6 +90,8 @@ Record for each step: the command, the expected observation, the actual result, 
 
 Copy this table into the pull request or release notes that adopts the result.
 
+Tag ownership (steps 4, 10, 13): on 2026-11-18 real CloudFront returned no `Tags` on `GetDistributionTenant`; `TenantInventory` reads ownership with `ListTagsForResource` on the tenant's ARN (`DistributionTenant.Arn`).
+
 | Step | Date | Expected | Observed | Pass? | Notes (request ids, timings, error names) |
 |---|---|---|---|---|---|
 | 1 First deploy | 2026-11-17 (arco-smoke staging, CLI d6eb1e0) | stack, record, mediator, `tenants: 0` | tenant stack `ROLLBACK_COMPLETE`: `ViewerCertificate`: "configured for SNI and the minimum SSL protocol version is specified as SSLv3" | No | The template had no `ViewerCertificate`. Fixed after this run (default certificate, `sni-only`, `TLSv1.2_2021`); rerun pending. The web deploy and `domain()` had already succeeded. |

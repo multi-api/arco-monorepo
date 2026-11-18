@@ -103,7 +103,7 @@ final class TenantMediator
                 [
                     'Sid' => 'ArcoTenantRead',
                     'Effect' => 'Allow',
-                    'Action' => ['cloudfront:GetDistributionTenant', 'cloudfront:GetDistributionTenantByDomain', 'cloudfront:GetManagedCertificateDetails'],
+                    'Action' => ['cloudfront:GetDistributionTenant', 'cloudfront:GetDistributionTenantByDomain', 'cloudfront:GetManagedCertificateDetails', 'cloudfront:ListTagsForResource'],
                     'Resource' => $tenants,
                 ],
                 [

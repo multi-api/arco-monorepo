@@ -5798,8 +5798,9 @@ final class AwsDeployerTest extends TestCase
             'GetDistributionTenant' => function (CommandInterface $command) use (&$state, $tags): Result {
                 return new Result(['ETag' => 'E1', 'DistributionTenant' => [
                     'Id' => $command['Identifier'], 'DistributionId' => 'ETENANT', 'ConnectionGroupId' => 'cg_1', 'Domains' => [['Domain' => $command['Identifier'] . '.customer.com']],
-                    'Enabled' => $state['enabled'][$command['Identifier']], 'Status' => 'Deployed', 'Tags' => ['Items' => $tags]]]);
+                    'Enabled' => $state['enabled'][$command['Identifier']], 'Status' => 'Deployed', 'Arn' => 'arn:aws:cloudfront::111111111111:distribution-tenant/' . $command['Identifier']]]);
             },
+            'ListTagsForResource' => new Result(['Tags' => ['Items' => $tags]]),
             'UpdateDistributionTenant' => function (CommandInterface $command) use (&$state): Result {
                 $state['enabled'][$command['Id']] = false;
                 return new Result([]);
@@ -5937,7 +5938,7 @@ final class AwsDeployerTest extends TestCase
         $status = $deployer->tenantDomainsStatus($this->removableTenantConfig());
 
         self::assertSame(['distribution' => 'ETENANT', 'connectionGroup' => 'cg_1', 'target' => 'routing.example.com', 'endpoint' => 'd222.cloudfront.net', 'tenants' => 3, 'error' => null], $status);
-        self::assertSame(['DescribeStacks', 'ListDistributionTenants', 'GetDistributionTenant', 'GetDistributionTenant', 'GetDistributionTenant'], $mocks->calls);
+        self::assertSame(['DescribeStacks', 'ListDistributionTenants', 'GetDistributionTenant', 'ListTagsForResource', 'GetDistributionTenant', 'ListTagsForResource', 'GetDistributionTenant', 'ListTagsForResource'], $mocks->calls);
 
         $state['stackDeleted'] = true;
         self::assertNull($deployer->tenantDomainsStatus($this->removableTenantConfig()));
@@ -5947,7 +5948,7 @@ final class AwsDeployerTest extends TestCase
     {
         $state = [];
         $mocks = new AwsMocks();
-        self::answer($mocks, [...self::withTenants($state, 1), 'GetDistributionTenant' => AwsMocks::error(\Aws\CloudFront\Exception\CloudFrontException::class, 'GetDistributionTenant', 'AccessDenied', 403, 'no')]);
+        self::answer($mocks, [...self::withTenants($state, 1), 'ListTagsForResource' => AwsMocks::error(\Aws\CloudFront\Exception\CloudFrontException::class, 'ListTagsForResource', 'AccessDenied', 403, 'no')]);
 
         $status = (new AwsDeployer($mocks->clients(), AwsMocks::noSleep()))->tenantDomainsStatus($this->removableTenantConfig());
 

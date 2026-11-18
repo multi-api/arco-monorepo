@@ -1032,7 +1032,7 @@ role gets this inline policy, the feature's whole CloudFront surface (`<tenants>
 | `ArcoTenantCreate` | `cloudfront:CreateDistributionTenant` | `*`, only with the request tags `arco:app` and `arco:environment` of the environment |
 | `ArcoTenantTagOnCreate` | `cloudfront:TagResource` | `<tenants>`, same request tags |
 | `ArcoTenantWrite` | `cloudfront:UpdateDistributionTenant`, `cloudfront:DeleteDistributionTenant` | `<tenants>`, only on tenants carrying the environment's tags |
-| `ArcoTenantRead` | `cloudfront:GetDistributionTenant`, `GetDistributionTenantByDomain`, `GetManagedCertificateDetails` | `<tenants>` |
+| `ArcoTenantRead` | `cloudfront:GetDistributionTenant`, `GetDistributionTenantByDomain`, `GetManagedCertificateDetails`, `ListTagsForResource` (CloudFront returns no tags on a tenant read) | `<tenants>` |
 | `ArcoTenantCertificates` | `acm:RequestCertificate`, `acm:DescribeCertificate`, `acm:AddTagsToCertificate` | `arn:aws:acm:us-east-1:<account>:certificate/*` (CloudFront requests each customer domain's managed certificate with the mediator's permissions) |
 | `ArcoTenantList` | `cloudfront:ListDistributionTenants` | `*` |
 
@@ -1042,7 +1042,9 @@ the mediator's: it only gets `lambda:InvokeFunction` on the mediator (`ArcoTenan
 `arco remove` and `arco info` with tenant domains also need, beyond the deploy's list above:
 
 - `cloudfront:ListDistributionTenants` (`info` and `remove`), and for `remove` `cloudfront:GetDistributionTenant`,
-  `cloudfront:UpdateDistributionTenant` and `cloudfront:DeleteDistributionTenant`. Already covered by the custom
+  `cloudfront:UpdateDistributionTenant` and `cloudfront:DeleteDistributionTenant`, and, in both, `cloudfront:ListTagsForResource`
+  (CloudFront returns no tags on `GetDistributionTenant`, so ownership is read from the tenant's ARN; the custom domains'
+  list above already has it). Already covered by the custom
   domains' `cloudfront:*Distribution*` (a profile that names actions must add these four; the mediator's role above
   holds the same names as a different principal)
 - `lambda:PutFunctionConcurrency` (disable the mediator; not listed before) and `lambda:GetFunctionConcurrency`,

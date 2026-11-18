@@ -11,6 +11,7 @@ const COMMANDS = [
   'DeleteDistributionTenantCommand',
   'ListDistributionTenantsCommand',
   'GetManagedCertificateDetailsCommand',
+  'ListTagsForResourceCommand',
 ];
 
 // Returns null when the SDK or any command is missing: the mediator answers `unavailable`.
@@ -48,6 +49,11 @@ function createCloudFrontAdapter(load = () => require('@aws-sdk/client-cloudfron
           MaxItems: maxItems,
         }),
       ).then((out) => ({ items: out.DistributionTenantList ?? [], nextMarker: out.NextMarker })),
+    // Responses of the tenant reads carry no tags on real CloudFront: they come from the tenant's ARN.
+    tags: (arn) =>
+      send(new sdk.ListTagsForResourceCommand({ Resource: arn })).then((out) =>
+        out.Tags && Array.isArray(out.Tags.Items) ? out.Tags.Items : [],
+      ),
     certificate: (id) =>
       send(new sdk.GetManagedCertificateDetailsCommand({ Identifier: id })).then(
         (out) => out.ManagedCertificateDetails ?? null,

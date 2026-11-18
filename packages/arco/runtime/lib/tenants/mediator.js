@@ -106,18 +106,43 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
     return domain;
   }
 
+  // The single place that completes a tenant read before ownership is judged. Real CloudFront returns
+  // no tags from the tenant reads: they are read with the tenant's own ARN (never a guessed one). Without
+  // readable tags the tenant stays without them and ownership() answers unverified (fail closed).
+  async function withTags(tenant, trace) {
+    if (!tenant || typeof tenant !== 'object') return tenant;
+    if (tenant.Tags && Array.isArray(tenant.Tags.Items)) return tenant;
+    const arn = tenant.Arn;
+    const id = tenant.Id;
+    if (typeof arn !== 'string' || arn === '' || typeof id !== 'string' || id === '' || !arn.endsWith(`distribution-tenant/${id}`)) {
+      return tenant;
+    }
+    try {
+      const items = await cloudfront.tags(arn);
+      if (!Array.isArray(items)) return tenant;
+      return { ...tenant, Tags: { Items: items } };
+    } catch (error) {
+      if (trace) trace.detail = `tags unreadable: ${errorName(error) || 'Error'}`;
+      return tenant;
+    }
+  }
+
   // Looks the domain up and classifies the tenant that holds it: {found, owner, tenant, etag}.
   // GetDistributionTenantByDomain only finds ACTIVE domains, so a miss falls back to the tenant name
   // `add` creates (deterministic from the domain). A name hit counts only when it lists the domain,
   // unless `lenient` (after a duplicate error from create, where the name itself is what collided).
-  async function find(domain, lenient = false) {
+  async function find(domain, lenient = false, trace) {
     const hit = await cloudfront.getTenantByDomain(domain);
-    if (hit && hit.tenant) return { found: true, owner: ownership(hit.tenant), tenant: hit.tenant, etag: hit.etag };
+    if (hit && hit.tenant) {
+      const tenant = await withTags(hit.tenant, trace);
+      return { found: true, owner: ownership(tenant), tenant, etag: hit.etag };
+    }
     const named = await cloudfront.getTenant(tenantName(domain));
     if (!named || !named.tenant) return { found: false };
     const lists = Array.isArray(named.tenant.Domains) && named.tenant.Domains.some((d) => d && normalizeHost(d.Domain) === domain);
     if (!lists && !lenient) return { found: false };
-    return { found: true, owner: ownership(named.tenant), tenant: named.tenant, etag: named.etag };
+    const tenant = await withTags(named.tenant, trace);
+    return { found: true, owner: ownership(tenant), tenant, etag: named.etag };
   }
 
   async function existing(domain, found, trace) {
@@ -136,7 +161,7 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
       throw new Fail('apex_not_supported', 'Only subdomains are supported, not root domains or public suffixes.');
     }
 
-    const found = await find(domain);
+    const found = await find(domain, false, trace);
     if (found.found) return existing(domain, found, trace);
 
     const correct = await dns.check({ domain, target: config.target, endpoint: config.endpoint });
@@ -163,7 +188,7 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
       const name = errorName(error);
       if (name === 'EntityLimitExceeded') throw new Fail('quota', 'CloudFront refused the tenant: a limit was exceeded.');
       if (!DUPLICATE.has(name)) throw error;
-      const again = await find(domain, true);
+      const again = await find(domain, true, trace);
       if (!again.found) throw new Fail('domain_taken', 'CloudFront reports the domain as already in use.');
       return existing(domain, again, trace);
     }
@@ -172,13 +197,13 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
 
   async function status(raw, trace) {
     const domain = requireDomain(raw);
-    const found = await find(domain);
+    const found = await find(domain, false, trace);
     if (!found.found || found.owner === 'foreign') throw new Fail('not_found', 'This environment has no tenant for the domain.');
     if (found.owner !== 'owned') throw unverified();
     return state(found.tenant, domain, { activate: true, etag: found.etag, trace });
   }
 
-  async function list(cursor, limit) {
+  async function list(cursor, limit, trace) {
     const max = limit === undefined || limit === null ? 50 : limit;
     if (!Number.isInteger(max) || max < 1 || max > 100) throw new Fail('invalid_request', 'The limit must be an integer from 1 to 100.');
     const marker = cursor === undefined || cursor === null ? undefined : decodeCursor(cursor);
@@ -199,15 +224,16 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
         throw unverified();
       }
       if (!full || !full.tenant) continue; // deleted meanwhile
-      const owner = ownership(full.tenant);
+      const tenant = await withTags(full.tenant, trace);
+      const owner = ownership(tenant);
       if (owner === 'foreign') continue;
       if (owner !== 'owned') throw unverified();
-      const entries = Array.isArray(full.tenant.Domains) ? full.tenant.Domains : null;
+      const entries = Array.isArray(tenant.Domains) ? tenant.Domains : null;
       if (!entries) throw unverified('domain');
       for (const entry of entries) {
         const name = normalizeHost(entry && entry.Domain);
         if (name === '') throw unverified('domain');
-        domains.push(await state(full.tenant, name));
+        domains.push(await state(tenant, name));
       }
     }
     const next = page.nextMarker;
@@ -218,9 +244,9 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
     return { domains, cursor: null };
   }
 
-  async function remove(raw) {
+  async function remove(raw, trace) {
     const domain = requireDomain(raw);
-    const found = await find(domain);
+    const found = await find(domain, false, trace);
     if (!found.found) return { removed: true };
     if (found.owner === 'foreign') throw new Fail('not_found', 'This environment has no tenant for the domain.');
     if (found.owner !== 'owned') throw unverified();
@@ -254,7 +280,7 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
       if (!etag) {
         const again = await cloudfront.getTenant(tenant.Id);
         if (!again || !again.tenant) return { removed: true };
-        if (ownership(again.tenant) !== 'owned') throw unverified();
+        if (ownership(await withTags(again.tenant, trace)) !== 'owned') throw unverified();
         etag = again.etag;
       }
       if (!etag) throw conflict();
@@ -293,8 +319,8 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
       let result;
       if (request.operation === 'add') result = await add(request.domain, trace);
       else if (request.operation === 'status') result = await status(request.domain, trace);
-      else if (request.operation === 'remove') result = await remove(request.domain);
-      else result = await list(request.cursor, request.limit);
+      else if (request.operation === 'remove') result = await remove(request.domain, trace);
+      else result = await list(request.cursor, request.limit, trace);
       return { ok: true, result };
     } catch (error) {
       if (error instanceof Fail) {
