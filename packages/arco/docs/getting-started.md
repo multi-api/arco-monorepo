@@ -1008,9 +1008,9 @@ deploy profile needs the custom domain permissions above and:
 - `cloudformation:CreateChangeSet`, `DescribeChangeSet`, `ExecuteChangeSet`, `DeleteChangeSet` on
   `arn:aws:cloudformation:*:*:stack/arco-*` (the tenant stack is only updated through a change set)
 - `cloudfront:CreateConnectionGroup`, `GetConnectionGroup`, `UpdateConnectionGroup`, `DeleteConnectionGroup`,
-  `cloudfront:CreateOriginRequestPolicy`, `GetOriginRequestPolicy`, `UpdateOriginRequestPolicy`,
-  `DeleteOriginRequestPolicy`, `cloudfront:CreateCachePolicy`, `GetCachePolicy`, `UpdateCachePolicy`,
-  `DeleteCachePolicy` (CloudFormation calls them with the deploy credentials; `cloudfront:*Distribution*` does not
+  `cloudfront:CreateCachePolicy`, `GetCachePolicy`, `UpdateCachePolicy`,
+  `DeleteCachePolicy` (the tenant stack has its own cache policy for `/build/*` and uses CloudFront's managed origin
+  request policy; CloudFormation calls them with the deploy credentials; `cloudfront:*Distribution*` does not
   match them)
 - `cloudfront:VerifyDnsConfiguration` (`cloudfront:GetDistributionTenantByDomain` is covered by
   `cloudfront:*Distribution*`)
@@ -1033,8 +1033,12 @@ role gets this inline policy, the feature's whole CloudFront surface (`<tenants>
 | `ArcoTenantTagOnCreate` | `cloudfront:TagResource` | `<tenants>`, same request tags |
 | `ArcoTenantWrite` | `cloudfront:UpdateDistributionTenant`, `cloudfront:DeleteDistributionTenant` | `<tenants>`, only on tenants carrying the environment's tags |
 | `ArcoTenantRead` | `cloudfront:GetDistributionTenant`, `GetDistributionTenantByDomain`, `GetManagedCertificateDetails`, `ListTagsForResource` (CloudFront returns no tags on a tenant read) | `<tenants>` |
-| `ArcoTenantCertificates` | `acm:RequestCertificate`, `acm:DescribeCertificate`, `acm:AddTagsToCertificate` | `arn:aws:acm:us-east-1:<account>:certificate/*` (CloudFront requests each customer domain's managed certificate with the mediator's permissions) |
+| `ArcoTenantCertificates` | `acm:RequestCertificate`, `acm:DescribeCertificate`, `acm:AddTagsToCertificate` | `arn:aws:acm:us-east-1:<account>:certificate/*` (CloudFront requests each customer domain's managed certificate with the mediator's permissions; only `acm:RequestCertificate` is proven necessary, the other two are an estimate) |
 | `ArcoTenantList` | `cloudfront:ListDistributionTenants` | `*` |
+
+These lists were derived from the code and exercised on real AWS only with an administrator deploy profile; a profile
+that names actions has not been verified. Under a permissions boundary both roles are limited by it (see
+[the checklist](configuration.md#managing-tenant-domains-from-the-app)).
 
 Reads have no tag condition so the mediator can tell that a domain belongs to someone else. The app's role is not
 the mediator's: it only gets `lambda:InvokeFunction` on the mediator (`ArcoTenantDomains`).

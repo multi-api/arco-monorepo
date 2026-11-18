@@ -69,8 +69,10 @@ unless the user explicitly says otherwise for the case at hand.
   `PORT`. Queues and schedules POST to routes of the app under `/_arco/`, which the public endpoint never serves.
   See [Go apps](#go-apps-arcojson).
 - **Tenant domain targets:** `tenantDomains(target: ...)` validates a hostname distinct from `domain()` and needs
-  `domain()` in the same environment (`validation.tenant_domain_requires_domain`). It deploys, but is experimental: it has
-  not been accepted against real AWS yet (certificates, origin signing, draining and tenant deletion timing), so
+  `domain()` in the same environment (`validation.tenant_domain_requires_domain`). It deploys and is experimental: it was
+  run on real AWS once, with an administrator profile and a Route 53 target (deploy, add, activation, requests,
+  `remove` without `--force`, `tenants:restore`), but not `remove --force`, Cloudflare or manual-DNS targets, quotas,
+  a limited deploy profile or a boundary on the mediator's role (the list is in the configuration reference), so
   prefer staging and tell the user. A deploy refuses before any change:
   a target at a zone apex, without a zone, occupied or unverifiable (`domains.tenant_target_apex`,
   `domains.tenant_target_zone_missing`, `domains.tenant_target_occupied`, `domains.tenant_target_unverified`,
@@ -96,6 +98,10 @@ unless the user explicitly says otherwise for the case at hand.
   (`TenantDomains::add`, `status`, `list`, `remove`, `fake()`), its exceptions and the manual `lambda:InvokeFunction`
   statement `role()` needs are in
   [Managing tenant domains from the app](configuration.md#managing-tenant-domains-from-the-app).
+  A new customer domain is activated only when the app calls `status` (or `add` again) after the certificate is issued
+  (minutes; `active` about 5 minutes later): `pending` with a `reason` (`activating`, `removing`,
+  `activation failed: <ErrorName>`) is not an error, and an app that never polls `status` never activates the domain.
+  The visitor's address is `$request->ip()`, never `REMOTE_ADDR` (always the link-local `169.254.100.1` on Lambda).
   `remove` disables the mediator first, counts the customer domains and stops with `remove.tenants_need_force` when
   any exist: nothing is deleted. **Never add `--force` on your own to get past `remove.tenants_need_force`:** it
   deletes the user's customers' domains and takes their sites offline for good. Report the `{count}` to the user and

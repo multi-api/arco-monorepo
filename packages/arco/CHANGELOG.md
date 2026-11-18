@@ -35,9 +35,11 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   `environment`); `remove --force` from a non-interactive caller is the explicit authorization to delete customer
   domains. The configuration reference says which statements a `permissionsBoundary()` must allow for tenant domains.
 - **Added (experimental): tenant domains.** `tenantDomains(target: 'routing.example.com')` lets your app add its
-  customers' own domains at runtime. Not yet accepted against real AWS (managed certificate issuance, origin access
-  control through the multi-tenant distribution with the rewritten `Host`, draining and tenant deletion timing, the
-  shape of CloudFront's answers for an empty tenant list): try it on a staging environment first.
+  customers' own domains at runtime, with CloudFront-managed certificates. Run once on real AWS (administrator
+  profile, Route 53 target: deploy and redeploy, add, activation, requests, `list`, `remove`, `remove` without
+  `--force`, `tenants:restore`), but not yet `remove --force`, Cloudflare or manual-DNS targets, quotas, a limited
+  deploy profile or a permissions boundary on the mediator's role: try it on a staging environment first
+  ([what is verified](docs/configuration.md#tenant-domain-routing)).
   - *Scope of v1.* `tenantDomains()` exists only in `arco.php` (not in `arco.json`, so Go and process apps cannot use
     it yet), and the only supported client of the mediator is the `multiapi/arco-laravel` API: the mediator's JSON
     request and response format is internal and may change. One target per environment; customer subdomains only (a
@@ -70,6 +72,14 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
     `deploy.tenant_mediator_not_owned`, `deploy.tenant_mediator_untagged`, `deploy.tenant_mediator_tags_unreadable`,
     `deploy.tenant_mediator_draining`, `deploy.tenant_mediator_failed`, `deploy.tenant_mediator_missing`. The
     mediator ships the public suffix list (publicsuffix.org, MPL 2.0, version 2026-11-17).
+  - *Activation.* CloudFront does not activate a customer domain by itself: `TenantDomains::status()` (or a repeated
+    `add`) applies the issued certificate to the tenant, and the app must poll `status` until `active`. A state is
+    `pending` with the reason `null`, `activating`, `activation failed: <ErrorName>` or `removing`, `active`, or `failed`
+    with `certificate <status>`; while the domain is inactive `status` answers `pending`, never `not_found`. `list`
+    never changes anything. The mediator's role also holds `ArcoTenantCertificates` (ACM) and `ListTagsForResource`
+    (tenant reads return no tags, so ownership is read from the tenant's ARN); the tenant distribution forwards
+    requests to the app as `domain()` does (customer host in `X-Forwarded-Host`; the visitor's address is
+    `$request->ip()`).
   - *`arco info`.* Shows the tenant distribution, the target and the number of customer domains; `info --json` gains
     `tenantDomains` (`{distribution, connectionGroup, target, endpoint, tenants}`, after `schedules`; `tenants` is
     `null` when the count cannot be established; absent without a tenant stack). New keys: `info.tenant_distribution`,

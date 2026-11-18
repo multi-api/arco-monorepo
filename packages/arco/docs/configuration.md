@@ -1350,12 +1350,38 @@ with a `CNAME` to the target, and the target points at the routing endpoint of a
 lowercase hostname without a wildcard and choose a name absent from `domain()`; if it is listed there, remove it
 before using it as a target.
 
-**Experimental.** `arco deploy` deploys `tenantDomains()`, `arco remove` protects customer domains (see
-[Removing an environment with tenant domains](#removing-an-environment-with-tenant-domains)) and `arco info` shows
-them. The feature has not been accepted against real AWS yet: managed certificate issuance, origin access control
-(SigV4) through the multi-tenant distribution with the rewritten `Host`, the timing of draining and of deleting a
-tenant, and the shape of CloudFront's answers for an empty tenant list are checked only against fakes. Treat it as
-experimental until that acceptance run; try it on a staging environment first.
+**Experimental.** The feature was run on real AWS for the first time on 2026-11-17 and 2026-11-18, with an
+administrator deploy profile, a Route 53 target, a Laravel app and two customer subdomains. It stays experimental
+until the rest is verified; try it on a staging environment first.
+
+Verified on real AWS:
+
+- `arco deploy` and a redeploy with `tenantDomains()` (Route 53 target): the redeploy over existing tenants goes
+  through the change set without replacing anything, and a tenant stack left in `ROLLBACK_COMPLETE` by a failed first
+  creation is deleted and recreated by the next deploy.
+- `add` creates the tenant and requests CloudFront's managed certificate (HTTP validation through the `CNAME`); it was
+  issued within minutes for a customer subdomain pointing at the target, and a chain customer domain, target, routing
+  endpoint is accepted.
+- Activation: CloudFront does not activate the domain by itself. `status` (or a repeated `add`) applies the issued
+  certificate and answers `pending` with the reason `activating`; about 5 minutes later `status` answered `active` and
+  the domain served HTTPS. While the domain is inactive `status` answers `pending`, never `not_found`.
+- Requests through a customer domain reach the app (see [What the app receives](#what-the-app-receives-through-a-customer-domain)).
+- `list` returned every domain with `cursor: null` at the end; `remove` of an active domain succeeded on the first
+  call.
+- `arco info` shows the tenant distribution, the target and the number of customer domains.
+- `arco remove` without `--force`, after the typed confirmation, disabled the mediator, waited 90 s, counted the
+  customer domain, stopped and deleted nothing; `arco tenants:restore` enabled the mediator again.
+- The app role under a permissions boundary that allows `lambda:InvokeFunction` on the mediator.
+
+Not verified yet:
+
+- `arco remove --force` (deleting tenants, then the tenant infrastructure) and the 15-minute delete limit.
+- A Cloudflare target and a manual-DNS target; a domain already used by another distribution or environment;
+  account quotas (`quota`); `list` paging with a cursor; a duplicate `add` of a domain still being created.
+- A limited (non-administrator) deploy profile: every run used an administrator profile, so the permission lists in
+  [getting started](getting-started.md#permissions-for-custom-domains) are derived from the code, not from a run.
+- `permissionsBoundary()` on the mediator's role (the run's mediator role had no boundary), and apps in a VPC.
+- Which ACM actions the mediator's role needs besides `acm:RequestCertificate` (see below).
 
 **Limits of this version.**
 
@@ -1383,10 +1409,11 @@ an endpoint anyone can call with a forged host.
 After the `domain()` steps, `deploy`:
 
 1. Checks the target, before anything is created (see the table below).
-2. Creates or updates the stack `arco-<app>-<env>-tenants`: a multi-tenant distribution (same origin, `/build/*`
-   caching, origin request policy and viewer-request function as `domain()`: the app reads the customer's host
-   from `X-Forwarded-Host` and the client address from `X-Forwarded-For`; cached assets are keyed by customer
-   host) and a connection group. Distribution tenants are never part of the stack.
+2. Creates or updates the stack `arco-<app>-<env>-tenants`: a multi-tenant distribution (same origin access
+   control, `/build/*` caching, managed origin request policy and viewer-request function as `domain()`, so the app
+   reads the customer's host from `X-Forwarded-Host`; cached assets are keyed by customer host) with CloudFront's
+   default certificate (`sni-only`, TLS 1.2) until each tenant gets its own, and a connection group. Distribution
+   tenants are never part of the stack.
 3. Adds a second statement (`ArcoCloudFrontTenant`) to the endpoint's policy so the tenant distribution may invoke
    it, keeping the `domain()` statement and any statement of yours.
 4. Points the target at the connection group's routing endpoint with a `CNAME`.
@@ -1445,26 +1472,38 @@ app gets `ARCO_TENANT_DOMAINS_FUNCTION` (the function name). The mediator uses t
 Node.js runtime; its code does not ship its own copy.
 
 **With a permissions boundary.** `permissionsBoundary()` (or `--permissions-boundary`) is applied to both roles, and a
-boundary only limits: it grants nothing. For tenant domains the boundary policy must allow:
+boundary only limits: it grants nothing. The effective permissions of each role are the intersection of its policy and
+the boundary, so the boundary may allow more than the lists below, never less. One `permissionsBoundary()` applies to
+both roles: a boundary written for the app's role alone (the usual case) lacks the mediator's statements. Checklist:
 
-- for the app's execution role `arco-<app>-<env>`, `lambda:InvokeFunction` on
+- **The app's role** `arco-<app>-<env>`: `lambda:InvokeFunction` on
   `arn:aws:lambda:<region>:<account>:function:<app>-<env>-tenants` (the statement `ArcoTenantDomains` Arco adds to the
-  role). Without it the app's calls fail and the Laravel API throws `TenantDomainsUnavailable`;
-- for the mediator's role `arco-<app>-<env>-tenants`, everything its inline policy grants (`TenantMediator::policy()`),
-  by `Sid`: `ArcoTenantLogs` (`logs:CreateLogGroup`, `CreateLogStream`, `PutLogEvents` on its own log group),
-  `ArcoTenantCreate` (`cloudfront:CreateDistributionTenant`, with the environment's request tags),
-  `ArcoTenantTagOnCreate` (`cloudfront:TagResource` on `distribution-tenant/*`, with the request tags),
-  `ArcoTenantWrite` (`cloudfront:UpdateDistributionTenant` and `DeleteDistributionTenant` on `distribution-tenant/*`,
-  only on tenants carrying the environment's tags), `ArcoTenantRead` (`cloudfront:GetDistributionTenant`,
-  `GetDistributionTenantByDomain`, `GetManagedCertificateDetails`, `ListTagsForResource` on `distribution-tenant/*`),
-  `ArcoTenantCertificates` (`acm:RequestCertificate`, `DescribeCertificate`, `AddTagsToCertificate` on the account's
-  certificates in `us-east-1`: CloudFront requests each customer domain's certificate with the mediator's
-  permissions) and `ArcoTenantList` (`cloudfront:ListDistributionTenants`). Without them the mediator's CloudFront calls are denied and every add,
-  status, list or remove of a customer domain fails.
+  role). Without it the app's calls are denied and the Laravel API throws `TenantDomainsUnavailable`. *Verified on real
+  AWS:* the app could not call the mediator until the boundary allowed it, then it could.
+- **The mediator's role** `arco-<app>-<env>-tenants`: every statement of its inline policy, by `Sid` (the next list).
+  *Not verified:* the run's mediator role had no boundary, so a boundary on it has never been exercised. Without one of
+  these statements in the boundary the matching mediator call is denied and the add, status, list or remove that needs
+  it fails with `failed`.
 
-The boundary may allow more than these statements, never less: the effective permissions of each role are the
-intersection of its policy and the boundary. One `permissionsBoundary()` applies to both roles, so a boundary written
-for the app's role alone (the usual case) lacks the mediator's CloudFront statements.
+The mediator role's inline policy is exactly (`TenantMediator::policy()`; `<tenants>` is
+`arn:aws:cloudfront::<account>:distribution-tenant/*`):
+
+| `Sid` | Actions | Resource and condition |
+|---|---|---|
+| `ArcoTenantLogs` | `logs:CreateLogGroup`, `logs:CreateLogStream`, `logs:PutLogEvents` | `arn:aws:logs:<region>:<account>:log-group:/aws/lambda/<app>-<env>-tenants:*` |
+| `ArcoTenantCreate` | `cloudfront:CreateDistributionTenant` | `*`, only with the request tags `arco:app` and `arco:environment` of the environment |
+| `ArcoTenantTagOnCreate` | `cloudfront:TagResource` | `<tenants>`, same request tags |
+| `ArcoTenantWrite` | `cloudfront:UpdateDistributionTenant`, `cloudfront:DeleteDistributionTenant` | `<tenants>`, only on tenants carrying the environment's tags |
+| `ArcoTenantRead` | `cloudfront:GetDistributionTenant`, `cloudfront:GetDistributionTenantByDomain`, `cloudfront:GetManagedCertificateDetails`, `cloudfront:ListTagsForResource` | `<tenants>` |
+| `ArcoTenantCertificates` | `acm:RequestCertificate`, `acm:DescribeCertificate`, `acm:AddTagsToCertificate` | `arn:aws:acm:us-east-1:<account>:certificate/*` |
+| `ArcoTenantList` | `cloudfront:ListDistributionTenants` | `*` |
+
+`ListTagsForResource` is there because CloudFront's tenant reads return no tags: ownership is read from the tenant's own
+ARN. `ArcoTenantCertificates` exists because CloudFront requests each customer domain's managed certificate with the
+mediator's permissions (`CreateDistributionTenant` is denied without them). Only `acm:RequestCertificate` was proven
+necessary on real AWS; AWS does not document which ACM actions CloudFront uses for a tenant's managed certificate, so
+`acm:DescribeCertificate` and `acm:AddTagsToCertificate` are an estimate. If a future AWS change needs another ACM
+action, the failure names it and the policy is a one-line addition.
 
 Before changing anything the deploy refuses, and `--force` overrides none of it (a mediator of another environment
 would hand this environment's customer domains to that environment's CloudFront permissions):
@@ -1503,15 +1542,25 @@ $page = TenantDomains::list(cursor: null, limit: 50); // TenantDomainPage: domai
 TenantDomains::remove('shop.customer.com');
 ```
 
-- `add` answers `pending` for a new domain; adding it again (a retry) answers its current state. `status` throws
-  `TenantDomainNotFound` for a domain the environment does not have.
-- A new domain is not served the moment its certificate is issued: CloudFront keeps it inactive until the
-  certificate is applied to its tenant. `status` (and a repeated `add`) does that once the certificate is issued and
-  answers `pending` with the reason `activating`; if CloudFront refuses, the reason is `activation failed: <error>`
-  and the next `status` tries again. So poll `status` until it answers `active`; `list` never changes anything.
-- States are `pending`, `active` and `failed`. `pending` covers certificate issuance and a domain being removed
-  (`reason` is `removing`); `failed` carries a reason such as `certificate failed`. `isPending()`, `isActive()` and
-  `isFailed()` read it.
+- `add` answers `pending` for a new domain; adding it again (a retry) answers its current state and, like `status`,
+  applies an issued certificate. `status` throws `TenantDomainNotFound` for a domain the environment does not have.
+- States are `pending`, `active` and `failed`; `isPending()`, `isActive()` and `isFailed()` read them. `reason` is
+  `null` unless one of these applies:
+
+  | State | `reason` | Meaning |
+  |---|---|---|
+  | `pending` | `null` | The tenant exists, its domain is not active and nothing else is known: the certificate is being validated (typically minutes), or `list` found an issued certificate it does not apply |
+  | `pending` | `activating` | The certificate is issued and applied to the tenant; CloudFront is activating the domain (about 5 minutes were seen) |
+  | `pending` | `activation failed: <ErrorName>` | The certificate is issued but CloudFront refused to apply it (`<ErrorName>` is CloudFront's error name); the next `status` tries again |
+  | `pending` | `removing` | The tenant is disabled and being removed |
+  | `active` | `null` | The domain is active and serves HTTPS |
+  | `failed` | `certificate failed`, `certificate validation-timed-out`, `certificate revoked`, `certificate expired` or `certificate inactive` | CloudFront's certificate status for the domain; look at the domain's DNS first |
+
+- A new domain is not served the moment its certificate is issued: CloudFront keeps it inactive (and
+  `GetDistributionTenantByDomain` does not find it) until the certificate is applied to its tenant. **Only `status` and a
+  repeated `add` apply it; `list` never changes anything. So an app must poll `status` (every 30 seconds or so) until it
+  answers `active`.** While the domain is inactive `status` answers `pending`, not `TenantDomainNotFound`. Times seen:
+  the certificate issued within minutes; `active` about 5 minutes after the first `status` that applied it.
 - `list` takes a `limit` from 1 to 100 (default 50) and returns the page's `cursor`: pass it back to continue, and
   only a `null` cursor is the end (a page can be empty and still carry one). It is not a snapshot: under concurrent
   changes a domain can be missed or seen twice.
@@ -1531,11 +1580,32 @@ kept for logs and support; handle the exception classes, not the strings):
 | `TenantDomainNotFound` | `not_found` | The environment has no such domain |
 | `TenantDomainRemovalPending` | `removal_pending` | Disabled, but not deletable yet |
 | `TenantDomainsUnavailable` | `unavailable` | Not on Arco, `tenantDomains()` not deployed, mediator not usable, or the app's role may not invoke it |
-| `TenantDomainException` | `failed`, `conflict`, `ownership_unverified` | Anything else; `conflict` means the tenant changed during the call, so retry |
+| `TenantDomainException` | `failed`, `conflict`, `ownership_unverified` | Anything else. `conflict`: the tenant changed during the call, so retry. `ownership_unverified`: the mediator could not prove the tenant is this environment's (its tags, domain or state could not be read), so it changed nothing; check the mediator's logs and its `cloudfront:ListTagsForResource` permission. `failed`: any other CloudFront or mediator error, with the AWS error name in the message |
 
 In tests, `TenantDomains::fake()` swaps in an in-memory service (it works without `ARCO=1` and never touches AWS) and
 returns it: `assertAdded($domain)`, `assertRemoved($domain)` and `assertNothingAdded()`, plus `activate($domain)` and
 `fail($domain, $reason)` to move a domain's state.
+
+##### What the app receives through a customer domain
+
+A request to a customer domain goes through the tenant distribution, which signs it to the app's endpoint exactly as
+`domain()` does. Observed on real AWS for a request to `https://shop.example.com/path?q=a+b&x=%2B`:
+
+- `Host` is the Lambda endpoint's own host, not the customer's. The customer domain is in `X-Forwarded-Host` (set by
+  the viewer-request function, as with `domain()`), which `multiapi/arco-laravel` trusts, so `$request->getHost()`
+  answers the customer domain.
+- The query string arrives as `q=a%20b&x=%2B`: a literal `+` is sent as `%20` and an encoded `+` (`%2B`) is kept, as
+  [`+` in query strings](#-in-query-strings) describes for `domain()`.
+- `X-Forwarded-For` holds the visitor's address followed by a CloudFront address, and a `CloudFront-Viewer-Address`
+  header carries the visitor's `ip:port`.
+- **The visitor's address:** read `$request->ip()`. It returns the visitor's address, the same on a customer domain as
+  on `domain()`. Never read `REMOTE_ADDR`: on Lambda it is always `169.254.100.1`, a link-local address. Code that
+  runs before Laravel's trusted proxies (a global middleware prepended ahead of them) still sees that link-local
+  address.
+
+Not verified: per-host caching of `/build/*` between two customer domains, and that the endpoint's own URL answers 403
+to a direct call with a customer host (the endpoint protection of [Protecting the endpoint](#protecting-the-endpoint)
+applies to the same endpoint).
 
 **Rules for customer domains.** A domain must be a lowercase, multi-label hostname (no wildcard, underscore, IP
 address or unicode: send punycode), a **subdomain** of a registrable domain according to the public suffix list
@@ -1578,7 +1648,7 @@ Arco no crea. AWS cobra por cada tenant de distribución y tiene cuotas por cuen
 En Cloudflare, tanto el target como los dominios de clientes deben usar solo DNS. Errores principales:
 `TenantDomainDnsIncorrect` (el DNS no apunta al target), `InvalidTenantDomain` (no es un subdominio válido o es
 reservado), `TenantDomainTaken` y `TenantDomainRemovalPending` (volver a llamar más tarde). La función es
-experimental hasta que se acepte contra AWS real. `arco remove` solo borra los dominios de clientes con `--force`
+experimental: se probó en AWS real con un perfil de administrador (ver la lista de lo verificado arriba). `arco remove` solo borra los dominios de clientes con `--force`
 explícito (`--yes` no basta).
 
 #### Removing an environment with tenant domains
@@ -1608,6 +1678,14 @@ confirmation never count: they confirm the removal, not the loss of your custome
    statement on the endpoint, the stack (distribution and connection group), the function and its role.
 
 The rest of the environment is removed as usual afterwards. A step that is already gone is skipped.
+
+*Observed on real AWS (without `--force`):* after the typed confirmation, `arco remove` set the mediator's reserved
+concurrency to 0, waited 90 s, counted the customer domain (1), stopped with `remove.tenants_need_force` and deleted
+nothing; the app and the customer domain kept serving. `arco tenants:restore --env=<env>` then enabled the mediator
+again and the app's `list` answered. `arco remove --force` has not been run on real AWS yet.
+
+A tenant stack left in `ROLLBACK_COMPLETE` by a failed first creation needs no manual deletion: the next `arco deploy`
+deletes and recreates it.
 
 **The mediator stays disabled after any stop.** From step 2 on, reserved concurrency 0 is never restored by Arco, so
 a refused, failed or cancelled remove leaves the app unable to add or remove customer domains. If you cancel the

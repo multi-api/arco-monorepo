@@ -57,7 +57,17 @@ TenantDomains::remove('shop.customer.com');          // disables at once; may th
 Errors are typed, all extending `TenantDomains\Exceptions\TenantDomainException`: `InvalidTenantDomain`,
 `TenantDomainDnsIncorrect` (`$expected` holds the CNAME target), `TenantDomainTaken`, `TenantDomainQuotaExceeded`,
 `TenantDomainNotFound`, `TenantDomainRemovalPending` and `TenantDomainsUnavailable` (not running on Arco, or
-`tenantDomains()` not deployed). It only works on Arco; in tests use the fake:
+`tenantDomains()` not deployed, or the app's role may not invoke the mediator, for example under a permissions
+boundary). It only works on Arco.
+
+A new domain is not served until its certificate is issued **and** applied: only `status` (or a repeated `add`)
+applies it, so poll `status` (every 30 seconds or so) until it answers `active`; `list` never changes anything. While
+the domain is inactive `status` answers `pending`, not `TenantDomainNotFound`. `pending` carries a reason: none
+(certificate being validated), `activating`, `removing` or `activation failed: <ErrorName>` (the next `status`
+retries); `failed` carries `certificate <status>`. The visitor's address is `$request->ip()` (not `REMOTE_ADDR`), the
+same on a customer domain as on the app's own domain; the customer's host is `$request->getHost()`.
+
+In tests use the fake:
 
 ```php
 $fake = TenantDomains::fake();

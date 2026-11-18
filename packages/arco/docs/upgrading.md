@@ -13,8 +13,9 @@ vendor/bin/arco info --env=staging     # validation runs here: errors and deprec
 
 ## Unreleased: tenant domains (experimental)
 
-Existing configurations need no change. `tenantDomains(target: 'routing.example.com')` is deployable but has not been
-accepted against real AWS yet: try it on a staging environment first. Before using a hostname as the target, remove
+Existing configurations need no change. `tenantDomains(target: 'routing.example.com')` is deployable and was run once on real AWS (see
+[what is verified](configuration.md#tenant-domain-routing)); it is still experimental, so try it on a staging
+environment first. Before using a hostname as the target, remove
 it from `domain()`; migrating a live target is not supported. `tenantDomains()` needs a `domain()` in the same
 environment. See [Tenant domain routing](configuration.md#tenant-domain-routing).
 
@@ -39,11 +40,15 @@ stack (`cloudformation:DescribeStacks`), the function `<app>-<env>-tenants` (`la
 `lambda:ListTags`) and its role (`iam:GetRole`); for an environment without `tenantDomains()` and without a tenant
 stack, a denied read counts as "no tenant resources", so a profile scoped to the console and worker functions needs
 nothing added. With tenant domains it must allow the two Lambda reads on `*-tenants`, or `remove` stops with AWS's
-access error before changing anything. See
+access error before changing anything. The mediator's role also needs ACM and CloudFront tag-read permissions that Arco
+puts in its inline policy; under a `permissionsBoundary()` the boundary must allow them, and the app's role must be
+allowed `lambda:InvokeFunction` on the mediator (checklist in the configuration reference). See
 [Permissions for custom domains](getting-started.md#permissions-for-custom-domains).
 
 `arco info --json` gains `tenantDomains` (`{distribution, connectionGroup, target, endpoint, tenants}`; only with a
 tenant stack; `tenants` is `null` when it cannot be counted). Keys are only added.
+
+The app must poll `TenantDomains::status()` to get a new customer domain activated: CloudFront does not activate it by itself.
 
 If Route 53 returns no change ID, deploy or remove stops with `domains.dns_change_unconfirmed`. The DNS change may
 already have been submitted; inspect the records before retrying.
