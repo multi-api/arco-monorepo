@@ -112,8 +112,8 @@ Tag ownership (steps 4, 10, 13): on 2026-11-18 real CloudFront returned no `Tags
 | 8 Quota | | `TenantDomainQuotaExceeded` | | | error name / not reached: |
 | 8 remove (pending / idempotent) | 2026-11-18 (arco-smoke staging, CLI c6666fe) | disable then delete | `remove` of an active domain answered `removed: true` on the first call; `list` then showed only the other domain | Yes | disable-to-delete time: immediate (no `ResourceNotDisabled` / `PreconditionFailed` seen). Idempotent second remove not exercised. |
 | 9 Empty list answer | | `DistributionTenantList` present (empty) | | | exact JSON: |
-| 10 remove without `--force` | | stops, nothing deleted | | | |
-| 11 Restore | | works again | | | |
+| 10 remove without `--force` | 2026-11-18 (arco-smoke staging, CLI c6666fe) | stops, nothing deleted | typed confirmation given; mediator set to reserved concurrency 0, waited 90 s, counted 1 tenant, stopped with `remove.tenants_need_force`; nothing deleted, the app and the customer domain kept working | Yes | The message reads "1 tenants" (singular missing). The pre-listing labels the tenant distribution `(deleted)` and still shows a tenant removed minutes before (tagging API lag). |
+| 11 Restore | 2026-11-18 (arco-smoke staging, CLI c6666fe) | works again | `arco tenants:restore --env=staging` deleted the reserved concurrency of 0; `list` through the app answered again with the customer domain `active` | Yes | Already-enabled and limit-kept paths not exercised. |
 | 12 Drain margin | | throttled within seconds | | | first throttle: / last success: |
 | 13 remove `--force` | | everything gone, exit 0 | | | per-tenant timings: |
 | 14 remove without tenants | | goes through | | | |
