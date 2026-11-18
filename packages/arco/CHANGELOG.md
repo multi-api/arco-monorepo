@@ -5,8 +5,10 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
 
 ## 0.25.0-beta.2
 
-A preview release: Composer only installs it when asked for by its version
-(`composer require multiapi/arco:0.25.0-beta.2 multiapi/arco-laravel:0.25.0-beta.2`); `^0.24` stays on 0.24.1.
+A preview release: Composer only installs it when asked for by its version, and all three packages must be named,
+because Composer refuses a beta dependency it was not asked for
+(`composer require multiapi/arco:0.25.0-beta.2 multiapi/arco-laravel:0.25.0-beta.2 multiapi/arco-secrets:0.25.0-beta.2`,
+with `--dev` where the app keeps `multiapi/arco` in `require-dev`); `^0.24` stays on 0.24.1.
 Do not use `0.25.0-beta.1`: that tag was pushed by mistake on the 0.24.1 code and contains none of this.
 It exists so tenant domains can be tried before 0.25.0, in particular through Arco Cloud with a limited deploy role
 and a permissions boundary, which has not been run yet. Public suffix list `VERSION: 2026-11-17_06-40-19_UTC`.
