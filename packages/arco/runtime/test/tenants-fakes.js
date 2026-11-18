@@ -62,7 +62,9 @@ function fakeCloudFront({ tenants = [], pageSize = 100 } = {}) {
       throw failure.error;
     }
   };
-  const byDomain = (domain) => [...store.values()].find((t) => (t.Domains ?? []).some((d) => d.Domain === domain));
+  // Real CloudFront: GetDistributionTenantByDomain only finds ACTIVE domains.
+  const byDomain = (domain) => [...store.values()].find((t) => (t.Domains ?? []).some((d) => d.Domain === domain && d.Status === 'active'));
+  const byIdOrName = (key) => store.get(key) ?? [...store.values()].find((t) => t.Name === key);
   const etagOf = (id) => (state.omitEtag.has(id) ? undefined : state.etags.get(id));
 
   const adapter = {
@@ -73,8 +75,8 @@ function fakeCloudFront({ tenants = [], pageSize = 100 } = {}) {
     },
     async getTenant(id) {
       record('getTenant', id);
-      const tenant = store.get(id);
-      return tenant ? { tenant: structuredClone(tenant), etag: etagOf(id) } : null;
+      const tenant = byIdOrName(id);
+      return tenant ? { tenant: structuredClone(tenant), etag: etagOf(tenant.Id) } : null;
     },
     async createTenant(input) {
       record('createTenant', input);
@@ -95,6 +97,7 @@ function fakeCloudFront({ tenants = [], pageSize = 100 } = {}) {
       if (etag !== state.etags.get(id)) throw awsError('PreconditionFailed');
       const tenant = store.get(id);
       Object.assign(tenant, { Enabled: input.Enabled ?? tenant.Enabled });
+      if (input.Customizations) tenant.Customizations = input.Customizations;
       state.etags.set(id, `E${etagCounter++}`);
       return { tenant, etag: etagOf(id) };
     },

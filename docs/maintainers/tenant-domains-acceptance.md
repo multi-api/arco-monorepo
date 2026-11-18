@@ -96,7 +96,7 @@ Copy this table into the pull request or release notes that adopts the result.
 | 2 Redeploy unchanged | | no stack update, no tenant touched | | | |
 | 3a Target change refused | | `domains.tenant_target_changed` | | | |
 | 3b Replacement refused | | `domains.stack_replacement` | | | |
-| 4 Certificate via CNAME | 2026-11-18 (arco-smoke staging, CLI 72388e2) | `pending` then `active` | `add` failed: `AccessDenied: CloudFront cannot access the specified Amazon ACM certificate for the operation: RequestCertificate` | No | The mediator role had no ACM action. Fixed after this run (`ArcoTenantCertificates`); rerun pending. Step 1 passed on this commit: stack created, app reaches the mediator. time to active: |
+| 4 Certificate via CNAME | 2026-11-18 (arco-smoke staging, CLI 72388e2) | `pending` then `active` | `add` failed: `AccessDenied: CloudFront cannot access the specified Amazon ACM certificate for the operation: RequestCertificate` | No | The mediator role had no ACM action. Fixed after this run (`ArcoTenantCertificates`); rerun on 406372f: `add` created the tenant and the certificate was issued within minutes, but `status` answered `not_found` (`GetDistributionTenantByDomain` only finds active domains) and the domain stayed `inactive` with `Customizations` null and no HTTPS. Fixed after that run: lookup by tenant name as fallback, and `status` applies the issued certificate to the tenant (hypothesis, to confirm on the next run). Step 1 passed: stack created, app reaches the mediator. time to active: |
 | 4a CNAME chain | | issues | | | |
 | 4b Flattened record | | `add` passes only with all addresses in the endpoint's | | | |
 | 4c No record | | `TenantDomainDnsIncorrect` | | | |

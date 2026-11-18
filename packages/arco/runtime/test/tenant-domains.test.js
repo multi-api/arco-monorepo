@@ -591,3 +591,175 @@ test('remove never touches a foreign tenant', async () => {
   assert.deepEqual(t.writes(), []);
   assert.equal(t.store.get('dt_a.customer.com').Enabled, true);
 });
+
+// ---- inactive domains (GetDistributionTenantByDomain only finds active ones) -----------------
+
+test('after add, status finds the tenant by name while its domain is still inactive', async () => {
+  const t = setup();
+  ok(await add(t, 'shop.customer.com'));
+  assert.deepEqual(ok(await t.handler({ operation: 'status', domain: 'shop.customer.com' })), { domain: 'shop.customer.com', state: 'pending', reason: null });
+  const lookups = t.methods();
+  assert.ok(lookups.includes('getTenantByDomain') && lookups.includes('getTenant'));
+});
+
+test('a second add of an inactive-domain tenant is idempotent: no create, no DNS check', async () => {
+  let dnsCalls = 0;
+  const t = setup({ dns: { check: async () => { dnsCalls += 1; return true; } } });
+  ok(await add(t, 'shop.customer.com'));
+  assert.equal(dnsCalls, 1);
+  assert.deepEqual(ok(await add(t, 'shop.customer.com')), { domain: 'shop.customer.com', state: 'pending', reason: null });
+  assert.equal(dnsCalls, 1);
+  assert.equal(t.state.calls.filter((c) => c.method === 'createTenant').length, 1);
+});
+
+test('remove works on a tenant whose domain is still inactive', async () => {
+  const t = setup();
+  ok(await add(t, 'shop.customer.com'));
+  assert.deepEqual(ok(await t.handler({ operation: 'remove', domain: 'shop.customer.com' })), { removed: true });
+  assert.equal(t.store.size, 0);
+});
+
+test('a foreign tenant holding the name: add is domain_taken, status and remove are not_found, nothing written', async () => {
+  const t = setup({ tenants: [tenantFor('shop.customer.com', { Tags: ownTags('other', 'production') })] });
+  err(await add(t, 'shop.customer.com'), 'domain_taken');
+  err(await t.handler({ operation: 'status', domain: 'shop.customer.com' }), 'not_found');
+  err(await t.handler({ operation: 'remove', domain: 'shop.customer.com' }), 'not_found');
+  assert.deepEqual(t.writes(), []);
+});
+
+test('a tenant found by name that does not list the domain is not found, except after a duplicate error on create', async () => {
+  const other = tenantFor('shop.customer.com', { Domains: [{ Domain: 'else.customer.com', Status: 'inactive' }], Tags: ownTags('other', 'x') });
+  const t = setup({ tenants: [other] });
+  err(await t.handler({ operation: 'status', domain: 'shop.customer.com' }), 'not_found');
+  assert.deepEqual(ok(await t.handler({ operation: 'remove', domain: 'shop.customer.com' })), { removed: true });
+  assert.deepEqual(t.writes(), []);
+  // add: nothing listing the domain, so it tries to create; the name collides and the lenient lookup says foreign
+  t.state.fail.createTenant = { error: awsError('EntityAlreadyExists') };
+  err(await add(t, 'shop.customer.com'), 'domain_taken');
+  assert.deepEqual(t.writes().map((c) => c.method), ['createTenant']);
+});
+
+test('duplicate error with nothing found by either lookup stays domain_taken', async () => {
+  const t = setup();
+  t.state.fail.createTenant = { error: awsError('CNAMEAlreadyExists') };
+  err(await add(t, 'shop.customer.com'), 'domain_taken');
+});
+
+// ---- activation once the certificate is issued ----------------------------------------------
+
+const ARN = 'arn:aws:acm:us-east-1:111111111111:certificate/abc';
+const issued = (t, id = 'dt_a.customer.com') => { t.state.certs[id] = { CertificateStatus: 'issued', CertificateArn: ARN }; };
+const updates = (t) => t.state.calls.filter((c) => c.method === 'updateTenant');
+
+test('issued certificate and inactive domain: status applies it once and answers pending/activating', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com')] });
+  issued(t);
+  const etag = t.state.etags.get('dt_a.customer.com');
+  assert.deepEqual(ok(await t.handler({ operation: 'status', domain: 'a.customer.com' })), { domain: 'a.customer.com', state: 'pending', reason: 'activating' });
+  assert.equal(updates(t).length, 1);
+  assert.deepEqual(updates(t)[0].args, ['dt_a.customer.com', etag, {
+    DistributionId: 'DIST1', ConnectionGroupId: 'CG1', Domains: [{ Domain: 'a.customer.com' }], Enabled: true,
+    Customizations: { Certificate: { Arn: ARN } },
+  }]);
+  assert.equal(t.writes().length, 1);
+  // the tenant now carries it: no second update
+  assert.deepEqual(ok(await t.handler({ operation: 'status', domain: 'a.customer.com' })).reason, 'activating');
+  assert.equal(updates(t).length, 1);
+});
+
+test('the idempotent path of add also activates', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com')] });
+  issued(t);
+  assert.equal(ok(await add(t, 'a.customer.com')).reason, 'activating');
+  assert.equal(updates(t).length, 1);
+});
+
+test('a tenant already carrying the certificate: pending/activating without any call', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com', { Customizations: { Certificate: { Arn: ARN } } })] });
+  issued(t);
+  assert.deepEqual(ok(await t.handler({ operation: 'status', domain: 'a.customer.com' })).reason, 'activating');
+  assert.deepEqual(t.writes(), []);
+});
+
+test('existing customizations are preserved in the activation update', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com', { Customizations: { WebAcl: { Action: 'override', Arn: 'arn:waf' } } })] });
+  issued(t);
+  ok(await t.handler({ operation: 'status', domain: 'a.customer.com' }));
+  assert.deepEqual(updates(t)[0].args[2].Customizations, { WebAcl: { Action: 'override', Arn: 'arn:waf' }, Certificate: { Arn: ARN } });
+});
+
+test('certificate not issued, issued without ARN, disabled tenant or no ETag: no update', async () => {
+  const pending = setup({ tenants: [tenantFor('a.customer.com')] });
+  pending.state.certs['dt_a.customer.com'] = { CertificateStatus: 'pending-validation', CertificateArn: ARN };
+  assert.deepEqual(ok(await pending.handler({ operation: 'status', domain: 'a.customer.com' })), { domain: 'a.customer.com', state: 'pending', reason: null });
+  assert.deepEqual(pending.writes(), []);
+
+  const noArn = setup({ tenants: [tenantFor('a.customer.com')] });
+  noArn.state.certs['dt_a.customer.com'] = { CertificateStatus: 'issued' };
+  assert.equal(ok(await noArn.handler({ operation: 'status', domain: 'a.customer.com' })).reason, null);
+  assert.deepEqual(noArn.writes(), []);
+
+  const disabled = setup({ tenants: [tenantFor('a.customer.com', { Enabled: false })] });
+  issued(disabled);
+  assert.equal(ok(await disabled.handler({ operation: 'status', domain: 'a.customer.com' })).reason, 'removing');
+  assert.deepEqual(disabled.writes(), []);
+
+  const noEtag = setup({ tenants: [tenantFor('a.customer.com')] });
+  issued(noEtag);
+  noEtag.state.omitEtag.add('dt_a.customer.com');
+  assert.equal(ok(await noEtag.handler({ operation: 'status', domain: 'a.customer.com' })).reason, null);
+  assert.deepEqual(noEtag.writes(), []);
+});
+
+test('a failed update does not fail the operation, reports the error name and is retried by the next status', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com')] });
+  issued(t);
+  t.state.fail.updateTenant = { error: awsError('AccessDenied', 'secret details') };
+  const response = await t.handler({ operation: 'status', domain: 'a.customer.com' });
+  assert.deepEqual(ok(response), { domain: 'a.customer.com', state: 'pending', reason: 'activation failed: AccessDenied' });
+  assert.deepEqual(ok(await t.handler({ operation: 'status', domain: 'a.customer.com' })).reason, 'activating');
+  assert.equal(updates(t).length, 2);
+});
+
+test('the activation error name goes to the log line as detail', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com')] });
+  issued(t);
+  t.state.fail.updateTenant = { error: awsError('PreconditionFailed', 'x') };
+  await t.handler({ operation: 'status', domain: 'a.customer.com' });
+  assert.equal(JSON.parse(t.logs[0]).detail, 'activation failed: PreconditionFailed');
+  await t.handler({ operation: 'status', domain: 'a.customer.com' });
+  assert.equal('detail' in JSON.parse(t.logs[1]), false);
+});
+
+test('list never updates, and foreign or unverifiable tenants are never activated', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com')] });
+  issued(t);
+  assert.deepEqual(ok(await t.handler({ operation: 'list' })).domains.map((d) => d.reason), [null]);
+  assert.deepEqual(t.writes(), []);
+
+  const foreign = setup({ tenants: [tenantFor('a.customer.com', { Tags: ownTags('other', 'x') })] });
+  issued(foreign);
+  err(await foreign.handler({ operation: 'status', domain: 'a.customer.com' }), 'not_found');
+  err(await add(foreign, 'a.customer.com'), 'domain_taken');
+  const unknown = setup({ tenants: [tenantFor('a.customer.com', { Tags: undefined })] });
+  issued(unknown);
+  err(await unknown.handler({ operation: 'status', domain: 'a.customer.com' }), 'ownership_unverified');
+  assert.deepEqual([...foreign.writes(), ...unknown.writes()], []);
+});
+
+test('remove never activates', async () => {
+  const t = setup({ tenants: [tenantFor('a.customer.com')] });
+  issued(t);
+  ok(await t.handler({ operation: 'remove', domain: 'a.customer.com' }));
+  assert.ok(updates(t).every((c) => c.args[2].Enabled === false && !('Customizations' in c.args[2])));
+});
+
+test('active domains and failed certificates keep their states', async () => {
+  const active = setup({ tenants: [tenantFor('a.customer.com', { Domains: [{ Domain: 'a.customer.com', Status: 'active' }] })] });
+  issued(active);
+  assert.equal(ok(await active.handler({ operation: 'status', domain: 'a.customer.com' })).state, 'active');
+  assert.deepEqual(active.writes(), []);
+  const failed = setup({ tenants: [tenantFor('a.customer.com')] });
+  failed.state.certs['dt_a.customer.com'] = { CertificateStatus: 'failed', CertificateArn: ARN };
+  assert.equal(ok(await failed.handler({ operation: 'status', domain: 'a.customer.com' })).state, 'failed');
+});

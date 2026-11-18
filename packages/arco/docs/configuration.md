@@ -1504,6 +1504,10 @@ TenantDomains::remove('shop.customer.com');
 
 - `add` answers `pending` for a new domain; adding it again (a retry) answers its current state. `status` throws
   `TenantDomainNotFound` for a domain the environment does not have.
+- A new domain is not served the moment its certificate is issued: CloudFront keeps it inactive until the
+  certificate is applied to its tenant. `status` (and a repeated `add`) does that once the certificate is issued and
+  answers `pending` with the reason `activating`; if CloudFront refuses, the reason is `activation failed: <error>`
+  and the next `status` tries again. So poll `status` until it answers `active`; `list` never changes anything.
 - States are `pending`, `active` and `failed`. `pending` covers certificate issuance and a domain being removed
   (`reason` is `removing`); `failed` carries a reason such as `certificate failed`. `isPending()`, `isActive()` and
   `isFailed()` read it.

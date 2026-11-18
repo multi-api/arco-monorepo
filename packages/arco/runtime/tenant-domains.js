@@ -24,7 +24,8 @@ function createHandler(deps) {
   const mediator = createMediator(deps);
   const log = deps.log ?? ((line) => console.log(line));
   return async function handler(event) {
-    const response = await mediator.handle(event);
+    const trace = {};
+    const response = await mediator.handle(event, trace);
     try {
       const safe = event && typeof event === 'object' ? event : {};
       log(
@@ -33,6 +34,7 @@ function createHandler(deps) {
           domain: typeof safe.domain === 'string' ? safe.domain.slice(0, 253) : null,
           ok: response.ok,
           code: response.ok ? null : response.error.code,
+          ...(typeof trace.detail === 'string' ? { detail: trace.detail.slice(0, 200) } : {}),
         }),
       );
     } catch {

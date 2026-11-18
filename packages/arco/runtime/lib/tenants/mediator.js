@@ -58,7 +58,8 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
     return 'owned';
   }
 
-  async function state(tenant, domain) {
+  // opts.activate (status and idempotent add only; never list): apply an issued certificate. opts.etag, opts.trace.
+  async function state(tenant, domain, opts = {}) {
     const entry = Array.isArray(tenant.Domains)
       ? tenant.Domains.find((d) => d && normalizeHost(d.Domain) === domain)
       : undefined;
@@ -75,6 +76,27 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
     }
     const status = certificate && certificate.CertificateStatus;
     if (FAILED_CERTIFICATES.has(status)) return { domain, state: 'failed', reason: `certificate ${status}` };
+    const arn = certificate && certificate.CertificateArn;
+    if (tenant.Enabled === true && status === 'issued' && typeof arn === 'string' && arn !== '') {
+      const current = tenant.Customizations && tenant.Customizations.Certificate && tenant.Customizations.Certificate.Arn;
+      if (current === arn) return { domain, state: 'pending', reason: 'activating' };
+      if (opts.activate && opts.etag) {
+        try {
+          await cloudfront.updateTenant(tenant.Id, opts.etag, {
+            DistributionId: config.distributionId,
+            ConnectionGroupId: config.connectionGroupId,
+            Domains: tenant.Domains.map((d) => ({ Domain: d.Domain })),
+            Enabled: true,
+            Customizations: { ...(tenant.Customizations ?? {}), Certificate: { Arn: arn } },
+          });
+          return { domain, state: 'pending', reason: 'activating' };
+        } catch (error) {
+          const name = errorName(error) || 'Error';
+          if (opts.trace) opts.trace.detail = `activation failed: ${name}`;
+          return { domain, state: 'pending', reason: `activation failed: ${name}` };
+        }
+      }
+    }
     return { domain, state: 'pending', reason: null };
   }
 
@@ -85,19 +107,26 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
   }
 
   // Looks the domain up and classifies the tenant that holds it: {found, owner, tenant, etag}.
-  async function find(domain) {
+  // GetDistributionTenantByDomain only finds ACTIVE domains, so a miss falls back to the tenant name
+  // `add` creates (deterministic from the domain). A name hit counts only when it lists the domain,
+  // unless `lenient` (after a duplicate error from create, where the name itself is what collided).
+  async function find(domain, lenient = false) {
     const hit = await cloudfront.getTenantByDomain(domain);
-    if (!hit || !hit.tenant) return { found: false };
-    return { found: true, owner: ownership(hit.tenant), tenant: hit.tenant, etag: hit.etag };
+    if (hit && hit.tenant) return { found: true, owner: ownership(hit.tenant), tenant: hit.tenant, etag: hit.etag };
+    const named = await cloudfront.getTenant(tenantName(domain));
+    if (!named || !named.tenant) return { found: false };
+    const lists = Array.isArray(named.tenant.Domains) && named.tenant.Domains.some((d) => d && normalizeHost(d.Domain) === domain);
+    if (!lists && !lenient) return { found: false };
+    return { found: true, owner: ownership(named.tenant), tenant: named.tenant, etag: named.etag };
   }
 
-  async function existing(domain, found) {
-    if (found.owner === 'owned') return state(found.tenant, domain);
+  async function existing(domain, found, trace) {
+    if (found.owner === 'owned') return state(found.tenant, domain, { activate: true, etag: found.etag, trace });
     if (found.owner === 'foreign') throw new Fail('domain_taken', 'The domain is in use by another application or environment.');
     throw unverified();
   }
 
-  async function add(raw) {
+  async function add(raw, trace) {
     const domain = requireDomain(raw);
     if (!suffixes) throw new Fail('unavailable', 'The public suffix list is not available.');
     const reserved = new Set([config.target, ...config.reserved].map(normalizeHost));
@@ -108,7 +137,7 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
     }
 
     const found = await find(domain);
-    if (found.found) return existing(domain, found);
+    if (found.found) return existing(domain, found, trace);
 
     const correct = await dns.check({ domain, target: config.target, endpoint: config.endpoint });
     if (!correct) {
@@ -134,19 +163,19 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
       const name = errorName(error);
       if (name === 'EntityLimitExceeded') throw new Fail('quota', 'CloudFront refused the tenant: a limit was exceeded.');
       if (!DUPLICATE.has(name)) throw error;
-      const again = await find(domain);
+      const again = await find(domain, true);
       if (!again.found) throw new Fail('domain_taken', 'CloudFront reports the domain as already in use.');
-      return existing(domain, again);
+      return existing(domain, again, trace);
     }
     return { domain, state: 'pending', reason: null };
   }
 
-  async function status(raw) {
+  async function status(raw, trace) {
     const domain = requireDomain(raw);
     const found = await find(domain);
     if (!found.found || found.owner === 'foreign') throw new Fail('not_found', 'This environment has no tenant for the domain.');
     if (found.owner !== 'owned') throw unverified();
-    return state(found.tenant, domain);
+    return state(found.tenant, domain, { activate: true, etag: found.etag, trace });
   }
 
   async function list(cursor, limit) {
@@ -257,13 +286,13 @@ function createMediator({ config, cloudfront, dns, suffixes }) {
   }
 
   // Never throws: every outcome is a response object.
-  async function handle(event) {
+  async function handle(event, trace = {}) {
     try {
       if (!config || !cloudfront) throw new Fail('unavailable', 'The tenant domains mediator is not configured.');
       const request = parse(event);
       let result;
-      if (request.operation === 'add') result = await add(request.domain);
-      else if (request.operation === 'status') result = await status(request.domain);
+      if (request.operation === 'add') result = await add(request.domain, trace);
+      else if (request.operation === 'status') result = await status(request.domain, trace);
       else if (request.operation === 'remove') result = await remove(request.domain);
       else result = await list(request.cursor, request.limit);
       return { ok: true, result };
