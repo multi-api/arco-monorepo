@@ -86,6 +86,7 @@ final class TenantsRestoreCommand extends ArcoCommand
         match ($result['outcome']) {
             TenantRestore::RESTORED => $io->success($this->t('tenants.restored', $params)),
             TenantRestore::ALREADY_ENABLED => $io->note($this->t('tenants.already_enabled', $params)),
+            TenantRestore::NOTHING_TO_RESTORE => $io->note($this->t('tenants.nothing_to_restore', $params)),
             default => $io->note($this->t('tenants.limit_kept', $params + ['limit' => (int) $result['reserved']])),
         };
         return self::SUCCESS;

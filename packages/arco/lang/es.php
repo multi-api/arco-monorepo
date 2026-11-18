@@ -979,7 +979,7 @@ return [
     'protected.confirm.tinker' => '¿Abrir tinker en {environment} (cuenta {account}, función {function})? Las sentencias se ejecutan sobre sus datos reales.',
     'protected.confirm.command' => '¿Ejecutar "{command}" en {environment} (cuenta {account}, función {function})? Se ejecuta sobre sus datos reales.',
     'protected.confirm.redrive' => '¿Devolver los mensajes de {dlq} a {queue} en {environment} (cuenta {account})? El worker los ejecutará de nuevo.',
-    'tenants.restore_missing' => 'No hay función de dominios de tenants {function} en AWS para {environment}; no se cambió nada. arco deploy la crea cuando el entorno tiene tenantDomains(), y arco remove la elimina.',
+    'tenants.nothing_to_restore' => 'No hay función de dominios de tenants {function} en AWS para {environment}: no hay nada que restaurar y no se cambió nada. arco deploy la crea cuando el entorno tiene tenantDomains(), y arco remove la elimina.',
     'tenants.restore_not_mediator' => '{function} existe y está etiquetada para {environment}, pero su descripción no es la que Arco escribe en la función de dominios de tenants. No se cambió nada.',
     'tenants.restore_unconfirmed' => 'Arco eliminó la concurrencia reservada de {function}, pero sigue siendo {value}. Ejecuta arco tenants:restore --env={environment} de nuevo para comprobarlo.',
     'tenants.restored' => 'La función de dominios de tenants {function} de {environment} está activa de nuevo: se eliminó su concurrencia reservada de 0. Tu app puede gestionar los dominios de clientes otra vez y arco deploy ya no se detiene por ella.',

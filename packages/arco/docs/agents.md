@@ -112,18 +112,18 @@ unless the user explicitly says otherwise for the case at hand.
   and `options` `{target}` whenever `tenantDomains()` is configured. A [config layer](config-layer.md) can set the
   target with `settings.tenantDomainTarget` (same merge and conflict rules as any setting; refused in `arco.json`).
   **`arco tenants:restore --env=<env>`** enables the mediator again after a stopped `remove` (ask the user first: it
-  changes AWS). It checks, read-only, that `<app>-<env>-tenants` exists, carries this environment's tags and is Arco's
-  mediator (`tenants.restore_missing`, `tenants.restore_not_mediator`, `deploy.tenant_mediator_not_owned`,
+  changes AWS). It checks, read-only, that `<app>-<env>-tenants`, when it exists, carries this environment's tags and is Arco's
+  mediator (`tenants.restore_not_mediator`, `deploy.tenant_mediator_not_owned`,
   `deploy.tenant_mediator_untagged`, `deploy.tenant_mediator_tags_unreadable`: nothing is changed, no `--force`), then
   deletes a reserved concurrency of 0 and reads it back (`tenants.restore_unconfirmed` if it is still there). No
-  reserved concurrency is `already_enabled` and any other value `limit_kept` (left alone); all three exit 0. Options:
+  reserved concurrency is `already_enabled` and any other value `limit_kept` (left alone); no function at all is `nothing_to_restore` (a note, no write); all four exit 0. Options:
   `--env`, `--profile`, `--config-layer=<path>`, `--json` (never asks). `--json` prints one document:
-  `{"schema": 1, "outcome": "restored"|"already_enabled"|"limit_kept", "app", "environment", "function",
+  `{"schema": 1, "outcome": "restored"|"already_enabled"|"limit_kept"|"nothing_to_restore", "app", "environment", "function",
   "reservedConcurrency"}` (`reservedConcurrency` is the limit kept, else `null`), or on a failure (exit 1)
   `{"schema": 1, "outcome": "refused"|"failed", "app", "environment", "function", "error": {"key", "message",
   "params"}}` (`refused`: nothing changed; `failed`: an AWS error or an unconfirmed delete; the three fields are `null`
   when the configuration did not load). It is not a way to cancel a remove that already deleted the function
-  (`tenants.restore_missing`).
+  (`nothing_to_restore`).
   **Error params you may rely on** (`error.params` in `--json`, only ever added to):
   `domains.tenant_manual_cname_missing` has `{target, endpoint}` (the `CNAME` to create: `<target>` to `<endpoint>`),
   `domains.tenant_target_changed` has `{target, current}` (the configured target and the one the environment was
@@ -864,7 +864,7 @@ failed, usually for a missing permission the message names.
 | `queue.unknown`, `queue.option_fixed`, `queue.unknown_option` | Use a queue name from `arco.php`; `fifo` and `existing` cannot change |
 | `queue.dlq_missing` | Deploy first |
 | `scheduler.no_schedule_rules` | `scheduler:pause`/`resume` in a Go app found no schedule rule for the environment: add `schedules` to `arco.json` and deploy |
-| `tenants.restore_missing`, `tenants.restore_not_mediator`, `tenants.restore_unconfirmed` | `tenants:restore`: there is no mediator function for the environment (a finished remove deleted it, or it was never deployed); the function is tagged for the environment but is not Arco's mediator; or the delete did not take effect (run again) |
+| `tenants.restore_not_mediator`, `tenants.restore_unconfirmed` | `tenants:restore`: the function is tagged for the environment but is not Arco's mediator; or the delete did not take effect (run again) |
 | `scheduler.no_rule`, `scheduler.apply_needs_env`, `scheduler.apply_needs_deploy` | `scheduler:set` and deploy first; `--apply` needs `--env` |
 | `editor.lint_failed`, `editor.verify_failed` | The edit was refused and `arco.php` restored: make the change by hand with the line printed |
 | `config.process_unsupported_command` | The command (`command`) is PHP-only or edits `arco.php`, and this is a Go app: edit `arco.json` by hand. Text only, no `--json` |

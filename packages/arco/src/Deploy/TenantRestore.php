@@ -20,14 +20,16 @@ final class TenantRestore
     public const RESTORED = 'restored';
     public const ALREADY_ENABLED = 'already_enabled';
     public const LIMIT_KEPT = 'limit_kept';
+    /** The environment has no mediator function: nothing was ever deployed, or a remove finished. Not an error. */
+    public const NOTHING_TO_RESTORE = 'nothing_to_restore';
 
     public function __construct(private readonly AwsClients $aws)
     {
     }
 
     /**
-     * @return array{outcome: 'restored'|'already_enabled'|'limit_kept', reserved: int|null} reserved: the limit that was kept (limit_kept), else null
-     * @throws DeployException tenants.restore_missing, tenants.restore_not_mediator, tenants.restore_unconfirmed,
+     * @return array{outcome: 'restored'|'already_enabled'|'limit_kept'|'nothing_to_restore', reserved: int|null} reserved: the limit that was kept (limit_kept), else null
+     * @throws DeployException tenants.restore_not_mediator, tenants.restore_unconfirmed,
      *         deploy.tenant_mediator_not_owned, deploy.tenant_mediator_untagged, deploy.tenant_mediator_tags_unreadable
      * @throws AwsException a refused or failed call; before the delete nothing has changed
      */
@@ -37,7 +39,7 @@ final class TenantRestore
         $params = ['function' => $name, 'environment' => $config->environment];
         $function = (new OwnershipGuard($this->aws))->lambdaFunction($name, TenantMediator::MARKER);
         if ($function === null) {
-            throw DeployException::make('tenants.restore_missing', $params);
+            return ['outcome' => self::NOTHING_TO_RESTORE, 'reserved' => null];
         }
         TenantMediator::assertOwned($config, $function);
         if (! $function->arcoMade) {

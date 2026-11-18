@@ -92,17 +92,11 @@ final class TenantRestoreTest extends TestCase
         }
     }
 
-    public function test_a_function_that_does_not_exist_is_an_error(): void
+    public function test_an_environment_without_a_mediator_has_nothing_to_restore_and_nothing_is_written(): void
     {
         $mocks = $this->mocks([AwsMocks::error(LambdaException::class, 'GetFunctionConfiguration', 'ResourceNotFoundException', 404)]);
 
-        try {
-            $this->restore($mocks)->restore($this->config());
-            self::fail('expected tenants.restore_missing');
-        } catch (DeployException $e) {
-            self::assertSame('tenants.restore_missing', $e->key);
-            self::assertSame(['function' => self::FUNCTION, 'environment' => 'production'], $e->params);
-        }
+        self::assertSame(['outcome' => 'nothing_to_restore', 'reserved' => null], $this->restore($mocks)->restore($this->config()));
         self::assertSame(['GetFunctionConfiguration'], $mocks->calls);
     }
 

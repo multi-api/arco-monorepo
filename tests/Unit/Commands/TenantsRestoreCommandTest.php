@@ -113,14 +113,28 @@ final class TenantsRestoreCommandTest extends TestCase
         self::assertStringContainsString('environment "staging"', self::display($tester));
     }
 
-    public function test_a_missing_function_fails_with_its_own_message(): void
+    public function test_a_missing_function_is_a_note_with_exit_0_and_no_write(): void
     {
         $this->mocks->handler->append(new Result(['Account' => '111111111111']), AwsMocks::error(LambdaException::class, 'GetFunctionConfiguration', 'ResourceNotFoundException', 404));
 
         $tester = $this->run_();
 
-        self::assertSame(Command::FAILURE, $tester->getStatusCode());
-        self::assertStringContainsString('There is no tenant domains function shop-production-tenants in AWS for production', self::display($tester));
+        $tester->assertCommandIsSuccessful();
+        self::assertStringContainsString('nothing to restore, and nothing was changed', self::display($tester));
+        self::assertNotContains('DeleteFunctionConcurrency', $this->mocks->calls);
+    }
+
+    public function test_json_nothing_to_restore(): void
+    {
+        $this->mocks->handler->append(new Result(['Account' => '111111111111']), AwsMocks::error(LambdaException::class, 'GetFunctionConfiguration', 'ResourceNotFoundException', 404));
+
+        $tester = $this->run_(['--json' => true]);
+
+        $tester->assertCommandIsSuccessful();
+        self::assertSame(
+            ['schema' => 1, 'outcome' => 'nothing_to_restore', 'app' => 'shop', 'environment' => 'production', 'function' => 'shop-production-tenants', 'reservedConcurrency' => null],
+            self::json($tester),
+        );
     }
 
     public function test_json_restored(): void

@@ -1648,22 +1648,22 @@ environment}` (`count`: the customer domains; `function`: the mediator; `environ
 arco tenants:restore --env=<env> [--profile=<profile>] [--json]
 ```
 
-Re-enables the mediator after a stopped `arco remove`. Read-only checks come first: the function
-`<app>-<env>-tenants` must exist, carry this app's and environment's `arco:app` and `arco:environment` tags and be
-described as Arco's tenant domains function, or the command stops with nothing changed (`tenants.restore_missing`,
-`tenants.restore_not_mediator`, `deploy.tenant_mediator_not_owned`, `deploy.tenant_mediator_untagged`,
+Re-enables the mediator after a stopped `arco remove`. Read-only checks come first: a function
+`<app>-<env>-tenants` that exists must carry this app's and environment's `arco:app` and `arco:environment` tags and be
+described as Arco's tenant domains function, or the command stops with nothing changed (`tenants.restore_not_mediator`, `deploy.tenant_mediator_not_owned`, `deploy.tenant_mediator_untagged`,
 `deploy.tenant_mediator_tags_unreadable`); there is no `--force`. Then it reads the function's reserved concurrency:
 
 | Reserved concurrency | What the command does | `outcome` |
 |---|---|---|
+| no function at all | Nothing: there is no mediator to restore (never deployed, or a remove finished); `tenants.nothing_to_restore` | `nothing_to_restore` |
 | none | Nothing: the mediator is already enabled | `already_enabled` |
 | `0` | Deletes it (`lambda:DeleteFunctionConcurrency`) and reads it back; a value still there is `tenants.restore_unconfirmed` | `restored` |
 | any other number | Nothing: someone set that limit on purpose; it is reported | `limit_kept` |
 
-All three succeed (exit code 0); an error exits 1. It does not need `tenantDomains()` in `arco.php`, only the
+All four succeed (exit code 0); an error exits 1. It does not need `tenantDomains()` in `arco.php`, only the
 environment (and the layer, with `--config-layer`, as `deploy` takes it). It does not undo the rest of a removal:
 a removal that went on past the mediator (the stack or the function already deleted) leaves nothing to restore
-(`tenants.restore_missing`). With `--json` the command never asks, writes one document on stdout and nothing else:
+(`nothing_to_restore`, exit 0, no write). With `--json` the command never asks, writes one document on stdout and nothing else:
 
 ```json
 {"schema": 1, "outcome": "restored", "app": "shop", "environment": "production", "function": "shop-production-tenants", "reservedConcurrency": null}

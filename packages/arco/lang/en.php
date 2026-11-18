@@ -979,7 +979,7 @@ return [
     'protected.confirm.tinker' => 'Open tinker on {environment} (account {account}, function {function})? Statements run against its real data.',
     'protected.confirm.command' => 'Run "{command}" on {environment} (account {account}, function {function})? It runs against its real data.',
     'protected.confirm.redrive' => 'Move the messages of {dlq} back to {queue} on {environment} (account {account})? The worker runs them again.',
-    'tenants.restore_missing' => 'There is no tenant domains function {function} in AWS for {environment}; nothing was changed. arco deploy creates it when the environment has tenantDomains(), and arco remove deletes it.',
+    'tenants.nothing_to_restore' => 'There is no tenant domains function {function} in AWS for {environment}: there is nothing to restore, and nothing was changed. arco deploy creates it when the environment has tenantDomains(), and arco remove deletes it.',
     'tenants.restore_not_mediator' => '{function} exists and is tagged for {environment}, but its description is not the one Arco writes on the tenant domains function. Nothing was changed.',
     'tenants.restore_unconfirmed' => 'Arco deleted the reserved concurrency of {function}, but it still reads {value}. Run arco tenants:restore --env={environment} again to check it.',
     'tenants.restored' => 'The tenant domains function {function} of {environment} is enabled again: its reserved concurrency of 0 was deleted. Your app can manage customer domains again and arco deploy no longer stops on it.',

@@ -9,10 +9,10 @@ while it is 0.x, minor versions may contain breaking changes, always listed unde
   an `arco remove` that stopped (the remove sets its reserved concurrency to 0 and never restores it, and a deploy
   refuses while it is 0). Read-only checks first (the function exists, carries this environment's `arco:app` /
   `arco:environment` tags and Arco's description; no override flag), then a reserved concurrency of 0 is deleted and
-  read back; none is "already enabled" and any other limit is left as somebody set it (all three succeed). Options:
+  read back; none is "already enabled", any other limit is left as somebody set it, and an environment without the function is `nothing_to_restore` (all four succeed, exit 0, no write). Options:
   `--env`, `--profile`, `--config-layer`, `--json` (one document, `"schema": 1`, `outcome` `restored`,
-  `already_enabled`, `limit_kept`, `refused` or `failed`, and `error` `{key, message, params}`). New keys:
-  `tenants.restored`, `tenants.already_enabled`, `tenants.limit_kept`, `tenants.restore_missing`,
+  `already_enabled`, `limit_kept`, `nothing_to_restore`, `refused` or `failed`, and `error` `{key, message, params}`). New keys:
+  `tenants.restored`, `tenants.already_enabled`, `tenants.limit_kept`, `tenants.nothing_to_restore`,
   `tenants.restore_not_mediator`, `tenants.restore_unconfirmed`. It needs `lambda:DeleteFunctionConcurrency` on the
   mediator function ([permissions](docs/getting-started.md#permissions-for-custom-domains)).
 - **Changed: the messages that said how to cancel a stopped tenant removal** now name `arco tenants:restore
