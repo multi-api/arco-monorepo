@@ -1455,8 +1455,10 @@ boundary only limits: it grants nothing. For tenant domains the boundary policy 
   `ArcoTenantTagOnCreate` (`cloudfront:TagResource` on `distribution-tenant/*`, with the request tags),
   `ArcoTenantWrite` (`cloudfront:UpdateDistributionTenant` and `DeleteDistributionTenant` on `distribution-tenant/*`,
   only on tenants carrying the environment's tags), `ArcoTenantRead` (`cloudfront:GetDistributionTenant`,
-  `GetDistributionTenantByDomain`, `GetManagedCertificateDetails` on `distribution-tenant/*`) and `ArcoTenantList`
-  (`cloudfront:ListDistributionTenants`). Without them the mediator's CloudFront calls are denied and every add,
+  `GetDistributionTenantByDomain`, `GetManagedCertificateDetails` on `distribution-tenant/*`),
+  `ArcoTenantCertificates` (`acm:RequestCertificate`, `DescribeCertificate`, `AddTagsToCertificate` on the account's
+  certificates in `us-east-1`: CloudFront requests each customer domain's certificate with the mediator's
+  permissions) and `ArcoTenantList` (`cloudfront:ListDistributionTenants`). Without them the mediator's CloudFront calls are denied and every add,
   status, list or remove of a customer domain fails.
 
 The boundary may allow more than these statements, never less: the effective permissions of each role are the

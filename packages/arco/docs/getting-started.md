@@ -1033,6 +1033,7 @@ role gets this inline policy, the feature's whole CloudFront surface (`<tenants>
 | `ArcoTenantTagOnCreate` | `cloudfront:TagResource` | `<tenants>`, same request tags |
 | `ArcoTenantWrite` | `cloudfront:UpdateDistributionTenant`, `cloudfront:DeleteDistributionTenant` | `<tenants>`, only on tenants carrying the environment's tags |
 | `ArcoTenantRead` | `cloudfront:GetDistributionTenant`, `GetDistributionTenantByDomain`, `GetManagedCertificateDetails` | `<tenants>` |
+| `ArcoTenantCertificates` | `acm:RequestCertificate`, `acm:DescribeCertificate`, `acm:AddTagsToCertificate` | `arn:aws:acm:us-east-1:<account>:certificate/*` (CloudFront requests each customer domain's managed certificate with the mediator's permissions) |
 | `ArcoTenantList` | `cloudfront:ListDistributionTenants` | `*` |
 
 Reads have no tag condition so the mediator can tell that a domain belongs to someone else. The app's role is not

@@ -60,7 +60,8 @@ final class TenantMediator
     /**
      * The mediator role's whole inline policy. Tenants are created and tagged with the environment's tags (request
      * tags), and changed or deleted only when they carry them (resource tags); reads have no tag condition, so the
-     * mediator can tell that a domain belongs to someone else. No ACM, no other CloudFront action, nothing of the app's.
+     * mediator can tell that a domain belongs to someone else. ACM only to request and read the tenants' managed
+     * certificates; no other CloudFront action, nothing of the app's.
      *
      * @return array{Version: string, Statement: list<array<string, mixed>>}
      */
@@ -104,6 +105,15 @@ final class TenantMediator
                     'Effect' => 'Allow',
                     'Action' => ['cloudfront:GetDistributionTenant', 'cloudfront:GetDistributionTenantByDomain', 'cloudfront:GetManagedCertificateDetails'],
                     'Resource' => $tenants,
+                ],
+                [
+                    // A tenant's managed certificate is requested by CloudFront with the caller's permissions: without
+                    // these, CreateDistributionTenant is denied ("CloudFront cannot access the specified Amazon ACM
+                    // certificate for the operation: RequestCertificate"). CloudFront certificates live in us-east-1.
+                    'Sid' => 'ArcoTenantCertificates',
+                    'Effect' => 'Allow',
+                    'Action' => ['acm:RequestCertificate', 'acm:DescribeCertificate', 'acm:AddTagsToCertificate'],
+                    'Resource' => "arn:aws:acm:us-east-1:$account:certificate/*",
                 ],
                 [
                     'Sid' => 'ArcoTenantList',

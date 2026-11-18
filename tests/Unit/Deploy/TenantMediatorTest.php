@@ -281,6 +281,7 @@ final class TenantMediatorTest extends TestCase
                 ['Sid' => 'ArcoTenantTagOnCreate', 'Effect' => 'Allow', 'Action' => 'cloudfront:TagResource', 'Resource' => $tenants, 'Condition' => $request],
                 ['Sid' => 'ArcoTenantWrite', 'Effect' => 'Allow', 'Action' => ['cloudfront:UpdateDistributionTenant', 'cloudfront:DeleteDistributionTenant'], 'Resource' => $tenants, 'Condition' => $resource],
                 ['Sid' => 'ArcoTenantRead', 'Effect' => 'Allow', 'Action' => ['cloudfront:GetDistributionTenant', 'cloudfront:GetDistributionTenantByDomain', 'cloudfront:GetManagedCertificateDetails'], 'Resource' => $tenants],
+                ['Sid' => 'ArcoTenantCertificates', 'Effect' => 'Allow', 'Action' => ['acm:RequestCertificate', 'acm:DescribeCertificate', 'acm:AddTagsToCertificate'], 'Resource' => 'arn:aws:acm:us-east-1:111111111111:certificate/*'],
                 ['Sid' => 'ArcoTenantList', 'Effect' => 'Allow', 'Action' => 'cloudfront:ListDistributionTenants', 'Resource' => '*'],
             ],
         ], TenantMediator::policy('shop', 'production', 'us-east-1', '111111111111', 'shop-production-tenants'));
