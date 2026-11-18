@@ -4,6 +4,7 @@ namespace Multiapi\Arco\Tests\Unit\Deploy\Domains;
 
 use Multiapi\Arco\Config\App;
 use Multiapi\Arco\Config\ConfigResolver;
+use Multiapi\Arco\Deploy\Domains\DomainStack;
 use Multiapi\Arco\Deploy\Domains\TenantDomainStack;
 use PHPUnit\Framework\TestCase;
 
@@ -35,22 +36,28 @@ final class TenantDomainStackTest extends TestCase
         }
     }
 
-    public function test_request_policy_preserves_viewer_data_and_cache_is_isolated_by_host(): void
+    public function test_requests_reach_the_origin_as_with_domain_and_assets_are_cached_per_customer_host(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')
             ->tenantDomains('routing.example.com')->environment('production')->toArray(), 'production');
         $template = TenantDomainStack::template($config, 'origin.lambda-web.example.com', ['/build/*']);
         $resources = $template['Resources'];
         $distribution = $resources['Distribution']['Properties']['DistributionConfig'];
-        $request = $resources['OriginRequestPolicy']['Properties']['OriginRequestPolicyConfig'];
-        self::assertSame('allViewerAndWhitelistCloudFront', $request['HeadersConfig']['HeaderBehavior']);
-        self::assertContains('CloudFront-Viewer-Address', $request['HeadersConfig']['Headers']);
-        self::assertSame('all', $request['CookiesConfig']['CookieBehavior']);
-        self::assertSame('all', $request['QueryStringsConfig']['QueryStringBehavior']);
-        self::assertSame(['Fn::GetAtt' => ['OriginRequestPolicy', 'Id']], $distribution['DefaultCacheBehavior']['OriginRequestPolicyId']);
-        self::assertSame(['host'], $resources['AssetCachePolicy']['Properties']['CachePolicyConfig']['ParametersInCacheKeyAndForwardedToOrigin']['HeadersConfig']['Headers']);
+
+        // Real CloudFront: forwarding the viewer's Host breaks the signed origin request, and rewriting the origin
+        // from the function is refused ("The CloudFront function returned an invalid value for origin rewrite").
+        // So exactly what domain() does: every viewer header, cookie and query string except Host.
+        self::assertSame(DomainStack::ALL_VIEWER_EXCEPT_HOST_HEADER, $distribution['DefaultCacheBehavior']['OriginRequestPolicyId']);
+        self::assertSame(DomainStack::CACHING_DISABLED, $distribution['DefaultCacheBehavior']['CachePolicyId']);
+        self::assertArrayNotHasKey('OriginRequestPolicy', $resources);
+        self::assertSame(DomainStack::functionCode(), $resources['ForwardHost']['Properties']['FunctionCode'], 'the same viewer-request function as domain()');
+        self::assertStringNotContainsString('updateRequestOrigin', $resources['ForwardHost']['Properties']['FunctionCode']);
+
+        // Assets are cached per customer host through the function's X-Forwarded-Host, never through Host.
+        $cache = $resources['AssetCachePolicy']['Properties']['CachePolicyConfig']['ParametersInCacheKeyAndForwardedToOrigin'];
+        self::assertSame(['x-forwarded-host'], $cache['HeadersConfig']['Headers']);
         self::assertSame(['Fn::GetAtt' => ['AssetCachePolicy', 'Id']], $distribution['CacheBehaviors'][0]['CachePolicyId']);
-        self::assertStringContainsString('updateRequestOrigin', $resources['ForwardHost']['Properties']['FunctionCode']);
-        self::assertStringContainsString('origin.lambda-web.example.com', $resources['ForwardHost']['Properties']['FunctionCode']);
+        self::assertArrayNotHasKey('OriginRequestPolicyId', $distribution['CacheBehaviors'][0]);
+        self::assertStringNotContainsString('"host"', strtolower(json_encode($cache, JSON_THROW_ON_ERROR)));
     }
 }

@@ -50,7 +50,7 @@ Record for each step: the command, the expected observation, the actual result, 
 5. **Requests through the tenant distribution.** With an `active` customer domain, `curl -sS -D- https://shop.<customer-zone>/<probe route>` and check, each one recorded:
    - the request reaches the app (HTTP 200 from the probe) over SigV4/origin access control, with the `Host` rewritten by the viewer-request function;
    - `X-Forwarded-Host` is the customer domain, and `$request->getHost()` agrees with it;
-   - `CloudFront-Viewer-Address` arrives at the app;
+   - the client address arrives in `X-Forwarded-For` (the tenant distribution forwards requests exactly as `domain()` does; `CloudFront-Viewer-Address` is not forwarded);
    - a `+` in the query string (`?q=a+b`) arrives as `a b` exactly as it does on the `domain()` distribution; also `%2B` and `%20`;
    - `/build/<file>` is cached per host: two requests to two customer domains each show `X-Cache: Miss from cloudfront` first, then `Hit`, and a `Hit` on one domain never serves the other's response (use a probe file whose body includes the host);
    - the endpoint's direct URL (the Function URL in `arco info`) answers 403 to an unsigned request, and `curl -H 'Host: shop.<customer-zone>' <direct URL>` also 403.
@@ -102,7 +102,7 @@ Tag ownership (steps 4, 10, 13): on 2026-11-18 real CloudFront returned no `Tags
 | 4a CNAME chain | | issues | | | |
 | 4b Flattened record | | `add` passes only with all addresses in the endpoint's | | | |
 | 4c No record | | `TenantDomainDnsIncorrect` | | | |
-| 5 Requests through the tenant | | app reached, headers, `+`, per-host cache, direct URL 403 | | | |
+| 5 Requests through the tenant | 2026-11-18 (arco-smoke staging, CLI 22fec4b) | app reached, headers, `+`, per-host cache, direct URL 403 | domain `active` after `status` applied the issued certificate (activation confirmed); request answered `502 The CloudFront function returned an invalid value for origin rewrite` | No | The tenant function called `cf.updateRequestOrigin({hostHeader})`. Fixed after this run: same function and origin request policy as `domain()`, assets keyed by `x-forwarded-host`. Rerun pending. |
 | 6a Cloudflare DNS only | | record created, proxied refused | | | |
 | 6b Manual DNS resume | | stops, resumes | | | DNS wait: |
 | 7 Unavailable cases | | `TenantDomainsUnavailable` | | | |

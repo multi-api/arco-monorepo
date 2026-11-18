@@ -1384,7 +1384,8 @@ After the `domain()` steps, `deploy`:
 
 1. Checks the target, before anything is created (see the table below).
 2. Creates or updates the stack `arco-<app>-<env>-tenants`: a multi-tenant distribution (same origin, `/build/*`
-   caching and viewer-request function as `domain()`, with the viewer address forwarded and the asset cache keyed by
+   caching, origin request policy and viewer-request function as `domain()`: the app reads the customer's host
+   from `X-Forwarded-Host` and the client address from `X-Forwarded-For`; cached assets are keyed by customer
    host) and a connection group. Distribution tenants are never part of the stack.
 3. Adds a second statement (`ArcoCloudFrontTenant`) to the endpoint's policy so the tenant distribution may invoke
    it, keeping the `domain()` statement and any statement of yours.

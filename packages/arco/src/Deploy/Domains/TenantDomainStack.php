@@ -26,7 +26,10 @@ final class TenantDomainStack
     public static function template(AppConfig $config, string $endpointDomain, array $cachedPaths, bool $originAccess = true): array
     {
         $function = ['EventType' => 'viewer-request', 'FunctionARN' => ['Fn::GetAtt' => ['ForwardHost', 'FunctionARN']]];
-        $policy = ['Fn::GetAtt' => ['OriginRequestPolicy', 'Id']];
+        // As domain(): every viewer header, cookie and query string except Host, which must stay the endpoint's own
+        // (the origin access control signs for it). The app reads the customer's host from X-Forwarded-Host, set by
+        // the viewer-request function, and the client address from X-Forwarded-For.
+        $policy = DomainStack::ALL_VIEWER_EXCEPT_HOST_HEADER;
         $distribution = [
             'ConnectionMode' => 'tenant-only',
             'Enabled' => true,
@@ -72,17 +75,14 @@ final class TenantDomainStack
                 'AllowedMethods' => ['GET', 'HEAD'],
                 'CachedMethods' => ['GET', 'HEAD'],
                 'CachePolicyId' => ['Fn::GetAtt' => ['AssetCachePolicy', 'Id']],
-                'OriginRequestPolicyId' => $policy,
                 'Compress' => true,
                 'FunctionAssociations' => [$function],
             ], $cachedPaths);
         }
 
-        $code = "import cf from 'cloudfront';\n" . str_replace(
-            '  return request;',
-            '  cf.updateRequestOrigin({hostHeader: ' . json_encode($endpointDomain, JSON_THROW_ON_ERROR) . "});\n  return request;",
-            DomainStack::functionCode(),
-        );
+        // The same function as domain(). Rewriting the origin from it (cf.updateRequestOrigin) is refused by real
+        // CloudFront: "The CloudFront function returned an invalid value for origin rewrite".
+        $code = DomainStack::functionCode();
 
         if (! $originAccess) {
             unset($distribution['Origins'][0]['OriginAccessControlId']);
@@ -111,15 +111,6 @@ final class TenantDomainStack
                         'SigningProtocol' => 'sigv4',
                     ]],
                 ],
-                'OriginRequestPolicy' => [
-                    'Type' => 'AWS::CloudFront::OriginRequestPolicy',
-                    'Properties' => ['OriginRequestPolicyConfig' => [
-                        'Name' => self::name($config, 'origin'),
-                        'HeadersConfig' => ['HeaderBehavior' => 'allViewerAndWhitelistCloudFront', 'Headers' => ['CloudFront-Viewer-Address']],
-                        'CookiesConfig' => ['CookieBehavior' => 'all'],
-                        'QueryStringsConfig' => ['QueryStringBehavior' => 'all'],
-                    ]],
-                ],
                 'AssetCachePolicy' => [
                     'Type' => 'AWS::CloudFront::CachePolicy',
                     'Properties' => ['CachePolicyConfig' => [
@@ -130,7 +121,8 @@ final class TenantDomainStack
                         'ParametersInCacheKeyAndForwardedToOrigin' => [
                             'EnableAcceptEncodingBrotli' => true,
                             'EnableAcceptEncodingGzip' => true,
-                            'HeadersConfig' => ['HeaderBehavior' => 'whitelist', 'Headers' => ['host']],
+                            // Cached per customer host without sending Host to the origin: the function's header carries it.
+                            'HeadersConfig' => ['HeaderBehavior' => 'whitelist', 'Headers' => ['x-forwarded-host']],
                             'CookiesConfig' => ['CookieBehavior' => 'none'],
                             'QueryStringsConfig' => ['QueryStringBehavior' => 'none'],
                         ],
