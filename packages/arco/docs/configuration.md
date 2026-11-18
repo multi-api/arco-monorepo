@@ -1598,6 +1598,9 @@ A request to a customer domain goes through the tenant distribution, which signs
   [`+` in query strings](#-in-query-strings) describes for `domain()`.
 - `X-Forwarded-For` holds the visitor's address followed by a CloudFront address, and a `CloudFront-Viewer-Address`
   header carries the visitor's `ip:port`.
+- The viewer's `Authorization` header reaches the app exactly as the visitor sent it, on a customer domain as on
+  `domain()`: the distribution signs its origin requests without replacing it, so `Authorization: Bearer <token>`
+  authentication works unchanged.
 - **The visitor's address:** read `$request->ip()`. It returns the visitor's address, the same on a customer domain as
   on `domain()`. Never read `REMOTE_ADDR`: on Lambda it is always `169.254.100.1`, a link-local address. Code that
   runs before Laravel's trusted proxies (a global middleware prepended ahead of them) still sees that link-local

@@ -64,7 +64,7 @@ A new domain is not served until its certificate is issued **and** applied: only
 applies it, so poll `status` (every 30 seconds or so) until it answers `active`; `list` never changes anything. While
 the domain is inactive `status` answers `pending`, not `TenantDomainNotFound`. `pending` carries a reason: none
 (certificate being validated), `activating`, `removing` or `activation failed: <ErrorName>` (the next `status`
-retries); `failed` carries `certificate <status>`. The visitor's address is `$request->ip()` (not `REMOTE_ADDR`), the
+retries); `failed` carries `certificate <status>`. The viewer's `Authorization` header arrives as sent, as on `domain()`. The visitor's address is `$request->ip()` (not `REMOTE_ADDR`), the
 same on a customer domain as on the app's own domain; the customer's host is `$request->getHost()`.
 
 In tests use the fake:

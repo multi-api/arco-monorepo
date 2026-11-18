@@ -102,6 +102,7 @@ unless the user explicitly says otherwise for the case at hand.
   (minutes; `active` about 5 minutes later): `pending` with a `reason` (`activating`, `removing`,
   `activation failed: <ErrorName>`) is not an error, and an app that never polls `status` never activates the domain.
   The visitor's address is `$request->ip()`, never `REMOTE_ADDR` (always the link-local `169.254.100.1` on Lambda).
+  The viewer's `Authorization` header reaches the app as sent, on customer domains as on `domain()`.
   `remove` disables the mediator first, counts the customer domains and stops with `remove.tenants_need_force` when
   any exist: nothing is deleted. **Never add `--force` on your own to get past `remove.tenants_need_force`:** it
   deletes the user's customers' domains and takes their sites offline for good. Report the `{count}` to the user and
