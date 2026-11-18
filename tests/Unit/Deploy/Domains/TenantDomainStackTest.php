@@ -21,7 +21,9 @@ final class TenantDomainStackTest extends TestCase
         self::assertSame('tenant-only', $distribution['ConnectionMode']);
         self::assertArrayNotHasKey('Aliases', $distribution);
         self::assertArrayNotHasKey('PriceClass', $distribution);
-        self::assertArrayNotHasKey('ViewerCertificate', $distribution);
+        // Real CloudFront refuses a tenant-only distribution without this block ("configured for SNI and the minimum
+        // SSL protocol version is specified as SSLv3"): no certificate, SNI, an explicit security policy.
+        self::assertSame(['CloudFrontDefaultCertificate' => true, 'SslSupportMethod' => 'sni-only', 'MinimumProtocolVersion' => 'TLSv1.2_2021'], $distribution['ViewerCertificate']);
         self::assertSame('origin.lambda-web.example.com', $distribution['Origins'][0]['DomainName']);
         self::assertSame(['Fn::GetAtt' => ['OriginAccess', 'Id']], $distribution['Origins'][0]['OriginAccessControlId']);
         self::assertSame('always-amz-auth', $resources['OriginAccess']['Properties']['OriginAccessControlConfig']['SigningBehavior']);

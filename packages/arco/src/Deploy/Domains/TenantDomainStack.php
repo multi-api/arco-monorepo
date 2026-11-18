@@ -32,6 +32,15 @@ final class TenantDomainStack
             'Enabled' => true,
             'Comment' => "Arco tenant domains {$config->app}/{$config->environment}",
             'HttpVersion' => 'http2and3',
+            // No certificate of its own: each distribution tenant brings its managed certificate. Left out,
+            // CloudFormation sends SSLv3 as the minimum protocol and CloudFront refuses it for a tenant-only
+            // (always SNI) distribution. This is the shape CloudFront itself reports for such a distribution,
+            // with the security policy domain() uses.
+            'ViewerCertificate' => [
+                'CloudFrontDefaultCertificate' => true,
+                'SslSupportMethod' => 'sni-only',
+                'MinimumProtocolVersion' => 'TLSv1.2_2021',
+            ],
             'Origins' => [[
                 'Id' => 'arco-endpoint',
                 'DomainName' => $endpointDomain,

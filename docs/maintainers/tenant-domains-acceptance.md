@@ -92,7 +92,7 @@ Copy this table into the pull request or release notes that adopts the result.
 
 | Step | Date | Expected | Observed | Pass? | Notes (request ids, timings, error names) |
 |---|---|---|---|---|---|
-| 1 First deploy | | stack, record, mediator, `tenants: 0` | | | |
+| 1 First deploy | 2026-11-17 (arco-smoke staging, CLI d6eb1e0) | stack, record, mediator, `tenants: 0` | tenant stack `ROLLBACK_COMPLETE`: `ViewerCertificate`: "configured for SNI and the minimum SSL protocol version is specified as SSLv3" | No | The template had no `ViewerCertificate`. Fixed after this run (default certificate, `sni-only`, `TLSv1.2_2021`); rerun pending. The web deploy and `domain()` had already succeeded. |
 | 2 Redeploy unchanged | | no stack update, no tenant touched | | | |
 | 3a Target change refused | | `domains.tenant_target_changed` | | | |
 | 3b Replacement refused | | `domains.stack_replacement` | | | |
