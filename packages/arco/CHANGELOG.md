@@ -3,7 +3,12 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.25.0-beta.1
+
+A preview release: Composer only installs it when asked for by its version
+(`composer require multiapi/arco:0.25.0-beta.1 multiapi/arco-laravel:0.25.0-beta.1`); `^0.24` stays on 0.24.1.
+It exists so tenant domains can be tried before 0.25.0, in particular through Arco Cloud with a limited deploy role
+and a permissions boundary, which has not been run yet. Public suffix list `VERSION: 2026-11-17_06-40-19_UTC`.
 
 - **Added: `arco tenants:restore --env=<env>`.** Enables the tenant domains function `<app>-<env>-tenants` again after
   an `arco remove` that stopped (the remove sets its reserved concurrency to 0 and never restores it, and a deploy

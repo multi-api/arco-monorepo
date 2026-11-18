@@ -11,7 +11,7 @@ composer require multiapi/arco-laravel:^0.12
 vendor/bin/arco info --env=staging     # validation runs here: errors and deprecations name the fix
 ```
 
-## Unreleased: tenant domains (experimental)
+## Upgrading to 0.25.0 (preview: 0.25.0-beta.1): tenant domains (experimental)
 
 Existing configurations need no change. `tenantDomains(target: 'routing.example.com')` is deployable and was run once on real AWS (see
 [what is verified](configuration.md#tenant-domain-routing)); it is still experimental, so try it on a staging
