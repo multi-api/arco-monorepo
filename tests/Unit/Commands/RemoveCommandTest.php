@@ -378,6 +378,29 @@ final class RemoveCommandTest extends TestCase
         $project->restore();
     }
 
+    public function test_a_refused_remove_never_lists_a_resource_as_already_deleted(): void
+    {
+        // Staging, 2026-11-19: the listing printed before anything is deleted said
+        // "resource-groups:group arco-arco-smoke-staging (deleted)", then the remove stopped with
+        // remove.tenants_need_force and "Nothing was deleted"; the group was still there.
+        $project = new ProjectFixture(self::tenantConfig());
+        $deployer = new FakeDeployer(status: new AppStatus('shop-production', 'Active', 'x.on.aws', 'rev-1'));
+        $r = fn (string $type, string $name, bool $retained = false) => ['type' => $type, 'name' => $name, 'arn' => "arn:$name", 'retained' => $retained, 'relations' => [], 'source' => null, 'options' => null];
+        $deployer->tagged = [$r('resource-groups:group', 'arco-shop-production'), $r('cloudfront:distribution-tenant', 'dt_1')];
+        $deployer->removeSteps = [['remove.step_tenant_drain', ['function' => 'shop-production-tenants', 'environment' => 'production']]];
+        $deployer->removeError = \Multiapi\Arco\Deploy\DeployException::make('remove.tenants_need_force', ['count' => 1, 'function' => 'shop-production-tenants', 'environment' => 'production']);
+        $tester = $project->tester($this->command($deployer));
+
+        $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
+
+        self::assertSame(1, $tester->getStatusCode());
+        $display = $tester->getDisplay();
+        self::assertStringContainsString('resource-groups:group arco-shop-production (will be deleted)', $display);
+        self::assertStringNotContainsString('(deleted)', $display);
+        self::assertStringContainsString('Nothing was deleted', $display);
+        $project->restore();
+    }
+
     public function test_json_force_reaches_the_deployer_and_never_prompts(): void
     {
         $project = new ProjectFixture(self::tenantConfig());
@@ -410,9 +433,9 @@ final class RemoveCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--profile' => 'p', '--yes' => true], ['interactive' => false]);
 
         $display = $tester->getDisplay();
-        self::assertStringContainsString('cloudfront:distribution-tenant dt_1 (deleted only with --force)', $display);
-        self::assertStringContainsString('cloudformation:stack arco-shop-production-tenants (deleted)', $display);
-        self::assertStringContainsString('s3 shop-uploads (kept)', $display);
+        self::assertStringContainsString('cloudfront:distribution-tenant dt_1 (will be deleted only with --force)', $display);
+        self::assertStringContainsString('cloudformation:stack arco-shop-production-tenants (will be deleted)', $display);
+        self::assertStringContainsString('s3 shop-uploads (will be kept)', $display);
         $project->restore();
     }
 
@@ -426,7 +449,7 @@ final class RemoveCommandTest extends TestCase
         $tester->execute(['--env' => 'production', '--profile' => 'p', '--force' => true], ['interactive' => false]);
 
         $display = $tester->getDisplay();
-        self::assertStringContainsString('cloudfront:distribution-tenant dt_1 (deleted)', $display);
+        self::assertStringContainsString('cloudfront:distribution-tenant dt_1 (will be deleted)', $display);
         self::assertStringNotContainsString('only with --force', $display);
         $project->restore();
     }
