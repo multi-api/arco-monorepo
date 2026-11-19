@@ -3,7 +3,10 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.25.1
+
+Two tenant domains fixes found by the first staging run through Arco Cloud (deploy, a customer domain, a refused
+remove and `tenants:restore`). Public suffix list `VERSION: 2026-11-19_08-30-20_UTC`.
 
 - **Fixed: `TenantDomains::status()` (and `add`, `list`) answered `active` for a customer domain whose tenant had no
   certificate yet.** CloudFront can list the domain as active as soon as DNS points to it, before the issued managed
