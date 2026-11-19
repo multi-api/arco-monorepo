@@ -17,7 +17,7 @@ A build also publishes a static PHP CLI (`php-linux-aarch64`) with the same PHP 
 
 1. **Dry run.** In `arco-runtime`, run the `Publish runtime build` workflow with `frankenphp_version=<x.y.z>`, `revision=<n>`, `spc_tag=<static-php-cli release tag>`, `extensions=<list>`, `publish=false`. The `build-php` and `verify` jobs run; `publish` does not.
    - `spc_tag`: a static-php-cli release (2.8.5 for `1.13.0-r2`). Its release binary is checked against the digest GitHub reports before it runs.
-   - `extensions`: copy `defaultExtensions` from FrankenPHP's `build-static.sh` at the tag `v<x.y.z>`. The parity check below fails if the list drifts from the FrankenPHP binary.
+   - `extensions`: copy `extensions` from FrankenPHP's `craft.yml` at the tag `v<x.y.z>` (since 1.13.2 the static build is described there; older tags have `defaultExtensions` in `build-static.sh`), then add the extensions the binary loads through `with-suggests` (`msgpack` since 1.13.5). The previous publish run's `EXTENSIONS` (in its log) is the quickest reference. The parity check below fails if the list drifts from the FrankenPHP binary.
 2. **Inspect the artifact.** Download the `frankenphp-<release id>` workflow artifact. Check `build.json` (id, PHP version, extensions, sha256, size, `origin.asset_digest`, and `php_cli` with `sha256`, `size`, `spc` and `extensions`) and `SHA256SUMS`.
 3. **Publish.** Re-run with `publish=true`. The `publish` job re-verifies the upstream attestation and cross-checks `build.json` before attesting both binaries and creating the release.
 4. **Verify the release.** Confirm the release `frankenphp-<release id>` is immutable (`gh api repos/multi-api/arco-runtime/releases/tags/frankenphp-<release id> --jq .immutable`) and that both attestations verify:
