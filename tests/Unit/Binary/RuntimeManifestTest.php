@@ -212,14 +212,14 @@ final class RuntimeManifestTest extends TestCase
         $manifest = RuntimeManifest::load();
         self::assertSame('8.5', $manifest->defaultPhp());
         $build = $manifest->resolve(null, null);
-        self::assertSame('php8.5.12-fp1.13.5-r1', $build->id);
+        self::assertSame('php8.5.13-fp1.13.6-r1', $build->id);
         self::assertSame($build, $manifest->resolve(null, null, '8.5'));
-        self::assertSame('2a21b7d3b74d9e3292915608f248adc26e98bc9b34ee4128a8c87b0629f9c07f', $build->sha256);
-        self::assertSame(173764552, $build->size);
-        self::assertSame('https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.5-r1/frankenphp-linux-aarch64', $build->url);
+        self::assertSame('07946c1c201c424a3358241114ac1947eea5bbe4c55fabcf37f8f47f58502b1e', $build->sha256);
+        self::assertSame(173816040, $build->size);
+        self::assertSame('https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.6-r1/frankenphp-linux-aarch64', $build->url);
         self::assertNotNull($build->phpCli);
         self::assertSame(
-            ['https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.5-r1/php-linux-aarch64', '7f82ee022accb45fdc252d107f82af9a9ac499f55c3ba0335d45fd1e5f1871d9', 95101080],
+            ['https://github.com/multi-api/arco-runtime/releases/download/frankenphp-1.13.6-r1/php-linux-aarch64', '872edf031bd0e2eae6e60c788ebfe2620b2449b4a454d54f6664ff13ccd33039', 95101128],
             [$build->phpCli->url, $build->phpCli->sha256, $build->phpCli->size],
         );
 
