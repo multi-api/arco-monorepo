@@ -848,6 +848,7 @@ return [
     'validation.queue_max_instances' => 'Cola "{queue}": maxInstances debe ser al menos 2, recibido {value}.',
     'validation.queue_both_concurrency' => 'Cola "{queue}": indica solo maxInstances; concurrency es su nombre en desuso.',
     'validation.queue_batch_size' => 'Cola "{queue}": batchSize debe estar entre 1 y {max}, recibido {value}.',
+    'validation.queue_maintenance' => 'Cola "{queue}": maintenance debe ser \'run\' o \'wait\', recibido "{value}".',
     'validation.queue_recursive_loop' => 'Cola "{queue}": recursiveLoop debe ser \'allow\' o \'terminate\', recibido "{value}".',
     'validation.queue_tries' => 'Cola "{queue}": tries debe ser al menos 1, recibido {value}.',
     'validation.queue_default_twice' => 'Solo una cola puede ser la predeterminada (default: true).',

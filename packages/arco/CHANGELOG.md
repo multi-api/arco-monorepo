@@ -3,6 +3,16 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
+## Unreleased
+
+- **Added: `maintenance` on queues.** `->queue('mail', maintenance: 'run')` (`"maintenance": "run"` in a config layer
+  or `arco.json`) keeps the queue's Laravel worker running jobs while the app is down (`php artisan down`), like
+  `queue:work --force`; `'wait'`, the default, keeps today's behaviour (jobs go back a minute later without spending
+  an attempt). The deploy sets `ARCO_QUEUE_MAINTENANCE=run` on that worker function only. New error key
+  `validation.queue_maintenance`. No new permissions. See
+  [Queues that run during maintenance](docs/configuration.md#queues-that-run-during-maintenance)
+  (multi-api/arco#2).
+
 ## 0.25.2
 
 Public suffix list `VERSION: 2026-11-19_08-30-20_UTC` (unchanged since 0.25.1).

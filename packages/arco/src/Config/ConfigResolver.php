@@ -577,6 +577,7 @@ final class ConfigResolver
                 adopt: in_array((string) $name, $adopted, true),
                 route: self::nullableString($o['route'] ?? null),
                 recursiveLoop: self::nullableString($o['recursiveLoop'] ?? null),
+                maintenance: self::nullableString($o['maintenance'] ?? null),
             );
         }
         return $queues;

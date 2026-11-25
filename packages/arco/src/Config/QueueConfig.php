@@ -36,6 +36,8 @@ final readonly class QueueConfig
          * a deploy, so whatever the function has (AWS's default is Terminate) stays
          */
         public ?string $recursiveLoop = null,
+        /** 'run' keeps the worker consuming while the app is in maintenance mode; 'wait' or null: it waits (the default) */
+        public ?string $maintenance = null,
     ) {
     }
 
@@ -53,6 +55,12 @@ final readonly class QueueConfig
             'terminate' => 'Terminate',
             default => null,
         };
+    }
+
+    /** True only for maintenance: 'run'. */
+    public function runsInMaintenance(): bool
+    {
+        return $this->maintenance === 'run';
     }
 
     public function route(): string

@@ -40,7 +40,8 @@ final class WorkerFunctions
      * The worker's environment: the deploy's variables (with the console's ARCO_BINARY_* when it
      * downloads FrankenPHP) plus the queue the worker serves and the guards that depend on it.
      * ARCO_QUEUE_MAX_RECEIVES (the dead-letter queue's maxReceiveCount) is only known for queues
-     * Arco created with a dead-letter queue.
+     * Arco created with a dead-letter queue. ARCO_QUEUE_MAINTENANCE=run is only set for a queue that
+     * keeps running while the app is in maintenance mode (maintenance: 'run'); there is no key otherwise.
      *
      * @param array<string, string> $variables
      * @return array<string, string>
@@ -50,6 +51,9 @@ final class WorkerFunctions
         $environment = [...$variables, 'ARCO_WORKER_QUEUE' => $queue->name, 'ARCO_QUEUE_TRIES' => (string) $queue->tries];
         if ($queue->existing === null && $queue->dlq) {
             $environment['ARCO_QUEUE_MAX_RECEIVES'] = (string) ($queue->tries + ResourcesStack::EXTRA_RECEIVES);
+        }
+        if ($queue->runsInMaintenance()) {
+            $environment['ARCO_QUEUE_MAINTENANCE'] = 'run';
         }
         return $environment;
     }

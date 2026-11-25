@@ -46,7 +46,7 @@ final class ArcoJsonTest extends TestCase
             'include' => ['templates/**'],
             'settings' => ['timeout' => 30, 'accessLog' => true],
             'variables' => ['LOG_LEVEL' => 'info'],
-            'queues' => ['emails' => ['route' => '/_arco/queues/emails', 'tries' => 3, 'timeout' => 30, 'recursiveLoop' => 'allow']],
+            'queues' => ['emails' => ['route' => '/_arco/queues/emails', 'tries' => 3, 'timeout' => 30, 'recursiveLoop' => 'allow', 'maintenance' => 'run']],
             'schedules' => ['cleanup' => ['every' => '1h', 'route' => '/_arco/schedule/cleanup', 'timeout' => 60]],
             'storage' => ['uploads' => []],
             'tables' => ['state' => ['ttl' => 'expires_at']],
@@ -65,6 +65,8 @@ final class ArcoJsonTest extends TestCase
         self::assertSame(['templates/**'], $config->include);
         self::assertSame(['LOG_LEVEL' => 'info'], $config->variables);
         self::assertSame('allow', $config->queues[0]->recursiveLoop);
+        self::assertSame('run', $config->queues[0]->maintenance);
+        self::assertTrue($config->queues[0]->runsInMaintenance());
         self::assertNotNull($config->process);
         self::assertSame('go', $config->process->language);
         self::assertSame('/healthz', $config->process->healthPath);

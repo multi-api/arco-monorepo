@@ -23,6 +23,14 @@ final class WorkerFunctionsTest extends TestCase
         self::assertArrayNotHasKey('ARCO_QUEUE_MAX_RECEIVES', WorkerFunctions::environment($noDlq, []));
     }
 
+    public function test_the_environment_flags_a_queue_that_runs_in_maintenance(): void
+    {
+        self::assertSame('run', WorkerFunctions::environment(new QueueConfig('a', maintenance: 'run'), [])['ARCO_QUEUE_MAINTENANCE']);
+        self::assertArrayNotHasKey('ARCO_QUEUE_MAINTENANCE', WorkerFunctions::environment(new QueueConfig('b', maintenance: 'wait'), []));
+        self::assertArrayNotHasKey('ARCO_QUEUE_MAINTENANCE', WorkerFunctions::environment(new QueueConfig('c'), []));
+        self::assertArrayNotHasKey('ARCO_QUEUE_MAINTENANCE', WorkerFunctions::processEnvironment(new QueueConfig('d', maintenance: 'run'), []));
+    }
+
     public function test_settings_come_from_the_queue_and_empty_variables_are_dropped(): void
     {
         $config = ConfigResolver::resolve(App::make('shop')->region('us-east-1')->kmsKey('arn:kms')->environment('production')->toArray(), 'production');
