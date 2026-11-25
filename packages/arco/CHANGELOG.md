@@ -3,7 +3,10 @@
 All notable changes to Arco are documented here. Arco follows [semantic versioning](https://semver.org);
 while it is 0.x, minor versions may contain breaking changes, always listed under **Changed**.
 
-## Unreleased
+## 0.26.0
+
+Released 2026-11-25. Public suffix list `VERSION: 2026-11-25_08-39-46_UTC`. The real-AWS end-to-end run was not
+done for this release.
 
 - **Added: `maintenance` on queues.** `->queue('mail', maintenance: 'run')` (`"maintenance": "run"` in a config layer
   or `arco.json`) keeps the queue's Laravel worker running jobs while the app is down (`php artisan down`), like
