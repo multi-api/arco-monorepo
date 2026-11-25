@@ -153,7 +153,7 @@ one of yours. The one exception is `ARCO_TELEMETRY_DISABLE`, a switch you may se
 | `ARCO_QUEUE_<NAME>_URL` | web, console and worker functions of a [process app](#process-runtime-go), one per queue | the queue's URL | stable: read it in your app |
 | `PORT`, `HOST` | the process of a [process app](#the-port-contract) | `8000` (`8001` when an [Arco Cloud front extension](cloud-extensions.md) is present), `127.0.0.1` | stable: always listen on `$PORT`, never a hard-coded port |
 | `ARCO_TABLES` | web, console and worker functions, with `table()` | JSON map `{"<name>": "<table>"}`, see [Tables](#tables) | stable: read it in your app; its JSON shape may gain keys |
-| `ARCO_WORKER_QUEUE`, `ARCO_QUEUE_ROUTE`, `ARCO_QUEUE_FIFO`, `ARCO_SCHEDULES`, `ARCO_QUEUE_TRIES`, `ARCO_QUEUE_MAX_RECEIVES`, `ARCO_BINARY_BUCKET`, `ARCO_BINARY_KEY`, `ARCO_BINARY_SHA256`, `ARCO_PHP_BINARY`, `ARCO_TMP`, `ARCO_S3_ENDPOINT`, `ARCO_BOOT_STARTED_AT` | the runtime of the console and worker functions | | internal: may change in any release, do not read them |
+| `ARCO_WORKER_QUEUE`, `ARCO_QUEUE_ROUTE`, `ARCO_QUEUE_FIFO`, `ARCO_SCHEDULES`, `ARCO_QUEUE_TRIES`, `ARCO_QUEUE_MAX_RECEIVES`, `ARCO_QUEUE_MAINTENANCE`, `ARCO_BINARY_BUCKET`, `ARCO_BINARY_KEY`, `ARCO_BINARY_SHA256`, `ARCO_PHP_BINARY`, `ARCO_TMP`, `ARCO_S3_ENDPOINT`, `ARCO_BOOT_STARTED_AT` | the runtime of the console and worker functions | | internal: may change in any release, do not read them |
 | `ARCO_TIMEOUT` | the web function | `timeout()` in seconds; the runtime sets PHP's `max_execution_time` from it | internal: may change in any release, do not read it |
 | `ARCO_REQUEST_ID` | each command the console function runs (with `_X_AMZN_TRACE_ID`, the invocation's trace header) | the Lambda invocation id | internal: `multiapi/arco-laravel` shares it in the log context ([Log context](#log-context)); read `context.requestId` instead |
 | `ARCO_VARIABLES` | web, console and worker functions, with `bundleVariables()` | `s3://<code bucket>/variables/<app>/<env>/<sha256>.json` | internal: may change in any release, do not read it |
@@ -677,6 +677,7 @@ name add to each other.
 | `existing` | none | Name, URL or ARN of an SQS queue Arco does not manage (below) |
 | `default` | first queue | The queue jobs go to without `onQueue()`; at most one queue may say `default: true` |
 | `recursiveLoop` | unset | `'allow'` or `'terminate'`: the worker's Lambda recursive loop detection (see [Jobs that re-queue themselves](#jobs-that-re-queue-themselves)). Unset leaves the function's setting as it is |
+| `maintenance` | `'wait'` | `'run'` keeps the worker running jobs while the app is down (`php artisan down`), like `queue:work --force`; `'wait'` sends them back until it is up (see [Queues that run during maintenance](#queues-that-run-during-maintenance)) |
 
 - App and environment queues merge by name: the environment's options go over the app's for that queue,
   new names are added, and `->queue('emails', false)` on an environment drops an app-level queue there.
@@ -711,6 +712,29 @@ that loops by mistake on that queue is no longer stopped by AWS: keep `tries`, a
 and the dead-letter queue as the limit. The deploy profile needs `lambda:GetFunctionRecursionConfig` and
 `lambda:PutFunctionRecursionConfig` on the workers (see [Permissions for queues](getting-started.md#permissions-for-queues));
 only queues with the option use them. In a config layer or `arco.json`, it is `"recursiveLoop": "allow"`.
+
+### Queues that run during maintenance
+
+By default, while the app is in maintenance mode (`php artisan down`), the Laravel worker does not run jobs. It sends
+each one back a minute later without spending an attempt: on a standard queue as a fresh copy delayed by 60 seconds,
+on a FIFO queue by making the message visible again after a minute (a fresh copy in the same message group once the
+job is at its `$tries` or on the last delivery before the dead-letter queue). Jobs are not lost, they wait until the
+app is up. Laravel keeps the maintenance state in its maintenance driver: use `APP_MAINTENANCE_DRIVER=cache` with a
+shared store (Redis, DynamoDB, a database) so every Lambda instance sees `down`; the default `file` driver is per
+instance.
+
+A queue whose jobs must keep running during maintenance (mail, notifications) opts out per queue:
+
+```php
+->queue('default')
+->queue('mail', maintenance: 'run')
+->queue('reports', maintenance: 'wait')
+```
+
+The worker of `mail` then runs its jobs as usual while the app is down. The deploy sets `ARCO_QUEUE_MAINTENANCE=run`
+on that worker function only, so `default` and `reports` keep waiting. `'wait'` is the default: setting it, or
+removing the option, goes back to waiting on the next deploy. Only Laravel workers read the variable: the workers of
+process apps never checked maintenance mode. In a config layer or `arco.json`, it is `"maintenance": "run"`.
 
 ### Several queues and `onQueue()`
 
