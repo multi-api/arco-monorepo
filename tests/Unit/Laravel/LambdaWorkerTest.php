@@ -29,7 +29,7 @@ final class LambdaWorkerTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach ([...array_keys(QueueTestApp::env()), 'ARCO_QUEUE_MAX_RECEIVES'] as $name) {
+        foreach ([...array_keys(QueueTestApp::env()), 'ARCO_QUEUE_MAX_RECEIVES', 'ARCO_QUEUE_MAINTENANCE'] as $name) {
             unset($_SERVER[$name]);
         }
         TrustProxies::flushState();
@@ -308,6 +308,55 @@ final class LambdaWorkerTest extends TestCase
         self::assertSame(['tenant' => ['DataType' => 'String', 'StringValue' => 'acme']], $sent[0]['MessageAttributes']);
         self::assertArrayNotHasKey('MessageGroupId', $sent[0]);
         self::assertSame([], $this->test->callsTo('ChangeMessageVisibility'));
+        self::assertSame('maintenance_requeued', $this->logs[0]['status']);
+    }
+
+    public function test_in_maintenance_mode_a_run_queue_runs_its_jobs(): void
+    {
+        $this->maintenance();
+        $_SERVER['ARCO_QUEUE_MAINTENANCE'] = 'run';
+
+        self::assertSame([], $this->handle([QueueTestJob::record('ok', attempts: 1)]));
+
+        self::assertSame(['ok'], QueueTestJob::$handled);
+        self::assertSame([], $this->test->callsTo('SendMessage'));
+        self::assertSame('ok', $this->logs[0]['status']);
+    }
+
+    public function test_in_maintenance_mode_a_fifo_run_queue_runs_its_jobs_without_holding(): void
+    {
+        $this->maintenance();
+        $this->fifo();
+        $_SERVER['ARCO_QUEUE_MAINTENANCE'] = 'run';
+
+        self::assertSame([], $this->handle([
+            QueueTestJob::record('ok', id: 'm-a', attributes: ['MessageGroupId' => 'g1']),
+            QueueTestJob::record('ok', id: 'm-b', attributes: ['MessageGroupId' => 'g1']),
+        ]));
+
+        self::assertSame(['ok', 'ok'], QueueTestJob::$handled);
+        self::assertSame([], $this->test->callsTo('SendMessage'));
+        self::assertSame([], $this->test->callsTo('ChangeMessageVisibility'));
+        self::assertSame(['ok', 'ok'], array_column($this->logs, 'status'));
+    }
+
+    public function test_in_maintenance_mode_a_failing_job_on_a_run_queue_comes_back_like_outside_maintenance(): void
+    {
+        $this->maintenance();
+        $_SERVER['ARCO_QUEUE_MAINTENANCE'] = 'run';
+
+        self::assertSame(['m-throw'], $this->handle([QueueTestJob::record('throw', attempts: 1)]));
+    }
+
+    public function test_in_maintenance_mode_a_wait_queue_still_sends_jobs_again(): void
+    {
+        $this->maintenance();
+        $_SERVER['ARCO_QUEUE_MAINTENANCE'] = 'wait';
+
+        self::assertSame([], $this->handle([QueueTestJob::record('ok', attempts: 1)]));
+
+        self::assertSame([], QueueTestJob::$handled);
+        self::assertCount(1, $this->test->callsTo('SendMessage'));
         self::assertSame('maintenance_requeued', $this->logs[0]['status']);
     }
 

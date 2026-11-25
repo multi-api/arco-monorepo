@@ -27,6 +27,9 @@ use Throwable;
  * store could not take it: it then comes back, so it ends in the dead-letter queue instead of being lost. Each job
  * gets the time left before the Lambda deadline minus a safety margin, so a slow job times out like
  * under `queue:work` instead of the whole batch being killed.
+ *
+ * While the app is down for maintenance the jobs do not run and come back (see whileDown()), except on a
+ * queue declared with `maintenance: 'run'` (ARCO_QUEUE_MAINTENANCE=run), which runs them like `queue:work --force`.
  */
 final class LambdaWorker
 {
@@ -43,6 +46,8 @@ final class LambdaWorker
     private readonly int $tries;
     private readonly ?int $maxReceives;
     private readonly ?string $workerQueue;
+    /** Whether this worker's queue keeps running jobs while the app is down (`maintenance: 'run'`). */
+    private readonly bool $runsInMaintenance;
     /** @var array<string, string> */
     private readonly array $queues;
     /** @var array<string, true> job id => the failed-jobs store could not take the job of this delivery */
@@ -67,6 +72,7 @@ final class LambdaWorker
         $maxReceives = Env::get('ARCO_QUEUE_MAX_RECEIVES');
         $this->maxReceives = $maxReceives !== null && ctype_digit($maxReceives) && (int) $maxReceives > 0 ? (int) $maxReceives : null;
         $this->workerQueue = Env::get('ARCO_WORKER_QUEUE');
+        $this->runsInMaintenance = Env::get('ARCO_QUEUE_MAINTENANCE') === 'run';
         $this->queues = ArcoSqsQueue::queuesFromEnv(Env::get('ARCO_QUEUES'));
         $this->worker = new TimedWorker($manager, $events, $exceptions, $this->isDown(...));
         if ($app->bound('cache')) {
@@ -210,7 +216,7 @@ final class LambdaWorker
             LogContext::share($this->app, ['requestId' => $this->requestId, 'traceId' => $traceId]);
             $job = ArcoSqsJob::fromRecord($this->app, $queue->getSqs(), $record, $connection, $this->queueUrl($record, $queue), $queue->overflowOptions(), $this->log);
             LogContext::share($this->app, ['traceId' => self::dispatchTraceId($job), 'job' => self::jobName($job)]);
-            if ($this->isDown()) {
+            if (! $this->runsInMaintenance && $this->isDown()) {
                 [$status, $reported] = $this->whileDown($job, $record);
             } else {
                 try {
@@ -281,7 +287,8 @@ final class LambdaWorker
     }
 
     /**
-     * The app is down: the job does not run, and its delivery must not count as an attempt.
+     * The app is down: the job does not run, and its delivery must not count as an attempt (not called
+     * for queues with `maintenance: 'run'`, whose jobs run).
      *
      * - Standard queue: every delivery is replaced by a fresh copy delayed by a minute (the receive
      *   count starts over) and the original is not reported, so Lambda deletes it.
@@ -360,7 +367,7 @@ final class LambdaWorker
     private function options(int $timeout): WorkerOptions
     {
         // The backoff comes from the job ($backoff / backoff()); none means the message is visible again at once.
-        return new WorkerOptions(name: 'arco', backoff: 0, timeout: $timeout, sleep: 0, maxTries: $this->tries);
+        return new WorkerOptions(name: 'arco', backoff: 0, timeout: $timeout, sleep: 0, maxTries: $this->tries, force: $this->runsInMaintenance);
     }
 
     /** What Laravel's worker does between jobs, so no state leaks from one job into the next. */
