@@ -159,6 +159,8 @@ trait ConfiguresDeployment
      * @param string|null $recursiveLoop the worker's Lambda recursive loop detection: 'allow' lets jobs that re-queue
      *                                   themselves (release(), re-dispatch) run past AWS's ~16-hop cut-off; 'terminate'
      *                                   puts back the AWS default; unset leaves the function's setting as it is
+     * @param string|null $maintenance 'run' keeps the worker consuming while the app is down for maintenance
+     *                                 (php artisan down); 'wait' or unset: it waits until the app is back up
      */
     public function queue(
         string $name,
@@ -174,6 +176,7 @@ trait ConfiguresDeployment
         ?bool $default = null,
         ?int $concurrency = null,
         ?string $recursiveLoop = null,
+        ?string $maintenance = null,
     ): static {
         if ($remove === false) {
             $this->queues[$name] = false;
@@ -182,7 +185,7 @@ trait ConfiguresDeployment
         $options = array_filter(
             ['timeout' => $timeout, 'memory' => $memory, 'maxInstances' => $maxInstances, 'concurrency' => $concurrency, 'batchSize' => $batchSize,
                 'tries' => $tries, 'dlq' => $dlq, 'fifo' => $fifo, 'existing' => $existing, 'default' => $default,
-                'recursiveLoop' => $recursiveLoop],
+                'recursiveLoop' => $recursiveLoop, 'maintenance' => $maintenance],
             fn (mixed $value): bool => $value !== null,
         );
         $current = $this->queues[$name] ?? [];

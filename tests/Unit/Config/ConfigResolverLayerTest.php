@@ -134,12 +134,16 @@ final class ConfigResolverLayerTest extends TestCase
         $config = ConfigResolver::resolve(
             self::raw(fn (App $a) => $a->queue('emails')),
             'production',
-            self::layer(['queues' => ['default' => ['recursiveLoop' => 'allow']]]),
+            self::layer(['queues' => ['default' => ['recursiveLoop' => 'allow', 'maintenance' => 'run']]]),
         );
 
         self::assertSame(['emails', 'default'], array_map(fn ($q) => $q->name, $config->queues));
         self::assertNull($config->queues[0]->recursiveLoop);
         self::assertSame('allow', $config->queues[1]->recursiveLoop);
+        self::assertNull($config->queues[0]->maintenance);
+        self::assertFalse($config->queues[0]->runsInMaintenance());
+        self::assertSame('run', $config->queues[1]->maintenance);
+        self::assertTrue($config->queues[1]->runsInMaintenance());
     }
 
     public function test_setting_equal_is_fine_different_conflicts_unset_takes_layer(): void

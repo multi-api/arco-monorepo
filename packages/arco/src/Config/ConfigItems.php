@@ -308,6 +308,7 @@ final class ConfigItems
             'default' => $queue->default,
             'route' => $config->isProcess() ? $queue->route() : null,
             'recursiveLoop' => $queue->recursiveLoop,
+            'maintenance' => $queue->maintenance,
         ];
     }
 

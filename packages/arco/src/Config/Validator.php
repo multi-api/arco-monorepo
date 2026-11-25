@@ -544,6 +544,9 @@ final class Validator
             if ($queue->recursiveLoop !== null && $queue->recursionConfig() === null) {
                 $result->error('validation.queue_recursive_loop', ['queue' => $name, 'value' => $queue->recursiveLoop]);
             }
+            if ($queue->maintenance !== null && !in_array($queue->maintenance, ['run', 'wait'], true)) {
+                $result->error('validation.queue_maintenance', ['queue' => $name, 'value' => $queue->maintenance]);
+            }
             if ($queue->default) {
                 $defaults++;
             }

@@ -848,6 +848,7 @@ return [
     'validation.queue_max_instances' => 'Queue "{queue}": maxInstances must be at least 2, got {value}.',
     'validation.queue_both_concurrency' => 'Queue "{queue}": give maxInstances only; concurrency is its deprecated name.',
     'validation.queue_batch_size' => 'Queue "{queue}": batchSize must be between 1 and {max}, got {value}.',
+    'validation.queue_maintenance' => 'Queue "{queue}": maintenance must be \'run\' or \'wait\', got "{value}".',
     'validation.queue_recursive_loop' => 'Queue "{queue}": recursiveLoop must be \'allow\' or \'terminate\', got "{value}".',
     'validation.queue_tries' => 'Queue "{queue}": tries must be at least 1, got {value}.',
     'validation.queue_default_twice' => 'Only one queue can be the default (default: true).',

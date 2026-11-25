@@ -647,7 +647,8 @@ final class ValidatorTest extends TestCase
     {
         $app = App::make('shop')->queue('jobs')->queue('emails', timeout: 900, memory: 128, maxInstances: 2, batchSize: 10000, tries: 1)
             ->queue('f', fifo: true, batchSize: 10)->queue('e', existing: 'arn:aws:sqs:us-east-1:123456789012:legacy')
-            ->queue('r', recursiveLoop: 'allow')->queue('t', recursiveLoop: 'terminate');
+            ->queue('r', recursiveLoop: 'allow')->queue('t', recursiveLoop: 'terminate')
+            ->queue('mr', maintenance: 'run')->queue('mw', maintenance: 'wait');
         self::assertSame([], $this->queueErrors($app));
     }
 
@@ -667,6 +668,7 @@ final class ValidatorTest extends TestCase
             'validation.queue_batch_size' => [['batchSize' => 0], ['batchSize' => 10001], ['batchSize' => 11, 'fifo' => true]],
             'validation.queue_tries' => [['tries' => 0]],
             'validation.queue_recursive_loop' => [['recursiveLoop' => 'Allow'], ['recursiveLoop' => 'yes'], ['recursiveLoop' => '']],
+            'validation.queue_maintenance' => [['maintenance' => 'Run'], ['maintenance' => 'yes'], ['maintenance' => '']],
         ];
         foreach ($cases as $key => $variants) {
             foreach ($variants as $options) {
