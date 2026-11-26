@@ -5,8 +5,8 @@
 // Please pull this list from, and only from https://publicsuffix.org/list/public_suffix_list.dat,
 // rather than any other VCS sites. Pulling from any other URL is not guaranteed to be supported.
 
-// VERSION: 2026-11-19_08-30-20_UTC
-// COMMIT: f7796455091118a5617cc7588523b083a8223301
+// VERSION: 2026-11-25_08-39-46_UTC
+// COMMIT: 80677f92c8d3d4a0fdf1e4960fa35d4dbe2e24a1
 
 // Instructions on pulling and using this list can be found at https://publicsuffix.org/list/.
 
@@ -705,10 +705,13 @@ bv
 // bw : https://nic.net.bw/bw-name-structure
 bw
 ac.bw
+agric.bw
 co.bw
 gov.bw
+me.bw
 net.bw
 org.bw
+shop.bw
 
 // by : https://www.iana.org/domains/root/db/by.html
 // http://tld.by/rules_2006_en.html
@@ -6817,7 +6820,7 @@ org.zw
 
 // newGTLDs
 
-// List of new gTLDs imported from https://www.icann.org/resources/registries/gtlds/v2/gtlds.json on 2026-10-30T19:51:02Z
+// List of new gTLDs imported from https://www.icann.org/resources/registries/gtlds/v2/gtlds.json on 2026-11-20T22:06:55Z
 // This list is auto-generated, don't edit it manually.
 // aaa : American Automobile Association, Inc.
 // https://www.iana.org/domains/root/db/aaa.html
@@ -10195,7 +10198,7 @@ soy
 // https://www.iana.org/domains/root/db/spa.html
 spa
 
-// space : Radix Technologies Inc SEZC
+// space : Squarespace Registry LLC
 // https://www.iana.org/domains/root/db/space.html
 space
 
@@ -10806,10 +10809,6 @@ xbox
 // xerox : Xerox DNHC LLC
 // https://www.iana.org/domains/root/db/xerox.html
 xerox
-
-// xihuan : Beijing Qihu Keji Co., Ltd.
-// https://www.iana.org/domains/root/db/xihuan.html
-xihuan
 
 // xin : Elegant Leader Limited
 // https://www.iana.org/domains/root/db/xin.html
@@ -12479,6 +12478,10 @@ d.gv.vc
 // Submitted by Hector Martin <marcan@euskalencounter.org>
 user.party.eus
 
+// Aspire Themes : https://aspirethemes.com
+// Submitted by Ahmad <psl@aspirethemes.com>
+sites.aspirethemes.com
+
 // Association potager.org : https://potager.org/
 // Submitted by Lunar <jardiniers@potager.org>
 pimienta.org
@@ -12493,8 +12496,11 @@ myasustor.com
 // Atlassian : https://atlassian.com
 // Submitted by Benjamin McAlary <edge-services@atlassian.com>
 *.atlassian-3p.com
+*.shared.atlassian-3p.com
 *.atlassian-3p-us-gov-mod.com
+*.shared.atlassian-3p-us-gov-mod.com
 *.atlassian-isolated-3p.com
+*.shared.atlassian-isolated-3p.com
 cdn.prod.atlassian-dev.net
 
 // Automattic Inc. : https://automattic.com
@@ -12573,6 +12579,11 @@ ship.place
 // Blackbaud, Inc. : https://www.blackbaud.com
 // Submitted by Paul Crowder <paul.crowder@blackbaud.com>
 blackbaudcdn.net
+
+// Blacktops, Inc. : https://blacktops.ai
+// Submitted by Ravi Kolandaiswamy <psl@blacktops.ai>
+blacktops.app
+blacktops.page
 
 // Blatech : http://www.blatech.net
 // Submitted by Luke Bratch <luke@bratch.co.uk>
@@ -13489,6 +13500,11 @@ twmail.org
 mymailer.com.tw
 url.tw
 
+// EFM Networks (ipTIME) : https://iptime.com
+// Submitted by EFM Networks Development Team <server@iptime.com>
+ipdisk.co.kr
+iptime.org
+
 // Electromagnetic Field : https://www.emfcamp.org
 // Submitted by <noc@emfcamp.org>
 at.emf.camp
@@ -13525,6 +13541,10 @@ objects.lp.dev
 // encoway GmbH : https://www.encoway.de
 // Submitted by Marcel Daus <cloudops@encoway.de>
 eu.encoway.cloud
+
+// Entry : https://entry.fyi/
+// Submitted by Francis Luz <hello@entry.fyi>
+entrypages.net
 
 // EU.org : https://eu.org/
 // Submitted by Pierre Beyssac <hostmaster@eu.org>
@@ -13612,6 +13632,10 @@ expo.app
 on.expo.app
 staging.expo.app
 on.staging.expo.app
+
+// Faable : https://faable.com/
+// Submitted by Marc Pomar <support@faable.com>
+faable.link
 
 // fachschaften.org: https://fachschaften.org/
 // Submitted by Felix Schäfer <security@fachschaften.org>
@@ -14054,6 +14078,8 @@ vibehost.space
 
 // GoDaddy Registry : https://registry.godaddy
 // Submitted by Rohan Durrant <tldns@registry.godaddy>
+*.airoapp.ai
+*.host.cloud
 graphic.design
 
 // GoIP DNS Services : http://www.goip.de
@@ -14111,6 +14137,10 @@ grayjayleagues.com
 // Grebedoc : https://grebedoc.dev
 // Submitted by Catherine Zotova <admin@grebedoc.dev>
 grebedoc.dev
+
+// Greybull : https://greybull.cloud/
+// Submitted by Nick Bouwhuis <security@greybull.cloud>
+greybull.site
 
 // GünstigBestellen : https://günstigbestellen.de
 // Submitted by Furkan Akkoc <info@hendelzon.de>
@@ -14206,6 +14236,10 @@ homesklep.pl
 *.id.pub
 *.kin.pub
 
+// Homemade : https://homemade.dev
+// Submitted by Homemade Support <support@homemade.dev>
+onhomemade.com
+
 // HOOC AG : https://www.hooc.ch
 // Submitted by Fabrizio Steiner <info@hooc.ch>
 seprox.hooc.me
@@ -14233,6 +14267,11 @@ plc.ng
 // Hostinger : https://hostinger.com
 // Submitted by Valentinas Cirba <domains@hostinger.com>
 hstgr.cloud
+
+// Hostney : https://www.hostney.com
+// Submitted by Gabor Leszlauer <hostmaster@hostney.com>
+hostney.app
+hostney.cloud
 
 // HostyHosting : https://hostyhosting.com
 hostyhosting.io
@@ -14300,6 +14339,10 @@ oninferno.net
 // info.cx : http://info.cx
 // Submitted by June Slater <whois@igloo.to>
 info.cx
+
+// Infusion : https://infusion.cloud
+// Submitted by Ana Pessoa <suporte@infusion.cloud>
+infusion-ai.cloud
 
 // Interlegis : http://www.interlegis.leg.br
 // Submitted by Gabriel Ferreira <registrobr@interlegis.leg.br>
@@ -14413,7 +14456,6 @@ cloud.interhostsolutions.be
 alp1.ae.flow.ch
 appengine.flow.ch
 es-1.axarnet.cloud
-diadem.cloud
 vip.jelastic.cloud
 jele.cloud
 it1.eur.aruba.jenv-aruba.cloud
@@ -14445,7 +14487,6 @@ j.scaleforce.com.cy
 jelastic.dogado.eu
 fi.cloudplatform.fi
 jele.host
-mircloud.host
 paas.beebyte.io
 sekd1.beebyteapp.io
 jele.io
@@ -14475,7 +14516,6 @@ jelastic.team
 orangecloud.tn
 j.layershift.co.uk
 phx.enscaled.us
-mircloud.us
 
 // Jino : https://www.jino.ru
 // Submitted by Sergey Ulyashin <ulyashin@jino.ru>
@@ -14603,8 +14643,6 @@ lpusercontent.com
 // Leapcell : https://leapcell.io/
 // Submitted by Leapcell Team <support@leapcell.io>
 leapcell.app
-leapcell.dev
-leapcell.online
 
 // Liara : https://liara.ir
 // Submitted by Amirhossein Badinloo <info@liara.ir>
@@ -15006,6 +15044,10 @@ pp.ru
 // MyOwn srl : https://www.myown.eu/
 // Submitted by Stephane Bouvard <support@myown.eu>
 my.be
+
+// Mythex : https://mythex.ai
+// Submitted by Mythex Support <support@mythex.ai>
+mythex.app
 
 // Mythic Beasts : https://www.mythic-beasts.com
 // Submitted by Paul Cammish <kelduum@mythic-beasts.com>
@@ -15539,6 +15581,14 @@ prequalifyme.today
 // Submitted by Sarah Newman <owner@prgmr.com>
 xen.prgmr.com
 
+// PrimeLink Limited: https://www.nic.uk.cc/
+// Submitted by PrimeLink Developer <support@nic.uk.cc>
+ec.cc
+eu.cc
+gu.cc
+uk.cc
+us.cc
+
 // priv.at : http://www.nic.priv.at/
 // Submitted by registry <lendl@nic.at>
 priv.at
@@ -15583,6 +15633,10 @@ pubtls.org
 puter.app
 puter.site
 puter.work
+
+// Pymaia : https://pymaia.com
+// Submitted by Martin <info@pymaia.com>
+pymaia.app
 
 // PythonAnywhere LLP : https://www.pythonanywhere.com
 // Submitted by Giles Thomas <giles@pythonanywhere.com>
@@ -15723,10 +15777,6 @@ devices.resinstaging.io
 // Retool : https://retool.com
 // Submitted by Andrew Guan <security@retool.com>
 retool.app
-
-// Rico Developments Limited : https://adimo.co
-// Submitted by Colin Brown <hello@adimo.co>
-adimo.co.uk
 
 // Riseup Networks : https://riseup.net
 // Submitted by Micah Anderson <micah@riseup.net>
@@ -16007,6 +16057,10 @@ zicp.fun
 // Sheezy.Art : https://sheezy.art
 // Submitted by Nyoom <admin@sheezy.art>
 sheezy.games
+
+// ShipStatic : https://www.shipstatic.com
+// Submitted by ShipStatic Team <hello@shipstatic.com>
+shipstatic.com
 
 // Shopblocks : http://www.shopblocks.com/
 // Submitted by Alex Bowers <alex@shopblocks.com>
@@ -16322,14 +16376,6 @@ tche.br
 site.tb-hosting.com
 directwp.eu
 
-// TechEdge Limited: https://www.nic.uk.cc/
-// Submitted by TechEdge Developer <support@nic.uk.cc>
-ec.cc
-eu.cc
-gu.cc
-uk.cc
-us.cc
-
 // Teckids e.V. : https://www.teckids.org
 // Submitted by Dominik George <dominik.george@teckids.org>
 edugit.io
@@ -16632,6 +16678,10 @@ localcert.net
 windsurf.app
 windsurf.build
 
+// Wirechunk, Inc. : https://wirechunk.com/
+// Submitted by Wirechunk Support <support@wirechunk.com>
+wirechunk.site
+
 // WirelessCar : https://wirelesscar.com
 // Submitted by Martin Lindberg <drive-platform@wirelesscar.com>
 drive-platform.com
@@ -16670,6 +16720,11 @@ meinforum.net
 affinitylottery.org.uk
 raffleentry.org.uk
 weeklylottery.org.uk
+
+// Wordsmith AI : https://wordsmith.ai
+// Submitted by Wordsmith Security <security@wordsmith.ai>
+wordsmithmcpcontent.com
+staging.wordsmithmcpcontent.com
 
 // WP Engine : https://wpengine.com/
 // Submitted by Michael Smith <michael.smith@wpengine.com>
@@ -16729,6 +16784,10 @@ zap.cloud
 // Zeabur : https://zeabur.com/
 // Submitted by Zeabur Team <contact@zeabur.com>
 zeabur.app
+
+// Zerexa domains : https://nic.fj.kg
+// Submitted by Zerexa Team <admin@zerexa.net>
+fj.kg
 
 // Zerops : https://zerops.io/
 // Submitted by Zerops Team <security@zerops.io>
